@@ -1,0 +1,1037 @@
+{
+  "source": "https://montavar.websonik.nl/mtopilot/profiles/",
+  "observedAt": "2026-10-21T19:34:38.292Z",
+  "kind": "blank profile form; available controls only, no existing profile values",
+  "areas": [
+    {
+      "actions": [
+        "show_54",
+        "insert_54",
+        "edit_54",
+        "delete_54",
+        "export_54"
+      ],
+      "apps": "T",
+      "name": "Absence reasons"
+    },
+    {
+      "actions": [
+        "show_61",
+        "insert_61",
+        "import_61"
+      ],
+      "apps": "T",
+      "name": "Articles"
+    },
+    {
+      "actions": [
+        "show_91",
+        "insert_91",
+        "edit_91",
+        "export_91",
+        "import_91",
+        "print_91"
+      ],
+      "apps": "W",
+      "name": "Assign ISO to FWP"
+    },
+    {
+      "actions": [
+        "show_34",
+        "insert_34",
+        "edit_34",
+        "delete_34",
+        "export_34"
+      ],
+      "apps": "E",
+      "name": "Calculation statuses"
+    },
+    {
+      "actions": [
+        "show_71",
+        "insert_71",
+        "edit_71",
+        "delete_71",
+        "export_71",
+        "import_71",
+        "print_71"
+      ],
+      "apps": "E",
+      "name": "Calculations"
+    },
+    {
+      "actions": [
+        "show_40",
+        "insert_40",
+        "edit_40",
+        "delete_40",
+        "export_40"
+      ],
+      "apps": "W",
+      "name": "Certificates"
+    },
+    {
+      "actions": [
+        "show_18",
+        "insert_18",
+        "edit_18",
+        "delete_18",
+        "export_18",
+        "import_18"
+      ],
+      "apps": "MW",
+      "name": "Certifications"
+    },
+    {
+      "actions": [
+        "show_52"
+      ],
+      "apps": "MEWTT",
+      "name": "Change theme"
+    },
+    {
+      "actions": [
+        "show_84",
+        "insert_84",
+        "edit_84",
+        "delete_84",
+        "export_84",
+        "print_84"
+      ],
+      "apps": "W",
+      "name": "Coating"
+    },
+    {
+      "actions": [
+        "show_37",
+        "insert_37",
+        "edit_37",
+        "delete_37",
+        "export_37"
+      ],
+      "apps": "W",
+      "name": "Companies"
+    },
+    {
+      "actions": [
+        "show_85",
+        "insert_85",
+        "edit_85",
+        "delete_85",
+        "export_85",
+        "import_85",
+        "print_85"
+      ],
+      "apps": "MW",
+      "name": "Custom Attachment Names"
+    },
+    {
+      "actions": [
+        "show_41",
+        "insert_41",
+        "edit_41",
+        "delete_41",
+        "export_41"
+      ],
+      "apps": "W",
+      "name": "Customs"
+    },
+    {
+      "actions": [
+        "show_35",
+        "print_35"
+      ],
+      "apps": "W",
+      "name": "Dahsboard - WeldPilot"
+    },
+    {
+      "actions": [
+        "show_82",
+        "insert_82",
+        "delete_82",
+        "export_82"
+      ],
+      "apps": "W",
+      "name": "Daily reports"
+    },
+    {
+      "actions": [
+        "show_27",
+        "print_27"
+      ],
+      "apps": "E",
+      "name": "Dashboard - EST Pilot"
+    },
+    {
+      "actions": [
+        "show_2"
+      ],
+      "apps": "M",
+      "name": "Dashboard - Pending materials"
+    },
+    {
+      "actions": [
+        "show_3"
+      ],
+      "apps": "M",
+      "name": "Dashboard - Pending orders"
+    },
+    {
+      "actions": [
+        "show_1",
+        "edit_1",
+        "print_1"
+      ],
+      "apps": "M",
+      "name": "Dashboard - Spools locations"
+    },
+    {
+      "actions": [
+        "show_81",
+        "insert_81",
+        "export_81",
+        "print_81"
+      ],
+      "apps": "W",
+      "name": "Export welds"
+    },
+    {
+      "actions": [
+        "show_32",
+        "insert_32",
+        "edit_32",
+        "delete_32",
+        "export_32"
+      ],
+      "apps": "E",
+      "name": "Factors"
+    },
+    {
+      "actions": [
+        "show_90",
+        "insert_90",
+        "edit_90",
+        "delete_90",
+        "export_90",
+        "import_90",
+        "print_90"
+      ],
+      "apps": "W",
+      "name": "Field Work Packages"
+    },
+    {
+      "actions": [
+        "show_100",
+        "insert_100",
+        "edit_100",
+        "delete_100",
+        "import_100"
+      ],
+      "apps": "W",
+      "name": "Flanges"
+    },
+    {
+      "actions": [
+        "show_55",
+        "insert_55",
+        "edit_55",
+        "delete_55",
+        "export_55"
+      ],
+      "apps": "T",
+      "name": "FMLA absence"
+    },
+    {
+      "actions": [
+        "show_74",
+        "insert_74",
+        "edit_74",
+        "delete_74",
+        "export_74",
+        "import_74",
+        "print_74"
+      ],
+      "apps": "W",
+      "name": "Hydrotest request"
+    },
+    {
+      "actions": [
+        "show_72",
+        "insert_72",
+        "edit_72",
+        "delete_72",
+        "export_72",
+        "import_72",
+        "print_72"
+      ],
+      "apps": "W",
+      "name": "Hydrotest request"
+    },
+    {
+      "actions": [
+        "show_20",
+        "insert_20"
+      ],
+      "apps": "M",
+      "name": "ISO execution"
+    },
+    {
+      "actions": [
+        "show_92",
+        "insert_92"
+      ],
+      "apps": "W",
+      "name": "Iso Overview"
+    },
+    {
+      "actions": [
+        "show_64",
+        "insert_64",
+        "edit_64",
+        "delete_64",
+        "export_64",
+        "import_64",
+        "print_64"
+      ],
+      "apps": "MEW",
+      "name": "Isometrics"
+    },
+    {
+      "actions": [
+        "show_19"
+      ],
+      "apps": "MEWT",
+      "name": "Isometrics list"
+    },
+    {
+      "actions": [
+        "show_88",
+        "insert_88",
+        "edit_88",
+        "delete_88",
+        "export_88"
+      ],
+      "apps": "M",
+      "name": "Laydowns materials"
+    },
+    {
+      "actions": [
+        "show_93",
+        "insert_93",
+        "edit_93",
+        "delete_93"
+      ],
+      "apps": "",
+      "name": "Management Dashoard"
+    },
+    {
+      "actions": [
+        "show_58",
+        "insert_58",
+        "edit_58",
+        "delete_58",
+        "export_58"
+      ],
+      "apps": "T",
+      "name": "Manpower overview"
+    },
+    {
+      "actions": [
+        "show_6",
+        "insert_6",
+        "edit_6",
+        "delete_6",
+        "import_6"
+      ],
+      "apps": "M",
+      "name": "Material database"
+    },
+    {
+      "actions": [
+        "show_16",
+        "insert_16",
+        "delete_16",
+        "export_16",
+        "import_16"
+      ],
+      "apps": "M",
+      "name": "Material inventory"
+    },
+    {
+      "actions": [
+        "show_25",
+        "insert_25",
+        "edit_25",
+        "delete_25",
+        "export_25"
+      ],
+      "apps": "M",
+      "name": "Material laydowns"
+    },
+    {
+      "actions": [
+        "show_78"
+      ],
+      "apps": "M",
+      "name": "Material list"
+    },
+    {
+      "actions": [
+        "show_13",
+        "print_13"
+      ],
+      "apps": "M",
+      "name": "Material order"
+    },
+    {
+      "actions": [
+        "show_17",
+        "print_17"
+      ],
+      "apps": "M",
+      "name": "Material order archive"
+    },
+    {
+      "actions": [
+        "show_7",
+        "insert_7",
+        "edit_7",
+        "delete_7",
+        "export_7"
+      ],
+      "apps": "MW",
+      "name": "Material part"
+    },
+    {
+      "actions": [
+        "show_15",
+        "insert_15",
+        "export_15"
+      ],
+      "apps": "M",
+      "name": "Material receive"
+    },
+    {
+      "actions": [
+        "show_12",
+        "insert_12",
+        "edit_12",
+        "delete_12",
+        "export_12"
+      ],
+      "apps": "MW",
+      "name": "Material Supplier"
+    },
+    {
+      "actions": [
+        "show_70",
+        "insert_70",
+        "edit_70",
+        "delete_70",
+        "export_70",
+        "import_70",
+        "print_70"
+      ],
+      "apps": "M",
+      "name": "Materials in Isometric"
+    },
+    {
+      "actions": [
+        "show_76",
+        "insert_76",
+        "edit_76",
+        "delete_76",
+        "export_76",
+        "import_76",
+        "print_76"
+      ],
+      "apps": "W",
+      "name": "NDT Archive"
+    },
+    {
+      "actions": [
+        "show_94",
+        "insert_94",
+        "edit_94",
+        "delete_94",
+        "export_94",
+        "import_94",
+        "print_94"
+      ],
+      "apps": "W",
+      "name": "NDT Archive - Pre"
+    },
+    {
+      "actions": [
+        "show_47",
+        "insert_47",
+        "edit_47",
+        "delete_47",
+        "export_47"
+      ],
+      "apps": "W",
+      "name": "NDT locations"
+    },
+    {
+      "actions": [
+        "show_46",
+        "insert_46",
+        "edit_46",
+        "delete_46",
+        "export_46"
+      ],
+      "apps": "W",
+      "name": "NDT process"
+    },
+    {
+      "actions": [
+        "show_79",
+        "insert_79",
+        "edit_79",
+        "delete_79",
+        "export_79",
+        "import_79"
+      ],
+      "apps": "W",
+      "name": "NDT Process Groups"
+    },
+    {
+      "actions": [
+        "show_66"
+      ],
+      "apps": "W",
+      "name": "NDT Request Archive"
+    },
+    {
+      "actions": [
+        "show_50",
+        "edit_50",
+        "print_50"
+      ],
+      "apps": "W",
+      "name": "NDT requests manager"
+    },
+    {
+      "actions": [
+        "show_11",
+        "insert_11",
+        "edit_11",
+        "delete_11",
+        "export_11"
+      ],
+      "apps": "M",
+      "name": "Operation phases"
+    },
+    {
+      "actions": [
+        "show_36",
+        "edit_36"
+      ],
+      "apps": "W",
+      "name": "Overview"
+    },
+    {
+      "actions": [
+        "show_14"
+      ],
+      "apps": "M",
+      "name": "Pending order"
+    },
+    {
+      "actions": [
+        "show_69",
+        "insert_69",
+        "edit_69",
+        "delete_69",
+        "export_69"
+      ],
+      "apps": "T",
+      "name": "Personnel"
+    },
+    {
+      "actions": [
+        "show_21",
+        "export_21",
+        "print_21"
+      ],
+      "apps": "M",
+      "name": "Pick list archive"
+    },
+    {
+      "actions": [
+        "show_83",
+        "insert_83",
+        "edit_83",
+        "delete_83",
+        "export_83",
+        "import_83",
+        "print_83"
+      ],
+      "apps": "M",
+      "name": "Pick list Export"
+    },
+    {
+      "actions": [
+        "show_57",
+        "insert_57",
+        "edit_57",
+        "delete_57",
+        "export_57"
+      ],
+      "apps": "T",
+      "name": "Plan overview"
+    },
+    {
+      "actions": [
+        "show_98",
+        "insert_98",
+        "edit_98",
+        "delete_98",
+        "export_98",
+        "import_98",
+        "print_98"
+      ],
+      "apps": "",
+      "name": "PQR"
+    },
+    {
+      "actions": [
+        "show_53",
+        "insert_53",
+        "edit_53",
+        "delete_53",
+        "export_53"
+      ],
+      "apps": "MEWTT",
+      "name": "Profiles"
+    },
+    {
+      "actions": [
+        "show_31",
+        "insert_31",
+        "edit_31",
+        "delete_31",
+        "export_31"
+      ],
+      "apps": "E",
+      "name": "Project site Factors"
+    },
+    {
+      "actions": [
+        "show_4",
+        "insert_4",
+        "edit_4",
+        "delete_4",
+        "export_4",
+        "import_4",
+        "print_4"
+      ],
+      "apps": "MEWT",
+      "name": "Project sites"
+    },
+    {
+      "actions": [
+        "show_5",
+        "insert_5",
+        "edit_5",
+        "delete_5",
+        "export_5",
+        "import_5",
+        "print_5"
+      ],
+      "apps": "MEWT",
+      "name": "Projects"
+    },
+    {
+      "actions": [
+        "show_77",
+        "insert_77",
+        "edit_77",
+        "delete_77",
+        "export_77",
+        "import_77",
+        "print_77"
+      ],
+      "apps": "W",
+      "name": "Punchlists"
+    },
+    {
+      "actions": [
+        "show_97",
+        "insert_97",
+        "edit_97",
+        "delete_97",
+        "export_97",
+        "import_97",
+        "print_97"
+      ],
+      "apps": "W",
+      "name": "PWHT archive"
+    },
+    {
+      "actions": [
+        "show_49",
+        "insert_49",
+        "edit_49",
+        "delete_49",
+        "export_49"
+      ],
+      "apps": "W",
+      "name": "PWHT locations"
+    },
+    {
+      "actions": [
+        "show_48",
+        "insert_48",
+        "edit_48",
+        "delete_48",
+        "export_48"
+      ],
+      "apps": "W",
+      "name": "PWHT process"
+    },
+    {
+      "actions": [
+        "show_65",
+        "print_65"
+      ],
+      "apps": "W",
+      "name": "PWHT requests"
+    },
+    {
+      "actions": [
+        "show_67"
+      ],
+      "apps": "W",
+      "name": "PWHT Requests Archive"
+    },
+    {
+      "actions": [
+        "show_73",
+        "insert_73",
+        "edit_73",
+        "delete_73",
+        "export_73",
+        "import_73",
+        "print_73"
+      ],
+      "apps": "W",
+      "name": "QA/QC engineers"
+    },
+    {
+      "actions": [
+        "show_89",
+        "insert_89",
+        "export_89",
+        "import_89",
+        "print_89"
+      ],
+      "apps": "MW",
+      "name": "Release field"
+    },
+    {
+      "actions": [
+        "show_86",
+        "insert_86",
+        "export_86",
+        "import_86",
+        "print_86"
+      ],
+      "apps": "MW",
+      "name": "Release prefab"
+    },
+    {
+      "actions": [
+        "show_62",
+        "export_62"
+      ],
+      "apps": "T",
+      "name": "Rented articles"
+    },
+    {
+      "actions": [
+        "show_39",
+        "insert_39",
+        "edit_39",
+        "delete_39",
+        "export_39"
+      ],
+      "apps": "W",
+      "name": "Roles"
+    },
+    {
+      "actions": [
+        "show_22",
+        "insert_22",
+        "edit_22",
+        "delete_22",
+        "export_22"
+      ],
+      "apps": "M",
+      "name": "Service companies"
+    },
+    {
+      "actions": [
+        "show_23",
+        "insert_23"
+      ],
+      "apps": "M",
+      "name": "Service request"
+    },
+    {
+      "actions": [
+        "show_80",
+        "insert_80"
+      ],
+      "apps": "M",
+      "name": "Service request - Materials"
+    },
+    {
+      "actions": [
+        "show_24",
+        "print_24"
+      ],
+      "apps": "M",
+      "name": "Service requests - Archive"
+    },
+    {
+      "actions": [
+        "show_96",
+        "insert_96"
+      ],
+      "apps": "W",
+      "name": "Signatures"
+    },
+    {
+      "actions": [
+        "show_10",
+        "insert_10",
+        "edit_10",
+        "delete_10",
+        "export_10"
+      ],
+      "apps": "MW",
+      "name": "Spools"
+    },
+    {
+      "actions": [
+        "show_75",
+        "insert_75",
+        "edit_75",
+        "delete_75",
+        "export_75",
+        "import_75",
+        "print_75"
+      ],
+      "apps": "MEW",
+      "name": "Storehouses"
+    },
+    {
+      "actions": [
+        "show_33",
+        "insert_33",
+        "edit_33",
+        "delete_33",
+        "export_33"
+      ],
+      "apps": "E",
+      "name": "Tariffs"
+    },
+    {
+      "actions": [
+        "show_56",
+        "insert_56",
+        "edit_56",
+        "delete_56",
+        "export_56"
+      ],
+      "apps": "T",
+      "name": "Tasks"
+    },
+    {
+      "actions": [
+        "show_87",
+        "insert_87",
+        "edit_87",
+        "delete_87",
+        "export_87",
+        "import_87",
+        "print_87"
+      ],
+      "apps": "W",
+      "name": "Test systems"
+    },
+    {
+      "actions": [
+        "show_60",
+        "export_60"
+      ],
+      "apps": "T",
+      "name": "Transfer list"
+    },
+    {
+      "actions": [
+        "show_8",
+        "insert_8",
+        "edit_8",
+        "delete_8",
+        "export_8"
+      ],
+      "apps": "MW",
+      "name": "Type of material"
+    },
+    {
+      "actions": [
+        "show_28",
+        "insert_28",
+        "edit_28",
+        "delete_28"
+      ],
+      "apps": "E",
+      "name": "Unit Rates"
+    },
+    {
+      "actions": [
+        "show_29",
+        "insert_29",
+        "edit_29",
+        "delete_29",
+        "export_29"
+      ],
+      "apps": "E",
+      "name": "Unit Rates Groups"
+    },
+    {
+      "actions": [
+        "show_30",
+        "insert_30",
+        "edit_30",
+        "delete_30",
+        "export_30"
+      ],
+      "apps": "E",
+      "name": "Unit Rates Subgroups"
+    },
+    {
+      "actions": [
+        "show_9",
+        "insert_9",
+        "edit_9",
+        "delete_9",
+        "export_9"
+      ],
+      "apps": "ME",
+      "name": "UOMs"
+    },
+    {
+      "actions": [
+        "show_26",
+        "insert_26",
+        "edit_26",
+        "delete_26",
+        "export_26"
+      ],
+      "apps": "MEWTT",
+      "name": "Users accounts"
+    },
+    {
+      "actions": [
+        "show_59",
+        "insert_59",
+        "edit_59",
+        "delete_59",
+        "export_59"
+      ],
+      "apps": "T",
+      "name": "Warehouses list"
+    },
+    {
+      "actions": [
+        "show_45",
+        "insert_45",
+        "edit_45",
+        "delete_45",
+        "export_45"
+      ],
+      "apps": "W",
+      "name": "Weld diameters"
+    },
+    {
+      "actions": [
+        "show_44",
+        "insert_44",
+        "edit_44",
+        "delete_44",
+        "export_44"
+      ],
+      "apps": "W",
+      "name": "Weld type"
+    },
+    {
+      "actions": [
+        "show_95",
+        "insert_95",
+        "edit_95",
+        "delete_95"
+      ],
+      "apps": "W",
+      "name": "Welder card settings"
+    },
+    {
+      "actions": [
+        "show_68",
+        "insert_68",
+        "edit_68",
+        "delete_68",
+        "export_68"
+      ],
+      "apps": "W",
+      "name": "Welders"
+    },
+    {
+      "actions": [
+        "show_43",
+        "insert_43",
+        "edit_43",
+        "delete_43",
+        "export_43"
+      ],
+      "apps": "W",
+      "name": "Welding process"
+    },
+    {
+      "actions": [
+        "show_99",
+        "insert_99",
+        "edit_99",
+        "delete_99"
+      ],
+      "apps": "MW",
+      "name": "Welding wires"
+    },
+    {
+      "actions": [
+        "show_63",
+        "insert_63",
+        "edit_63",
+        "delete_63",
+        "export_63",
+        "import_63",
+        "print_63"
+      ],
+      "apps": "W",
+      "name": "Welds"
+    },
+    {
+      "actions": [
+        "show_42",
+        "insert_42",
+        "edit_42",
+        "delete_42",
+        "export_42"
+      ],
+      "apps": "W",
+      "name": "WPS methods"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+import './env.ts';
+import { resolve } from 'node:path';
+import { Store } from './store.ts';
+import { seed } from './seed.ts';
+import { createApp } from './http.ts';
+import { PostgresDatabase, postgresConfig } from './postgres.ts';
+const dataDir = resolve(process.env.STELUX_DATA_DIR || '.data');
+const database = process.env.DATABASE_URL ? new PostgresDatabase(postgresConfig()) : undefined;
+const store = new Store(resolve(dataDir, 'stelux.sqlite'), database);
+seed(store);
+const port = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 3000 : 3001));
+const server = createApp(store, dataDir).listen(port, '127.0.0.1', () => console.log(`Stelux API ready at http://127.0.0.1:${port} (${database ? 'PostgreSQL' : 'SQLite'})`));
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));
