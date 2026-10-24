@@ -25,7 +25,7 @@ export function createApp(store: Store, dataDir: string) {
   app.use((_req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin'); next(); });
   app.use('/api', (req, _res, next) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-      if (req.headers['x-stelux-request'] !== '1') return next(new AppError(403, 'This request must come from the Stelux application.'));
+      if (req.headers['x-stelux-request'] !== '1') return next(new AppError(403, 'This request must come from the Blitzkrieg application.'));
       if (req.headers.origin) {
         try { const origin = new URL(req.headers.origin); if (!['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname) || !['3000', '3001', '5173'].includes(origin.port)) throw new Error(); }
         catch { return next(new AppError(403, 'This origin is not allowed.')); }
@@ -37,7 +37,7 @@ export function createApp(store: Store, dataDir: string) {
   const attempts = new Map<string, { count: number; until: number }>();
   app.get('/api/health', (_req, res) => {
     store.db.prepare('SELECT 1 AS connected').get();
-    res.json({ ok: true, name: 'Stelux', database: store.db.dialect === 'postgres' ? 'postgres' : 'sqlite' });
+    res.json({ ok: true, name: 'Blitzkrieg', database: store.db.dialect === 'postgres' ? 'postgres' : 'sqlite' });
   });
   app.get('/api/auth/status', (req, res) => {
     const requiresSetup = store.list('users').length === 0;
@@ -96,7 +96,7 @@ export function createApp(store: Store, dataDir: string) {
     const filters=Object.fromEntries(['projectId','isoId','welderId','clientId','warehouseId','type','from','to'].map(k=>[k,typeof req.query[k]==='string'?String(req.query[k]).slice(0,150):''])) as ReportFilters;
     const report=buildReport(definition.key,rows,filters);const query=typeof req.query.q==='string'?req.query.q.toLowerCase().slice(0,500):'';
     if(query)report.rows=report.rows.filter(r=>Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query)));
-    res.setHeader('Cache-Control','no-store');res.attachment(`stelux-${definition.key}-${new Date().toISOString().slice(0,10)}.csv`).type('text/csv').send(reportCsv(report));
+    res.setHeader('Cache-Control','no-store');res.attachment(`blitzkrieg-${definition.key}-${new Date().toISOString().slice(0,10)}.csv`).type('text/csv').send(reportCsv(report));
   });
   app.post('/api/records/:resource', (req, res) => {
     const resource = store.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
@@ -146,11 +146,11 @@ export function createApp(store: Store, dataDir: string) {
   app.get('/api/export/:resource', async (req, res) => {
     const { resource, output, fields } = exportRows(req);
     if (req.query.format === 'xlsx') {
-      const workbook = new ExcelJS.Workbook(); workbook.creator = 'Stelux';
+      const workbook = new ExcelJS.Workbook(); workbook.creator = 'Blitzkrieg';
       const sheet = workbook.addWorksheet(resource.title.slice(0, 31)); sheet.columns = fields.map(f => ({ header: f.label, key: f.label, width: 24 })); sheet.addRows(output);
-      sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }; sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF214C42' } }; sheet.views = [{ state: 'frozen', ySplit: 1 }];
-      res.attachment(`stelux-${resource.key}.xlsx`); await workbook.xlsx.write(res); res.end();
-    } else { res.attachment(`stelux-${resource.key}.csv`); res.type('text/csv'); res.send(stringify(output, { header: true, columns: fields.map(f => f.label), escape_formulas: true })); }
+      sheet.getRow(1).font = { name: 'Outfit', bold: true, color: { argb: 'FFFFFFFF' } }; sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF061B42' } }; sheet.views = [{ state: 'frozen', ySplit: 1 }];
+      res.attachment(`blitzkrieg-${resource.key}.xlsx`); await workbook.xlsx.write(res); res.end();
+    } else { res.attachment(`blitzkrieg-${resource.key}.csv`); res.type('text/csv'); res.send(stringify(output, { header: true, columns: fields.map(f => f.label), escape_formulas: true })); }
   });
   const memory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
   app.post('/api/import/:resource/preview', memory.single('file'), (req, res) => {
@@ -184,7 +184,7 @@ export function createApp(store: Store, dataDir: string) {
     if (!Array.isArray(req.body.rows) || !req.body.rows.length || req.body.rows.length > 1000) throw new AppError(422, 'Import between 1 and 1,000 rows.');
     const records = store.transaction(() => req.body.rows.map((row: Record<string, unknown>) => store.create(resource.key, row, actorOf(req)))); res.status(201).json({ count: records.length });
   });
-  app.get('/api/import/:resource/template', (req, res) => { const resource = store.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'import'); res.attachment(`stelux-${resource.key}-template.csv`); res.type('text/csv').send(stringify([], { header: true, columns: [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].map(f => f.label) })); });
+  app.get('/api/import/:resource/template', (req, res) => { const resource = store.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'import'); res.attachment(`blitzkrieg-${resource.key}-template.csv`); res.type('text/csv').send(stringify([], { header: true, columns: [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].map(f => f.label) })); });
   const disk = multer({ dest: uploadsDir, limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
   app.post('/api/revisions',disk.single('file'),(req,res)=>{
     try{

@@ -17,7 +17,7 @@
     "db:migrate": "node --import tsx server/migrate-postgres.ts"
   },
   "dependencies": {
-    "@fontsource/inter": "^5.2.0",
+    "@fontsource/outfit": "^5.3.0",
     "csv-parse": "^6.1.0",
     "csv-stringify": "^6.6.0",
     "exceljs": "^4.4.0",

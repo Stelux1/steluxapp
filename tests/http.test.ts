@@ -140,7 +140,7 @@ test('module restrictions also protect document metadata and downloads', async t
 });
 test('report downloads require authentication and respect project, search and module permissions',async t=>{
   const f=await fixture(t);assert.equal((await f.request('/reports/wdi')).status,401);await f.setup();
-  const response=await f.request('/reports/wdi?projectId=project-cooling&q=W001');assert.equal(response.status,200);assert.match(response.headers.get('content-disposition')!,/stelux-wdi.*csv/);const csv=await response.text();assert.ok(csv.includes('W001'));assert.ok(!csv.includes('W002'));assert.ok(!csv.includes('STX-2402'));assert.equal((await f.request('/reports/unknown')).status,404);
+  const response=await f.request('/reports/wdi?projectId=project-cooling&q=W001');assert.equal(response.status,200);assert.match(response.headers.get('content-disposition')!,/blitzkrieg-wdi.*csv/);const csv=await response.text();assert.ok(csv.includes('W001'));assert.ok(!csv.includes('W002'));assert.ok(!csv.includes('STX-2402'));assert.equal((await f.request('/reports/unknown')).status,404);
   const profile=f.s.create('profiles',{name:'Report tools only',generalPermission:'Read only',materialsPermission:'No access',weldingPermission:'No access',toolsPermission:'Read only',settingsPermission:'No access'});
   await f.request('/records/users','POST',{name:'Report reader',email:'report-reader@example.test',profileId:profile.id,active:true,password:'Reports-Test-Password'});await f.request('/auth/login','POST',{email:'report-reader@example.test',password:'Reports-Test-Password'});
   assert.equal((await f.request('/reports/wdi')).status,403);assert.equal((await f.request('/reports/mto')).status,403);assert.equal((await f.request('/reports/rentals')).status,200);

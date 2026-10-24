@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 324 324">
+  <defs>
+    <linearGradient id="tile" x2="1" y2="1"><stop stop-color="#0085ff"/><stop offset="1" stop-color="#080d4f"/></linearGradient>
+    <linearGradient id="bolt" x2="1" y2="1"><stop stop-color="#37e8f5"/><stop offset="1" stop-color="#0095ff"/></linearGradient>
+  </defs>
+  <rect width="324" height="324" rx="88" fill="url(#tile)"/>
+  <path d="M201 64h24c34 0 47 18 47 42 0 25-17 46-41 51 28 6 41 26 41 53 0 34-24 57-61 57H112l104-110-66 11Z" fill="#fff"/>
+  <path d="M90 64h111l-51 104 66-11L64 318l39-96H61l58-80H43Z" fill="url(#bolt)"/>
+</svg>

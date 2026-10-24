@@ -1,0 +1,106 @@
+/* Shared Blitzkrieg palette: navy ink, electric blue actions, cyan highlights. */
+:root {
+  --navy: #061b42;
+  --navy-raised: #102a55;
+  --nav-active: #153c75;
+  --ink: #091f45;
+  --text: var(--ink);
+  --muted: #586b88;
+  --nav-muted: #afc6e8;
+  --on-navy: #f4f8ff;
+  --primary: #0064e8;
+  --primary-hover: #004fbc;
+  --cyan: #25d9f0;
+  --accent: var(--cyan);
+  --surface: #f7faff;
+  --surface-blue: #edf4ff;
+  --surface-accent: #d9eaff;
+  --line: #dce6f3;
+  --border: var(--line);
+  --border-strong: #8db5ec;
+  font-family: 'Outfit', Arial, sans-serif;
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 208px;
+  max-width: 100%;
+  color: #fff;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.wordmark.dark { color: var(--navy); }
+.brand-icon { display: block; width: 42px; height: 42px; flex-shrink: 0; }
+.wordmark-name { display: block; width: 156px; height: auto; min-width: 0; overflow: hidden; }
+.auth-story > .wordmark { width: 280px; gap: 14px; }
+.auth-story > .wordmark .brand-icon { width: 56px; height: 56px; }
+.auth-story > .wordmark .wordmark-name { width: 210px; }
+.auth-icon { background: none; border: 0; padding: 0; width: 58px; height: 58px; }
+.auth-icon .brand-icon { width: 58px; height: 58px; }
+.workspace-avatar { background: transparent; width: 32px; height: 32px; }
+.workspace-avatar .brand-icon { width: 32px; height: 32px; }
+.report-brand .wordmark { width: 204px; }
+.weld-card-heading .wordmark { width: 136px; gap: 6px; }
+.weld-card-heading .brand-icon { width: 28px; height: 28px; }
+.weld-card-heading .wordmark-name { width: 102px; }
+
+@media screen {
+  h1, h2, h3 { font-weight: 600; }
+  .sidebar { background: linear-gradient(165deg, #092551, var(--navy) 52%, #050f2c); }
+  .sidebar-bottom { background: #061b42; }
+  .brand-link { display: block; min-width: 0; padding: 25px 21px 23px; }
+  .nav-item.active, .nav-item.module-active { background: var(--nav-active); color: #fff; }
+  .nav-item.active { box-shadow: inset 3px 0 var(--cyan); }
+  .sub-nav-item.active { background: var(--navy-raised); color: #fff; }
+  .nav-item:hover, .sub-nav-item:hover, .nav-group summary:hover { color: #fff; background: var(--navy-raised); }
+  .workspace-switch { background: #ffffff08; border: 1px solid #ffffff0c; }
+  .workspace-switch strong, .sidebar-user strong { color: #fff; }
+  .nav-counter { color: var(--cyan); background: #25d9f014; }
+  .sidebar .live-dot { background: var(--cyan); }
+  .sidebar-user { border-top-color: #ffffff18; }
+  .sidebar-user .user-avatar { color: #d9f7ff; background: #173a6b; border-color: #265388; }
+  .sidebar .mobile-nav-close { color: #d9eaff; }
+  .auth-story { background: radial-gradient(ellipse at 0 0, #0064e840, transparent 65%), radial-gradient(ellipse at 100% 100%, #00bfe51c, transparent 60%), var(--navy); }
+  .auth-story-main h1 { color: #fff; font-weight: 600; }
+  .auth-story-main .eyebrow { color: var(--cyan); }
+  .auth-story-main > p, .auth-story-footer, .auth-flow > div { color: #b7cceb; }
+  .auth-flow > div > svg { color: var(--cyan); }
+  .auth-form-section { background: #fff; }
+  .auth-form h2 { font-weight: 600; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+  .btn.primary:disabled { background: var(--primary); }
+  .progress > span { background: linear-gradient(90deg, var(--primary), #20bce9); }
+  .progress.amber > span { background: #d4a74d; }
+  .progress.blue > span { background: #4689e8; }
+  .stat-icon.green, .stat-icon.blue { color: var(--primary); background: var(--surface-blue); }
+  .stat-card:hover { border-color: var(--border-strong); }
+  .module-card, .module-card.welding, .module-card.tools { background: var(--surface); border-color: var(--line); }
+  .module-card:hover { background: var(--surface-blue); }
+  .module-symbol, .module-card.welding .module-symbol, .module-card.tools .module-symbol { color: var(--primary); }
+  .text-link, .record-link { color: var(--primary); }
+  .table-tabs button.selected { color: var(--primary); border-bottom-color: var(--primary); }
+  .project-symbol { color: var(--primary); background: var(--surface-blue); border-color: var(--line); }
+  .production-footer strong { color: var(--primary); }
+  .report-brand { color: var(--navy); }
+  input:focus, select:focus, textarea:focus { border-color: var(--primary); outline-color: var(--primary); }
+  ::selection { background: #bbecff; color: var(--navy); }
+}
+
+@media screen and (max-width: 760px) {
+  .brand-link { padding-right: 8px; }
+  .sidebar .wordmark { width: 194px; gap: 8px; }
+  .sidebar .brand-icon { width: 38px; height: 38px; }
+  .sidebar .wordmark-name { width: 148px; }
+  .auth-story > .wordmark { width: 232px; gap: 10px; }
+  .auth-story > .wordmark .brand-icon { width: 46px; height: 46px; }
+  .auth-story > .wordmark .wordmark-name { width: 176px; }
+}
+
+@media print {
+  .wordmark { print-color-adjust: exact; }
+}

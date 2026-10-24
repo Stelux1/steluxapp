@@ -1,6 +1,8 @@
-# Stelux operations workspace
+# Blitzkrieg operations workspace
 
-A local working rebuild of the accessible Montavar modules, with a clearer Stelux interface and fictional sample data. The original site is never called by this app.
+A local working rebuild of the accessible Montavar modules, with a clearer Blitzkrieg interface and fictional sample data. The original site is never called by this app.
+
+The Blitzkrieg interface uses the supplied logo artwork, a navy / electric blue / cyan palette, and locally bundled Outfit typography as a visual match for the logo. Brand tokens and logo layouts live in `client/brand.css`; the original artwork is in `public/brand/`. Existing database paths, environment variables, and session keys retain their Stelux names for compatibility.
 
 ## Start
 
