@@ -18,6 +18,23 @@ Open **http://127.0.0.1:3000** and sign in, or create your administrator account
 
 For development, use `npm run dev` and open **http://127.0.0.1:5173**. The API runs on port 3001. Stop any temporary preview on that port first.
 
+## Welding evaluation workspace
+
+The server profile `welding-demo` delivers projects, sites, isometrics, basic spools, welders, WPS references, weld execution, NDT/visual inspection, results, repairs, documents, and two welding reports. Account permissions still apply inside that scope. The complete internal workspace remains the default `full` profile.
+
+```sh
+npm run build:demo
+npm run start:demo
+```
+
+Open **http://127.0.0.1:3002** and create the evaluation workspace's own administrator account. The internal workspace keeps port 3000; `PORT` can override either server's port. Development uses `npm run dev:demo` on ports 5173/3001.
+
+The evaluation server **always uses its own SQLite database** in `.data/welding-demo/`, including separate accounts, session cookies, and uploads. It does not connect to `DATABASE_URL`, copy production data, change existing accounts, or rewrite their permission profiles. `STELUX_DEMO_DATA_DIR` can select another evaluation directory; selecting the full workspace's data directory is rejected. Keep this directory outside the full workspace's uploads directory.
+
+`npm run build:demo` writes `dist-welding-demo/`, without source maps. `npm run build` continues to write the complete internal build to `dist/`. Each server profile serves its corresponding build, so both versions can coexist. Neither build directory is committed. Restart the server after changing `STELUX_RELEASE_PROFILE`; there is no profile switch in the interface.
+
+The release policy in `shared/release.ts` defines positive lists of resources, fields, actions, inspection types, reports, and navigation. The API filters bootstrap data, documents, history, and CSV/Excel/report exports, and rejects omitted endpoints and fields. The client uses the same delivered catalog for forms, columns, links, search, and reports. Basic edits preserve omitted field values and qualification links. The evaluation interface retains its sample-data label.
+
 ## Current implementation
 
 - Shared project sites, projects, isometrics, spools, companies, warehouses, drawings, and revision history.
@@ -44,7 +61,7 @@ npm run build
 
 Tests use temporary SQLite databases. HTTP tests open temporary loopback listeners and need local networking permission in restricted execution environments. They never change the live Montavar app or the user's `.data` directory.
 
-Current verification: 79 default automated tests pass and the production build succeeds. An additional optional test against a disposable PostgreSQL instance covers migration, account login, inventory changes, rollback, version conflicts, audit pagination, CSV previews and persistence across independent connections. Browser checks cover sample material ordering/receipt/picking, partial tool returns, WPS/PQR links, welder deployment, material laydown/service, revision-file upload, independent ISO/ITP revision numbers, and partial/full removal of a material requirement. These checks do not establish hidden PHP-rule parity.
+Current verification: 88 default automated tests pass and both production builds succeed. An additional optional test against a disposable PostgreSQL instance covers migration, account login, inventory changes, rollback, version conflicts, audit pagination, CSV previews and persistence across independent connections. Browser checks cover sample material ordering/receipt/picking, partial tool returns, WPS/PQR links, welder deployment, material laydown/service, revision-file upload, independent ISO/ITP revision numbers, and partial/full removal of a material requirement. These checks do not establish hidden PHP-rule parity.
 
 Browser smoke checks and workflow observations are recorded in `test-results/` when available. These generated artifacts are excluded from version control.
 

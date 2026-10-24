@@ -1,7 +1,7 @@
 import { useState,type FormEvent } from 'react';
 import { Loader2,ShieldCheck } from 'lucide-react';
 import { PERMISSION_AREAS,PERMISSION_VERBS,VERB_LABELS,inheritedRules,parsePermissionRules } from '../shared/permissions.ts';
-import { MODULES,permissionValue } from '../shared/resources.ts';
+import { MODULES,permissionValue } from './catalog.ts';
 import type {Module,PermissionRules,PermissionVerb,Row,User} from '../shared/types.ts';
 import {api} from './api.ts';
 import {useWorkspace} from './context.tsx';

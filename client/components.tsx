@@ -2,7 +2,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, ty
 import { createPortal } from 'react-dom';
 import { X, ChevronDown, Check, Search, FileText, ArrowUpRight } from 'lucide-react';
 import type { ActionField, Field, Row } from '../shared/types.ts';
-import { RESOURCE_MAP } from '../shared/resources.ts';
+import { RESOURCE_MAP } from './catalog.ts';
+import { availableWps } from './catalog.ts';
 import { useWorkspace } from './context.tsx';
 import { formatDate, formatNumber } from './api.ts';
 
@@ -124,13 +125,14 @@ export function Dropdown({ trigger, label, children, className = '', menuClassNa
   </div>;
 }
 export function FieldInput({ field, value, onChange, error, values = {}, allowedIds }: { field: Field | ActionField; value: unknown; onChange: (value: unknown) => void; error?: string; values?: Record<string, unknown>;allowedIds?:string[] }) {
-  const { rows, label } = useWorkspace();const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
+  const { rows, user, label } = useWorkspace();const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
   if(field.hidden)return null;
   let options = field.ref ? (rows[field.ref] || []).filter(r => !r._archived) : [];
   if(field.refCategory)options=options.filter(r=>r.category===field.refCategory);
   if(allowedIds)options=options.filter(r=>allowedIds.includes(r.id));
   if (field.ref === 'spools' && values.isoId) options = options.filter(r => r.isoId === values.isoId);
   if (field.ref === 'isometrics' && values.projectId) options = options.filter(r => r.projectId === values.projectId);
+  if (user.availability && field.ref === 'wps' && values.isoId) { const project=rows.isometrics?.find(row=>row.id===values.isoId)?.projectId; if(project) options=options.filter(wps=>availableWps(rows,wps,String(project))); }
   if (field.ref === 'rentals') options = options.filter(r => ['Rented', 'Partially returned'].includes(String(r.status)));
   if (field.name === 'orderId') options = options.filter(r => ['Pending', 'Partially received'].includes(String(r.status)));
   const refLabel = (r: Row) => { let name = label(field.ref!, r.id); if (field.ref === 'welds'||field.ref==='iso_materials') name += ` · ${label('isometrics', r.isoId)}`; if (field.ref === 'inspection_requests') name += ` · ${label('welds', r.weldId)} · ${r.status}`; if (field.ref === 'rentals') name += ` · ${label('articles', r.articleId)} · ${Number(r.quantity) - Number(r.returned)} outstanding`; return name; };

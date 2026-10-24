@@ -1,5 +1,6 @@
 import observed from '../reference/permissions-observed.json' with {type:'json'};
 import type {Module,PermissionRules,PermissionVerb,Row,User} from './types.ts';
+import { actionAvailable, resourceAvailable, rowAvailable } from './release.ts';
 
 export const PERMISSION_VERBS:PermissionVerb[]=['show','insert','edit','delete','export','import','print'];
 export const VERB_LABELS:Record<PermissionVerb,string>={show:'View',insert:'Add',edit:'Edit',delete:'Archive',export:'Export',import:'Import',print:'Print'};
@@ -39,14 +40,18 @@ export function scopeOperation(key:string,verb:PermissionVerb):PermissionVerb{
  if(['export','print','show'].includes(verb))return 'show';
  if(verbs.includes('insert'))return 'insert';if(verbs.includes('edit'))return 'edit';return verb;
 }
-export function resourceScopes(key:string,row?:Row):string[]{
+export function resourceScopes(key:string,row?:Partial<Row>):string[]{
  if(row&&key==='service_requests')return ['24'];
  if(row&&key==='releases')return [row.type==='Field'?'89':row.type==='Hydrotest'?'74':'86'];
  if(row&&key==='inspection_requests')return [row.type==='PWHT'||row.type==='PRE-HT'?'65':'50'];
  if(row&&key==='inspection_results')return [row.type==='PWHT'?'97':row.type==='NDT PRE'?'94':row.type==='VI'||row.type==='PRE-HT'?'local-visual-results':'76'];
  return RESOURCE_SCOPES[key]||[];
 }
-export function canResource(user:User,key:string,verb:PermissionVerb='show',row?:Row){return resourceScopes(key,row).some(scope=>canScope(user,scope,scopeOperation(scope,verb)));}
+export function canResource(user:User,key:string,verb:PermissionVerb='show',row?:Row):boolean{
+ if(!resourceAvailable(user.availability,key)||row&&!rowAvailable(user.availability,key,row))return false;
+ const scopes=user.availability&&!row&&['inspection_requests','inspection_results'].includes(key)?user.availability.inspectionTypes.flatMap(type=>resourceScopes(key,{type})):resourceScopes(key,row);
+ return scopes.some(scope=>canScope(user,scope,scopeOperation(scope,verb)));
+}
 export function actionScope(key:string,data:Record<string,unknown>={}):[string,PermissionVerb]{
  const direct:Record<string,[string,PermissionVerb]>={
   'add-iso-material':['70','insert'],order:['13','print'],'order-requirements':['13','print'],receive:['15','insert'],'issue-material':['20','insert'],'adjust-material':['16','insert'],'transfer-material':['16','insert'],rent:['61','insert'],return:['61','insert'],'adjust-tool':['61','insert'],'transfer-tool':['61','insert'],service:['23','insert'],'complete-service':['23','insert'],'move-spools':['1','edit'],'move-materials':['local-material-logistics','edit'],'service-materials':['80','insert'],'complete-material-service':['80','insert'],repair:['63','edit'],phases:['64','edit'],revision:['64','edit'],'remove-material-quantity':['70','edit'],'inspection-request':[data.type==='PWHT'||data.type==='PRE-HT'?'65':'50','print'],release:[data.type==='Field'?'89':data.type==='Hydrotest'?'74':'86','insert']
@@ -55,11 +60,12 @@ export function actionScope(key:string,data:Record<string,unknown>={}):[string,P
  return direct[key]||['','insert'];
 }
 export function canAction(user:User,key:string,data:Record<string,unknown>={}):boolean{
+ if(!actionAvailable(user.availability,key,data.type))return false;
  if(user.capabilities&&data.type===undefined){const types=key==='release'?['Prefab','Field','Hydrotest']:key==='inspection-request'||key==='inspection-result'?['NDT','NDT PRE','VI','PWHT','PRE-HT']:[];if(types.length)return types.some(type=>canAction(user,key,{...data,type}));}
  const [scope,verb]=actionScope(key,data);if(!user.capabilities){const area=areas.get(scope);return Boolean(area)&&user.permissions[area!.module]>=2;}return canScope(user,scope,scopeOperation(scope,verb));
 }
 export const REPORT_RESOURCES:Record<string,string[]>={wdi:['welds'],welder:['welders'],tracer:['welds'],'open-welds':['welds'],'weld-cards':['welds'],'inspection-requests':['inspection_requests'],'inspection-results':['inspection_results'],releases:['releases'],mto:['iso_materials'],picklists:['picklists'],'order-status':['orders','order_lines'],'spool-locations':['spools'],rentals:['rentals'],'tool-movements':['tool_movements'],revisions:['revisions'],'isometric-status':['isometrics']};
-export function canReport(user:User,key:string,verb:PermissionVerb='show'){return (REPORT_RESOURCES[key]||[]).some(resource=>canResource(user,resource,verb));}
+export function canReport(user:User,key:string,verb:PermissionVerb='show'){return (!user.availability||Object.hasOwn(user.availability.reports,key))&&(REPORT_RESOURCES[key]||[]).some(resource=>canResource(user,resource,verb));}
 export function moduleSummary(rules:PermissionRules):User['permissions']{
  const result={general:0,materials:0,welding:0,tools:0,settings:0};
  for(const area of PERMISSION_AREAS){const allowed=rules[area.key]||[];if(allowed.length)result[area.module]=Math.max(result[area.module],allowed.some(v=>['insert','edit','delete','import'].includes(v))?(area.module==='settings'?3:2):1);}

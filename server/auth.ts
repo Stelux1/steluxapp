@@ -33,19 +33,19 @@ export function checkPermission(req: Request, module: Module, level = 1) {
 }
 export function checkResourcePermission(req:Request,key:string,verb:PermissionVerb='show',row?:Row){if(!canResource((req as AuthRequest).user,key,verb,row))throw new AppError(403,'Your permission profile does not allow this action.');}
 export function checkActionPermission(req:Request,key:string,data:Record<string,unknown>={}){if(!canAction((req as AuthRequest).user,key,data))throw new AppError(403,'Your permission profile does not allow this action.');}
-export function sessionCookie(req: Request) {
-  return req.headers.cookie?.split(';').map(c => c.trim()).find(c => c.startsWith('stelux_session='))?.slice('stelux_session='.length) || '';
+export function sessionCookie(req: Request, name = 'stelux_session') {
+  return req.headers.cookie?.split(';').map(c => c.trim()).find(c => c.startsWith(name + '='))?.slice(name.length + 1) || '';
 }
-export function newSession(store: Store, userId: string, res: Response) {
+export function newSession(store: Store, userId: string, res: Response, cookieName = 'stelux_session') {
   const token = randomBytes(32).toString('hex');
   store.db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(new Date().toISOString());
   store.db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hashToken(token), userId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString());
-  res.cookie('stelux_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 12 * 60 * 60 * 1000, path: '/' });
+  res.cookie(cookieName, token, { httpOnly: true, sameSite: 'strict', maxAge: 12 * 60 * 60 * 1000, path: '/' });
 }
-export function authMiddleware(store: Store) {
+export function authMiddleware(store: Store, cookieName = 'stelux_session') {
   return (req: Request, _res: Response, next: NextFunction) => {
     try {
-      const token = sessionCookie(req);
+      const token = sessionCookie(req, cookieName);
       const session = store.db.prepare('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(token), new Date().toISOString()) as { user_id: string } | undefined;
       if (!session) throw new AppError(401, 'Sign in to your workspace.');
       (req as AuthRequest).user = publicUser(store, session.user_id); next();

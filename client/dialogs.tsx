@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { RESOURCE_MAP } from '../shared/resources.ts';
-import { ACTIONS } from '../shared/actions.ts';
-import { RELATIONS,relationFields,relationIds } from '../shared/welding.ts';
+import { RESOURCE_MAP } from './catalog.ts';
+import { ACTIONS } from './catalog.ts';
+import { RELATIONS,relationFields,relationIds } from './catalog.ts';
 import { materialName,requirementExecution } from '../shared/materials.ts';
 import { nextRevision } from '../shared/revisions.ts';
 import type { Row } from '../shared/types.ts';
@@ -14,16 +14,20 @@ import { PermissionProfileEditor } from './permission-profile-editor.tsx';
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = RESOURCE_MAP[resourceKey]; const { rows,refresh, notify } = useWorkspace();const editorFields=[...def.fields,...relationFields(resourceKey)];
+  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify } = useWorkspace();const editorFields=[...def.fields,...relationFields(resourceKey)];
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]]))}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
   const groups = [...new Set(editorFields.filter(f=>!f.hidden).map(f => f.section || 'Details'))];
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setFields({});
-    try { await api(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...values, ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(`${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
+    try { const payload = record && user.availability ? Object.fromEntries(Object.entries(values).filter(([name,value]) => {
+      const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
+      const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
+      return JSON.stringify(value)!==JSON.stringify(previous);
+    })) : values; await api(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(`${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }
   }
-  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => setValues(current => ({ ...current, [f.name]: v, ...(f.name === 'isoId' ? { spoolId: '' } : {}),...(f.name==='materialId'&&v?{customMaterialId:'',customMaterial:false}:{}) }))}/>)}</div></details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => setValues(current => ({ ...current, [f.name]: v, ...(f.name === 'isoId' ? { spoolId: '', ...(user.availability?{wpsId:''}:{}) } : {}),...(f.name==='materialId'&&v?{customMaterialId:'',customMaterial:false}:{}) }))}/>)}</div></details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
 }
 interface Line { materialId?: string; lineId?: string; quantity: number | string; chargeNo?: string }
 export function WorkflowDialog({ actionKey, defaults = {}, onClose }: {actionKey: string; defaults?: Record<string, unknown>; onClose: () => void}) {

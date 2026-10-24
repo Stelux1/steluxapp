@@ -8,8 +8,11 @@
   },
   "scripts": {
     "dev": "concurrently -k -n api,web \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
+    "dev:demo": "STELUX_RELEASE_PROFILE=welding-demo npm run dev",
     "build": "tsc --noEmit && vite build",
+    "build:demo": "STELUX_RELEASE_PROFILE=welding-demo npm run build",
     "start": "NODE_ENV=production node --import tsx server/index.ts",
+    "start:demo": "STELUX_RELEASE_PROFILE=welding-demo npm start",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "backup": "node --import tsx server/backup.ts",

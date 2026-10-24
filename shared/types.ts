@@ -16,7 +16,16 @@ export interface Resource {
 }
 export type PermissionVerb='show'|'insert'|'edit'|'delete'|'export'|'import'|'print';
 export type PermissionRules=Record<string,PermissionVerb[]>;
-export interface User { id: string; name: string; email: string; profileId: string; permissions: Record<Module, number>; capabilities?:PermissionRules; }
+/** Positive capabilities of the delivered workspace, independent of account permissions. */
+export interface Availability {
+  resources: Record<string, string[]>;
+  actions: Record<string, string[]>;
+  reports: Record<string, string[]>;
+  inspectionTypes: string[];
+  navigation: string[];
+  features: string[];
+}
+export interface User { id: string; name: string; email: string; profileId: string; permissions: Record<Module, number>; capabilities?:PermissionRules; availability?: Availability; }
 export interface AuditEvent { id: string; entityType: string; entityId: string; action: string; summary: string; actorId: string; actorName: string; createdAt: string; }
 export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[]; }
 export interface ActionField extends Field { multiple?: boolean; }

@@ -201,7 +201,7 @@ export class Store {
   syncRelations(key:string,id:string,input:Record<string,unknown>,actor:Actor=SYSTEM){
     for(const relation of RELATIONS[key]||[]){
       let requested=input[relation.field];if(key==='wps'&&relation.field==='pqrIds'&&requested===undefined&&input.pqrId)requested=[input.pqrId];
-      if(key==='wps'&&relation.field==='projectIds'&&this.get(key,id).allProjects)requested=[];
+      if(key==='wps'&&relation.field==='projectIds'&&this.get(key,id).allProjects&&(input.allProjects!==undefined||input.projectIds!==undefined))requested=[];
       if(requested===undefined)continue;
       if(!Array.isArray(requested)||requested.length>500||requested.some(v=>typeof v!=='string'||!v))throw new AppError(422,`Choose valid ${relation.label.toLowerCase()}.`,{[relation.field]:'Select active linked records.'});
       const desired=[...new Set(requested)] as string[];for(const target of desired)this.get(relation.target,target);
