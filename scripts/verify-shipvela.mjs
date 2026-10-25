@@ -15,6 +15,7 @@ const port = Number(process.env.STELUX_TEST_SHIPVELA_PORT || 5317);
 const base = `http://127.0.0.1:${port}`;
 const env = {
   ...process.env, NODE_ENV: 'production', NEXT_TELEMETRY_DISABLED: '1',
+  STELUX_CLOUD_DATABASE: 'evaluation',
   DATABASE_URL: '', STELUX_DEMO_DATABASE_URL: databaseUrl,
   STELUX_DEMO_DATABASE_PASSWORD: decodeURIComponent(target.password), STELUX_DEMO_DATABASE_CA: '',
   STELUX_PUBLIC_URL: base,
@@ -37,7 +38,7 @@ if (existsSync('dist-server/server/runtime-env.json')) {
     const path = '.next/static/' + file;
     if (!statSync(path).isFile()) continue;
     const content = readFileSync(path, 'utf8');
-    for (const value of [privateValues.STELUX_DEMO_DATABASE_PASSWORD, privateValues.STELUX_DEMO_DATABASE_URL].filter(Boolean)) {
+    for (const value of [privateValues.STELUX_DEMO_DATABASE_PASSWORD, privateValues.STELUX_DEMO_DATABASE_URL, privateValues.STELUX_DATABASE_PASSWORD, privateValues.DATABASE_URL].filter(Boolean)) {
       assert.ok(!content.includes(value), 'Private server configuration must not enter browser assets.');
     }
   }
@@ -120,5 +121,25 @@ try {
   cookie = '';
   const login = await request('/api/auth/login', 'POST', credentials);
   assert.equal(login.status, 200, 'Existing credentials survive runtime replacement.');
-  console.log('Shipvela Next production verification passed: SSR pages, private API, auth, permissions, origin protection, weld edits, XLSX, uploads and persistence after restart.');
+  await stop();
+  // The same disposable fixture now represents an existing internal workspace.
+  // Exercise source selection in the packed Next runtime with its saved account.
+  const workspace = new pg.Client({ connectionString: databaseUrl });
+  await workspace.connect();
+  try { await workspace.query("DELETE FROM stelux.metadata WHERE key='release_profile'"); }
+  finally { await workspace.end(); }
+  env.STELUX_CLOUD_DATABASE = 'workspace';
+  env.DATABASE_URL = databaseUrl;
+  env.STELUX_DATABASE_PASSWORD = decodeURIComponent(target.password);
+  env.STELUX_DATABASE_CA = '';
+  env.STELUX_DEMO_DATABASE_URL = 'postgresql://wrong:wrong@127.0.0.1:1/unused';
+  cookie = '';
+  await start();
+  assert.equal((await (await request('/api/auth/status')).json()).requiresSetup, false);
+  const existingLogin = await request('/api/auth/login', 'POST', credentials);
+  assert.equal(existingLogin.status, 200, 'Hosted workspace mode uses the existing account.');
+  cookie = existingLogin.headers.get('set-cookie').split(';')[0];
+  assert.equal((await request('/api/bootstrap')).status, 200);
+  assert.deepEqual(Buffer.from(await (await request(`/api/files/${record.id}`)).arrayBuffer()), bytes);
+  console.log('Shipvela Next production verification passed: SSR pages, private API, existing-account login, permissions, origin protection, weld edits, XLSX, uploads and persistence after restart in both database modes.');
 } finally { await stop(); }

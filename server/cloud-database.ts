@@ -29,3 +29,17 @@ export function rejectEvaluationDatabase(db: Database) {
   const exists = db.prepare("SELECT to_regclass('stelux.metadata') AS name").get()?.name;
   if (exists && db.prepare("SELECT value FROM stelux.metadata WHERE key='release_profile'").get()?.value === 'welding-demo') throw new Error('The full workspace cannot use an evaluation database.');
 }
+
+// Connecting an existing workspace is explicit and never creates its schema,
+// seeds data, or adopts an evaluation database. Existing credentials stay intact.
+export function workspaceCloudDatabase(db: Database, prepare = false) {
+  if (!db.prepare("SELECT to_regclass('stelux.metadata') AS name").get()?.name) throw new Error('Use an initialized workspace database.');
+  rejectEvaluationDatabase(db);
+  db.exec('SET search_path TO stelux,pg_catalog');
+  const ready = db.prepare("SELECT key FROM metadata WHERE (key='seed_version' AND value='1') OR (key='welding_setup_v1' AND value='1')").all();
+  if (ready.length !== 2) throw new Error('The existing workspace schema must be prepared before cloud deployment.');
+  if (!db.prepare('SELECT u.id FROM users u JOIN credentials c ON c.user_id=u.id WHERE u.archived=0 LIMIT 1').get()) throw new Error('The existing workspace must already have an account.');
+  if (!prepare && (!db.prepare("SELECT to_regclass('stelux.upload_blobs') AS name").get()?.name || db.prepare("SELECT value FROM metadata WHERE key='cloud_storage_v1'").get()?.value !== '1')) {
+    throw new Error('Prepare cloud document storage for the existing workspace before deployment.');
+  }
+}

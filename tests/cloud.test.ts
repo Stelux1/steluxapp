@@ -10,7 +10,8 @@ import { createApp } from '../server/http.ts';
 import { initializeDocumentStorage } from '../server/documents.ts';
 import { runtimeConfig } from '../server/runtime-config.ts';
 import { PostgresDatabase, postgresConfig } from '../server/postgres.ts';
-import { cloudDatabase, rejectEvaluationDatabase } from '../server/cloud-database.ts';
+import { cloudDatabase, rejectEvaluationDatabase, workspaceCloudDatabase } from '../server/cloud-database.ts';
+import { createCloudApp } from '../server/cloud-app.ts';
 import { backupPostgres } from '../server/postgres-backup.ts';
 
 const cloudEnv = { STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: 'welding-demo', STELUX_DEMO_DATABASE_URL: 'postgresql://postgres@127.0.0.1/stelux_cloud_test', STELUX_DEMO_DATABASE_PASSWORD: 'disposable-test-password', STELUX_PUBLIC_URL: 'https://welding.example.test' };
@@ -30,8 +31,25 @@ test('cloud configuration requires a dedicated database and exact public origin 
   assert.equal(local.databaseUrl, undefined); assert.equal(local.documentStorage, 'disk'); assert.equal(local.host, '127.0.0.1');
 });
 
+test('existing workspace cloud access requires explicit selection and uses its own connection settings', () => {
+  const env = { ...cloudEnv, STELUX_CLOUD_DATABASE: 'workspace', DATABASE_URL: 'postgresql://postgres@127.0.0.1/stelux_workspace_test', STELUX_DATABASE_PASSWORD: 'existing-workspace-password' };
+  const config = runtimeConfig(env);
+  assert.equal(config.databaseUrl, env.DATABASE_URL);
+  assert.equal(config.cloudDatabaseSource, 'workspace');
+  assert.equal(config.profile, 'welding-demo');
+  assert.equal(postgresConfig(env, false).database, 'stelux_workspace_test');
+  assert.equal(postgresConfig(env, false).password, env.STELUX_DATABASE_PASSWORD);
+  assert.throws(() => runtimeConfig({ ...env, DATABASE_URL: '' }), /Set DATABASE_URL/);
+  assert.throws(() => runtimeConfig({ ...env, STELUX_CLOUD_DATABASE: 'typo' }), /STELUX_CLOUD_DATABASE/);
+  assert.equal(runtimeConfig(cloudEnv).cloudDatabaseSource, 'evaluation');
+});
+
 async function serve(store: Store, dir: string, initializeStorage = true) {
-  const server = createApp(store, dir, { releaseProfile: 'welding-demo', publicOrigin: cloudEnv.STELUX_PUBLIC_URL, secureCookies: true, documentStorage: 'database', initializeStorage }).listen(0, '127.0.0.1');
+  return listen(createApp(store, dir, { releaseProfile: 'welding-demo', publicOrigin: cloudEnv.STELUX_PUBLIC_URL, secureCookies: true, documentStorage: 'database', initializeStorage }));
+}
+
+async function listen(app: ReturnType<typeof createApp>) {
+  const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const request = (path: string, method = 'GET', body?: unknown, cookie = '', origin = cloudEnv.STELUX_PUBLIC_URL) => fetch(base + path, { method, headers: { 'X-Stelux-Request': '1', Origin: origin, ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(cookie ? { Cookie: cookie } : {}) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body) });
@@ -84,6 +102,33 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     assert.throws(() => cloudDatabase(db, true), /not an evaluation database/);
     assert.equal(db.prepare('SELECT count(*) AS total FROM stelux.metadata').get()?.total, 1);
     db.exec('DROP SCHEMA stelux CASCADE');
+    const existing = new Store(':memory:', db); seed(existing);
+    const existingApp = await serve(existing, '/unused-workspace-path', false);
+    const credentials = { name: 'Existing administrator', email: 'existing@example.test', password: 'Existing-Test-Password-123' };
+    try { assert.equal((await existingApp.request('/api/auth/setup', 'POST', credentials)).status, 201); }
+    finally { await existingApp.close(); }
+    const savedCredential = db.prepare('SELECT hash FROM credentials').get()?.hash;
+    existing.update('welds', 'weld-1', { description: 'Existing workspace record' }, existing.get('welds', 'weld-1')._version);
+    assert.throws(() => workspaceCloudDatabase(db), /cloud document storage/);
+    workspaceCloudDatabase(db, true);
+    initializeDocumentStorage(existing);
+    db.prepare("INSERT INTO metadata VALUES ('cloud_storage_v1','1')").run();
+    assert.throws(() => cloudDatabase(db), /not an evaluation database/);
+    const runtime = createCloudApp({ ...cloudEnv, STELUX_CLOUD_DATABASE: 'workspace', DATABASE_URL: testUrl!, STELUX_DEMO_DATABASE_URL: 'postgresql://wrong:wrong@127.0.0.1:1/unused' });
+    const hosted = await listen(runtime.app);
+    try {
+      assert.equal((await (await hosted.request('/api/auth/status')).json()).requiresSetup, false);
+      const login = await hosted.request('/api/auth/login', 'POST', credentials);
+      assert.equal(login.status, 200);
+      const cookie = login.headers.get('set-cookie')!.split(';')[0];
+      const bootstrap = await hosted.request('/api/bootstrap', 'GET', undefined, cookie);
+      assert.equal(bootstrap.status, 200);
+      assert.equal((await bootstrap.json()).rows.welds.find((row: { id: string }) => row.id === 'weld-1').description, 'Existing workspace record');
+      assert.equal((await hosted.request('/api/auth/setup', 'POST', credentials)).status, 409);
+      assert.equal(db.prepare('SELECT hash FROM credentials').get()?.hash, savedCredential);
+      assert.equal(existing.list('users').length, 1);
+    } finally { await hosted.close(); runtime.store.close(); }
+    db.exec('DROP SCHEMA stelux CASCADE');
     cloudDatabase(db, true);
     assert.throws(() => cloudDatabase(db), /Finish/);
     const store = new Store(':memory:', db); seed(store); initializeDocumentStorage(store);
@@ -99,6 +144,7 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     db.close(); db = new PostgresDatabase(config);
     cloudDatabase(db);
     assert.throws(() => rejectEvaluationDatabase(db), /full workspace/);
+    assert.throws(() => workspaceCloudDatabase(db), /full workspace/);
     const reopened = new Store(':memory:', db, { initialize: false });
     const replacement = await serve(reopened, '/another-unused-runtime-path', false);
     try {

@@ -13,25 +13,30 @@ function run(args) {
 run(['node_modules/typescript/bin/tsc', '--noEmit']);
 run(['scripts/build-server.mjs']);
 
-// Never copy a developer's .env or an internal DATABASE_URL into an artifact.
-// Only the hosted build's evaluation variables are bound to its SSR function.
+// Bind only the explicitly selected database's hosted environment to the server
+// artifact. Never copy a developer's .env or both databases' credentials.
 if (process.env.AWS_APP_ID) {
-  const keys = ['STELUX_DEMO_DATABASE_URL', 'STELUX_DEMO_DATABASE_PASSWORD', 'STELUX_PUBLIC_URL'];
-  const missing = ['STELUX_DEMO_DATABASE_URL', 'STELUX_PUBLIC_URL'].filter(key => !process.env[key]);
+  const source = process.env.STELUX_CLOUD_DATABASE || 'evaluation';
+  if (!['evaluation', 'workspace'].includes(source)) throw new Error('STELUX_CLOUD_DATABASE must be evaluation or workspace.');
+  const urlKey = source === 'workspace' ? 'DATABASE_URL' : 'STELUX_DEMO_DATABASE_URL';
+  const passwordKey = source === 'workspace' ? 'STELUX_DATABASE_PASSWORD' : 'STELUX_DEMO_DATABASE_PASSWORD';
+  const caKey = source === 'workspace' ? 'STELUX_DATABASE_CA' : 'STELUX_DEMO_DATABASE_CA';
+  const keys = [urlKey, passwordKey, 'STELUX_PUBLIC_URL'];
+  const missing = [urlKey, 'STELUX_PUBLIC_URL'].filter(key => !process.env[key]);
   if (missing.length) throw new Error(`Configure Shipvela's private server environment: ${missing.join(', ')}`);
   let database;
-  try { database = new URL(process.env.STELUX_DEMO_DATABASE_URL); } catch { throw new Error('STELUX_DEMO_DATABASE_URL must be a valid PostgreSQL URL.'); }
-  if (!['postgres:', 'postgresql:'].includes(database.protocol)) throw new Error('STELUX_DEMO_DATABASE_URL must use PostgreSQL.');
-  if (!process.env.STELUX_DEMO_DATABASE_PASSWORD && !database.password) throw new Error('Configure STELUX_DEMO_DATABASE_PASSWORD.');
-  const values = Object.fromEntries(keys.filter(key => process.env[key]).map(key => [key, process.env[key]]));
-  if (process.env.STELUX_DEMO_DATABASE_CA) {
-    if (!existsSync(process.env.STELUX_DEMO_DATABASE_CA)) throw new Error('STELUX_DEMO_DATABASE_CA must point to a certificate included in the build.');
-    copyFileSync(process.env.STELUX_DEMO_DATABASE_CA, 'dist-server/server/runtime-ca.crt');
-    values.STELUX_DEMO_DATABASE_CA = 'dist-server/server/runtime-ca.crt';
+  try { database = new URL(process.env[urlKey]); } catch { throw new Error(`${urlKey} must be a valid PostgreSQL URL.`); }
+  if (!['postgres:', 'postgresql:'].includes(database.protocol)) throw new Error(`${urlKey} must use PostgreSQL.`);
+  if (!process.env[passwordKey] && !database.password) throw new Error(`Configure ${passwordKey}.`);
+  const values = { STELUX_CLOUD_DATABASE: source, ...Object.fromEntries(keys.filter(key => process.env[key]).map(key => [key, process.env[key]])) };
+  if (process.env[caKey]) {
+    if (!existsSync(process.env[caKey])) throw new Error(`${caKey} must point to a certificate included in the build.`);
+    copyFileSync(process.env[caKey], 'dist-server/server/runtime-ca.crt');
+    values[caKey] = 'dist-server/server/runtime-ca.crt';
   }
   const { runtimeConfig } = await import('../dist-server/server/runtime-config.js');
   try { runtimeConfig({ ...values, STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: 'welding-demo' }); }
-  catch { throw new Error('Check the evaluation database URL and exact HTTPS STELUX_PUBLIC_URL in Shipvela.'); }
+  catch { throw new Error('Check the selected database URL and exact HTTPS STELUX_PUBLIC_URL in Shipvela.'); }
   writeFileSync('dist-server/server/runtime-env.json', JSON.stringify(values) + '\n', { mode: 0o600 });
 }
 // Trace the unbundled API and worker, including their production dependencies.

@@ -10,7 +10,7 @@ const dataDir = config.dataDir;
 if (!config.databaseUrl && !existsSync(join(dataDir, 'stelux.sqlite'))) throw new Error('Start the app once before creating a backup.');
 const dest = resolve('backups', new Date().toISOString().replaceAll(':', '-'));
 mkdirSync(dest, { recursive: true, mode: 0o700 });
-if (config.databaseUrl) backupPostgres(dest, postgresConfig(process.env, config.cloud));
+if (config.databaseUrl) backupPostgres(dest, postgresConfig(process.env, config.cloud && config.cloudDatabaseSource === 'evaluation'));
 else {
   const database = new DatabaseSync(join(dataDir, 'stelux.sqlite'),{readOnly:true});
   try{database.prepare('VACUUM INTO ?').run(join(dest,'stelux.sqlite'));}finally{database.close();}
