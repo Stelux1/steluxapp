@@ -20,7 +20,7 @@ import { availabilityFor, pageAvailable, projectReport, type ReleaseProfile } fr
 import { releaseAccess } from './release-access.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 
-export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean } = {}) {
+export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
   const availability = availabilityFor(options.releaseProfile || 'full');
   const cookieName = availability ? 'blitzkrieg_session' : 'stelux_session';
@@ -51,7 +51,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const requiresSetup = store.list('users').length === 0;
     const session = store.db.prepare('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(sessionCookie(req, cookieName)), new Date().toISOString()) as { user_id: string } | undefined;
     let user; try { if (session) user = presentUser(session.user_id); } catch { /* expired or deactivated */ }
-    res.setHeader('Cache-Control', 'no-store'); res.json({ requiresSetup, user: user || null, ...(availability ? { availability } : {}) });
+    res.setHeader('Cache-Control', 'no-store'); res.json({ requiresSetup, user: user || null, sampleWorkspace: options.sampleWorkspace !== false, ...(availability ? { availability } : {}) });
   });
   app.post('/api/auth/setup', (req, res) => {
     const user = store.transaction(() => {

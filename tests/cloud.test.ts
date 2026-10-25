@@ -117,7 +117,9 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     const runtime = createCloudApp({ ...cloudEnv, STELUX_CLOUD_DATABASE: 'workspace', DATABASE_URL: testUrl!, STELUX_DEMO_DATABASE_URL: 'postgresql://wrong:wrong@127.0.0.1:1/unused' });
     const hosted = await listen(runtime.app);
     try {
-      assert.equal((await (await hosted.request('/api/auth/status')).json()).requiresSetup, false);
+      const status = await (await hosted.request('/api/auth/status')).json();
+      assert.equal(status.requiresSetup, false);
+      assert.equal(status.sampleWorkspace, false);
       const login = await hosted.request('/api/auth/login', 'POST', credentials);
       assert.equal(login.status, 200);
       const cookie = login.headers.get('set-cookie')!.split(';')[0];

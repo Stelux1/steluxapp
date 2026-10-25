@@ -18,6 +18,7 @@ export function createCloudApp(env: NodeJS.ProcessEnv, serveClient = false) {
       releaseProfile: config.profile, distDir: config.distDir, serveClient,
       publicOrigin: config.publicOrigin, secureCookies: config.secureCookies,
       documentStorage: 'database', initializeStorage: false,
+      sampleWorkspace: evaluation,
     });
     return { app, store, database, config };
   } catch (error) { database.close(); throw error; }

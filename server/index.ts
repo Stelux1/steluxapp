@@ -15,5 +15,5 @@ if (database) { try { if (config.cloud) { if (config.cloudDatabaseSource === 'ev
 const store = new Store(resolve(dataDir, 'stelux.sqlite'), database, { initialize: !config.cloud });
 if (!config.cloud) seed(store);
 const port = config.port;
-const server = createApp(store, dataDir, { releaseProfile: config.profile, distDir: config.distDir, publicOrigin: config.publicOrigin, secureCookies: config.secureCookies, documentStorage: config.documentStorage, initializeStorage: !config.cloud }).listen(port, config.host, () => console.log(`Blitzkrieg API ready on port ${port} (${database ? 'PostgreSQL' : 'SQLite'})`));
+const server = createApp(store, dataDir, { releaseProfile: config.profile, distDir: config.distDir, publicOrigin: config.publicOrigin, secureCookies: config.secureCookies, documentStorage: config.documentStorage, initializeStorage: !config.cloud, sampleWorkspace: !config.cloud || config.cloudDatabaseSource === 'evaluation' }).listen(port, config.host, () => console.log(`Blitzkrieg API ready on port ${port} (${database ? 'PostgreSQL' : 'SQLite'})`));
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));

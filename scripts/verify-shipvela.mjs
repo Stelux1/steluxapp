@@ -135,7 +135,9 @@ try {
   env.STELUX_DEMO_DATABASE_URL = 'postgresql://wrong:wrong@127.0.0.1:1/unused';
   cookie = '';
   await start();
-  assert.equal((await (await request('/api/auth/status')).json()).requiresSetup, false);
+  const existingStatus = await (await request('/api/auth/status')).json();
+  assert.equal(existingStatus.requiresSetup, false);
+  assert.equal(existingStatus.sampleWorkspace, false);
   const existingLogin = await request('/api/auth/login', 'POST', credentials);
   assert.equal(existingLogin.status, 200, 'Hosted workspace mode uses the existing account.');
   cookie = existingLogin.headers.get('set-cookie').split(';')[0];
