@@ -10,8 +10,8 @@ Requires Node.js 24 or newer.
 
 ```sh
 npm install
-npm run build
-npm start
+npm run build:local
+npm run start:local
 ```
 
 Open **http://127.0.0.1:3000** and sign in, or create your administrator account for a new workspace. There is no preset production password. Sample projects, materials, welds, warehouses, and tools are created once. Your edits persist across restarts.
@@ -29,11 +29,72 @@ npm run start:demo
 
 Open **http://127.0.0.1:3002** and create the evaluation workspace's own administrator account. The internal workspace keeps port 3000; `PORT` can override either server's port. Development uses `npm run dev:demo` on ports 5173/3001.
 
-The evaluation server **always uses its own SQLite database** in `.data/welding-demo/`, including separate accounts, session cookies, and uploads. It does not connect to `DATABASE_URL`, copy production data, change existing accounts, or rewrite their permission profiles. `STELUX_DEMO_DATA_DIR` can select another evaluation directory; selecting the full workspace's data directory is rejected. Keep this directory outside the full workspace's uploads directory.
+The local evaluation server uses its own SQLite database in `.data/welding-demo/`, including separate accounts, session cookies, and uploads. It does not connect to `DATABASE_URL`, copy production data, change existing accounts, or rewrite their permission profiles. `STELUX_DEMO_DATA_DIR` can select another evaluation directory; selecting the full workspace's data directory is rejected. Keep this directory outside the full workspace's uploads directory. The cloud entry described below instead requires a separately configured evaluation PostgreSQL database.
 
 `npm run build:demo` writes `dist-welding-demo/`, without source maps. `npm run build` continues to write the complete internal build to `dist/`. Each server profile serves its corresponding build, so both versions can coexist. Neither build directory is committed. Restart the server after changing `STELUX_RELEASE_PROFILE`; there is no profile switch in the interface.
 
 The release policy in `shared/release.ts` defines positive lists of resources, fields, actions, inspection types, reports, and navigation. The API filters bootstrap data, documents, history, and CSV/Excel/report exports, and rejects omitted endpoints and fields. The client uses the same delivered catalog for forms, columns, links, search, and reports. Basic edits preserve omitted field values and qualification links. The evaluation interface retains its sample-data label.
+
+## Cloud deployment
+
+Use Node.js 24+ or the included Dockerfile. The cloud entry fixes the `welding-demo` scope, binds to `0.0.0.0`, respects `PORT` (default 3000), and serves both the client and authenticated API from the same origin. The compiled server runs without `tsx` or development dependencies. A static `dist` upload alone cannot run this application.
+
+Create a **separate empty PostgreSQL database** for evaluation. Supply these values through private runtime environment variables or an untracked local `.env`; never use a `VITE_` prefix:
+
+| Variable | Value |
+| --- | --- |
+| `STELUX_DEMO_DATABASE_URL` | Evaluation PostgreSQL connection URL |
+| `STELUX_DEMO_DATABASE_PASSWORD` | Evaluation database password, unless included in that URL |
+| `STELUX_DEMO_DATABASE_CA` | Optional CA file path accessible inside the runtime |
+| `STELUX_PUBLIC_URL` | Exact public HTTPS origin, for example `https://welding.example.com` |
+| `PORT` | Hosting platform's port, if supplied |
+
+Only loopback URLs may use HTTP for local verification. Public writes are restricted to the configured origin; HTTPS sessions use Secure, HttpOnly, SameSite cookies. A proxy must preserve the request Origin header. Database TLS verification remains enabled for remote hosts.
+
+```sh
+npm ci
+npm run build:cloud
+npm run db:prepare:cloud
+npm run start:cloud
+```
+
+Run database preparation once before the first deployment, and again when applying a schema update. It is idempotent and preserves existing evaluation accounts and records. It rejects existing unmarked/internal databases before migrations run. The cloud server verifies preparation and the evaluation marker at startup; it never seeds or migrates during a cold start and never falls back to SQLite. `DATABASE_URL` and the internal database password are not used for cloud evaluation. Reusing the same database target is rejected when both connection URLs are present, and the database marker also protects against aliases to an existing internal workspace.
+
+Cloud documents (up to 20 MB each) are stored in private PostgreSQL tables in the same transaction as their attachment records. Accounts, sessions, documents and business records survive container replacement; no persistent local disk is required. The local versions retain their current file storage. This deployment requires ordinary TCP access to PostgreSQL and Node worker-thread support for the existing synchronous database adapter; it runs no background jobs.
+
+For Docker, build the image, run the initialization command against the evaluation database, then start it with the same runtime variables:
+
+```sh
+docker build -t blitzkrieg-welding .
+# Put only the evaluation runtime variables above in this private file.
+docker run --rm --env-file .env.cloud blitzkrieg-welding node dist-server/server/prepare-cloud.js
+docker run -d --name blitzkrieg-welding --env-file .env.cloud -p 3000:3000 blitzkrieg-welding
+```
+
+`.env.cloud` is ignored by Git and excluded from the Docker build context. The final image contains production dependencies, `dist-welding-demo/` and `dist-server/`; it contains no source maps, internal documentation, local databases, `.env` files, tests or source checkout. Keep TLS certificates mounted read-only or use the committed public CA at `dist-server/server/certs/supabase-ca.crt` if appropriate for your provider. Check `/api/health`, sign in, exercise a weld and upload a document, then replace the container and verify both the record and document again.
+
+`npm run backup:cloud` backs up the selected evaluation PostgreSQL database, including document content, credentials and the evaluation marker. Sessions are omitted. Restore the SQL only into an empty schema created by `Store` and `initializeDocumentStorage`; never restore over a live workspace.
+
+### Shipvela / Next.js deployment
+
+The default `npm run build` now produces a **Next.js SSR application**, with output `.next`, rather than a static Vite directory. It builds the existing browser interface and exposes the authenticated Express domain API through a Next.js Node API route. No separate Express server, Express compute pilot or `shipvela.compute.json` is needed. Next.js is pinned in `package-lock.json`. The Vite/local and Docker workflows remain available through `build:local`, `build:demo` and `build:cloud`.
+
+The linked Shipvela project is `798638c9-f97b-4714-9c30-ba250967e208`, repository `Stelux1/steluxapp`, branch `main`. Select **Next.js SSR**, build command **`npm run build`**, output **`.next`**, and Node.js **24**. Shipvela's documented SSR path requires **Pro or Studio**; Free/Hobby static hosting cannot execute the private API. Installing Shipvela Deploy and accepting hosting permissions is a separate account-owner action. A local successful build does not establish that those account requirements are satisfied.
+
+Configure `STELUX_DEMO_DATABASE_URL`, `STELUX_DEMO_DATABASE_PASSWORD` (unless the URL includes it), and the exact HTTPS `STELUX_PUBLIC_URL` from the table above. Use a separately prepared evaluation database, with the same `npm run db:prepare:cloud` procedure. Existing evaluation accounts and documents persist. The internal `DATABASE_URL` and local data are never adopted as evaluation data.
+
+Amplify supplies Shipvela environment variables during the build. `scripts/build-shipvela.mjs` checks the required values in a hosted build and writes only that explicit server-variable allowlist to a private JSON file under `dist-server/server/`. It does not load or copy a developer's `.env`. The JSON, compiled API, PostgreSQL worker, certificates and traced runtime dependencies belong exclusively to the server bundle; they are never in `public/` or `.next/static/`. JSON preserves special characters in passwords without dotenv expansion. Runtime variables override the saved build values. Changing these values requires a new deployment.
+
+If your database requires a private CA file, make it accessible to the runtime and configure `STELUX_DEMO_DATABASE_CA`; the public Supabase CA is included at `dist-server/server/certs/supabase-ca.crt`. Public API and data responses use `Cache-Control: no-store`, same-origin writes retain their CSRF checks, and session cookies remain HttpOnly. Next serves page navigation and assets; database initialization and migrations never run at request time.
+
+```sh
+npm ci
+npm run build
+# Supply the evaluation runtime values above, then:
+npm start
+```
+
+Verify `/api/health`, sign-in, a weld edit, authenticated document upload/download, and persistence after replacing the runtime. `scripts/verify-shipvela.mjs` performs this check against an explicitly selected disposable local PostgreSQL database. Hosting request/response size limits still apply to attachments; the generic Docker API supports up to 20 MB.
 
 ## Current implementation
 
@@ -56,12 +117,12 @@ See **PARITY.md** for the distinction between implemented behavior, observed sou
 
 ```sh
 npm test
-npm run build
+npm run build:local
 ```
 
 Tests use temporary SQLite databases. HTTP tests open temporary loopback listeners and need local networking permission in restricted execution environments. They never change the live Montavar app or the user's `.data` directory.
 
-Current verification: 88 default automated tests pass and both production builds succeed. An additional optional test against a disposable PostgreSQL instance covers migration, account login, inventory changes, rollback, version conflicts, audit pagination, CSV previews and persistence across independent connections. Browser checks cover sample material ordering/receipt/picking, partial tool returns, WPS/PQR links, welder deployment, material laydown/service, revision-file upload, independent ISO/ITP revision numbers, and partial/full removal of a material requirement. These checks do not establish hidden PHP-rule parity.
+Current verification: 90 default automated tests pass and both production builds succeed. An additional optional test against a disposable PostgreSQL instance covers migration, account login, inventory changes, rollback, version conflicts, audit pagination, CSV previews and persistence across independent connections. Browser checks cover sample material ordering/receipt/picking, partial tool returns, WPS/PQR links, welder deployment, material laydown/service, revision-file upload, independent ISO/ITP revision numbers, and partial/full removal of a material requirement. These checks do not establish hidden PHP-rule parity.
 
 Browser smoke checks and workflow observations are recorded in `test-results/` when available. These generated artifacts are excluded from version control.
 
@@ -81,8 +142,8 @@ Copy `.env.example` to `.env`. Set `DATABASE_URL` to the URL from **Supabase →
 ```sh
 npm run db:check
 npm run db:migrate
-npm run build
-npm start
+npm run build:local
+npm run start:local
 ```
 
 Stop the app before migration. `db:migrate` first saves a consistent SQLite snapshot and copies uploads under `backups/before-supabase-*`. It then copies every resource, password hash, audit event, counter and attachment path to an **empty** PostgreSQL workspace in one transaction, checking row counts and foreign keys. It refuses to overwrite a populated workspace. Existing accounts keep their passwords; sign in again after migration. The original SQLite database remains available. Uploaded files still live on this computer in `.data/uploads/`.

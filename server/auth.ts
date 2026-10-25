@@ -40,7 +40,7 @@ export function newSession(store: Store, userId: string, res: Response, cookieNa
   const token = randomBytes(32).toString('hex');
   store.db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(new Date().toISOString());
   store.db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hashToken(token), userId, new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString());
-  res.cookie(cookieName, token, { httpOnly: true, sameSite: 'strict', maxAge: 12 * 60 * 60 * 1000, path: '/' });
+  res.cookie(cookieName, token, { httpOnly: true, sameSite: 'strict', secure: Boolean(res.app.get('secure cookies')), maxAge: 12 * 60 * 60 * 1000, path: '/' });
 }
 export function authMiddleware(store: Store, cookieName = 'stelux_session') {
   return (req: Request, _res: Response, next: NextFunction) => {

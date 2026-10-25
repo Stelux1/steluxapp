@@ -34,9 +34,10 @@ const unpackAudit=(r:Record<string,unknown>):AuditEvent=>({id:String(r.id),entit
 export class Store {
   db: Database;
   depth = 0;
-  constructor(public filename: string, database?: Database) {
+  constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = database || new DatabaseSync(filename);
+    if (options.initialize === false) return;
     if (this.db.dialect === 'postgres') initializePostgres(this.db);
     else {
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');

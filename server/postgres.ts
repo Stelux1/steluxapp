@@ -7,6 +7,7 @@ export class PostgresDatabase implements Database {
   readonly dialect = 'postgres' as const;
   private worker: Worker;
   private closed = false;
+  get usable() { return !this.closed; }
   private control = new SharedArrayBuffer(8);
   private output = new SharedArrayBuffer(64 * 1024 * 1024);
 
@@ -32,7 +33,10 @@ export class PostgresDatabase implements Database {
       Atomics.wait(state, 0, 0, remaining);
     }
     const response = JSON.parse(Buffer.from(this.output, 0, Atomics.load(state, 1)).toString());
-    if (response.error) throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    if (response.error) {
+      if (response.error.code === 'STELUX_CONNECTION_LOST') { this.closed = true; void this.worker.terminate(); }
+      throw Object.assign(new Error(response.error.message), { code: response.error.code });
+    }
     return response as { rows: Record<string, unknown>[]; rowCount: number };
   }
   exec(sql: string) { this.query(sql); }
@@ -51,7 +55,11 @@ export class PostgresDatabase implements Database {
   }
 }
 
-export function postgresConfig(env: NodeJS.ProcessEnv = process.env): ClientConfig {
+export function postgresConfig(env: NodeJS.ProcessEnv = process.env, demo = false): ClientConfig {
+  if (demo) {
+    if (!env.STELUX_DEMO_DATABASE_URL) throw new Error('Set STELUX_DEMO_DATABASE_URL for the evaluation workspace.');
+    return postgresConfig({ DATABASE_URL: env.STELUX_DEMO_DATABASE_URL, STELUX_DATABASE_PASSWORD: env.STELUX_DEMO_DATABASE_PASSWORD, STELUX_DATABASE_CA: env.STELUX_DEMO_DATABASE_CA });
+  }
   if (!env.DATABASE_URL) throw new Error('Set DATABASE_URL in the local .env file.');
   let url: URL;
   try { url = new URL(env.DATABASE_URL); } catch { throw new Error('DATABASE_URL must be a valid PostgreSQL URL.'); }

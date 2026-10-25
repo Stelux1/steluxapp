@@ -5,7 +5,7 @@ import { stringify } from 'csv-stringify/sync';
 import ExcelJS from 'exceljs';
 import { randomUUID } from 'node:crypto';
 import { basename, join, resolve } from 'node:path';
-import { mkdirSync, existsSync, unlinkSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { Store, AppError } from './store.ts';
 import { runAction } from './workflows.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
@@ -18,8 +18,9 @@ import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkA
 
 import { availabilityFor, pageAvailable, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { releaseAccess } from './release-access.ts';
+import { documentStorage, type DocumentStorage } from './documents.ts';
 
-export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string } = {}) {
+export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
   const availability = availabilityFor(options.releaseProfile || 'full');
   const cookieName = availability ? 'blitzkrieg_session' : 'stelux_session';
@@ -27,14 +28,14 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const presentUser = (id: string) => access.user(publicUser(store, id));
   const readableRows = (req: Request, key: string, archived = false) => store.list(key, archived).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, row));
   const visibleAudit = (req: Request, events: ReturnType<Store['activity']>) => events.map(event => access.audit((req as AuthRequest).user, event)).filter((event): event is NonNullable<typeof event> => Boolean(event));
-  const uploadsDir = join(dataDir, 'uploads'); mkdirSync(uploadsDir, { recursive: true });
-  store.db.exec('CREATE TABLE IF NOT EXISTS upload_paths(attachment_id TEXT PRIMARY KEY REFERENCES attachments(id), filename TEXT NOT NULL)');
-  app.use((_req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin'); next(); });
+  const documents = documentStorage(store, dataDir, options.documentStorage || 'disk', options.initializeStorage !== false);
+  if (options.secureCookies) app.set('secure cookies', true);
+  app.use((req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin'); if (req.path === '/api' || req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store'); next(); });
   app.use('/api', (req, _res, next) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
       if (req.headers['x-stelux-request'] !== '1') return next(new AppError(403, 'This request must come from the Blitzkrieg application.'));
       if (req.headers.origin) {
-        try { const origin = new URL(req.headers.origin); if (!['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname) || !['3000', '3001', '5173', String(req.socket.localPort)].includes(origin.port)) throw new Error(); }
+        try { const origin = new URL(req.headers.origin); const local = !options.publicOrigin && ['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname) && ['3000', '3001', '5173', String(req.socket.localPort)].includes(origin.port); if (options.publicOrigin ? origin.origin !== options.publicOrigin : !local) throw new Error(); }
         catch { return next(new AppError(403, 'This origin is not allowed.')); }
       }
     }
@@ -201,7 +202,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const records = store.transaction(() => req.body.rows.map((row: Record<string, unknown>) => store.create(resource.key, row, actorOf(req)))); res.status(201).json({ count: records.length });
   });
   app.get('/api/import/:resource/template', (req, res) => { const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'import'); res.attachment(`blitzkrieg-${resource.key}-template.csv`); res.type('text/csv').send(stringify([], { header: true, columns: [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].map(f => f.label) })); });
-  const disk = multer({ dest: uploadsDir, limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
+  const disk = documents.upload;
   app.post('/api/revisions',disk.single('file'),(req,res)=>{
     try{
       checkActionPermission(req,'revision',req.body);if(req.file)checkResourcePermission(req,'revisions','import');
@@ -212,12 +213,12 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
         const record=revision.record!;
         if(req.file){
           const attachment=store.create('attachments',{name,entityType:'revisions',entityId:record.id,documentType:`${record.type} revision ${record.revNo}`,mime:req.file.mimetype,size:req.file.size,note:record.comment||''},actorOf(req));
-          store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(attachment.id,req.file.filename);
+          documents.save(attachment.id,req.file);
         }
         return revision;
       });
       res.status(201).json(result);
-    }catch(error){if(req.file)unlinkSync(req.file.path);throw error;}
+    }catch(error){documents.discard(req.file);throw error;}
   });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
@@ -225,19 +226,17 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       if (!req.file) throw new AppError(422, 'Choose a file.');
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
-      const record = store.transaction(() => { const row = store.create('attachments', { name, entityType: key, entityId: req.body.entityId, documentType: req.body.documentType || 'Attachment', mime: req.file!.mimetype, size: req.file!.size, note: req.body.note || '' }, actorOf(req)); store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(row.id, req.file!.filename); return row; });
+      const record = store.transaction(() => { const row = store.create('attachments', { name, entityType: key, entityId: req.body.entityId, documentType: req.body.documentType || 'Attachment', mime: req.file!.mimetype, size: req.file!.size, note: req.body.note || '' }, actorOf(req)); documents.save(row.id, req.file!); return row; });
       res.status(201).json({ record });
-    } catch (error) { if (req.file) unlinkSync(req.file.path); throw error; }
+    } catch (error) { documents.discard(req.file); throw error; }
   });
   app.get('/api/files/:id', (req, res) => {
     const file = access.record('attachments', String(req.params.id)); checkResourcePermission(req,String(file.entityType),'show',access.record(String(file.entityType),file.entityId,true));
-    const path = store.db.prepare('SELECT filename FROM upload_paths WHERE attachment_id=?').get(file.id) as { filename: string } | undefined;
-    if (!path || !existsSync(join(uploadsDir, path.filename))) throw new AppError(404, 'This file is unavailable.');
-    res.download(join(uploadsDir, path.filename), String(file.name));
+    documents.download(file.id, String(file.name), res);
   });
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'This API endpoint does not exist.')));
   const dist = resolve(options.distDir || (availability ? 'dist-welding-demo' : 'dist'));
-  if (existsSync(join(dist, 'index.html'))) {
+  if (options.serveClient !== false && existsSync(join(dist, 'index.html'))) {
     app.use((req, res, next) => {
       if (availability && (/\.map$/i.test(req.path) || /^\/(?:README\.md|PARITY\.md|reference|server|shared|client|tests|\.env)(?:\/|$)/i.test(req.path))) return res.status(404).type('text').send('Page not found.');
       next();

@@ -6,19 +6,19 @@ import pg from 'pg';
 pg.types.setTypeParser(20, value => Number(value));
 const client = new pg.Client(workerData.config);
 let failure;
-client.on('error', () => { failure = 'The PostgreSQL connection was lost. Restart the server to reconnect.'; });
+client.on('error', () => { failure = { message: 'The PostgreSQL connection was lost.', code: 'STELUX_CONNECTION_LOST' }; });
 try {
   await client.connect();
   await client.query("SET statement_timeout = '30s'; SET lock_timeout = '15s'; SET idle_in_transaction_session_timeout = '60s'");
 } catch (error) {
-  failure = `Cannot connect to PostgreSQL (${error.code || 'connection failed'}). Check the database host, password, TLS certificate and network access.`;
+  failure = { message: `Cannot connect to PostgreSQL (${error.code || 'connection failed'}). Check the database host, password, TLS certificate and network access.`, code: 'STELUX_CONNECTION_LOST' };
 }
 
 parentPort.on('message', async ({ sql, values, control, output, close }) => {
   const state = new Int32Array(control);
   let response;
   try {
-    if (failure) throw new Error(failure);
+    if (failure) throw Object.assign(new Error(failure.message), { code: failure.code });
     if (close) { await client.end(); response = { rows: [] }; }
     else {
       const result = await client.query(sql, values?.length ? values : undefined);
