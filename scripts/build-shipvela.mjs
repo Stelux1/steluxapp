@@ -35,7 +35,8 @@ if (process.env.AWS_APP_ID) {
     values[caKey] = 'dist-server/server/runtime-ca.crt';
   }
   const { runtimeConfig } = await import('../dist-server/server/runtime-config.js');
-  try { runtimeConfig({ ...values, STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: 'welding-demo' }); }
+  const { HOSTED_RELEASE_PROFILE } = await import('../dist-server/shared/release.js');
+  try { runtimeConfig({ ...values, STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: HOSTED_RELEASE_PROFILE }); }
   catch { throw new Error('Check the selected database URL and exact HTTPS STELUX_PUBLIC_URL in Shipvela.'); }
   writeFileSync('dist-server/server/runtime-env.json', JSON.stringify(values) + '\n', { mode: 0o600 });
 }

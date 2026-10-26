@@ -2,10 +2,11 @@ import type { ActionDefinition, Availability, Field, Resource, Row } from './typ
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 
-export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype';
+export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
+export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
 export function releaseProfile(value?: string): ReleaseProfile {
   if (!value || value === 'full') return 'full';
-  if (value === 'welding-demo' || value === 'access-prototype') return value;
+  if (value === 'welding-demo' || value === 'access-prototype' || value === HOSTED_RELEASE_PROFILE) return value;
   throw new Error('Unknown workspace release profile.');
 }
 
@@ -75,7 +76,12 @@ const prototypeAvailability: Availability = {
   navigation: [...weldingAvailability.navigation, 'materials', 'certifications', 'coatings', 'test_systems', 'pwht_processes', 'pwht_locations'],
   features: [...weldingAvailability.features, 'lisl'],
 };
-export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => profile === 'full' ? undefined : structuredClone(profile === 'access-prototype' ? prototypeAvailability : weldingAvailability);
+export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => {
+  if (profile === 'full') return undefined;
+  const availability = structuredClone(profile === 'welding-demo' ? weldingAvailability : prototypeAvailability);
+  if (profile === 'access-prototype') availability.features.push('local-access');
+  return availability;
+};
 export const hasFeature = (availability: Availability | undefined, key: string) => !availability || availability.features.includes(key);
 export const resourceAvailable = (availability: Availability | undefined, key: string) => !availability || Object.hasOwn(availability.resources, key);
 export const rowAvailable = (availability: Availability | undefined, key: string, row: Row) => resourceAvailable(availability, key) && (!availability || !['inspection_requests', 'inspection_results'].includes(key) || availability.inspectionTypes.includes(String(row.type)));

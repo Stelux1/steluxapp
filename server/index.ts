@@ -8,12 +8,14 @@ import { PostgresDatabase, postgresConfig } from './postgres.ts';
 import { runtimeConfig } from './runtime-config.ts';
 import { cloudDatabase, rejectEvaluationDatabase, workspaceCloudDatabase } from './cloud-database.ts';
 import { initializePrototype } from './import-access-prototype.ts';
+import { verifyWeldingTraceability } from './welding-schema.ts';
 const config = runtimeConfig(process.env);
 if (config.cloud && !existsSync(resolve(config.distDir, 'index.html'))) throw new Error('Run npm run build:cloud before starting the cloud server.');
 const { dataDir } = config;
 const database = config.databaseUrl ? new PostgresDatabase(postgresConfig(process.env, config.cloud && config.cloudDatabaseSource === 'evaluation')) : undefined;
 if (database) { try { if (config.cloud) { if (config.cloudDatabaseSource === 'evaluation') cloudDatabase(database); else workspaceCloudDatabase(database); } else rejectEvaluationDatabase(database); } catch (error) { database.close(); throw error; } }
 const store = new Store(resolve(dataDir, 'stelux.sqlite'), database, { initialize: !config.cloud });
+if (config.cloud && database) verifyWeldingTraceability(database);
 if (config.profile === 'access-prototype') initializePrototype(store);
 else if (!config.cloud) seed(store);
 const port = config.port;

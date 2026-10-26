@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import Head from 'next/head';
 import type { GetServerSideProps } from 'next';
-import { availabilityFor, pageAvailable } from '../shared/release.ts';
+import { availabilityFor, pageAvailable, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { RESOURCES } from '../shared/resources.ts';
 
 const Workspace = dynamic(() => import('../client/App.tsx'), {
@@ -23,7 +23,7 @@ export default function WorkspacePage() {
 }
 
 export const getServerSideProps: GetServerSideProps = async ({ resolvedUrl, res, query }) => {
-  const availability = availabilityFor('welding-demo');
+  const availability = availabilityFor(HOSTED_RELEASE_PROFILE);
   const path = new URL(resolvedUrl, 'http://localhost').pathname;
   res.setHeader('Cache-Control', 'private, no-store');
   if (!pageAvailable(availability, path, RESOURCES) ||

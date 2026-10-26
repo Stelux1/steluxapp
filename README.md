@@ -39,7 +39,7 @@ The release policy in `shared/release.ts` defines positive lists of resources, f
 
 ## Cloud deployment
 
-Use Node.js 24+ or the included Dockerfile. The cloud entry fixes the `welding-demo` scope, binds to `0.0.0.0`, respects `PORT` (default 3000), and serves both the client and authenticated API from the same origin. The compiled server runs without `tsx` or development dependencies. A static `dist` upload alone cannot run this application.
+Use Node.js 24+ or the included Dockerfile. The cloud entry fixes the `welding-workspace` scope, including the connected 87-field LISL register and material certificates, binds to `0.0.0.0`, respects `PORT` (default 3000), and serves both the client and authenticated API from the same origin. The compiled server runs without `tsx` or development dependencies. A static `dist` upload alone cannot run this application.
 
 Create a **separate empty PostgreSQL database** for evaluation. Supply these values through private runtime environment variables or an untracked local `.env`; never use a `VITE_` prefix:
 
@@ -78,6 +78,10 @@ docker run -d --name blitzkrieg-welding --env-file .env.cloud -p 3000:3000 blitz
 `npm run backup:cloud` backs up the selected evaluation PostgreSQL database, including document content, credentials and the evaluation marker. Sessions are omitted. Restore the SQL only into an empty schema created by `Store` and `initializeDocumentStorage`; never restore over a live workspace.
 
 ### Shipvela / Next.js deployment
+
+The hosted release uses `welding-workspace` for the same connected LISL workflow as the local Access prototype, with the existing hosted database and accounts. It contains no schema diagram and never imports the local example data automatically. The isolated local `access-prototype` and restricted `welding-demo` profiles remain available.
+
+Before deploying this release to an existing, already prepared hosted database, set its existing private connection variables and exact `STELUX_PUBLIC_URL`, then run `STELUX_CLOUD_DATABASE=workspace npm run db:prepare:welding`. This creates a private PostgreSQL backup, adds four nullable generated material/certificate references, and checks that all records, credentials, audit history, counters, and documents are unchanged. The command is repeatable. Cloud request handling refuses an unprepared traceability schema and never runs migrations. Fresh evaluation preparation includes these references through `db:prepare:cloud`.
 
 The default `npm run build` now produces a **Next.js SSR application**, with output `.next`, rather than a static Vite directory. It builds the existing browser interface and exposes the authenticated Express domain API through a Next.js Node API route. No separate Express server, Express compute pilot or `shipvela.compute.json` is needed. Next.js is pinned in `package-lock.json`. The Vite/local and Docker workflows remain available through `build:local`, `build:demo` and `build:cloud`.
 
@@ -128,7 +132,7 @@ npm run build:local
 
 Tests use temporary SQLite databases. HTTP tests open temporary loopback listeners and need local networking permission in restricted execution environments. They never change the live Montavar app or the user's `.data` directory.
 
-Current verification: 90 default automated tests pass and both production builds succeed. An additional optional test against a disposable PostgreSQL instance covers migration, account login, inventory changes, rollback, version conflicts, audit pagination, CSV previews and persistence across independent connections. Browser checks cover sample material ordering/receipt/picking, partial tool returns, WPS/PQR links, welder deployment, material laydown/service, revision-file upload, independent ISO/ITP revision numbers, and partial/full removal of a material requirement. These checks do not establish hidden PHP-rule parity.
+Current verification: all 101 automated tests pass with disposable PostgreSQL integration databases configured, and the Next.js, local, and cloud production builds succeed. An additional optional test against a disposable PostgreSQL instance covers migration, account login, inventory changes, rollback, version conflicts, audit pagination, CSV previews and persistence across independent connections. Browser checks cover sample material ordering/receipt/picking, partial tool returns, WPS/PQR links, welder deployment, material laydown/service, revision-file upload, independent ISO/ITP revision numbers, and partial/full removal of a material requirement. These checks do not establish hidden PHP-rule parity.
 
 Browser smoke checks and workflow observations are recorded in `test-results/` when available. These generated artifacts are excluded from version control.
 

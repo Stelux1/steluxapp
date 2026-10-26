@@ -5,14 +5,18 @@ import { cloudDatabase, workspaceCloudDatabase } from './cloud-database.ts';
 import { Store } from './store.ts';
 import { seed } from './seed.ts';
 import { initializeDocumentStorage } from './documents.ts';
+import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
+import { prepareWeldingTraceability } from './welding-schema.ts';
 
-const config = runtimeConfig({ ...process.env, STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: 'welding-demo' });
+const config = runtimeConfig({ ...process.env, STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: HOSTED_RELEASE_PROFILE });
 const evaluation = config.cloudDatabaseSource === 'evaluation';
 const db = new PostgresDatabase(postgresConfig(process.env, evaluation));
 try {
   if (evaluation) cloudDatabase(db, true); else workspaceCloudDatabase(db, true);
   const store = new Store(':memory:', db, { initialize: evaluation });
   if (evaluation) seed(store);
+  // Existing workspace updates use the backed-up db:prepare:welding command.
+  if (evaluation) prepareWeldingTraceability(db);
   store.transaction(() => {
     initializeDocumentStorage(store);
     if (!evaluation && db.prepare('SELECT a.id FROM attachments a LEFT JOIN upload_blobs b ON b.attachment_id=a.id WHERE b.attachment_id IS NULL LIMIT 1').get()) {

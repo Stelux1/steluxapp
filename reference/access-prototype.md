@@ -9,7 +9,7 @@ npm run build:prototype
 npm run start:prototype
 ```
 
-Open http://127.0.0.1:3003. This profile always uses local SQLite in `.data/access-prototype/stelux.sqlite` and a separate `dist-access-prototype/` build. It ignores `DATABASE_URL`, rejects cloud mode, binds to loopback, and creates no fictional project records. The existing full and welding-demo profiles retain their own storage and release boundaries. These commands run locally; publishing the code does not select or modify a hosted database.
+Open http://127.0.0.1:3003. This profile always uses local SQLite in `.data/access-prototype/stelux.sqlite` and a separate `dist-access-prototype/` build. It ignores `DATABASE_URL`, rejects cloud mode, binds to loopback, and creates no fictional project records. The existing full and welding-demo profiles retain their own storage and release boundaries. The hosted welding-workspace profile delivers the connected LISL workflow using the existing hosted database and accounts; it never adopts this local SQLite database or its example data. These commands run locally; publishing the code does not select or modify a hosted database.
 
 To extract the supplied database again, install the reader only in an isolated Python runtime and import its JSON:
 
@@ -46,4 +46,4 @@ The `Sub-Projects` table and a project-specific ISO table are present in the sup
 
 `npm test` includes transactional import rollback, idempotency, all 87 source columns, certificate integrity on both sides, inspection history, isolated runtime, reopen persistence, authenticated CSV export, inactive WPS assignment, and read-only API permissions. Existing regression tests continue to cover the other workspace profiles. PostgreSQL integration tests require an explicitly configured disposable database and remain optional.
 
-Release verification on 26 October 2026: all 100 automated tests passed with no skips, using disposable PostgreSQL 17 databases for the integration checks. Local, Access prototype, cloud, and Next.js builds passed. The Next.js production check covered sign-in, permissions, weld edits, XLSX export, document upload/download, and persistence after restart in both database modes. Browser checks confirmed that the schema links are absent, the former schema URL returns 404, and LISL search, exports, and material certificate selection work.
+Release verification on 26 October 2026: all 101 automated tests passed with no skips, using disposable PostgreSQL 17 databases for the integration checks. Local, Access prototype, cloud, and Next.js builds passed. The Next.js production check covered sign-in, permissions, weld edits, XLSX export, document upload/download, and persistence after restart in both database modes. Browser checks confirmed that the schema links are absent, the former schema URL returns 404, and LISL search, exports, and material certificate selection work.

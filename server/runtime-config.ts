@@ -12,14 +12,14 @@ export function runtimeConfig(env: NodeJS.ProcessEnv, root = process.cwd()) {
   const cloud = env.STELUX_RUNTIME === 'cloud';
   const cloudDatabaseSource = env.STELUX_CLOUD_DATABASE || 'evaluation';
   if (env.STELUX_RUNTIME && !['local', 'cloud'].includes(env.STELUX_RUNTIME)) throw new Error('Unknown STELUX_RUNTIME.');
-  if (cloud && profile !== 'welding-demo') throw new Error('The cloud entry point requires the welding-demo profile.');
+  if (cloud && !['welding-demo', 'welding-workspace'].includes(profile)) throw new Error('The cloud entry point requires the welding-demo or welding-workspace profile.');
   if (cloud && !['evaluation', 'workspace'].includes(cloudDatabaseSource)) throw new Error('STELUX_CLOUD_DATABASE must be evaluation or workspace.');
   const fullDataDir = resolve(root, env.STELUX_DATA_DIR || '.data');
-  const dataDir = profile === 'access-prototype' ? resolve(root, env.STELUX_PROTOTYPE_DATA_DIR || '.data/access-prototype') : profile === 'welding-demo' ? resolve(root, env.STELUX_DEMO_DATA_DIR || '.data/welding-demo') : fullDataDir;
+  const dataDir = profile === 'access-prototype' ? resolve(root, env.STELUX_PROTOTYPE_DATA_DIR || '.data/access-prototype') : profile === 'welding-workspace' ? resolve(root, env.STELUX_WELDING_DATA_DIR || '.data/welding-workspace') : profile === 'welding-demo' ? resolve(root, env.STELUX_DEMO_DATA_DIR || '.data/welding-demo') : fullDataDir;
   if (profile !== 'full') {
     const demoPath = canonical(dataDir); const fullPath = canonical(fullDataDir); const uploads = canonical(join(fullDataDir, 'uploads'));
     if (demoPath === fullPath || demoPath === uploads || demoPath.startsWith(uploads + sep)) throw new Error('The evaluation workspace needs its own data directory.');
-    if (profile === 'access-prototype') {
+    if (profile === 'access-prototype' || profile === 'welding-workspace') {
       const evaluationPath = canonical(resolve(root, env.STELUX_DEMO_DATA_DIR || '.data/welding-demo'));
       if (demoPath === evaluationPath || demoPath.startsWith(evaluationPath + sep) || evaluationPath.startsWith(demoPath + sep)) throw new Error('The Access prototype needs its own data directory.');
     }
@@ -40,5 +40,5 @@ export function runtimeConfig(env: NodeJS.ProcessEnv, root = process.cwd()) {
   if (cloud && !publicOrigin) throw new Error('Set STELUX_PUBLIC_URL to the public HTTPS origin.');
   const port = Number(env.PORT || (cloud ? 3000 : env.NODE_ENV === 'production' ? profile === 'access-prototype' ? 3003 : profile === 'welding-demo' ? 3002 : 3000 : 3001));
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535.');
-  return { profile, cloud, cloudDatabaseSource, dataDir, port, host: profile === 'access-prototype' ? '127.0.0.1' : env.STELUX_HOST || (cloud ? '0.0.0.0' : '127.0.0.1'), databaseUrl, publicOrigin: profile === 'access-prototype' ? undefined : publicOrigin, secureCookies: profile === 'access-prototype' ? false : publicOrigin?.startsWith('https:') || false, documentStorage: cloud ? 'database' as const : 'disk' as const, distDir: resolve(root, profile === 'access-prototype' ? 'dist-access-prototype' : profile === 'welding-demo' ? 'dist-welding-demo' : 'dist') };
+  return { profile, cloud, cloudDatabaseSource, dataDir, port, host: profile === 'access-prototype' ? '127.0.0.1' : env.STELUX_HOST || (cloud ? '0.0.0.0' : '127.0.0.1'), databaseUrl, publicOrigin: profile === 'access-prototype' ? undefined : publicOrigin, secureCookies: profile === 'access-prototype' ? false : publicOrigin?.startsWith('https:') || false, documentStorage: cloud ? 'database' as const : 'disk' as const, distDir: resolve(root, profile === 'access-prototype' ? 'dist-access-prototype' : profile === 'welding-demo' || profile === 'welding-workspace' ? 'dist-welding-demo' : 'dist') };
 }

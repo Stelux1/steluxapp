@@ -13,6 +13,8 @@ import { PostgresDatabase, postgresConfig } from '../server/postgres.ts';
 import { cloudDatabase, rejectEvaluationDatabase, workspaceCloudDatabase } from '../server/cloud-database.ts';
 import { createCloudApp } from '../server/cloud-app.ts';
 import { backupPostgres } from '../server/postgres-backup.ts';
+import { prepareWeldingTraceability, verifyWeldingTraceability } from '../server/welding-schema.ts';
+import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 
 const cloudEnv = { STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: 'welding-demo', STELUX_DEMO_DATABASE_URL: 'postgresql://postgres@127.0.0.1/stelux_cloud_test', STELUX_DEMO_DATABASE_PASSWORD: 'disposable-test-password', STELUX_PUBLIC_URL: 'https://welding.example.test' };
 test('cloud configuration requires a dedicated database and exact public origin while local demo remains isolated', () => {
@@ -114,12 +116,25 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     initializeDocumentStorage(existing);
     db.prepare("INSERT INTO metadata VALUES ('cloud_storage_v1','1')").run();
     assert.throws(() => cloudDatabase(db), /not an evaluation database/);
-    const runtime = createCloudApp({ ...cloudEnv, STELUX_CLOUD_DATABASE: 'workspace', DATABASE_URL: testUrl!, STELUX_DEMO_DATABASE_URL: 'postgresql://wrong:wrong@127.0.0.1:1/unused' });
+    const hostedEnv = { ...cloudEnv, STELUX_CLOUD_DATABASE: 'workspace', DATABASE_URL: testUrl!, STELUX_DEMO_DATABASE_URL: 'postgresql://wrong:wrong@127.0.0.1:1/unused' };
+    for (const field of ['material1Id','material2Id','certificate1Id','certificate2Id']) db.exec(`ALTER TABLE welds DROP COLUMN "${field}"`);
+    assert.throws(() => verifyWeldingTraceability(db), /Prepare welding traceability/);
+    assert.throws(() => createCloudApp(hostedEnv), /Prepare welding traceability/);
+    const prepared = prepareWeldingTraceability(db);
+    assert.equal(prepared.recordsPreserved, true); assert.equal(prepared.counts.users, 1);
+    assert.equal(prepareWeldingTraceability(db).recordsPreserved, true);
+    assert.equal(db.prepare('SELECT hash FROM credentials').get()?.hash, savedCredential);
+    const runtime = createCloudApp(hostedEnv);
+    assert.equal(runtime.config.profile, HOSTED_RELEASE_PROFILE);
     const hosted = await listen(runtime.app);
     try {
       const status = await (await hosted.request('/api/auth/status')).json();
       assert.equal(status.requiresSetup, false);
       assert.equal(status.sampleWorkspace, false);
+      assert.ok(status.availability.features.includes('lisl'));
+      assert.ok(!status.availability.features.includes('local-access'));
+      assert.equal(status.availability.reports.lisl.length, 87);
+      assert.ok(status.availability.resources.certifications);
       const login = await hosted.request('/api/auth/login', 'POST', credentials);
       assert.equal(login.status, 200);
       const cookie = login.headers.get('set-cookie')!.split(';')[0];
@@ -127,6 +142,7 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
       assert.equal(bootstrap.status, 200);
       assert.equal((await bootstrap.json()).rows.welds.find((row: { id: string }) => row.id === 'weld-1').description, 'Existing workspace record');
       assert.equal((await hosted.request('/api/auth/setup', 'POST', credentials)).status, 409);
+      assert.equal((await hosted.request('/api/reports/lisl', 'GET', undefined, cookie)).status, 200);
       assert.equal(db.prepare('SELECT hash FROM credentials').get()?.hash, savedCredential);
       assert.equal(existing.list('users').length, 1);
     } finally { await hosted.close(); runtime.store.close(); }

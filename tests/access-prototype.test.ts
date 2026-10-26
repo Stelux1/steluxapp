@@ -9,7 +9,7 @@ import { importAccessPrototype } from '../server/import-access-prototype.ts';
 import { runtimeConfig } from '../server/runtime-config.ts';
 import { createApp } from '../server/http.ts';
 import { RESOURCES } from '../shared/resources.ts';
-import { availabilityFor, pageAvailable } from '../shared/release.ts';
+import { availabilityFor, pageAvailable, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { buildReport } from '../shared/reports.ts';
 import { LISL_COLUMNS } from '../shared/lisl.ts';
 import { runAction } from '../server/workflows.ts';
@@ -102,9 +102,9 @@ test('local prototype persists across reopening without seeding fictional projec
   store = new Store(file); try { assert.equal(store.list('welds').length, 1); assert.equal(store.get('welds', weld.id).certificate1Id, weld.certificate1Id); assert.equal(store.list('projects').length, 1); assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(), []); } finally { store.close(); }
 });
 
-test('prototype HTTP serves the joined CSV, validates writes, and keeps read-only accounts restricted', async t => {
+for (const releaseProfile of ['access-prototype', HOSTED_RELEASE_PROFILE] as const) test(`${releaseProfile} HTTP serves the joined CSV, validates writes, and keeps read-only accounts restricted`, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'access-prototype-http-')); const store = new Store(join(dir, 'test.sqlite')); importAccessPrototype(store, [source()]);
-  const server = createApp(store, dir, { releaseProfile: 'access-prototype' }).listen(0, '127.0.0.1'); await once(server, 'listening');
+  const server = createApp(store, dir, { releaseProfile }).listen(0, '127.0.0.1'); await once(server, 'listening');
   const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '';
   t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const request = async (path: string, method = 'GET', data?: unknown) => {
@@ -113,8 +113,8 @@ test('prototype HTTP serves the joined CSV, validates writes, and keeps read-onl
   };
   assert.equal((await request('/reports/lisl')).status, 401);
   const setup = await request('/auth/setup', 'POST', { name: 'Local tester', email: 'prototype@example.test', password: 'Local-Prototype-Test-Only' });
-  assert.equal(setup.status, 201); assert.match(setup.headers.get('set-cookie')!, /^blitzkrieg_prototype_session=/);
-  const bootstrap = await (await request('/bootstrap')).json(); assert.equal(bootstrap.rows.welds.length, 1); assert.equal(bootstrap.rows.certifications.length, 2);
+  assert.equal(setup.status, 201); assert.ok(setup.headers.get('set-cookie')!.startsWith(releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session=' : 'blitzkrieg_session='));
+  const bootstrap = await (await request('/bootstrap')).json(); assert.equal(bootstrap.rows.welds.length, 1); assert.equal(bootstrap.rows.certifications.length, 2); assert.equal(bootstrap.user.availability.features.includes('local-access'), releaseProfile === 'access-prototype');
   const csv = await request('/reports/lisl?q=0060'); assert.equal(csv.status, 200); assert.match(await csv.text(), /0060/);
   const weld = store.list('welds')[0]; assert.equal((await request(`/records/welds/${weld.id}`, 'PUT', { _version: weld._version, chargeNo1: 'WRONG' })).status, 422);
   const wps = store.get('wps', weld.wpsId); store.update('wps', wps.id, { active: false }, wps._version);
