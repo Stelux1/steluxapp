@@ -23,7 +23,7 @@ import { documentStorage, type DocumentStorage } from './documents.ts';
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
   const availability = availabilityFor(options.releaseProfile || 'full');
-  const cookieName = availability ? 'blitzkrieg_session' : 'stelux_session';
+  const cookieName = options.releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session' : availability ? 'blitzkrieg_session' : 'stelux_session';
   const access = releaseAccess(store, availability);
   const presentUser = (id: string) => access.user(publicUser(store, id));
   const readableRows = (req: Request, key: string, archived = false) => store.list(key, archived).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, row));
@@ -235,7 +235,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     documents.download(file.id, String(file.name), res);
   });
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'This API endpoint does not exist.')));
-  const dist = resolve(options.distDir || (availability ? 'dist-welding-demo' : 'dist'));
+  const dist = resolve(options.distDir || (options.releaseProfile === 'access-prototype' ? 'dist-access-prototype' : availability ? 'dist-welding-demo' : 'dist'));
   if (options.serveClient !== false && existsSync(join(dist, 'index.html'))) {
     app.use((req, res, next) => {
       if (availability && (/\.map$/i.test(req.path) || /^\/(?:README\.md|PARITY\.md|reference|server|shared|client|tests|\.env)(?:\/|$)/i.test(req.path))) return res.status(404).type('text').send('Page not found.');

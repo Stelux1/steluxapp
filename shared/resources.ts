@@ -87,6 +87,21 @@ add('signatures', 'Signatures', 'signature', 'settings', 'Administration', 'Auth
 add('profiles', 'Permission profiles', 'profile', 'settings', 'Administration', 'Control access to each part of your workspace.', [t('name', 'Profile name', { required: true }),note(),s('permissionMode','Access mode',['Module levels','Detailed permissions'],{default:'Module levels'}),t('permissionRules','Permission rules',{default:'{}',type:'textarea',hidden:true}), ...(['general', 'materials', 'welding', 'tools', 'settings'] as const).map(m => s(`${m}Permission`, m === 'general' ? 'Shared project data' : m[0].toUpperCase() + m.slice(1), ['No access', 'Read only', 'Read & write', 'Administration'], { default: 'Read only' }))], ['name', 'generalPermission', 'materialsPermission', 'weldingPermission', 'toolsPermission'], { unique: [['name']] });
 add('users', 'User accounts', 'user', 'settings', 'Administration', 'Independent accounts for your Stelux workspace.', [t('name', 'Full name', { required: true }), t('email', 'Email', { type: 'email', required: true }), r('profileId', 'Permission profile', 'profiles', { required: true }), b('active', 'Account active', { default: true }), t('password', 'New password', { type: 'password', hint: 'At least 10 characters. Leave blank to keep the current password.' })], ['name', 'email', 'profileId', 'active'], { unique: [['email']] });
 add('attachments', 'Documents', 'document', 'general', 'Workspace', 'Drawings, certificates, signed releases, and other supporting files.', [t('name', 'File name'), t('entityType', 'Record type'), t('entityId', 'Record ID'), t('documentType', 'Document type'), t('mime', 'File type'), n('size', 'Size in bytes'), note('note', 'Notes')], ['name', 'documentType', 'entityType', '_createdAt'], { readonly: true });
+// Access prototype additions are optional so existing workspace records remain valid.
+function extend(key: string, fields: Field[]) {
+  const resource = resources.find(resource => resource.key === key)!;
+  resource.fields.push(...fields);
+}
+extend('isometrics', [t('area', 'Area'), n('ndtPercentage', 'NDT %', { max: 100 }), t('pressureTestPlan', 'Pressure test plan')]);
+extend('weld_types', [t('abbreviation', 'Abbreviation')]);
+extend('wps', [b('active', 'Active', { default: true })]);
+extend('materials', [t('wallThickness', 'Wall thickness')]);
+extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Material code'), t('diameter', 'Diameter (inch)'), t('materialDescription', 'Description of material'), t('wallThickness', 'Wall thickness'), t('schedule', 'Schedule')]);
+extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
+  r(`material${i}Id`, `Material ${i}`, 'materials', { section: `Material side ${i}` }),
+  r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),
+])]);
+extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {

@@ -51,6 +51,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
       if (wpsId) {
         const iso = record('isometrics', value.isoId ?? existing?.isoId);
         const wps = record('wps', wpsId);
+        if (wps.active === false && existing?.wpsId !== wpsId) throw new AppError(422, 'Choose an active WPS.', { wpsId: 'This procedure is inactive.' });
         const rows = Object.fromEntries(['projects', 'wps_projects', 'wps_sites'].map(resource => [resource, store.list(resource)]));
         if (!availableWps(rows, wps, String(iso.projectId))) throw new AppError(422, 'Choose a WPS available for this project and site.', { wpsId: 'Select a procedure available for this project and site.' });
       }

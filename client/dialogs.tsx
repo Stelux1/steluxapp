@@ -27,7 +27,22 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     })) : values; await api(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(`${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }
   }
-  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => setValues(current => ({ ...current, [f.name]: v, ...(f.name === 'isoId' ? { spoolId: '', ...(user.availability?{wpsId:''}:{}) } : {}),...(f.name==='materialId'&&v?{customMaterialId:'',customMaterial:false}:{}) }))}/>)}</div></details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  function change(name: string, value: unknown) {
+    setValues(current => {
+      const next = { ...current, [name]: value };
+      if (name === 'isoId') { next.spoolId = ''; if (user.availability) next.wpsId = ''; }
+      if (name === 'materialId' && value) { next.customMaterialId = ''; next.customMaterial = false; }
+      const side = /^[a-z]+([12])Id$/.exec(name)?.[1];
+      if (resourceKey === 'welds' && side && name.startsWith('material')) { next[`certificate${side}Id`] = ''; next[`chargeNo${side}`] = ''; }
+      if (resourceKey === 'welds' && side && name.startsWith('certificate') && value) {
+        const certificate = rows.certifications?.find(row => row.id === value);
+        if (certificate?.materialId) next[`material${side}Id`] = certificate.materialId;
+        if (certificate?.chargeNo) next[`chargeNo${side}`] = certificate.chargeNo;
+      }
+      return next;
+    });
+  }
+  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div></details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
 }
 interface Line { materialId?: string; lineId?: string; quantity: number | string; chargeNo?: string }
 export function WorkflowDialog({ actionKey, defaults = {}, onClose }: {actionKey: string; defaults?: Record<string, unknown>; onClose: () => void}) {

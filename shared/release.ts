@@ -1,10 +1,11 @@
 import type { ActionDefinition, Availability, Field, Resource, Row } from './types.ts';
 import type { Report } from './reports.ts';
+import { LISL_COLUMNS } from './lisl.ts';
 
-export type ReleaseProfile = 'full' | 'welding-demo';
+export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype';
 export function releaseProfile(value?: string): ReleaseProfile {
   if (!value || value === 'full') return 'full';
-  if (value === 'welding-demo') return value;
+  if (value === 'welding-demo' || value === 'access-prototype') return value;
   throw new Error('Unknown workspace release profile.');
 }
 
@@ -47,7 +48,34 @@ const weldingAvailability: Availability = {
   features: ['documents', 'history', 'table-export', 'table-print'],
 };
 
-export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => profile === 'welding-demo' ? structuredClone(weldingAvailability) : undefined;
+const prototypeAvailability: Availability = {
+  ...weldingAvailability,
+  resources: {
+    ...resources,
+    isometrics: fields('isoNo projectId revNo itpNo irn assetTag drawingNo date pipingClass xRay ndtnorm nomDiameter material priority description testSystemId testPressure testMedium ped paintSpec ral insulation elevation xaxis yaxis zone chemicalClean tracing area ndtPercentage pressureTestPlan'),
+    weld_types: [...resources.weld_types, 'abbreviation'],
+    wps: [...resources.wps, 'active'],
+    welds: [...resources.welds, ...fields('jointType material1Id material2Id certificate1Id certificate2Id coating1Id tracer ndoReqPre pwhtReqPre pwhtReq')],
+    materials: fields('materialNo materialGroup articleNo legacyNo description dia lbs uom wallThickness'),
+    certifications: fields('name chargeNo materialId date standard description indexNo materialCode diameter materialDescription wallThickness schedule'),
+    coatings: fields('name description'),
+    test_systems: fields('name projectId medium pressure description'),
+    pwht_processes: fields('name description'),
+    pwht_locations: fields('name description'),
+    inspection_requests: [...resources.inspection_requests, 'pwhtProcessId', 'pwhtLocationId'],
+    inspection_results: [...resources.inspection_results, 'naLength', 'defectType'],
+  },
+  actions: {
+    ...weldingAvailability.actions,
+    'inspection-request': [...weldingAvailability.actions['inspection-request'], 'pwhtProcessId', 'pwhtLocationId'],
+    'inspection-result': [...weldingAvailability.actions['inspection-result'], 'naLength', 'defectType'],
+  },
+  reports: { ...weldingAvailability.reports, lisl: LISL_COLUMNS.map(column => column.key) },
+  inspectionTypes: ['NDT', 'NDT PRE', 'VI', 'PWHT', 'PRE-HT'],
+  navigation: [...weldingAvailability.navigation, 'materials', 'certifications', 'coatings', 'test_systems', 'pwht_processes', 'pwht_locations'],
+  features: [...weldingAvailability.features, 'lisl'],
+};
+export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => profile === 'full' ? undefined : structuredClone(profile === 'access-prototype' ? prototypeAvailability : weldingAvailability);
 export const hasFeature = (availability: Availability | undefined, key: string) => !availability || availability.features.includes(key);
 export const resourceAvailable = (availability: Availability | undefined, key: string) => !availability || Object.hasOwn(availability.resources, key);
 export const rowAvailable = (availability: Availability | undefined, key: string, row: Row) => resourceAvailable(availability, key) && (!availability || !['inspection_requests', 'inspection_results'].includes(key) || availability.inspectionTypes.includes(String(row.type)));
@@ -74,10 +102,15 @@ export function projectField(availability: Availability | undefined, field: Fiel
 }
 export function projectResource(availability: Availability | undefined, resource: Resource): Resource {
   if (!availability) return resource;
+  const prototype = availability.features.includes('lisl');
+  const columns = prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => projectField(availability, f)),
-    columns: resource.columns.filter(key => fieldAvailable(availability, resource.key, key)),
+    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => {
+      const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
+      return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
+    }),
+    columns: columns.filter(key => fieldAvailable(availability, resource.key, key)),
     actions: resource.actions?.filter(key => actionAvailable(availability, key)),
     createAction: resource.createAction && actionAvailable(availability, resource.createAction) ? resource.createAction : undefined,
   };
@@ -94,6 +127,7 @@ export function projectReport(availability: Availability | undefined, report: Re
 }
 export function pageAvailable(availability: Availability | undefined, pathname: string, definitions: Resource[]): boolean {
   if (!availability) return true;
+  if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);
 }

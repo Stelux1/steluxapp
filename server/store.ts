@@ -140,6 +140,20 @@ export class Store {
     if(key==='iso_materials'&&data.customMaterial&&!data.materialId){const identity=data.customMaterialId?this.get('custom_materials',data.customMaterialId):null;if(!identity||MATERIAL_FIELDS.some(k=>String(identity[k]??'')!==String(data[k]??''))){const snapshot=Object.fromEntries(MATERIAL_FIELDS.map(k=>[k,data[k]??'']));data.customMaterialId=this.create('custom_materials',snapshot,actor).id;}}
     if(['order_lines','stock','picklists'].includes(key)&&!data.materialId&&!data.customMaterialId)throw new AppError(422,'A catalog or custom material is required.');
     if(['order_lines','picklists'].includes(key)&&data.requirementId&&(!existing||['requirementId','isoId','materialId','customMaterialId'].some(k=>String(existing[k]||'')!==String(data[k]||'')))){const req=this.get('iso_materials',data.requirementId);if(req.isoId!==data.isoId||req.materialId!==data.materialId||String(req.customMaterialId||'')!==String(data.customMaterialId||''))throw new AppError(422,'The material requirement must match the isometric and material.');}
+    if (key === 'certifications' && existing) for (const weld of this.list('welds')) for (const side of [1, 2]) {
+      if (weld[`certificate${side}Id`] !== existing.id) continue;
+      if (data.materialId && weld[`material${side}Id`] && data.materialId !== weld[`material${side}Id`] || data.chargeNo && weld[`chargeNo${side}`] && data.chargeNo !== weld[`chargeNo${side}`]) throw new AppError(422, 'This certificate is linked to a weld. Its material and charge / heat number must continue to match that weld.');
+    }
+    if (key === 'welds') for (const side of [1, 2]) {
+      const certificateId = data[`certificate${side}Id`];
+      if (!certificateId) continue;
+      const certificate = this.get('certifications', certificateId);
+      const materialField = `material${side}Id`, chargeField = `chargeNo${side}`;
+      if (certificate.materialId && data[materialField] && certificate.materialId !== data[materialField]) throw new AppError(422, 'The certificate must match the selected material.', { [`certificate${side}Id`]: 'Select a certificate for this material.' });
+      if (certificate.chargeNo && data[chargeField] && certificate.chargeNo !== data[chargeField]) throw new AppError(422, 'The charge / heat number must match the certificate.', { [chargeField]: 'Use the charge / heat number on the selected certificate.' });
+      if (!data[materialField]) data[materialField] = certificate.materialId || '';
+      if (!data[chargeField]) data[chargeField] = certificate.chargeNo || '';
+    }
     if (key === 'welds' && data.spoolId) {
       const spool = this.get('spools', data.spoolId);
       if (spool.isoId !== data.isoId) throw new AppError(422, 'The spool must belong to the selected isometric.', { spoolId: 'Select a spool from this isometric.' });

@@ -2,6 +2,7 @@ import type { Module, Row, Value } from './types.ts';
 import { RESOURCE_MAP } from './resources.ts';
 import { materialName, materialRecord } from './materials.ts';
 import { active, weldingStats } from './module-metrics.ts';
+import { LISL_COLUMNS, lislValues } from './lisl.ts';
 
 export interface ReportDefinition {key:string;title:string;description:string;module:Module;}
 export interface ReportFilters {projectId?:string;isoId?:string;welderId?:string;clientId?:string;warehouseId?:string;type?:string;from?:string;to?:string;}
@@ -9,6 +10,7 @@ export interface ReportColumn {key:string;label:string;type?:'number'|'date';}
 export interface ReportRow {id:string;source?:{resource:string;id:string};values:Record<string,Value>;}
 export interface Report {definition:ReportDefinition;columns:ReportColumn[];rows:ReportRow[];note?:string;}
 export const REPORTS:ReportDefinition[]=[
+  {key:'lisl',title:'Data LISL',description:'The 87-column Access register with ISO details, welds, VT / NDT, heat treatment, and both material certificates. The first four NDT requests appear in date order; the complete history remains in Inspection results.',module:'welding'},
   {key:'wdi',title:'Weld data & traceability',description:'WDI register with welders, procedures, wires, charge numbers, and inspection requirements.',module:'welding'},
   {key:'welder',title:'Welder production report',description:'Weld counts, configured length, examinations, and repair flags for each welder.',module:'welding'},
   {key:'tracer',title:'Tracer welds',description:'Traceability register restricted to welds marked as tracers.',module:'welding'},
@@ -37,6 +39,7 @@ export function buildReport(key:string,rows:Record<string,Row[]>,filters:ReportF
   const row=(resource:string,item:Row,values:Record<string,Value>):ReportRow=>({id:item.id,source:{resource,id:item.id},values});
   const welds=active(rows,'welds').filter(w=>isoIds.has(String(w.isoId))&&(!filters.welderId||[w.welder1Id,w.welder2Id,w.welder3Id,w.welder4Id].includes(filters.welderId))&&inDate(w.date));
   const baseCols=[col('project','Project'),col('iso','Isometric'),col('revision','ISO rev.')];
+  if (key === 'lisl') return { definition, columns: LISL_COLUMNS, rows: welds.map(weld => row('welds', weld, lislValues(weld, rows))) };
   const weldValues=(w:Row)=>({...isoValues(w.isoId),weld:String(w.weldNo),type:label('weld_types',w.typeId),spool:label('spools',w.spoolId),wps:label('wps',w.wpsId),...Object.fromEntries([1,2,3,4].map(i=>[`welder${i}`,label('welders',w[`welder${i}Id`])])),diameter:label('diameters',w.diameterId),length:w.lengthMode==='Length in mm'?Number(w.dialen)||0:Number(find('diameters',w.diameterId)?.outline)||0,date:w.date||'',fitDate:w.datefit||'',wire1:label('welding_wires',w.wire1Id),wire2:label('welding_wires',w.wire2Id),charge1:w.chargeNo1||'',charge2:w.chargeNo2||'',ndt:w.ndoReq?'Yes':'No',pre:w.ndoReqPre?'Yes':'No',pwht:w.pwhtReq?'Yes':'No',preht:w.pwhtReqPre?'Yes':'No',repair:w.repair?'Yes':'No',tracer:w.tracer?'Yes':'No'});
   if(['wdi','tracer','open-welds','weld-cards'].includes(key))return {definition,columns:[...baseCols,col('weld','Weld'),col('type','Type'),col('spool','Spool'),col('wps','WPS'),...[1,2,3,4].map(i=>col(`welder${i}`,`Welder ${i}`)),col('diameter','Diameter'),col('length','Length (mm)','number'),col('date','Weld date','date'),col('fitDate','Fit-up date','date'),col('wire1','Wire 1'),col('wire2','Wire 2'),col('charge1','Charge 1'),col('charge2','Charge 2'),col('ndt','NDT'),col('pre','NDT PRE'),col('pwht','PWHT'),col('preht','Pre-HT'),col('repair','Repair'),col('tracer','Tracer')],rows:welds.filter(w=>key==='tracer'?w.tracer:key==='open-welds'?!w.date:true).map(w=>row('welds',w,weldValues(w)))};
   if(key==='welder')return {definition,note:'Each welder is credited once for every weld in which they appear. Shared welds appear in each participating welder’s total.',columns:[col('number','Welder no.'),col('name','Welder'),col('company','Company'),col('count','Welds','number'),col('length','Length (mm)','number'),col('examined','Examined (mm)','number'),col('repair','Repair (mm)','number')],rows:active(rows,'welders').filter(w=>!filters.welderId||w.id===filters.welderId).flatMap(w=>{const stats=weldingStats({...rows,welds}, {welderId:w.id});return stats.welds.length?[row('welders',w,{number:w.number||'',name:w.name||'',company:label('companies',w.companyId),count:stats.welds.length,length:stats.total,examined:stats.examined,repair:stats.repaired})]:[];})};

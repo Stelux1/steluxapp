@@ -219,7 +219,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       const reportNo = str(data.reportNo); if (!reportNo) throw new AppError(422, 'Enter a report number.');
       const length = data.examinedLength === undefined || data.examinedLength === '' || data.examinedLength === null ? weldLength(store, weld) : Number(data.examinedLength);
       if (!Number.isFinite(length) || length < 0) throw new AppError(422, 'Examined length must be zero or greater.');
-      const record = add('inspection_results', { requestId: request.id, weldId: weld.id, reportNo, type: request.type, result, round: data.round || 'Initial', examinedLength: length, date, note });
+      if (data.naLength !== undefined && data.naLength !== '' && data.naLength !== null && (!Number.isFinite(Number(data.naLength)) || Number(data.naLength) < 0 || Number(data.naLength) > length)) throw new AppError(422, 'Not accepted length must be between zero and the examined length.');
+      const record = add('inspection_results', { requestId: request.id, weldId: weld.id, reportNo, type: request.type, result, round: data.round || 'Initial', examinedLength: length, naLength: data.naLength ?? null, defectType: data.defectType || '', date, note });
       patch('inspection_requests', request, { status: result });
       store.audit('welds', weld.id, 'inspected', `${request.type} ${result.toLowerCase()} · ${reportNo}`, actor);
       return { resource: 'inspection_results', record };

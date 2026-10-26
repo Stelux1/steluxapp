@@ -20,6 +20,8 @@ For development, use `npm run dev` and open **http://127.0.0.1:5173**. The API r
 
 ## Welding evaluation workspace
 
+The supplied Access schema has a separate local prototype with a joined 87-field **Data LISL** register, two-sided material/certificate links, and support for the supplied example welds. The relationship diagram is implementation reference material; it is not displayed in the application. Run `npm run build:prototype` followed by `npm run start:prototype`, then open **http://127.0.0.1:3003**. It uses its own SQLite database and never selects the configured PostgreSQL database. See [the prototype notes](reference/access-prototype.md) for import, schema mapping, and verification.
+
 The server profile `welding-demo` delivers projects, sites, isometrics, basic spools, welders, WPS references, weld execution, NDT/visual inspection, results, repairs, documents, and two welding reports. Account permissions still apply inside that scope. The complete internal workspace remains the default `full` profile.
 
 ```sh

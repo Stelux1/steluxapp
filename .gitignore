@@ -2,6 +2,7 @@ node_modules/
 .DS_Store
 dist/
 dist-welding-demo/
+dist-access-prototype/
 dist-server/
 .next/
 next-env.d.ts
