@@ -116,6 +116,15 @@ for (const releaseProfile of ['access-prototype', HOSTED_RELEASE_PROFILE] as con
   assert.equal(setup.status, 201); assert.ok(setup.headers.get('set-cookie')!.startsWith(releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session=' : 'blitzkrieg_session='));
   const bootstrap = await (await request('/bootstrap')).json(); assert.equal(bootstrap.rows.welds.length, 1); assert.equal(bootstrap.rows.certifications.length, 2); assert.equal(bootstrap.user.availability.features.includes('local-access'), releaseProfile === 'access-prototype');
   const csv = await request('/reports/lisl?q=0060'); assert.equal(csv.status, 200); assert.match(await csv.text(), /0060/);
+  const project = store.list('projects')[0], iso = store.list('isometrics')[0];
+  assert.equal((await request('/bulk/projects', 'POST', { ids: [project.id], changes: { contact: 'Bulk contact' }, versions: { [project.id]: project._version } })).status, 200);
+  assert.equal(store.get('projects', project.id).contact, 'Bulk contact');
+  assert.equal((await request('/bulk/isometrics', 'POST', { ids: [iso.id], changes: { area: 'Unit A' }, versions: { [iso.id]: iso._version } })).status, 200);
+  assert.equal(store.get('isometrics', iso.id).area, 'Unit A');
+  assert.equal((await request('/bulk/projects', 'POST', { ids: [project.id], changes: { contact: 'Must not save', workingdays: 25 } })).status, 404);
+  assert.equal(store.get('projects', project.id).contact, 'Bulk contact');
+  assert.equal((await request('/bulk/welds', 'POST', { ids: [bootstrap.rows.welds[0].id], changes: { description: 'Unavailable bulk area' } })).status, 404);
+
   const weld = store.list('welds')[0]; assert.equal((await request(`/records/welds/${weld.id}`, 'PUT', { _version: weld._version, chargeNo1: 'WRONG' })).status, 422);
   const wps = store.get('wps', weld.wpsId); store.update('wps', wps.id, { active: false }, wps._version);
   assert.equal((await request('/records/welds', 'POST', { weldNo: 'NEW', isoId: weld.isoId, wpsId: wps.id })).status, 422);
@@ -126,4 +135,5 @@ for (const releaseProfile of ['access-prototype', HOSTED_RELEASE_PROFILE] as con
   assert.equal((await request('/auth/login', 'POST', { email: 'viewer@example.test', password: 'Prototype-Viewer-Test-Only' })).status, 200);
   assert.equal((await request('/reports/lisl')).status, 200);
   assert.equal((await request(`/records/welds/${weld.id}`, 'PUT', { _version: weld._version, description: 'Blocked edit' })).status, 403);
+  assert.equal((await request('/bulk/projects', 'POST', { ids: [project.id], changes: { contact: 'Blocked viewer' } })).status, 403);
 });

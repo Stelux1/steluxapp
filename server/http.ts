@@ -76,7 +76,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.use('/api', authMiddleware(store, cookieName));
   app.use('/api', (req, _res, next) => {
     (req as AuthRequest).user = access.user((req as AuthRequest).user);
-    if (availability && (/^\/(?:bulk|import)(?:\/|$)/.test(req.path) || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
+    const projectBulk = availability?.features.includes('project-bulk-edit') && /^\/bulk\/(?:projects|isometrics)$/.test(req.path);
+    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
     next();
   });
   app.param('resource', (_req, _res, next, key) => { try { access.resource(key); next(); } catch (error) { next(error); } });
@@ -106,7 +107,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const definition=REPORTS.find(r=>r.key===req.params.key);if(!definition||(availability&&!Object.hasOwn(availability.reports,definition.key)))throw new AppError(404,'This report does not exist.');
     const user=(req as unknown as AuthRequest).user;if(!canReport(user,definition.key,'export'))throw new AppError(403,'Your permission profile does not allow this report export.');
     const primary=REPORT_RESOURCES[definition.key]||[];const rows=Object.fromEntries(RESOURCES.filter(r=>canResource(user,r.key)).map(r=>[r.key,readableRows(req,r.key,true).filter(row=>!primary.includes(r.key)||canResource(user,r.key,'export',row))]));
-    const filters=Object.fromEntries(['projectId','isoId','welderId','clientId','warehouseId','type','from','to'].map(k=>[k,typeof req.query[k]==='string'?String(req.query[k]).slice(0,150):''])) as ReportFilters;
+    const filters=Object.fromEntries(['siteId','ndtRequired','projectId','isoId','welderId','clientId','warehouseId','type','from','to'].map(k=>[k,typeof req.query[k]==='string'?String(req.query[k]).slice(0,150):''])) as ReportFilters;
     if(availability&&filters.type&&!availability.inspectionTypes.includes(filters.type))throw new AppError(404,'This resource could not be found.');
     const report=projectReport(availability,buildReport(definition.key,rows,filters));const query=typeof req.query.q==='string'?req.query.q.toLowerCase().slice(0,500):'';
     if(query)report.rows=report.rows.filter(r=>Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query)));
@@ -148,6 +149,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly || resource.key === 'users') throw new AppError(405, 'Bulk editing is unavailable for this record type.');
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
+    access.input(resource.key, req.body.changes);
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password'))) throw new AppError(422, 'An update field is invalid.');
     const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdministrator(store); return result; }); res.json({ count: records.length });
   });

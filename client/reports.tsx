@@ -11,16 +11,16 @@ import { EmptyState, FieldInput, SearchInput, TableScroll } from './components.t
 import { formatDate, formatNumber } from './api.ts';
 
 export function Reports({module}:{module:Module}){
-  const {rows,user,canReadReport,openRecord}=useWorkspace();const [params,setParams]=useSearchParams();
+  const {rows,user,siteId,canReadReport,openRecord}=useWorkspace();const [params,setParams]=useSearchParams();
   const definitions=REPORTS.filter(r=>r.module===module&&canReadReport(r.key));
   const key=definitions.find(r=>r.key===params.get('report'))?.key||definitions[0]?.key;
   const [filters,setFilters]=useState<ReportFilters>({});const [query,setQuery]=useState('');const [page,setPage]=useState(0);
   if(user.availability&&params.get('report')&&!Object.hasOwn(user.availability.reports,params.get('report')!))return <EmptyState title="Page not found" description="Choose a page from the workspace navigation."/>;
   if(!key)return <EmptyState title="Reports are restricted" description="Your profile does not include these reports."/>;
-  const report=projectReport(user.availability,buildReport(key,rows,filters));const filtered={...report,rows:report.rows.filter(r=>!query||Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query.toLowerCase())))};
+  const report=projectReport(user.availability,buildReport(key,rows,{...filters,siteId}));const filtered={...report,rows:report.rows.filter(r=>!query||Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query.toLowerCase())))};
   const dateReport=!['mto','spool-locations','isometric-status','open-welds'].includes(key);const tool=module==='tools';
   function change(name:string,value:unknown){setFilters(f=>({...f,[name]:String(value),...(name==='projectId'?{isoId:''}:{})}));setPage(0);}
-  const downloadUrl=`/api/reports/${key}?${new URLSearchParams({...Object.fromEntries(Object.entries(filters).filter(([,v])=>v)),q:query}).toString()}`;
+  const downloadUrl=`/api/reports/${key}?${new URLSearchParams({siteId,...Object.fromEntries(Object.entries(filters).filter(([,v])=>v)),q:query}).toString()}`;
   const format=(value:Value|undefined,c:ReportColumn)=>value===''||value===undefined||value===null?'—':c.type==='date'?formatDate(value):c.type==='number'?formatNumber(value):String(value);
   const pages=Math.max(1,Math.ceil(filtered.rows.length/50));const current=Math.min(page,pages-1);
   return <div className="page reports-page"><div className="page-heading"><div><div className="eyebrow">BLITZKRIEG REPORTING</div><h1>Reports & documents</h1><p>Review the current records, export a spreadsheet, or print a project document.</p></div><div className="heading-actions">{canReadReport(key,'export')&&<a className="btn" href={downloadUrl}><Download size={16}/>Download CSV</a>}{canReadReport(key,'print')&&<button className="btn primary" onClick={()=>window.print()}><Printer size={16}/>Print / Save PDF</button>}</div></div>

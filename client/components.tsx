@@ -125,7 +125,9 @@ export function Dropdown({ trigger, label, children, className = '', menuClassNa
   </div>;
 }
 export function FieldInput({ field, value, onChange, error, values = {}, allowedIds }: { field: Field | ActionField; value: unknown; onChange: (value: unknown) => void; error?: string; values?: Record<string, unknown>;allowedIds?:string[] }) {
-  const { rows, user, label } = useWorkspace();const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
+  const { rows, user, label, projectScopeEnabled } = useWorkspace();
+  if (projectScopeEnabled && field.ref === 'projects' && /^(Project|Project scope)$/.test(field.label)) field = { ...field, label: 'Subproject' };
+  const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
   if(field.hidden)return null;
   let options = field.ref ? (rows[field.ref] || []).filter(r => !r._archived) : [];
   if(field.refCategory)options=options.filter(r=>r.category===field.refCategory);

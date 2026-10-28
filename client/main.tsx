@@ -9,5 +9,6 @@ import './readability.css';
 import './usability.css';
 import './brand.css';
 import './data-lisl.css';
+import './project-workspace.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

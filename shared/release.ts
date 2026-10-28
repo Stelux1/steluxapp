@@ -74,7 +74,7 @@ const prototypeAvailability: Availability = {
   reports: { ...weldingAvailability.reports, lisl: LISL_COLUMNS.map(column => column.key) },
   inspectionTypes: ['NDT', 'NDT PRE', 'VI', 'PWHT', 'PRE-HT'],
   navigation: [...weldingAvailability.navigation, 'materials', 'certifications', 'coatings', 'test_systems', 'pwht_processes', 'pwht_locations'],
-  features: [...weldingAvailability.features, 'lisl'],
+  features: [...weldingAvailability.features, 'lisl', 'project-bulk-edit'],
 };
 export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => {
   if (profile === 'full') return undefined;
@@ -133,6 +133,7 @@ export function projectReport(availability: Availability | undefined, report: Re
 }
 export function pageAvailable(availability: Availability | undefined, pathname: string, definitions: Resource[]): boolean {
   if (!availability) return true;
+  if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);

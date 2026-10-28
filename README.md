@@ -37,6 +37,12 @@ The local evaluation server uses its own SQLite database in `.data/welding-demo/
 
 The release policy in `shared/release.ts` defines positive lists of resources, fields, actions, inspection types, reports, and navigation. The API filters bootstrap data, documents, history, and CSV/Excel/report exports, and rejects omitted endpoints and fields. The client uses the same delivered catalog for forms, columns, links, search, and reports. Basic edits preserve omitted field values and qualification links. The evaluation interface retains its sample-data label.
 
+### Project navigation and isometric workspace
+
+The hosted welding workspace and local Access prototype start with a main-project picker. Existing project sites are the main projects; their numbered project records appear as subprojects. The selected main project scopes the dashboard, subprojects, isometrics, welds, inspections, documents, search, and welding report exports. Shared materials, certificates, welders and WPS references remain available for linked entries.
+
+Open a subproject to see its isometric table, then open an isometric as a full workspace. It contains ISO/ITP document links and uploads, technical details, WDI totals, the LISL register, spools and document history. Adding and editing records uses popup forms with the current subproject or isometric preselected. Subproject and isometric tables also support permission-controlled bulk edits. The LISL overview brings the weld type, welder, visual/NDT status, both material/certificate sides, WPS, diameter and spool together, with the other column groups and all 87 export fields still available. The NDT requirement filter also applies to the downloaded register.
+
 ## Cloud deployment
 
 Use Node.js 24+ or the included Dockerfile. The cloud entry fixes the `welding-workspace` scope, including the connected 87-field LISL register and material certificates, binds to `0.0.0.0`, respects `PORT` (default 3000), and serves both the client and authenticated API from the same origin. The compiled server runs without `tsx` or development dependencies. A static `dist` upload alone cannot run this application.

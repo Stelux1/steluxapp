@@ -5,7 +5,7 @@ import { active, weldingStats } from './module-metrics.ts';
 import { LISL_COLUMNS, lislValues } from './lisl.ts';
 
 export interface ReportDefinition {key:string;title:string;description:string;module:Module;}
-export interface ReportFilters {projectId?:string;isoId?:string;welderId?:string;clientId?:string;warehouseId?:string;type?:string;from?:string;to?:string;}
+export interface ReportFilters {siteId?:string;ndtRequired?:string;projectId?:string;isoId?:string;welderId?:string;clientId?:string;warehouseId?:string;type?:string;from?:string;to?:string;}
 export interface ReportColumn {key:string;label:string;type?:'number'|'date';}
 export interface ReportRow {id:string;source?:{resource:string;id:string};values:Record<string,Value>;}
 export interface Report {definition:ReportDefinition;columns:ReportColumn[];rows:ReportRow[];note?:string;}
@@ -34,10 +34,10 @@ export function buildReport(key:string,rows:Record<string,Row[]>,filters:ReportF
   const find=(resource:string,id:unknown)=>(rows[resource]||[]).find(r=>r.id===id);
   const label=(resource:string,id:unknown):string=>{const row=find(resource,id);if(!row)return id?'Unavailable record':'';const def=RESOURCE_MAP[resource];const field=def.fields.find(f=>f.name===def.display);return field?.ref?label(field.ref,row[field.name]):String(row[def.display]||'');};
   const inDate=(date:unknown)=>(!filters.from||Boolean(date)&&String(date)>=filters.from)&&(!filters.to||Boolean(date)&&String(date).slice(0,10)<=filters.to);
-  const isos=active(rows,'isometrics').filter(i=>(!filters.projectId||i.projectId===filters.projectId)&&(!filters.isoId||i.id===filters.isoId));const isoIds=new Set(isos.map(i=>i.id));
+  const isos=active(rows,'isometrics').filter(i=>(!filters.siteId||find('projects',i.projectId)?.siteId===filters.siteId)&&(!filters.projectId||i.projectId===filters.projectId)&&(!filters.isoId||i.id===filters.isoId));const isoIds=new Set(isos.map(i=>i.id));
   const isoValues=(id:unknown)=>{const iso=find('isometrics',id);return {project:label('projects',iso?.projectId),iso:iso?String(iso.isoNo):'',revision:iso?String(iso.revNo||''):''};};
   const row=(resource:string,item:Row,values:Record<string,Value>):ReportRow=>({id:item.id,source:{resource,id:item.id},values});
-  const welds=active(rows,'welds').filter(w=>isoIds.has(String(w.isoId))&&(!filters.welderId||[w.welder1Id,w.welder2Id,w.welder3Id,w.welder4Id].includes(filters.welderId))&&inDate(w.date));
+  const welds=active(rows,'welds').filter(w=>isoIds.has(String(w.isoId))&&(!filters.welderId||[w.welder1Id,w.welder2Id,w.welder3Id,w.welder4Id].includes(filters.welderId))&&(!filters.ndtRequired||Boolean(w.ndoReq)===(filters.ndtRequired==='yes'))&&inDate(w.date));
   const baseCols=[col('project','Project'),col('iso','Isometric'),col('revision','ISO rev.')];
   if (key === 'lisl') return { definition, columns: LISL_COLUMNS, rows: welds.map(weld => row('welds', weld, lislValues(weld, rows))) };
   const weldValues=(w:Row)=>({...isoValues(w.isoId),weld:String(w.weldNo),type:label('weld_types',w.typeId),spool:label('spools',w.spoolId),wps:label('wps',w.wpsId),...Object.fromEntries([1,2,3,4].map(i=>[`welder${i}`,label('welders',w[`welder${i}Id`])])),diameter:label('diameters',w.diameterId),length:w.lengthMode==='Length in mm'?Number(w.dialen)||0:Number(find('diameters',w.diameterId)?.outline)||0,date:w.date||'',fitDate:w.datefit||'',wire1:label('welding_wires',w.wire1Id),wire2:label('welding_wires',w.wire2Id),charge1:w.chargeNo1||'',charge2:w.chargeNo2||'',ndt:w.ndoReq?'Yes':'No',pre:w.ndoReqPre?'Yes':'No',pwht:w.pwhtReq?'Yes':'No',preht:w.pwhtReqPre?'Yes':'No',repair:w.repair?'Yes':'No',tracer:w.tracer?'Yes':'No'});
