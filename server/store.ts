@@ -158,6 +158,22 @@ export class Store {
       const spool = this.get('spools', data.spoolId);
       if (spool.isoId !== data.isoId) throw new AppError(422, 'The spool must belong to the selected isometric.', { spoolId: 'Select a spool from this isometric.' });
     }
+    if (key === 'cut_list' || key === 'calculation_lines') {
+      const requirement = data.requirementId ? this.get('iso_materials', data.requirementId) : undefined;
+      if (requirement && requirement.isoId !== data.isoId) throw new AppError(422, 'The MTO material must belong to the selected isometric.', { requirementId: 'Choose a material in this isometric.' });
+      if (key === 'cut_list') {
+        if (!Number.isSafeInteger(data.quantity)) throw new AppError(422, 'Number of pieces must be a whole number.', { quantity: 'Enter a whole number of pieces.' });
+        if (data.spoolId && this.get('spools', data.spoolId).isoId !== data.isoId) throw new AppError(422, 'The spool must belong to the selected isometric.');
+        if (!Number.isFinite(Number(data.quantity) * Number(data.lengthMm))) throw new AppError(422, 'The total cutting length is too large.');
+      } else {
+        const norm = this.get('calculation_norms', data.normId);
+        if (!requirement && (data.quantity === null || Number(data.quantity) <= 0)) throw new AppError(422, 'Enter a positive manual quantity or select an MTO material.', { quantity: 'Enter a quantity in the norm’s unit.' });
+        const material = requirement?.materialId ? this.get('materials', requirement.materialId) : requirement;
+        if (requirement && String(material?.uom || '').trim().toLowerCase() !== String(norm.uom).trim().toLowerCase()) throw new AppError(422, 'The calculation norm and MTO material must use the same unit.', { normId: 'Choose a norm matching the material unit.' });
+        if (!Number.isFinite(Number(requirement?.quantity ?? data.quantity) * Number(norm.hoursPerUnit))) throw new AppError(422, 'The planned hours are too large.');
+      }
+    }
+    if (key === 'iso_materials' && existing && data.isoId !== existing.isoId && ['cut_list', 'calculation_lines'].some(resource => this.list(resource).some(row => row.requirementId === existing.id))) throw new AppError(422, 'This MTO material is used in planning. Remove its calculation and cut-list links before moving it to another isometric.');
     return data;
   }
   create(key: string, input: Record<string, unknown>, actor: Actor = SYSTEM, id: string = randomUUID()): Row {

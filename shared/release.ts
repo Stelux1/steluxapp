@@ -79,6 +79,26 @@ const prototypeAvailability: Availability = {
 export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => {
   if (profile === 'full') return undefined;
   const availability = structuredClone(profile === 'welding-demo' ? weldingAvailability : prototypeAvailability);
+  if (profile === HOSTED_RELEASE_PROFILE) {
+    availability.resources.isometrics.push('itpRevNo', 'itpNo2', 'itp2RevNo');
+    availability.resources.materials.push('price');
+    Object.assign(availability.resources, {
+      iso_materials: fields('isoId materialId customMaterialId phaseId quantity chargeNo customMaterial materialNo description materialGroup articleNo legacyNo dia lbs uom price'),
+      custom_materials: fields('materialNo description materialGroup articleNo legacyNo dia lbs uom price'),
+      operation_phases: fields('name sort description'),
+      calculation_norms: fields('name uom hoursPerUnit description'),
+      calculation_lines: fields('name isoId requirementId normId quantity description'),
+      cut_list: fields('name isoId requirementId spoolId quantity lengthMm description'),
+    });
+    availability.actions['add-iso-material'] = fields('isoId source materialId phaseId quantity materialNo description materialGroup articleNo legacyNo dia lbs uom price chargeNo addToDB');
+    Object.assign(availability.reports, {
+      mto: fields('project iso revision group article material dia lbs description quantity uom phase charge'),
+      calculation: fields('project iso name material quantity uom norm hoursPerUnit hours status'),
+      'cut-list': fields('project iso name material spool quantity lengthMm totalMm'),
+    });
+    availability.navigation.push('iso_materials', 'operation_phases', 'calculation_norms', 'calculation_lines', 'cut_list');
+    availability.features.push('project-planning');
+  }
   if (profile === 'access-prototype') availability.features.push('local-access');
   return availability;
 };
@@ -135,6 +155,7 @@ export function pageAvailable(availability: Availability | undefined, pathname: 
   if (!availability) return true;
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
+  if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);
 }

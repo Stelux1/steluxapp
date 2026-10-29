@@ -120,8 +120,10 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     for (const field of ['material1Id','material2Id','certificate1Id','certificate2Id']) db.exec(`ALTER TABLE welds DROP COLUMN "${field}"`);
     assert.throws(() => verifyWeldingTraceability(db), /Prepare welding traceability/);
     assert.throws(() => createCloudApp(hostedEnv), /Prepare welding traceability/);
+    for (const table of ['calculation_lines', 'cut_list', 'calculation_norms']) db.exec(`DROP TABLE ${table}`);
     const prepared = prepareWeldingTraceability(db);
     assert.equal(prepared.recordsPreserved, true); assert.equal(prepared.counts.users, 1);
+    for (const table of ['calculation_norms', 'calculation_lines', 'cut_list']) assert.ok(db.prepare('SELECT to_regclass(?) AS name').get(`stelux.${table}`)?.name);
     assert.equal(prepareWeldingTraceability(db).recordsPreserved, true);
     assert.equal(db.prepare('SELECT hash FROM credentials').get()?.hash, savedCredential);
     const runtime = createCloudApp(hostedEnv);
@@ -158,6 +160,10 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
       assert.equal(setup.status, 201); cookie = setup.headers.get('set-cookie')!.split(';')[0];
       const form = new FormData(); form.set('entityType', 'welds'); form.set('entityId', 'weld-1'); form.set('file', new Blob(['Persistent cloud report']), 'cloud-report.txt');
       const upload = await app.request('/api/files', 'POST', form, cookie); assert.equal(upload.status, 201); attachmentId = (await upload.json()).record.id;
+      const planningMaterial = store.create('iso_materials', { isoId: 'iso-1', customMaterial: true, materialNo: 'PG-PLANNING', description: 'Postgres planning fixture', uom: 'M', quantity: 3 });
+      const planningNorm = store.create('calculation_norms', { name: 'PG metre operation', uom: 'M', hoursPerUnit: 0.5 });
+      store.create('calculation_lines', { name: 'Persistent planned hours', isoId: 'iso-1', requirementId: planningMaterial.id, normId: planningNorm.id });
+      store.create('cut_list', { name: 'Persistent piece', isoId: 'iso-1', requirementId: planningMaterial.id, quantity: 2, lengthMm: 750 });
     } finally { await app.close(); }
     db.close(); db = new PostgresDatabase(config);
     cloudDatabase(db);
@@ -181,6 +187,9 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
       db.exec(sql);
       cloudDatabase(db);
       assert.equal(restored.list('users').length, 1);
+      assert.equal(restored.list('calculation_lines')[0].name, 'Persistent planned hours');
+      assert.equal(restored.list('cut_list')[0].lengthMm, 750);
+      assert.equal(restored.list('calculation_norms')[0].hoursPerUnit, 0.5);
       const content = restored.db.prepare('SELECT content FROM upload_blobs WHERE attachment_id=?').get(attachmentId)?.content;
       assert.equal(Buffer.from(String(content), 'base64').toString(), 'Persistent cloud report');
       assert.equal(restored.db.prepare('SELECT count(*) AS total FROM credentials').get()?.total, 1);

@@ -75,7 +75,7 @@ try {
   const health = await request('/api/health');
   assert.equal((await health.json()).database, 'postgres');
   assert.equal(health.headers.get('cache-control'), 'no-store');
-  for (const path of ['/', '/welding/lisl', '/welding/welds', '/workspace/projects', '/materials/materials', '/materials/certifications']) assert.equal((await request(path)).status, 200, path);
+  for (const path of ['/', '/welding/lisl', '/welding/welds', '/workspace/projects', '/materials/materials', '/materials/certifications', '/materials/planning', '/materials/iso_materials', '/materials/calculation_norms', '/materials/cut_list']) assert.equal((await request(path)).status, 200, path);
   for (const path of ['/tools/articles', '/workspace/schema', '/README.md', '/server/serverless.js', '/dist-server/server/runtime-env.json', '/.env']) assert.equal((await request(path)).status, 404, path);
   assert.equal((await request('/api/bootstrap')).status, 401);
   const credentials = { name: 'Next test administrator', email: 'next@example.test', password: 'Disposable-Next-Test-123' };

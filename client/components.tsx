@@ -133,6 +133,7 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
   if(field.refCategory)options=options.filter(r=>r.category===field.refCategory);
   if(allowedIds)options=options.filter(r=>allowedIds.includes(r.id));
   if (field.ref === 'spools' && values.isoId) options = options.filter(r => r.isoId === values.isoId);
+  if (field.ref === 'iso_materials' && values.isoId) options = options.filter(r => r.isoId === values.isoId);
   if (field.ref === 'certifications' && /^certificate[12]Id$/.test(field.name)) {
     const material = values[`material${field.name.match(/[12]/)![0]}Id`];
     if (material) options = options.filter(row => !row.materialId || row.materialId === material);
@@ -141,7 +142,7 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
   if (user.availability && field.ref === 'wps' && values.isoId) { const project=rows.isometrics?.find(row=>row.id===values.isoId)?.projectId; if(project) options=options.filter(wps=>availableWps(rows,wps,String(project))); options=options.filter(wps=>wps.active!==false || wps.id===value); }
   if (field.ref === 'rentals') options = options.filter(r => ['Rented', 'Partially returned'].includes(String(r.status)));
   if (field.name === 'orderId') options = options.filter(r => ['Pending', 'Partially received'].includes(String(r.status)));
-  const refLabel = (r: Row) => { let name = label(field.ref!, r.id); if (field.ref === 'welds'||field.ref==='iso_materials') name += ` · ${label('isometrics', r.isoId)}`; if (field.ref === 'inspection_requests') name += ` · ${label('welds', r.weldId)} · ${r.status}`; if (field.ref === 'rentals') name += ` · ${label('articles', r.articleId)} · ${Number(r.quantity) - Number(r.returned)} outstanding`; return name; };
+  const refLabel = (r: Row) => { let name = label(field.ref!, r.id); if (field.ref === 'calculation_norms') name += ` · ${r.uom} · ${r.hoursPerUnit} h/unit`; if (field.ref === 'welds'||field.ref==='iso_materials') name += ` · ${label('isometrics', r.isoId)}`; if (field.ref === 'iso_materials') name += ` · ${r.quantity} ${r.materialId ? rows.materials?.find(material => material.id === r.materialId)?.uom || '' : r.uom || ''}${r.chargeNo ? ` · ${r.chargeNo}` : ''}`; if (field.ref === 'inspection_requests') name += ` · ${label('welds', r.weldId)} · ${r.status}`; if (field.ref === 'rentals') name += ` · ${label('articles', r.articleId)} · ${Number(r.quantity) - Number(r.returned)} outstanding`; return name; };
   if (field.showIf && values[field.showIf[0]] !== field.showIf[1]) return null;
   if (field.name === 'ndtpercent' && !values.ndoReq) return null;
   const common = { id, name: field.name, required: field.required, disabled: field.readonly, 'aria-invalid': Boolean(error), 'aria-describedby': error ? `${id}-error` : undefined };

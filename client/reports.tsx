@@ -18,7 +18,7 @@ export function Reports({module}:{module:Module}){
   if(user.availability&&params.get('report')&&!Object.hasOwn(user.availability.reports,params.get('report')!))return <EmptyState title="Page not found" description="Choose a page from the workspace navigation."/>;
   if(!key)return <EmptyState title="Reports are restricted" description="Your profile does not include these reports."/>;
   const report=projectReport(user.availability,buildReport(key,rows,{...filters,siteId}));const filtered={...report,rows:report.rows.filter(r=>!query||Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query.toLowerCase())))};
-  const dateReport=!['mto','spool-locations','isometric-status','open-welds'].includes(key);const tool=module==='tools';
+  const dateReport=!['mto','calculation','cut-list','spool-locations','isometric-status','open-welds'].includes(key);const tool=module==='tools';
   function change(name:string,value:unknown){setFilters(f=>({...f,[name]:String(value),...(name==='projectId'?{isoId:''}:{})}));setPage(0);}
   const downloadUrl=`/api/reports/${key}?${new URLSearchParams({siteId,...Object.fromEntries(Object.entries(filters).filter(([,v])=>v)),q:query}).toString()}`;
   const format=(value:Value|undefined,c:ReportColumn)=>value===''||value===undefined||value===null?'—':c.type==='date'?formatDate(value):c.type==='number'?formatNumber(value):String(value);

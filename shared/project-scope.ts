@@ -9,7 +9,7 @@ export function projectScope(rows: Record<string, Row[]>, siteId: string): Recor
   const projects = new Set(scoped.projects.map(row => row.id));
   scoped.isometrics = (rows.isometrics || []).filter(row => projects.has(String(row.projectId)));
   const isos = new Set(scoped.isometrics.map(row => row.id));
-  for (const key of ['welds', 'spools', 'revisions', 'iso_materials', 'releases', 'punchlists', 'flanges']) scoped[key] = (rows[key] || []).filter(row => isos.has(String(row.isoId)));
+  for (const key of ['welds', 'spools', 'revisions', 'iso_materials', 'calculation_lines', 'cut_list', 'releases', 'punchlists', 'flanges']) scoped[key] = (rows[key] || []).filter(row => isos.has(String(row.isoId)));
   const welds = new Set(scoped.welds.map(row => row.id));
   for (const key of ['inspection_requests', 'inspection_results', 'repairs']) scoped[key] = (rows[key] || []).filter(row => welds.has(String(row.weldId)));
   scoped.test_systems = (rows.test_systems || []).filter(row => !row.projectId || projects.has(String(row.projectId)));

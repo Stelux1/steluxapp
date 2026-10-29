@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { PostgresDatabase, postgresConfig } from './postgres.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import type { ClientConfig } from 'pg';
+import { PLANNING_RESOURCES } from '../shared/planning.ts';
 
 export function backupPostgres(destination: string, config: ClientConfig = postgresConfig()) {
   const database = new PostgresDatabase(config);
@@ -19,6 +20,7 @@ export function backupPostgres(destination: string, config: ClientConfig = postg
   try {
     database.exec('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET search_path TO stelux,pg_catalog');
     for (const { name, columns } of tables) {
+      if (PLANNING_RESOURCES.includes(name) && !database.prepare('SELECT to_regclass(?) AS name').get(`stelux.${name}`)?.name) continue;
       const names = columns.map(column => `"${column}"`).join(',');
       const rows = database.prepare(`SELECT ${names} FROM "${name}"${name === 'audit' ? ' ORDER BY sequence' : ''}`).all();
       for (const row of rows) sql.push(`INSERT INTO "${name}" (${names}) VALUES (${columns.map(column => quote(row[column])).join(',')})${name === 'metadata' ? ' ON CONFLICT(key) DO UPDATE SET value=excluded.value' : ''};`);

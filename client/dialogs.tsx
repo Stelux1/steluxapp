@@ -31,6 +31,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     setValues(current => {
       const next = { ...current, [name]: value };
       if (name === 'isoId') { next.spoolId = ''; if (user.availability) next.wpsId = ''; }
+      if (name === 'isoId' && ['cut_list', 'calculation_lines'].includes(resourceKey)) next.requirementId = '';
       if (name === 'materialId' && value) { next.customMaterialId = ''; next.customMaterial = false; }
       const side = /^[a-z]+([12])Id$/.exec(name)?.[1];
       if (resourceKey === 'welds' && side && name.startsWith('material')) { next[`certificate${side}Id`] = ''; next[`chargeNo${side}`] = ''; }

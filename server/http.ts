@@ -19,6 +19,7 @@ import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkA
 import { availabilityFor, pageAvailable, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { releaseAccess } from './release-access.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
+import { reportWorkbook } from './report-export.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -103,7 +104,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const before=req.query.before===undefined?Number.MAX_SAFE_INTEGER:Number(req.query.before);
     const history=store.history(resource.key,record.id,before);res.setHeader('Cache-Control','no-store');res.json({...history,events:visibleAudit(req,history.events)});
   });
-  app.get('/api/reports/:key', (req,res)=>{
+  app.get('/api/reports/:key', async (req,res)=>{
     const definition=REPORTS.find(r=>r.key===req.params.key);if(!definition||(availability&&!Object.hasOwn(availability.reports,definition.key)))throw new AppError(404,'This report does not exist.');
     const user=(req as unknown as AuthRequest).user;if(!canReport(user,definition.key,'export'))throw new AppError(403,'Your permission profile does not allow this report export.');
     const primary=REPORT_RESOURCES[definition.key]||[];const rows=Object.fromEntries(RESOURCES.filter(r=>canResource(user,r.key)).map(r=>[r.key,readableRows(req,r.key,true).filter(row=>!primary.includes(r.key)||canResource(user,r.key,'export',row))]));
@@ -111,6 +112,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if(availability&&filters.type&&!availability.inspectionTypes.includes(filters.type))throw new AppError(404,'This resource could not be found.');
     const report=projectReport(availability,buildReport(definition.key,rows,filters));const query=typeof req.query.q==='string'?req.query.q.toLowerCase().slice(0,500):'';
     if(query)report.rows=report.rows.filter(r=>Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query)));
+    if (req.query.format === 'xlsx') { res.attachment(`blitzkrieg-${definition.key}.xlsx`); await reportWorkbook(report).xlsx.write(res); res.end(); return; }
     res.setHeader('Cache-Control','no-store');res.attachment(`blitzkrieg-${definition.key}-${new Date().toISOString().slice(0,10)}.csv`).type('text/csv').send(reportCsv(report));
   });
   app.post('/api/records/:resource', (req, res) => {
