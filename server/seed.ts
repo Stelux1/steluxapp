@@ -37,10 +37,12 @@ export function seed(store: Store) {
     projects.forEach(p => { const { id, ...data } = p; add('projects', id, { ...data, amounthours: 8, workingdays: 60 }); });
     add('test_systems', 'test-cw', { name: 'CW-01', projectId: 'project-cooling', medium: 'Water', pressure: '15 bar' });
     add('field_packages', 'fwp-1', { name: 'Cooling loop — Area 1', number: 'FWP-001', projectId: 'project-cooling' });
-    for (let i = 1; i <= 9; i++) add('isometrics', `iso-${i}`, { isoNo: `STX-${i <= 3 ? 'CW' : i <= 6 ? 'ST' : 'SK'}-${String(i).padStart(3, '0')}`, projectId: projects[Math.floor((i - 1) / 3)].id, revNo: i <= 3 ? '2' : '0', irn: `IRN-${100 + i}`, pipingClass: i <= 3 ? 'CS150' : 'SS300', material: i <= 3 ? 'A106 Gr B' : 'A312 TP316L', itpNo: `ITP-0${Math.ceil(i / 3)}`, priority: i === 2 ? 'Prio 2' : i === 3 ? 'Prio 1' : 'Prio 3', date: '2026-09-18', prefab_materials: i >= 7, prefab_welds: i >= 8, prefab_doc: i === 9, prep_finished: i >= 4, paintSpec: 'PS-02',
+    for (let i = 1; i <= 9; i++) add('isometrics', `iso-${i}`, { isoNo: `STX-${i <= 3 ? 'CW' : i <= 6 ? 'ST' : 'SK'}-${String(i).padStart(3, '0')}`, projectId: projects[Math.floor((i - 1) / 3)].id, revNo: i <= 3 ? '2' : '0', irn: `IRN-${100 + i}`, pipingClass: i <= 3 ? 'CS150' : 'SS300', material: i <= 3 ? 'A106 Gr B' : 'A312 TP316L', itpNo: `ITP-0${Math.ceil(i / 3)}`, priority: i === 2 ? 'Prio 2' : i === 3 ? 'Prio 1' : 'Prio 3', date: '2026-09-18', prefab_materials: i >= 7, prefab_welds: i >= 8, prefab_est: i === 9, prefab_doc: i === 9, field_doc: i === 9, prep_finished: i >= 4, paintSpec: 'PS-02',
       assetTag: `AT-${i <= 3 ? 'CW' : i <= 6 ? 'ST' : 'SK'}-${String(i).padStart(2, '0')}`, drawingNo: `DWG-${2400 + i}`, testPressure: i <= 3 ? '15 bar' : '24 bar', testMedium: 'Water', ped: i <= 3 ? 'Cat II / B' : 'Cat I / A', xRay: i <= 3 ? '10' : '5', pwht: i === 2,
       noBo: i <= 3, noBoReg: i <= 3 ? `NB-2026-${100 + i}` : '', noBoSerial: i <= 3 ? `SN-${4100 + i}` : '', ...(i <= 3 ? { testSystemId: 'test-cw' } : {}), ...(i === 1 ? { itpNo2: 'ITP-NDT-01' } : {}),
       ...(i === 3 ? { paintState: 'Done', tracingState: 'N/A', insulationState: 'N/A' } : i === 1 ? { paintState: 'Done' } : {}) });
+    // A field-only drawing: no shop welds yet, so its Prefab flag in the isometrics list is a dash.
+    add('isometrics', 'iso-10', { isoNo: 'STX-SK-010', projectId: 'project-skid', revNo: '0', irn: 'IRN-110', pipingClass: 'SS300', material: 'A312 TP316L', itpNo: 'ITP-04', priority: 'Prio 3', date: '2026-09-25', assetTag: 'AT-SK-10', drawingNo: 'DWG-2410', testPressure: '24 bar', testMedium: 'Water', ped: 'Cat I / A', xRay: '5', paintSpec: 'PS-02', prefab_materials: true });
     const mats = [['CS-P060', 'Seamless carbon steel pipe', 'Pipe', '2', 'SCH 40', 'M', 28.4], ['CS-E090', '90° long radius elbow', 'Elbow', '2', 'SCH 40', 'EA', 18.6], ['CS-F150', 'Weld neck flange, class 150', 'Flange', '2', '150', 'EA', 42.5], ['SS-P114', 'Stainless steel pipe 316L', 'Pipe', '4', 'SCH 10S', 'M', 82], ['SS-T114', 'Equal tee, stainless steel 316L', 'Tee', '4', 'SCH 10S', 'EA', 118], ['CS-V060', 'Gate valve, flanged ends', 'Valve', '2', '150', 'EA', 156], ['SS-E114', '90° elbow, stainless steel 316L', 'Elbow', '4', 'SCH 10S', 'EA', 56], ['CS-B020', 'Stud bolt and two hex nuts', 'Bolt', '3/4', 'B7 / 2H', 'SET', 6.8]];
     mats.forEach(([materialNo, description, materialGroup, dia, lbs, uom, price], i) => add('materials', `material-${i + 1}`, { materialNo, description, materialGroup, dia, lbs, uom, price, articleNo: `ART-${1001 + i}`, typeId: i >= 3 && i <= 4 ? 'material-type-1' : 'material-type-0' }));
     for (let i = 1; i <= 9; i++) {
@@ -63,7 +65,7 @@ export function seed(store: Store) {
     add('pwht_locations', 'pwht-shop', { name: 'Heat treatment bay' });
     add('qa_engineers', 'qa-1', { name: 'Morgan Lee', companyId: 'company-stelux', email: 'quality@example.com' });
     ['Isometric drawing', 'ITP', 'NDT report', 'Material certificate', 'Signed release'].forEach((name, i) => add('attachment_names', `attachment-type-${i}`, { name }));
-    for (let i = 1; i <= 30; i++) add('welds', `weld-${i}`, { weldNo: `W${String(i).padStart(3, '0')}`, isoId: `iso-${(i - 1) % 9 + 1}`, spoolId: `spool-${(i - 1) % 9 + 1}`, typeId: `weld-type-${i % 4}`, welder1Id: `welder-${i % 4 + 1}`, wpsId: 'wps-1', diameterId: i % 2 ? 'diameter-6' : 'diameter-9', lengthMode: 'Diameter', date: `2026-10-${String(Math.min(21, i)).padStart(2, '0')}`, datefit: '2026-10-01', ndoReq: true, wire1Id: 'wire-1', chargeNo1: 'H-1042', chargeNo2: i === 29 ? '' : 'H-1042', coating1Id: 'coating-none' });
+    for (let i = 1; i <= 30; i++) add('welds', `weld-${i}`, { weldNo: `W${String(i).padStart(3, '0')}`, isoId: `iso-${(i - 1) % 9 + 1}`, spoolId: `spool-${(i - 1) % 9 + 1}`, typeId: `weld-type-${i % 4}`, welder1Id: `welder-${i % 4 + 1}`, wpsId: 'wps-1', diameterId: i % 2 ? 'diameter-6' : 'diameter-9', lengthMode: 'Diameter', date: `2026-10-${String(Math.min(21, i)).padStart(2, '0')}`, datefit: '2026-10-01', ndoReq: true, pwhtReq: i === 2 || i === 11, wire1Id: 'wire-1', chargeNo1: 'H-1042', chargeNo2: i === 29 ? '' : 'H-1042', coating1Id: 'coating-none' });
     for (let i = 1; i <= 18; i++) {
       const result = action('inspection-request', { weldIds: [`weld-${i}`], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-19' });
       const request = 'records' in result ? result.records?.[0] : undefined;
@@ -75,10 +77,18 @@ export function seed(store: Store) {
       const request = 'records' in result ? result.records?.[0] : undefined;
       if (request) action('inspection-result', { requestId: request.id, reportNo: `RT-2026-${String(i).padStart(3, '0')}`, result: 'Accepted', round: 'Initial', date: '2026-10-20' });
     }
+    add('welds', 'weld-31', { weldNo: 'W031', isoId: 'iso-10', typeId: 'weld-type-0', wpsId: 'wps-1', diameterId: 'diameter-9', lengthMode: 'Diameter' });
+    // The two welds of iso-2 that need post-weld heat treatment are treated and accepted.
+    for (const i of [2, 11]) {
+      const result = action('inspection-request', { weldIds: [`weld-${i}`], type: 'PWHT', pwhtProcessId: 'pwht-1', pwhtLocationId: 'pwht-shop', date: '2026-10-19' });
+      const request = 'records' in result ? result.records?.[0] : undefined;
+      if (request) action('inspection-result', { requestId: request.id, reportNo: `PWHT-2026-${String(i).padStart(3, '0')}`, result: 'Accepted', round: 'Initial', date: '2026-10-21' });
+    }
     action('repair', { weldId: 'weld-5', date: '2026-10-21', note: 'Sample repair record — repeat examination pending.' });
     add('punchlists', 'punch-1', { name: 'Confirm support tag on cooling line', isoId: 'iso-2', category: 'B', status: 'Open', assignedTo: 'Site team', dueDate: '2026-10-27' });
     action('release', { isoIds: ['iso-9'], type: 'Prefab', reportNo: 'PFR-001', engineerId: 'qa-1', date: '2026-10-20' });
     action('release', { isoIds: ['iso-3'], type: 'Prefab', reportNo: 'PFR-002', engineerId: 'qa-1', date: '2026-10-22' });
+    action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });

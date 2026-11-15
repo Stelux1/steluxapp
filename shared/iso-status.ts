@@ -96,7 +96,7 @@ const hasWelder = (weld: Row) => [1, 2, 3, 4].some(side => text(weld[`welder${si
 const NDT_TYPES = ['NDT', 'NDT PRE'];
 
 /** Newest first, the order the weld register (LISL) uses. */
-const newest = (a: Row, b: Row) => text(b.date).localeCompare(text(a.date)) || text(b._createdAt).localeCompare(text(a._createdAt)) || text(b.id).localeCompare(text(a.id));
+export const newest = (a: Row, b: Row) => text(b.date).localeCompare(text(a.date)) || text(b._createdAt).localeCompare(text(a._createdAt)) || text(b.id).localeCompare(text(a.id));
 const resultsOf = (results: Row[], weldId: string, types: string[]) => live(results).filter(row => row.weldId === weldId && types.includes(text(row.type))).sort(newest);
 const isoWelds = (input: IsoStatusInput) => live(input.welds).filter(weld => weld.isoId === input.iso.id);
 const locationOf = (weld: Row, weldTypes: Row[]): QuantityPhase | undefined => {

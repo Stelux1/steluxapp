@@ -1,11 +1,12 @@
 import { useState, lazy, Suspense, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, FileStack, FolderKanban, MapPin, Pencil, Plus, ScanLine, Upload, FileText, Download, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronLeft, ChevronRight, FileStack, FolderKanban, MapPin, Pencil, Plus, ScanLine, Upload, FileText, Download, Loader2 } from 'lucide-react';
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useWorkspace, activeRows } from './context.tsx';
-import { Badge, EmptyState, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
+import { Badge, Dropdown, EmptyState, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { RecordEditor } from './dialogs.tsx';
-import { TablePage } from './records.tsx';
+import { RecordHistory, TablePage } from './records.tsx';
+import { PhaseDialog } from './iso-actions.tsx';
 import { DataLisl } from './data-lisl.tsx';
 import { wdiProgress } from '../shared/wdi.ts';
 import { WdiProgress } from './wdi-progress.tsx';
@@ -97,8 +98,8 @@ function DrawingUpload({ iso, kind, onClose }: { iso: Row; kind: string; onClose
 
 export function IsometricWorkspace() {
   const { isoId = '' } = useParams();
-  const { rows, canRecord, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
-  const navigate = useNavigate();
+  const { rows, canRecord, canRun, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
+  const navigate = useNavigate(); const [phasing, setPhasing] = useState(false), [auditing, setAuditing] = useState(false);
   const [editor, setEditor] = useState(''), [editingSpool, setEditingSpool] = useState<Row | undefined>(), [selectedTab, setTab] = useState(pilot?.pilot.key === 'mto' ? 'mto' : 'welds'), [upload, setUpload] = useState('');
   const [archiving, setArchiving] = useState(false);
   const iso = rows.isometrics?.find(row => row.id === isoId && !row._archived);
@@ -114,7 +115,7 @@ export function IsometricWorkspace() {
   const otherPilot = pilot?.allowed.find(other => other.key !== pilot.pilot.key);
   return <div className="page workflow-page iso-workspace">
     <div className="iso-workspace-navigation"><Link className="text-link" to={`/workspace/projects/${iso.projectId}/isometrics`}><ArrowLeft size={15}/>{String(project?.internnumber || 'Subproject')} · Isometrics</Link><div><label className="sr-only" htmlFor="workspace-isometric">Switch isometric</label><select id="workspace-isometric" value={isoId} onChange={event => navigate(`/workspace/isometrics/${event.target.value}`)}>{isos.map(row => <option key={row.id} value={row.id}>{String(row.isoNo)}</option>)}</select><button className="icon-btn" aria-label="Previous isometric" disabled={index <= 0} onClick={() => navigate(`/workspace/isometrics/${isos[index - 1].id}`)}><ChevronLeft size={18}/></button><button className="icon-btn" aria-label="Next isometric" disabled={index + 1 >= isos.length} onClick={() => navigate(`/workspace/isometrics/${isos[index + 1].id}`)}><ChevronRight size={18}/></button></div></div>
-    <div className="page-heading"><div><div className="eyebrow">ISOMETRIC WORKSPACE</div><h1>{String(iso.isoNo)}</h1><p>{String(project?.description || project?.internnumber || '')}{iso.area || iso.zone ? ` · ${iso.area || iso.zone}` : ''}</p></div><div className="heading-actions">{otherPilot && <button className="btn pilot-switch-button" style={{ '--pilot-color': otherPilot.color } as React.CSSProperties} onClick={() => pilot!.openPilot(otherPilot.key, `/workspace/isometrics/${isoId}`)}>Open in {otherPilot.title}<ArrowRight size={15}/></button>}<ArchiveRecordButton resourceKey="isometrics" record={iso} onArchive={() => setArchiving(true)}/>{canRecord('isometrics', 'edit', iso) && <button className="btn" onClick={() => setEditor('isometrics')}><Pencil size={15}/>Edit isometric</button>}</div></div>
+    <div className="page-heading"><div><div className="eyebrow">ISOMETRIC WORKSPACE</div><h1>{String(iso.isoNo)}</h1><p>{String(project?.description || project?.internnumber || '')}{iso.area || iso.zone ? ` · ${iso.area || iso.zone}` : ''}</p></div><div className="heading-actions">{otherPilot && <button className="btn pilot-switch-button" style={{ '--pilot-color': otherPilot.color } as React.CSSProperties} onClick={() => pilot!.openPilot(otherPilot.key, `/workspace/isometrics/${isoId}`)}>Open in {otherPilot.title}<ArrowRight size={15}/></button>}{pilot && <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}><button disabled={!tabs.some(([key]) => key === 'documents')} onClick={() => { setTab('documents'); requestAnimationFrame(() => document.getElementById(`iso-tab-documents`)?.scrollIntoView({ block: 'nearest' })); }}>Attachments</button><button onClick={() => setAuditing(true)}>Audit trail</button><button disabled={!canRun('phases', { isoIds: [iso.id] })} onClick={() => setPhasing(true)}>Set phase</button></Dropdown>}<ArchiveRecordButton resourceKey="isometrics" record={iso} onArchive={() => setArchiving(true)}/>{canRecord('isometrics', 'edit', iso) && <button className="btn" onClick={() => setEditor('isometrics')}><Pencil size={15}/>Edit isometric</button>}</div></div>
     <IsometricHeader iso={iso} project={project} documents={documents} onUpload={setUpload} onOpenWeld={weldId => { if (tabs.some(([key]) => key === 'welds')) setTab('welds'); openRecord('welds', weldId); }}/>
     {canRecord('welds') && canRecord('diameters') && <details className="panel iso-wdi-panel"><summary>Weld inch progress (WDI)<span>{wdiProgress(welds, rows.diameters || []).percent}% completed</span></summary><WdiProgress welds={welds} diameters={rows.diameters || []}/></details>}
     <div className="iso-workspace-tabs" role="tablist" aria-label={pilot ? `${pilot.pilot.title} isometric records` : 'Isometric records'}>{tabs.map(([key, title, count]) => <button key={String(key)} id={`iso-tab-${key}`} role="tab" aria-selected={tab === key} aria-controls={`iso-panel-${isoId}`} tabIndex={tab === key ? 0 : -1} onKeyDown={event => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') { event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('button')); const next = buttons[(buttons.indexOf(event.currentTarget) + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length]; next.click(); next.focus(); } }} onClick={event => { setTab(String(key)); event.currentTarget.focus(); }}>{String(title)}<span>{String(count)}</span></button>)}</div>
@@ -127,5 +128,7 @@ export function IsometricWorkspace() {
     {editor && <RecordEditor resourceKey={editor} record={editor === 'isometrics' ? iso : editingSpool} defaults={{ isoId }} onClose={() => setEditor('')}/>}
     {archiving && <ArchiveRecordDialog resourceKey="isometrics" record={iso} onClose={() => setArchiving(false)} onSaved={() => navigate(`/workspace/projects/${iso.projectId}/isometrics`)}/>}
     {upload && <DrawingUpload iso={iso} kind={upload} onClose={() => setUpload('')}/>}
+    {phasing && <PhaseDialog records={[iso]} onClose={() => setPhasing(false)}/>}
+    {auditing && <Modal title="Audit trail" subtitle={String(iso.isoNo)} onClose={() => setAuditing(false)}><div className="modal-body"><RecordHistory resource="isometrics" id={iso.id}/></div><div className="modal-footer"><button className="btn" onClick={() => setAuditing(false)}>Close</button></div></Modal>}
   </div>;
 }

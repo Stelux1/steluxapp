@@ -1,5 +1,7 @@
 import { ACTIONS } from '../shared/actions.ts';
-import { phaseFields } from '../shared/resources.ts';
+import { phaseFields, RESOURCE_MAP } from '../shared/resources.ts';
+import { availableWps } from '../shared/welding.ts';
+import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { Store, AppError, positive, qty, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
@@ -244,6 +246,67 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       if (!Object.keys(phases).length) throw new AppError(422, 'Choose at least one phase to change.');
       for (const id of ids(data.isoIds, 'isometric')) patch('isometrics', ensure('isometrics', id), phases);
       return { resource: 'isometrics' };
+    }
+    if (key === 'copy-isometrics') {
+      const flag = (name: string) => { if (data[name] !== undefined && typeof data[name] !== 'boolean') throw new AppError(422, 'Choose whether to copy welds, materials and calculations.'); return data[name] === true; };
+      const copyWelds = flag('copyWelds'), copyMaterials = flag('copyMaterials'), copyCalculations = flag('copyCalculations');
+      if (copyCalculations && !copyMaterials) throw new AppError(422, 'Calculations refer to materials: tick Copy materials as well, or leave Copy calculations unticked.');
+      const target = ensure('projects', data.projectId);
+      const sources = ids(data.isoIds, 'isometric').map(id => ensure('isometrics', id));
+      // Copy within one main project: every source isometric's project belongs to the same project site as the target.
+      for (const source of sources) if (ensure('projects', source.projectId).siteId !== target.siteId) throw new AppError(422, 'Isometrics can only be copied to another subproject of the same main project.');
+      // All or nothing: an ISO number that exists in the target (or is chosen twice) stops the copy before anything is written.
+      const taken = new Set(store.list('isometrics').filter(row => row.projectId === target.id).map(row => String(row.isoNo).trim().toLowerCase()));
+      const clashes: string[] = [];
+      for (const source of sources) { const number = String(source.isoNo).trim(); if (taken.has(number.toLowerCase())) clashes.push(number); taken.add(number.toLowerCase()); }
+      if (clashes.length) throw new AppError(422, `ISO number${clashes.length === 1 ? '' : 's'} ${clashes.join(', ')} already exist${clashes.length === 1 ? 's' : ''} in project ${target.internnumber}. Nothing was copied.`);
+      // What a copy carries: descriptive and technical fields, but not the project-bound assignments, the progress or the phase flags.
+      const leftOut = new Set(['projectId', 'testSystemId', 'fieldPackageId']);
+      const carried = RESOURCE_MAP.isometrics.fields.filter(field => !leftOut.has(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
+      const wpsRows = Object.fromEntries(['projects', 'wps_projects', 'wps_sites'].map(name => [name, store.list(name)]));
+      const copies: Row[] = [];
+      for (const source of sources) {
+        const copy = add('isometrics', { ...Object.fromEntries(carried.map(name => [name, source[name]])), projectId: target.id });
+        const counts: string[] = [];
+        // Spools are created on the copy when a copied weld or cut-list line names one.
+        const spools = new Map<string, string>();
+        const spoolFor = (spoolId: unknown) => {
+          if (!spoolId) return '';
+          const original = ensure('spools', spoolId);
+          if (!spools.has(original.id)) spools.set(original.id, add('spools', { name: original.name, isoId: copy.id, diameter: original.diameter ?? '', paintSpec: original.paintSpec ?? '', chemicalClean: original.chemicalClean ?? '', pwht: original.pwht === true }).id);
+          return spools.get(original.id)!;
+        };
+        if (copyWelds) {
+          const welds = store.list('welds').filter(weld => weld.isoId === source.id);
+          for (const weld of welds) {
+            const wps = weld.wpsId ? store.get('wps', weld.wpsId, true) : undefined;
+            add('welds', { isoId: copy.id, weldNo: weld.weldNo, typeId: weld.typeId || '', spoolId: spoolFor(weld.spoolId), wpsId: wps && availableWps(wpsRows, wps, target.id) ? wps.id : '', lengthMode: weld.lengthMode, diameterId: weld.diameterId || '', dialen: weld.dialen ?? null, ndtpercent: weld.ndtpercent ?? null, jointType: weld.jointType ?? '', ndoReqPre: weld.ndoReqPre === true, ndoReq: weld.ndoReq === true, pwhtReqPre: weld.pwhtReqPre === true, pwhtReq: weld.pwhtReq === true });
+          }
+          counts.push(`${welds.length} weld${welds.length === 1 ? '' : 's'}`);
+        }
+        const requirements = new Map<string, string>();
+        if (copyMaterials) {
+          for (const requirement of store.list('iso_materials').filter(row => row.isoId === source.id && Number(row.quantity) > 0)) {
+            const custom = requirement.customMaterial === true && !requirement.materialId;
+            const created = add('iso_materials', { isoId: copy.id, materialId: requirement.materialId || '', quantity: requirement.quantity, phaseId: requirement.phaseId || '', customMaterial: custom, ...(custom ? Object.fromEntries(MATERIAL_FIELDS.map(name => [name, requirement[name] ?? ''])) : {}) });
+            requirements.set(requirement.id, created.id);
+          }
+          counts.push(`${requirements.size} material${requirements.size === 1 ? '' : 's'}`);
+        }
+        if (copyCalculations) {
+          let lines = 0;
+          for (const line of store.list('calculation_lines').filter(row => row.isoId === source.id && requirements.has(String(row.requirementId)))) {
+            add('calculation_lines', { name: line.name, isoId: copy.id, requirementId: requirements.get(String(line.requirementId)), normId: line.normId, quantity: line.quantity ?? null, description: line.description ?? '' }); lines++;
+          }
+          for (const line of store.list('cut_list').filter(row => row.isoId === source.id && requirements.has(String(row.requirementId)))) {
+            add('cut_list', { name: line.name, isoId: copy.id, requirementId: requirements.get(String(line.requirementId)), spoolId: spoolFor(line.spoolId), quantity: line.quantity, lengthMm: line.lengthMm, description: line.description ?? '' }); lines++;
+          }
+          counts.push(`${lines} calculation line${lines === 1 ? '' : 's'}`);
+        }
+        store.audit('isometrics', copy.id, 'copied', `Copied from ${source.isoNo} (${store.display('projects', ensure('projects', source.projectId))})${counts.length ? ' with ' + counts.join(', ') : ''}`, actor);
+        copies.push(store.get('isometrics', copy.id));
+      }
+      return { resource: 'isometrics', records: copies };
     }
     if (key === 'revision') {
       const iso = ensure('isometrics', data.isoId); const type = str(data.type); if (!['ISO', 'ITP', 'ITP 2'].includes(type)) throw new AppError(422, 'Choose a document type.');

@@ -18,6 +18,7 @@ import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkA
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { releaseAccess } from './release-access.ts';
+import { ISO_LIST_COLUMNS, flagText, isoFlags, isoListContext } from '../shared/iso-list.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { reportWorkbook } from './report-export.ts';
 
@@ -155,13 +156,25 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password'))) throw new AppError(422, 'An update field is invalid.');
     const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdministrator(store); return result; }); res.json({ count: records.length });
   });
+  /** Flag columns of the isometrics list for an export: derived from the welds, results and releases the account may read. */
+  const isoFlagExport = (req: Request, isos: Row[]) => {
+    const user = (req as AuthRequest).user, planning = Boolean(availability?.features.includes('project-planning'));
+    const optional = (key: string) => canResource(user, key, 'show') ? readableRows(req, key) : null;
+    const context = isoListContext({ welds: optional('welds'), weldTypes: optional('weld_types'), results: optional('inspection_results'), releases: optional('releases'), planning });
+    const columns = ISO_LIST_COLUMNS.filter(column => column.flag && (column.flag !== 'e' || planning)).map(column => ({ name: column.key, label: column.label, type: 'text' as const }));
+    const flags = new Map(isos.map(iso => [iso.id, isoFlags(iso, context)]));
+    return { columns, value: (row: Row, name: string) => { const column = ISO_LIST_COLUMNS.find(item => item.key === name && item.flag); return column ? flagText(flags.get(row.id)![column.flag!]) : undefined; } };
+  };
   const exportRows = (req: Request) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'export');
     const selected = typeof req.query.ids === 'string' ? new Set(req.query.ids.split(',')) : null;
     const rows = readableRows(req, resource.key, req.query.archived === 'true').filter(r => (!selected || selected.has(r.id))&&canResource((req as AuthRequest).user,resource.key,'export',r));
     const fields = [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].filter(f => access.field(resource.key, f.name));
+    // The isometrics list of the hosted profile also exports its flag columns as Yes / No / n/a (n/a: not applicable or not readable by this account).
+    const flagExport = resource.key === 'isometrics' && availability?.features.includes('pilots') ? isoFlagExport(req, rows) : undefined;
+    if (flagExport) fields.push(...flagExport.columns);
     const visibleLabel=(target:string,id:unknown)=>{try{const record=store.get(target,id,true);if(!access.visible((req as AuthRequest).user,target,record))return 'Unavailable record';return store.display(target,record);}catch{return 'Archived record';}};
-    const output = rows.map(row => Object.fromEntries(fields.map(f => {const relation=(RELATIONS[resource.key]||[]).find(r=>r.field===f.name);if(relation)return [f.label,JSON.stringify(store.list(relation.resource).filter(l=>l[relation.ownerKey]===row.id).map(l=>visibleLabel(relation.target,l[relation.targetKey])))];let value = row[f.name]; if (f.ref && value)value=visibleLabel(f.ref,value);if (typeof value === 'boolean') value = value ? 'Yes' : 'No'; return [f.label, value ?? '']; })));
+    const output = rows.map(row => Object.fromEntries(fields.map(f => {const flagValue=flagExport?.value(row,f.name);if(flagValue!==undefined)return [f.label,flagValue];const relation=(RELATIONS[resource.key]||[]).find(r=>r.field===f.name);if(relation)return [f.label,JSON.stringify(store.list(relation.resource).filter(l=>l[relation.ownerKey]===row.id).map(l=>visibleLabel(relation.target,l[relation.targetKey])))];let value = row[f.name]; if (f.ref && value)value=visibleLabel(f.ref,value);if (typeof value === 'boolean') value = value ? 'Yes' : 'No'; return [f.label, value ?? '']; })));
     return { resource, output, fields };
   };
   app.get('/api/export/:resource', async (req, res) => {

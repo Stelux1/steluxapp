@@ -117,6 +117,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       revisions: fields('isoId type revNo previousRev date comment'),
     });
     availability.actions.revision = fields('isoId type revNo date comment');
+    // Set phase (bulk and single) and Copy isometrics: only the flags the user changes are sent.
+    availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
+    availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
     availability.features.push('project-planning', 'pilots');
   }
