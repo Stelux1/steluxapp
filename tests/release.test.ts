@@ -209,3 +209,19 @@ test('account permissions still restrict writes and report exports within the de
   const data = await (await f.request('/api/bootstrap')).json() as Bootstrap;
   assert.equal(data.rows.inspection_results, undefined);
 });
+
+test('profiles without pilots keep their features, un-prefixed routes and module-level catalog permissions', async t => {
+  assert.equal(availabilityFor('full'), undefined);
+  assert.deepEqual(availabilityFor('welding-demo')!.features, ['documents', 'history', 'table-export', 'table-print']);
+  assert.deepEqual(availabilityFor('access-prototype')!.features, ['documents', 'history', 'table-export', 'table-print', 'lisl', 'project-bulk-edit', 'local-access']);
+  assert.deepEqual(availabilityFor('welding-workspace')!.features, ['documents', 'history', 'table-export', 'table-print', 'lisl', 'project-bulk-edit', 'project-planning', 'pilots']);
+  const f = await fixture(t); await f.setup();
+  for (const route of ['/weld', '/mto', '/weld/welding/welds', '/mto/workspace/projects']) assert.equal((await f.request(route)).status, 404, route);
+  assert.equal((await f.request('/welding/welds')).status, 200);
+  const profile = f.s.create('profiles', { name: 'Weld only (unchanged)', generalPermission: 'Read & write', materialsPermission: 'No access', weldingPermission: 'Read & write' });
+  assert.equal((await f.request('/api/records/users', 'POST', { name: 'Weld only', email: 'weld-only@example.test', profileId: profile.id, active: true, password }, true)).status, 201);
+  assert.equal((await f.request('/api/auth/login', 'POST', { email: 'weld-only@example.test', password }, true)).status, 200);
+  for (const key of ['certifications', 'material_parts', 'material_types', 'suppliers', 'orders', 'stock']) assert.equal((await f.request(`/api/records/${key}`, 'GET', undefined, true)).status, 403, key);
+  assert.equal((await f.request('/api/records/spools', 'GET', undefined, true)).status, 200);
+  assert.equal((await f.request('/api/records/welds', 'GET', undefined, true)).status, 200);
+});

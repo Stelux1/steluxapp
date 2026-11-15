@@ -28,11 +28,19 @@ export function parsePermissionRules(raw:unknown):PermissionRules{
  for(const [key,verbs] of Object.entries(input)){const area=areas.get(key);if(!area||!Array.isArray(verbs)||verbs.some(v=>typeof v!=='string'||!area.verbs.includes(v as PermissionVerb)))throw new Error('A permission area or action is invalid.');output[key]=[...new Set(verbs)] as PermissionVerb[];}
  return Object.fromEntries(Object.entries(output).sort(([a],[b])=>a.localeCompare(b)));
 }
+/** Catalog areas both pilots work with: material parts, types of material, spools, material suppliers, certifications. */
+export const SHARED_PILOT_SCOPES=['7','8','10','12','18'];
+/** Module-level access to an area. Where the profile delivers pilots, a shared catalog takes the higher of its own module, materials and welding. */
+export function scopeLevel(user:User,key:string):number{
+ const area=areas.get(key);if(!area)return 0;
+ const own=user.permissions[area.module];
+ return user.availability?.features.includes('pilots')&&SHARED_PILOT_SCOPES.includes(key)?Math.max(own,user.permissions.materials,user.permissions.welding):own;
+}
 export function canScope(user:User,key:string,verb:PermissionVerb='show'){
  const area=areas.get(key);if(!area)return false;
  if(user.capabilities)return Boolean(user.capabilities[key]?.includes(verb));
  const level=['show','export','print'].includes(verb)?1:area.module==='settings'?3:2;
- return user.permissions[area.module]>=level;
+ return scopeLevel(user,key)>=level;
 }
 /** Missing source columns are not separate grants; local controls inherit the nearest source operation. */
 export function scopeOperation(key:string,verb:PermissionVerb):PermissionVerb{

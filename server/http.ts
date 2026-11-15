@@ -16,7 +16,7 @@ import { canResource,canReport,REPORT_RESOURCES } from '../shared/permissions.ts
 import type { Row, Module } from '../shared/types.ts';
 import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, publicUser, sessionCookie, type AuthRequest } from './auth.ts';
 
-import { availabilityFor, pageAvailable, projectReport, type ReleaseProfile } from '../shared/release.ts';
+import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { releaseAccess } from './release-access.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { reportWorkbook } from './report-export.ts';
@@ -247,7 +247,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     });
     app.use(express.static(dist, { dotfiles: 'deny' }));
     app.get('/{*path}', (req, res) => {
-      if (!pageAvailable(availability, req.path, RESOURCES) || (availability && req.path === '/welding/reports' && req.query.report && !Object.hasOwn(availability.reports,String(req.query.report)))) res.status(404);
+      if (!pageAvailable(availability, req.path, RESOURCES) || (availability && pagePath(availability, req.path) === '/welding/reports' && req.query.report && !Object.hasOwn(availability.reports,String(req.query.report)))) res.status(404);
       res.sendFile(join(dist, 'index.html'));
     });
   }

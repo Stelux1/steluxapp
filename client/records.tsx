@@ -72,7 +72,7 @@ export function TablePage({ resourceKey, scopeProjectId = '' }: {resourceKey: st
   const creationDefaults = { ...(projectScopeEnabled && resourceKey === 'projects' && siteId ? { siteId } : {}), ...(scopeProjectId ? { projectId: scopeProjectId } : {}) };
   const filterCount = Object.entries(filters).filter(([key, value]) => Boolean(value) && !(scopeProjectId && key === '_projectId')).length;
   const csvUrl = (format: string) => `/api/export/${resourceKey}?format=${format}&archived=true&ids=${(selectedRows.length ? selectedRows : filtered).map(r => r.id).join(',') || '__none__'}`;
-  if (!can(def.module)) return <EmptyState title="This area is restricted" description="Your permission profile does not include this module."/>;
+  if (!can(def.module) && !canRecord(def.key)) return <EmptyState title="This area is restricted" description="Your permission profile does not include this module."/>;
   const toggleSort = (field: string) => setSort(s => ({ field, direction: s.field === field ? -s.direction : 1 }));
   const updateFilter = (key: string, value: unknown) => { if (scopeProjectId && key === '_projectId') return; setFilters(f => ({ ...f, [key]: value })); setPage(0); setSelected([]); };
   if(!canRecord(resourceKey))return <EmptyState title="This area is restricted" description="Your profile does not include these records."/>;

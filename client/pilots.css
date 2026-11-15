@@ -1,0 +1,45 @@
+/* Weld Pilot / MTO Pilot: application selector, sidebar pilot block and no-access state. */
+.pilot-select-page { min-height: 100vh; background: var(--surface); display: flex; flex-direction: column; }
+.pilot-select-top { background: var(--navy); color: var(--on-navy); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 32px; flex-wrap: wrap; }
+.pilot-select-user { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.pilot-select-user > span { display: flex; flex-direction: column; min-width: 0; text-align: right; }
+.pilot-select-user strong { font-size: 13px; color: #fff; }
+.pilot-select-user .btn { color: var(--ink); }
+.pilot-select-user small { font-size: 12px; color: var(--nav-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pilot-select-main { width: 100%; max-width: 900px; margin: 0 auto; padding: 56px 24px; }
+.pilot-select-main > .eyebrow { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+.pilot-select-main > h1 { font-size: clamp(26px, 4vw, 34px); line-height: 1.2; color: var(--ink); margin: 0 0 10px; }
+.pilot-select-main > p { color: var(--muted); font-size: 15px; margin: 0 0 32px; max-width: 620px; }
+.pilot-tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.pilot-tile { --pilot-color: var(--primary); display: flex; align-items: center; gap: 18px; padding: 26px 24px; min-height: 120px; background: #fff; border: 1px solid var(--line); border-top: 4px solid var(--pilot-color); border-radius: 10px; color: var(--ink); text-decoration: none; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.pilot-tile:hover { border-color: var(--border-strong); border-top-color: var(--pilot-color); box-shadow: 0 6px 18px #061b4214; transform: translateY(-1px); }
+.pilot-tile:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.pilot-tile-icon { display: grid; place-items: center; width: 52px; height: 52px; flex-shrink: 0; border-radius: 12px; background: color-mix(in srgb, var(--pilot-color) 14%, #fff); color: var(--pilot-color); }
+.pilot-tile-text { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.pilot-tile-text strong { font-size: 18px; }
+.pilot-tile-text small { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.pilot-tile > svg:last-child { color: var(--muted); flex-shrink: 0; }
+.pilot-select-empty { padding: 8px; }
+
+.pilot-badge { display: flex; align-items: center; gap: 9px; margin: 0 18px 10px; padding: 9px 10px; border-radius: 6px; background: color-mix(in srgb, var(--module-color) 22%, transparent); border-left: 3px solid var(--module-color); color: var(--on-navy); }
+.pilot-badge strong { font-size: 13px; flex: 1; min-width: 0; }
+.pilot-badge-icon { display: grid; place-items: center; color: var(--module-color); }
+.pilot-badge-switch { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 9px; border-radius: 5px; border: 1px solid #ffffff2e; background: transparent; color: var(--on-navy); font: inherit; font-size: 12px; cursor: pointer; }
+.pilot-badge-switch:hover { background: var(--navy-raised); }
+.pilot-badge-switch:focus-visible, .pilot-nav-button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.pilot-nav-group summary { text-transform: none; }
+.pilot-nav-button { width: calc(100% - 17px); text-align: left; background: none; border-top: 0; border-right: 0; border-bottom: 0; font: inherit; cursor: pointer; }
+.pilot-nav-note { padding: 10px 12px; font-size: 12px; color: var(--nav-muted); line-height: 1.5; }
+
+.pilot-no-access { display: flex; flex-direction: column; align-items: center; padding-top: 48px; }
+.pilot-no-access-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: #fdecec; color: #b42318; }
+.pilot-no-access .heading-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.pilot-switch-button { border-color: var(--pilot-color, var(--line)); }
+
+@media (max-width: 640px) {
+  .pilot-select-top { padding: 14px 16px; }
+  .pilot-select-user > span { display: none; }
+  .pilot-select-main { padding: 32px 16px; }
+  .pilot-tiles { grid-template-columns: 1fr; gap: 14px; }
+  .pilot-tile { padding: 20px 16px; min-height: 0; }
+}

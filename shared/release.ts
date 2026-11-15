@@ -97,7 +97,7 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       'cut-list': fields('project iso name material spool quantity lengthMm totalMm'),
     });
     availability.navigation.push('iso_materials', 'operation_phases', 'calculation_norms', 'calculation_lines', 'cut_list');
-    availability.features.push('project-planning');
+    availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
   return availability;
@@ -151,8 +151,21 @@ export function projectReport(availability: Availability | undefined, report: Re
   const allowed = availability.reports[report.definition.key] || [];
   return { ...report, columns: report.columns.filter(c => allowed.includes(c.key)), rows: report.rows.map(row => ({ ...row, values: Object.fromEntries(Object.entries(row.values).filter(([key]) => allowed.includes(key))) })) };
 }
+export const PILOT_KEYS = ['weld', 'mto'] as const;
+export type PilotKey = typeof PILOT_KEYS[number];
+/** Split `/weld/...` or `/mto/...` into the pilot and the page path used by the existing route table. */
+export function splitPilotPath(pathname: string): { pilot?: PilotKey; path: string } {
+  const match = /^\/(weld|mto)(?=\/|$)(.*)$/.exec(pathname);
+  return match ? { pilot: match[1] as PilotKey, path: match[2] || '/' } : { path: pathname };
+}
+/** The route-table path of a browser path; the pilot prefix is only recognised where the profile delivers pilots. */
+export const pagePath = (availability: Availability | undefined, pathname: string) => availability?.features.includes('pilots') ? splitPilotPath(pathname).path : pathname;
 export function pageAvailable(availability: Availability | undefined, pathname: string, definitions: Resource[]): boolean {
   if (!availability) return true;
+  if (availability.features.includes('pilots')) { const { pilot, path } = splitPilotPath(pathname); if (pilot) return deliveredPage(availability, path, definitions); }
+  return deliveredPage(availability, pathname, definitions);
+}
+function deliveredPage(availability: Availability, pathname: string, definitions: Resource[]): boolean {
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
