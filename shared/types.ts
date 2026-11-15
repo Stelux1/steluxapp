@@ -8,6 +8,8 @@ export interface Field {
   options?: string[]; min?: number; max?: number; step?:number; default?: Value; section?: string;
   hint?: string; hidden?: boolean; readonly?: boolean; showIf?: [string, Value];
   creatable?:boolean;refCategory?:string;
+  /** Earlier stored values mapped to the option they now stand for (see shared/priority.ts). Never rewritten in bulk. */
+  legacy?: Record<string, string>;
 }
 export interface Resource {
   key: string; title: string; singular: string; module: Module; group: string;

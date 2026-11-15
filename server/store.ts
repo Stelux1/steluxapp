@@ -7,6 +7,7 @@ import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { RELATIONS } from '../shared/welding.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
+import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
@@ -124,12 +125,13 @@ export class Store {
         if (text.length > 20_000) errors[field.name] = `${field.label} is too long.`;
         if (field.type === 'email' && text && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) errors[field.name] = 'Enter a valid email address.';
         if (field.type === 'date' && text) { try { validDate(text, field.label); } catch (e) { errors[field.name] = (e as Error).message; } }
-        if (field.options && text && !field.options.includes(text)) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
+        if (field.options && text && !field.options.includes(text) && !(field.legacy && Object.hasOwn(field.legacy, text))) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
         if(field.ref&&text&&field.creatable){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);value=(found||this.create(field.ref,{name:text,category:field.refCategory},actor)).id;}}
         if (field.ref && value) { try { this.get(field.ref, value); } catch { errors[field.name] = `Choose an active ${field.label.toLowerCase()}.`; } }
       }
       data[field.name] = value as Value;
     }
+    if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);

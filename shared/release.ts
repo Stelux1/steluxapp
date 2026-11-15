@@ -90,7 +90,6 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
   if (profile === 'full') return undefined;
   const availability = structuredClone(profile === 'welding-demo' ? weldingAvailability : prototypeAvailability);
   if (profile === HOSTED_RELEASE_PROFILE) {
-    availability.resources.isometrics.push('itpRevNo', 'itpNo2', 'itp2RevNo');
     availability.resources.materials.push('price');
     Object.assign(availability.resources, {
       iso_materials: fields('isoId materialId customMaterialId phaseId quantity chargeNo customMaterial materialNo description materialGroup articleNo legacyNo dia lbs uom price'),
@@ -108,6 +107,16 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     });
     availability.navigation.push('iso_materials', 'operation_phases', 'calculation_norms', 'calculation_lines', 'cut_list');
     deliverResource(availability, 'sites');
+    // Every isometric field, including the progress inputs and the ITP 2 / revision fields.
+    deliverResource(availability, 'isometrics');
+    // Records the isometric header reads (blockers, revision history) without a menu page of their own:
+    // releases and punch items are delivered here so the blockers are complete; their pages come with later tasks.
+    Object.assign(availability.resources, {
+      releases: fields('number isoId type reportNo date engineerId signatureId note'),
+      punchlists: fields('name isoId category status assignedTo dueDate completedAt description'),
+      revisions: fields('isoId type revNo previousRev date comment'),
+    });
+    availability.actions.revision = fields('isoId type revNo date comment');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
     availability.features.push('project-planning', 'pilots');
   }

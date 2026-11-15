@@ -73,6 +73,15 @@ Notation: `Label [name type]`, `*` = required, `sel{n}` = select with n options.
   - **Technical**: Piping class, PWHT (Yes/No), Test pressure, Test system
   - **Progress**: Shop prefab %, Field %, Site % (each expandable), Save, "Set all to 100%"
   - **Status**: overall %, Quality %, "N open" (blockers list), Prefab ready / not ready, Field completed + Reopen + Create release doc, Pre-Punch (open / finished), Hydrotest, Punch (open / finished), overdue count. MTO shows additionally "Hydrotest completed" and "Material status %" with a refresh button.
+- **Progress card in detail** (expanding each row):
+  - Shop prefab n %: inputs Pipe (m), Supports (pcs), Appendages (pcs). Each shows its own % or "N/A".
+  - Field n %: inputs Pipe (m), Supports (pcs), Appendages (pcs).
+  - Site n %: Paint (shows the isometric's paint spec), Tracing, Insulation — each a three-way choice Open / Done / N/A.
+  - Buttons Save and "Set all to 100%". Toasts: saved; "value exceeds the MTO budget"; "value exceeds issued/picked quantity"; "no MTO budget — add materials with this component code in MTO"; "no issued/picked quantity — progress cannot be entered"; invalid value; saving failed.
+  - The budget for pipe / supports / appendages is the isometric's MTO quantity of materials whose **component code** (Material database column "CC") classifies them as pipe, support or appendage, split by Shop / Field operation phase; the entered value may not exceed the budget nor the issued/picked quantity. With no budget the input is disabled and shows N/A.
+  - Calculation model: every phase has "drivers", each with a weight (from the site's Iso progress settings), a progress 0–1 and an in-scope flag. Shop drivers: welds, NDT, pipe, supports, appendages. Field: pipe, welds, NDT, supports, appendages, punch. Site: hydrotest, finish (paint / tracing / insulation; N/A items drop out). Phase % = Σ(weight × progress) over drivers that are in scope and have weight > 0, divided by the sum of those weights — out-of-scope drivers drop out and the rest renormalise. Isometric % = Σ(phase weight × phase %). Displayed with one decimal.
+  - Welds driver: inch-weighted share of welds that are welded. NDT driver: per the site's NDT measurement (inch-weighted or per weld), accepted results only.
+  - "Quality n %" next to the status = accepted NDT results / (accepted + not accepted); it is not part of progress.
 - Blockers ("What blocks this isometric"), grouped: Release (prefab not released yet) · Welds (weld N is missing required fields) · NDT (NDT on weld N has no result) · Repair (rejection on weld N, repair NR1 still open) · Punch (n open pre-punch).
 - Pilot switch dropdown on the panel header opens the same isometric in another pilot.
 - Options ▾ (both pilots): Attachments, Audit trail, Set phase.

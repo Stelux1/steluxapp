@@ -118,7 +118,7 @@ test('hosted planning CRUD, formula spreadsheets, scoped exports and viewer perm
 test('empty project hierarchy can be archived and restored while active links and stale versions are protected', t => {
   const store = fixture(t), site = store.create('sites', { name: 'Archive test main project' });
   const project = store.create('projects', { internnumber: 'Archive test subproject', siteId: site.id });
-  const iso = store.create('isometrics', { isoNo: 'Archive test ISO', projectId: project.id });
+  const iso = store.create('isometrics', { isoNo: 'Archive-test-ISO', projectId: project.id });
   assert.throws(() => store.archive('sites', site.id, site._version, { id: 'test', name: 'Test' }), /used by active/);
   const archivedIso = store.archive('isometrics', iso.id, iso._version, { id: 'test', name: 'Test' });
   assert.throws(() => store.archive('isometrics', iso.id, iso._version, { id: 'test', name: 'Test' }), /changed/);
