@@ -43,24 +43,39 @@ export function PilotRoot({ user, onLogout, children }: { user: User; onLogout: 
   if (redirect) return <div className="screen-center" role="status"><Wordmark dark/><p>Opening your workspace…</p></div>;
   if (!pilot) return <PilotSelector user={user} pilots={allowed} onOpen={key => go(`/${key}`)} onLogout={onLogout}/>;
   const value: PilotState = { pilot: PILOT_MAP[pilot], allowed, entered: allowed.some(p => p.key === pilot), openPilot: (key, page = '') => go(`/${key}${page}`), selectPilot: () => go('/') };
+  // The server refuses every request of a pilot the account may not enter, so its workspace is not opened at all.
+  if (!value.entered) return <PilotRefused user={user} pilot={value.pilot} onSelect={() => go('/')} onLogout={onLogout}/>;
   return <PilotContext.Provider value={value}><BrowserRouter key={pilot} basename={`/${pilot}`}>{children}</BrowserRouter></PilotContext.Provider>;
 }
 
-export function PilotSelector({ user, pilots, onOpen, onLogout }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void }) {
+/** Header of the selector and the no-access screen: the account and Sign out. */
+function AccountBar({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function logout() { setBusy(true); setError(''); try { await post('/auth/logout', {}); window.history.replaceState(null, '', '/'); onLogout(); } catch (e) { setError((e as Error).message); setBusy(false); } }
+  return <><header className="pilot-select-top"><Wordmark/><div className="pilot-select-user"><span><strong>{user.name}</strong><small>{user.email}</small></span><button type="button" className="btn small" onClick={() => void logout()} disabled={busy}>{busy ? <Loader2 size={14} className="spin"/> : <LogOut size={14}/>}Sign out</button></div></header>{error && <div className="alert error" role="alert">{error}</div>}</>;
+}
+
+/** A pilot URL the account may not enter (not enabled for it, or its profile does not open the pilot). */
+function PilotRefused({ user, pilot, onSelect, onLogout }: { user: User; pilot: Pilot; onSelect: () => void; onLogout: () => void }) {
+  const others = allowedPilots(user).length;
   return <div className="pilot-select-page">
-    <header className="pilot-select-top"><Wordmark/><div className="pilot-select-user"><span><strong>{user.name}</strong><small>{user.email}</small></span><button type="button" className="btn small" onClick={() => void logout()} disabled={busy}>{busy ? <Loader2 size={14} className="spin"/> : <LogOut size={14}/>}Sign out</button></div></header>
+    <AccountBar user={user} onLogout={onLogout}/>
+    <main className="pilot-select-main" id="main-content"><section className="panel pilot-select-empty" role="alert"><span className="pilot-no-access-icon"><ShieldAlert size={22}/></span><EmptyState title={`You do not have access to ${pilot.title}`} description={others ? 'Your account is not enabled for this workspace. Choose a workspace that is open to your account.' : 'Your account is not enabled for any workspace. Ask your administrator to enable Weld Pilot or MTO Pilot for your account.'} action={others ? <button className="btn primary" onClick={onSelect}>Select a workspace</button> : undefined}/></section></main>
+  </div>;
+}
+
+export function PilotSelector({ user, pilots, onOpen, onLogout }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void }) {
+  return <div className="pilot-select-page">
+    <AccountBar user={user} onLogout={onLogout}/>
     <main className="pilot-select-main" id="main-content">
       <div className="eyebrow">BLITZKRIEG · WORKSPACES</div>
       <h1>Select your application workspace</h1>
       <p>Projects, isometrics, spools and certificates are shared. Choose where you want to work now; you can switch at any time.</p>
-      {error && <div className="alert error" role="alert">{error}</div>}
       {pilots.length ? <ul className="pilot-tiles">{pilots.map(pilot => { const Icon = ICONS[pilot.key]; return <li key={pilot.key}>
         <a className="pilot-tile" href={`/${pilot.key}`} style={{ '--pilot-color': pilot.color } as React.CSSProperties} onClick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return; event.preventDefault(); onOpen(pilot.key); }}>
           <span className="pilot-tile-icon"><Icon size={26}/></span><span className="pilot-tile-text"><strong>{pilot.title}</strong><small>{pilot.description}</small></span><ArrowRight size={18}/>
         </a></li>; })}</ul>
-        : <section className="panel pilot-select-empty"><EmptyState title="No workspace is open to your account" description="Your permission profile does not include welding or materials access. Ask your administrator to add Weld Pilot or MTO Pilot to your profile."/></section>}
+        : <section className="panel pilot-select-empty"><EmptyState title="No workspace is open to your account" description="Your account is not enabled for Weld Pilot or MTO Pilot, or its profiles do not include welding or materials access. Ask your administrator to enable a workspace for your account."/></section>}
     </main>
   </div>;
 }

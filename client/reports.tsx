@@ -8,7 +8,7 @@ import { projectReport } from '../shared/release.ts';
 import type { Module, Value } from '../shared/types.ts';
 import { useWorkspace } from './context.tsx';
 import { EmptyState, FieldInput, SearchInput, TableScroll } from './components.tsx';
-import { formatDate, formatNumber } from './api.ts';
+import { formatDate, formatNumber, apiUrl } from './api.ts';
 
 export function Reports({module}:{module:Module}){
   const {rows,user,siteId,canReadReport,openRecord}=useWorkspace();const [params,setParams]=useSearchParams();
@@ -20,7 +20,7 @@ export function Reports({module}:{module:Module}){
   const report=projectReport(user.availability,buildReport(key,rows,{...filters,siteId}));const filtered={...report,rows:report.rows.filter(r=>!query||Object.values(r.values).some(v=>String(v??'').toLowerCase().includes(query.toLowerCase())))};
   const dateReport=!['mto','calculation','cut-list','spool-locations','isometric-status','open-welds'].includes(key);const tool=module==='tools';
   function change(name:string,value:unknown){setFilters(f=>({...f,[name]:String(value),...(name==='projectId'?{isoId:''}:{})}));setPage(0);}
-  const downloadUrl=`/api/reports/${key}?${new URLSearchParams({siteId,...Object.fromEntries(Object.entries(filters).filter(([,v])=>v)),q:query}).toString()}`;
+  const downloadUrl=apiUrl(`/reports/${key}?${new URLSearchParams({siteId,...Object.fromEntries(Object.entries(filters).filter(([,v])=>v)),q:query}).toString()}`);
   const format=(value:Value|undefined,c:ReportColumn)=>value===''||value===undefined||value===null?'—':c.type==='date'?formatDate(value):c.type==='number'?formatNumber(value):String(value);
   const pages=Math.max(1,Math.ceil(filtered.rows.length/50));const current=Math.min(page,pages-1);
   return <div className="page reports-page"><div className="page-heading"><div><div className="eyebrow">BLITZKRIEG REPORTING</div><h1>Reports & documents</h1><p>Review the current records, export a spreadsheet, or print a project document.</p></div><div className="heading-actions">{canReadReport(key,'export')&&<a className="btn" href={downloadUrl}><Download size={16}/>Download CSV</a>}{canReadReport(key,'print')&&<button className="btn primary" onClick={()=>window.print()}><Printer size={16}/>Print / Save PDF</button>}</div></div>

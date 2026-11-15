@@ -82,7 +82,7 @@ test('hosted planning CRUD, formula spreadsheets, scoped exports and viewer perm
   t.after(async () => { await new Promise<void>(resolve => { app.close(() => resolve()); app.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const origin = `http://127.0.0.1:${(app.address() as { port: number }).port}`; let cookie = '';
   async function request(path: string, method = 'GET', body?: unknown) {
-    const response = await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, Cookie: cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const response = await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', 'X-Stelux-Pilot': 'mto', Origin: origin, Cookie: cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   }
   const password = 'Planning-Test-Password';

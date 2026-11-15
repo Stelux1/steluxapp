@@ -53,6 +53,12 @@ The PDF names two formula sheets without supplying their original formulas. The 
 
 Before deploying to an existing hosted database, run the existing backed-up **`npm run db:prepare:welding`** procedure with its explicitly selected database settings. It now also adds the three planning tables and their reference constraints without changing existing records or credentials. The server checks preparation at startup; it never migrates during a request. Evaluation database preparation creates these tables normally. Existing local SQLite workspaces add them when initialized. Account permissions still apply; planning uses the Calculations permission area. The restricted `welding-demo` and Access-import prototype retain their delivered resource scopes.
 
+## Access per pilot (hosted profile)
+
+In the hosted `welding-workspace` profile an account can be enabled for Weld Pilot and MTO Pilot separately, each with its own permission profile (User accounts → Applications). An empty pilot profile means the account's permission profile; accounts saved before this existed are enabled in both pilots with it. The client names the current pilot on every API request (`X-Stelux-Pilot`, or `?pilot=` on download links); the server evaluates the request with that pilot's profile, refuses a pilot the account may not enter, and keeps the other pilot's module out of reach. Without a pilot only sign-out, password change and the selector (identity, pilots and main projects) are answered. Users and profiles are for administrators; every user keeps their own full and short signature on the Signatures page. The other profiles are unchanged.
+
+Before deploying to an existing hosted database, run the backed-up **`npm run db:prepare:welding`** again: it adds the nullable references `users.companyId`, `users.weldProfileId`, `users.mtoProfileId` and `signatures.userId` without changing records. The local sample workspace adds sample profiles and accounts without passwords; an administrator sets a password before they can sign in.
+
 ## Cloud deployment
 
 Use Node.js 24+ or the included Dockerfile. The cloud entry fixes the `welding-workspace` scope, including the connected 87-field LISL register and material certificates, binds to `0.0.0.0`, respects `PORT` (default 3000), and serves both the client and authenticated API from the same origin. The compiled server runs without `tsx` or development dependencies. A static `dist` upload alone cannot run this application.

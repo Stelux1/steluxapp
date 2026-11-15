@@ -63,7 +63,8 @@ test('the pilot prefix is accepted only where the profile delivers pilots and ne
   assert.deepEqual(splitPilotPath('/mto'), { pilot: 'mto', path: '/' });
   assert.deepEqual(splitPilotPath('/weldx/welding/welds'), { path: '/weldx/welding/welds' });
   for (const path of ['/', '/weld', '/mto/', '/weld/dashboard', '/weld/welding/welds', '/weld/welding/lisl', '/mto/materials/planning', '/mto/workspace/isometrics/iso-1', '/mto/materials/certifications', '/weld/materials/planning', '/welding/welds', '/materials/planning']) assert.ok(pageAvailable(hosted, path, RESOURCES), path);
-  for (const path of ['/weld/welding/pqr', '/mto/materials/orders', '/mto/materials/stock', '/weld/tools', '/weld/settings/users', '/weld/weld/welding/welds', '/mto/mto/materials/planning', '/weldx/welding/welds', '/materials/orders']) assert.equal(pageAvailable(hosted, path, RESOURCES), false, path);
+  for (const path of ['/weld/settings/users', '/mto/settings/profiles', '/weld/settings/signatures']) assert.ok(pageAvailable(hosted, path, RESOURCES), path);
+  for (const path of ['/weld/welding/pqr', '/mto/materials/orders', '/mto/materials/stock', '/weld/tools', '/weld/settings/companies', '/weld/weld/welding/welds', '/mto/mto/materials/planning', '/weldx/welding/welds', '/materials/orders']) assert.equal(pageAvailable(hosted, path, RESOURCES), false, path);
   assert.equal(pagePath(hosted, '/weld/welding/reports'), '/welding/reports');
   for (const profile of ['welding-demo', 'access-prototype'] as const) {
     const availability = availabilityFor(profile)!;
@@ -115,10 +116,10 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
   const store = new Store(join(dir, 'test.sqlite')); seed(store);
   writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Workspace</title>');
   const server = createApp(store, dir, { releaseProfile: HOSTED_RELEASE_PROFILE, distDir: dir }).listen(0, '127.0.0.1'); await once(server, 'listening');
-  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '';
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '', pilot = 'weld';
   t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const request = async (path: string, method = 'GET', data?: unknown) => {
-    const response = await fetch(origin + path, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
+    const response = await fetch(origin + path, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', 'X-Stelux-Pilot': pilot, Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   const password = 'Pilot-Test-Password';
@@ -129,7 +130,7 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     const response = await request('/api/auth/login', 'POST', { email: user.email, password }); assert.equal(response.status, 200);
     return (await response.json()).user as User;
   };
-  return { store, request, signIn, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Pilot admin', email: 'pilot-admin@example.test', password })).status, 201) };
+  return { store, request, signIn, usePilot: (key: string) => { pilot = key; }, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Pilot admin', email: 'pilot-admin@example.test', password })).status, 201) };
 }
 
 test('hosted pages are served under both prefixes and undelivered pages stay 404', async t => {
@@ -158,6 +159,8 @@ test('an MTO-only account sees shared catalogs through the API but stays out of 
   const f = await hostedFixture(t); await f.setup();
   const user = await f.signIn('MTO only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['mto']);
+  assert.equal((await f.request('/api/records/certifications')).status, 403, 'not enabled for Weld Pilot');
+  f.usePilot('mto');
   for (const key of ['certifications', 'spools', 'iso_materials', 'materials']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   for (const key of ['welds', 'inspection_requests', 'inspection_results', 'welders', 'wps', 'diameters', 'test_systems']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
   for (const key of ['lisl', 'wdi', 'inspection-results']) assert.equal((await f.request(`/api/reports/${key}`)).status, 403, key);

@@ -1,11 +1,17 @@
 import { RESOURCES } from '../shared/resources.ts';
-import { canResource, RESOURCE_SCOPES } from '../shared/permissions.ts';
-import { actionAvailable, fieldAvailable, projectRow, resourceAvailable, rowAvailable } from '../shared/release.ts';
+import { canResource, pilotBoundary, RESOURCE_SCOPES } from '../shared/permissions.ts';
+import { actionAvailable, fieldAvailable, PILOT_KEYS, projectRow, resourceAvailable, rowAvailable, type PilotKey } from '../shared/release.ts';
+import { PILOT_MAP } from '../shared/pilots.ts';
+import { SIGNATURE_KINDS } from '../shared/signatures.ts';
 import type { Availability, AuditEvent, Module, Row, User } from '../shared/types.ts';
 import { Store, AppError } from './store.ts';
+import { effectiveProfileId, publicUser } from './auth.ts';
 import { availableWps } from '../shared/welding.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
+/** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
+export const pilotRefused = (message = 'Your account does not have access to this application workspace.') => new AppError(403, message, undefined, 'pilot');
+const NO_PERMISSIONS: User['permissions'] = { general: 0, materials: 0, welding: 0, tools: 0, settings: 0 };
 
 export function releaseAccess(store: Store, availability?: Availability) {
   function user(original: User): User {
@@ -68,7 +74,61 @@ export function releaseAccess(store: Store, availability?: Availability) {
     return availability || account.capabilities ? { ...event, summary: `${event.action[0].toUpperCase() + event.action.slice(1)} ${resource(event.entityType).singular}` } : event;
   }
   const project = (key: string, row: Row) => projectRow(availability, key, row);
-  return { user, resource, visible, record, input, audit, project,
+  const pilots = Boolean(availability?.features.includes('pilots'));
+  /**
+   * The account inside a pilot: that pilot's profile, projected to the delivered scope and bounded to the pilot.
+   * Null when the account is not enabled there, its profile is unavailable, or the profile does not open the
+   * pilot's module. An inactive account still fails with 401.
+   */
+  function inPilot(id: string, pilot: PilotKey): User | null {
+    const row = store.get('users', id);
+    if (!row.active) throw new AppError(401, 'This account is inactive.');
+    const profileId = effectiveProfileId(row, pilot);
+    if (!profileId) return null;
+    let base: User;
+    try { base = publicUser(store, id, profileId); } catch { return null; }
+    const account = pilotBoundary(user(base), pilot);
+    return account.permissions[PILOT_MAP[pilot].module] > 0 ? account : null;
+  }
+  const enterable = (id: string) => PILOT_KEYS.filter(pilot => inPilot(id, pilot));
+  /** The account for a request naming `value` as its pilot; refused unless the account may enter it. */
+  function pilotAccount(id: string, value: unknown): User {
+    if (typeof value !== 'string' || !(PILOT_KEYS as readonly string[]).includes(value)) throw pilotRefused();
+    const account = inPilot(id, value as PilotKey);
+    if (!account) throw pilotRefused();
+    return { ...account, pilots: enterable(id) };
+  }
+  /** The account as sign-in, status, the selector, password and sign-out see it. With pilots: identity and the pilots it may enter, no permissions. */
+  function present(id: string): User {
+    const base = publicUser(store, id);
+    if (!pilots) return user(base);
+    return { id: base.id, name: base.name, email: base.email, profileId: base.profileId, availability, permissions: { ...NO_PERMISSIONS }, pilots: enterable(id) };
+  }
+  /** Main projects the account may choose, and in which pilots (selector requests; no other records). */
+  function mainProjects(id: string) {
+    const output = new Map<string, { id: string; name: string; pilots: PilotKey[] }>();
+    for (const pilot of PILOT_KEYS) {
+      const account = inPilot(id, pilot);
+      if (!account || !canResource(account, 'sites')) continue;
+      for (const site of store.list('sites')) if (canResource(account, 'sites', 'show', site)) {
+        const entry = output.get(site.id) || { id: site.id, name: String(site.name), pilots: [] };
+        entry.pilots.push(pilot); output.set(site.id, entry);
+      }
+    }
+    return [...output.values()];
+  }
+  /** Accounts the last-administrator check evaluates: with pilots, the account in every pilot it may enter; otherwise its profile as before. */
+  const administrators = (id: string): User[] => pilots ? PILOT_KEYS.map(pilot => inPilot(id, pilot)).filter((account): account is User => Boolean(account)) : [publicUser(store, id)];
+  /** Pilots profile: a signature record always belongs to the account writing it; one record per signature type. */
+  function owner(account: User, key: string, value: Record<string, unknown>, existing?: Row) {
+    if (!pilots || key !== 'signatures') return;
+    if (existing ? existing.userId !== account.id : value.userId !== account.id) throw new AppError(403, 'You can only change your own signatures.');
+    if (value.userId !== undefined && value.userId !== account.id) throw new AppError(403, 'You can only change your own signatures.');
+    if (existing && value.kind !== undefined && value.kind !== existing.kind) throw new AppError(422, 'The signature type cannot be changed.', { kind: 'Keep the signature type.' });
+    if (!existing && !SIGNATURE_KINDS.some(item => item.kind === value.kind)) throw new AppError(422, 'Choose a full or short signature.', { kind: 'Choose a signature type.' });
+    if (!existing && store.list('signatures').some(row => row.userId === account.id && row.kind === value.kind)) throw new AppError(409, 'This signature already exists. Save a new image to replace it.');
+  }
+  return { user, resource, visible, record, input, audit, project, present, pilotAccount, mainProjects, administrators, owner,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

@@ -30,7 +30,7 @@ export function WorkspaceProvider({ user, onUnauthenticated, children }: { user:
   const pilotRows = useMemo(() => pilotScope(data.rows, pilotKey), [data.rows, pilotKey]);
   const scopedRows = useMemo(() => projectScopeEnabled ? projectScope(pilotRows, siteId) : pilotRows, [pilotRows, siteId, projectScopeEnabled]);
   const selectSite = (id: string) => { setSelectedSite(id); setDetail(null); sessionStorage.setItem(`blitzkrieg-project-${user.id}`, id); };
-  const refresh = useCallback(async () => { try { const next = await api<Bootstrap>('/bootstrap'); configureCatalog(next.user.availability); setData(next); setReady(true); setError(''); } catch (e) { if ((e as {status: number}).status === 401) onUnauthenticated(); else setError((e as Error).message); } }, [onUnauthenticated]);
+  const refresh = useCallback(async () => { try { const next = await api<Bootstrap>('/bootstrap'); configureCatalog(next.user.availability); setData(next); setReady(true); setError(''); } catch (e) { const failure = e as { status: number; code?: string }; if (failure.status === 401 || failure.code === 'pilot') onUnauthenticated(); else setError((e as Error).message); } }, [onUnauthenticated]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 4500); return () => clearTimeout(timer); }, [toast]);
   const label = (resource: string, id: unknown) => {

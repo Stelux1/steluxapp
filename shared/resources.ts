@@ -136,6 +136,18 @@ extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
   r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),
 ])]);
 extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
+// Pilots profile only (hidden elsewhere, see projectResource): descriptive account fields and access per application.
+// A missing / true "enabled" flag and an empty pilot profile mean "use the permission profile", so existing accounts keep working.
+const APPLICATIONS = 'Applications';
+const pilotAccess = (key: 'weld' | 'mto', title: string): Field[] => [
+  b(`${key}Enabled`, `${title} enabled`, { default: true, section: APPLICATIONS, hidden: true, hint: `The account may open ${title}.` }),
+  r(`${key}ProfileId`, `${title} profile`, 'profiles', { section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Leave empty to use the permission profile above.' }),
+];
+extend('users', [t('title', 'Title', { hidden: true }), t('address', 'Address', { hidden: true }), t('phone', 'Phone', { hidden: true }), r('companyId', 'Company', 'companies', { hidden: true }), ...pilotAccess('weld', 'Weld Pilot'), ...pilotAccess('mto', 'MTO Pilot')]);
+// A user's own full / short signature (pilots profile): the image is the newest attachment of the record.
+extend('signatures', [r('userId', 'User', 'users', { hidden: true }), s('kind', 'Signature', ['Full signature', 'Short signature'], { hidden: true }), b('nameUnder', 'Add name under the signature', { hidden: true })]);
+/** Fields above that only the pilots profile shows. */
+export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId'], signatures: ['userId', 'kind', 'nameUnder'] };
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {

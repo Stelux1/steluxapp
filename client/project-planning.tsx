@@ -4,7 +4,7 @@ import { Archive, Download, Pencil, Plus, Printer } from 'lucide-react';
 import { buildReport } from '../shared/reports.ts';
 import type { Row } from '../shared/types.ts';
 import { useWorkspace } from './context.tsx';
-import { formatNumber } from './api.ts';
+import { formatNumber, apiUrl } from './api.ts';
 import { Badge, EmptyState, FieldInput, SearchInput, TableScroll } from './components.tsx';
 import { RecordEditor, WorkflowDialog } from './dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
@@ -31,7 +31,7 @@ export function PlanningRegister({ mode, scopeIsoId = '', scopeProjectId = '' }:
   const current = Math.min(page, Math.max(0, Math.ceil(filtered.length / 50) - 1));
   const incomplete = filtered.filter(row => mode === 'calculation' && row.values.status !== 'Ready').length;
   const total = filtered.reduce((sum, row) => sum + Number(row.values[mode === 'calculation' ? 'hours' : 'totalMm'] || 0), 0);
-  const exportUrl = `/api/reports/${mode}?${new URLSearchParams({ siteId, projectId, isoId, q: query.trim() })}`;
+  const exportUrl = apiUrl(`/reports/${mode}?${new URLSearchParams({ siteId, projectId, isoId, q: query.trim() })}`);
   const defaults = { ...(isoId ? { isoId } : {}), ...(projectId ? { projectId } : {}) };
   return <section className="planning-register">
     <div className="page-heading"><div><h2>{info.title}</h2><p>{report.definition.description}</p></div><div className="heading-actions">

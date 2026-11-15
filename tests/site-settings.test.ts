@@ -148,7 +148,7 @@ test('hosted editing: invalid weights are rejected with a message, valid setting
   const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '';
   t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const request = async (path: string, method = 'GET', data?: unknown) => {
-    const response = await fetch(origin + path, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
+    const response = await fetch(origin + path, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', 'X-Stelux-Pilot': 'weld', Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   assert.equal((await request('/api/auth/setup', 'POST', { name: 'Settings admin', email: 'settings-admin@example.test', password: 'Settings-Test-Password' })).status, 201);

@@ -27,7 +27,13 @@ export interface Availability {
   navigation: string[];
   features: string[];
 }
-export interface User { id: string; name: string; email: string; profileId: string; permissions: Record<Module, number>; capabilities?:PermissionRules; availability?: Availability; }
+export interface User {
+  id: string; name: string; email: string; profileId: string; permissions: Record<Module, number>; capabilities?:PermissionRules; availability?: Availability;
+  /** Where the profile delivers pilots: the pilot these permissions were evaluated for (absent on the selector / account requests). */
+  pilot?: 'weld' | 'mto';
+  /** Where the profile delivers pilots: the pilots this account may enter. */
+  pilots?: ('weld' | 'mto')[];
+}
 export interface AuditEvent { id: string; entityType: string; entityId: string; action: string; summary: string; actorId: string; actorName: string; createdAt: string; }
 export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[]; }
 export interface ActionField extends Field { multiple?: boolean; }

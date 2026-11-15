@@ -13,7 +13,7 @@ import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 
 export class AppError extends Error {
-  constructor(public status: number, message: string, public fields?: Record<string, string>) { super(message); }
+  constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
 }
 export interface Actor { id: string; name: string }
 export const SYSTEM: Actor = { id: 'system', name: 'Stelux' };

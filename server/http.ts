@@ -14,10 +14,11 @@ import { RELATIONS,relationFields } from '../shared/welding.ts';
 import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/reports.ts';
 import { canResource,canReport,REPORT_RESOURCES } from '../shared/permissions.ts';
 import type { Row, Module } from '../shared/types.ts';
-import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, publicUser, sessionCookie, type AuthRequest } from './auth.ts';
+import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, sessionCookie, type AuthRequest } from './auth.ts';
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
-import { releaseAccess } from './release-access.ts';
+import { pilotRefused, releaseAccess } from './release-access.ts';
+import { assertSignatureImage } from './signatures.ts';
 import { ISO_LIST_COLUMNS, flagText, isoFlags, isoListContext } from '../shared/iso-list.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { reportWorkbook } from './report-export.ts';
@@ -27,7 +28,11 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const availability = availabilityFor(options.releaseProfile || 'full');
   const cookieName = options.releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session' : availability ? 'blitzkrieg_session' : 'stelux_session';
   const access = releaseAccess(store, availability);
-  const presentUser = (id: string) => access.user(publicUser(store, id));
+  const pilots = Boolean(availability?.features.includes('pilots'));
+  const presentUser = (id: string) => access.present(id);
+  const ensureAdmin = () => ensureAdministrator(store, access.administrators);
+  // Accounts are created together with their credential; sample accounts seeded without a password do not count.
+  const needsSetup = () => !store.db.prepare('SELECT user_id FROM credentials LIMIT 1').get();
   const readableRows = (req: Request, key: string, archived = false) => store.list(key, archived).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, row));
   const visibleAudit = (req: Request, events: ReturnType<Store['activity']>) => events.map(event => access.audit((req as AuthRequest).user, event)).filter((event): event is NonNullable<typeof event> => Boolean(event));
   const documents = documentStorage(store, dataDir, options.documentStorage || 'disk', options.initializeStorage !== false);
@@ -50,14 +55,14 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     res.json({ ok: true, name: 'Blitzkrieg', database: store.db.dialect === 'postgres' ? 'postgres' : 'sqlite' });
   });
   app.get('/api/auth/status', (req, res) => {
-    const requiresSetup = store.list('users').length === 0;
+    const requiresSetup = needsSetup();
     const session = store.db.prepare('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(sessionCookie(req, cookieName)), new Date().toISOString()) as { user_id: string } | undefined;
     let user; try { if (session) user = presentUser(session.user_id); } catch { /* expired or deactivated */ }
     res.setHeader('Cache-Control', 'no-store'); res.json({ requiresSetup, user: user || null, sampleWorkspace: options.sampleWorkspace !== false, ...(availability ? { availability } : {}) });
   });
   app.post('/api/auth/setup', (req, res) => {
     const user = store.transaction(() => {
-      if (store.list('users').length) throw new AppError(409, 'This workspace already has an administrator. Sign in instead.');
+      if (!needsSetup()) throw new AppError(409, 'This workspace already has an administrator. Sign in instead.');
       const hash = passwordHash(req.body.password);
       const user = store.create('users', { name: req.body.name, email: req.body.email, profileId: 'profile-admin', active: true });
       store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, hash);
@@ -76,8 +81,24 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     attempts.delete(ip); newSession(store, user!.id, res, cookieName); res.json({ user: presentUser(user!.id) });
   });
   app.use('/api', authMiddleware(store, cookieName));
+  /** Requests that never need a pilot: sign-out and password change work from the selector and from any pilot. */
+  const ACCOUNT_ROUTES = new Set(['POST /auth/logout', 'POST /auth/password']);
   app.use('/api', (req, _res, next) => {
-    (req as AuthRequest).user = access.user((req as AuthRequest).user);
+    if (pilots) {
+      // The current pilot comes from the X-Stelux-Pilot header; plain download links (GET) may carry ?pilot= instead.
+      // It decides which profile applies; a pilot the account may not enter, or a mismatch, is refused.
+      const id = (req as AuthRequest).user.id, route = `${req.method} ${req.path}`;
+      const header = req.headers['x-stelux-pilot'], query = ['GET', 'HEAD'].includes(req.method) ? req.query.pilot : undefined;
+      try {
+        if (ACCOUNT_ROUTES.has(route)) (req as AuthRequest).user = access.present(id);
+        else if (header !== undefined && query !== undefined && header !== query) throw pilotRefused();
+        else if ((header ?? query) === undefined) {
+          // Selector requests see identity, the pilots and the main projects (bootstrap only); everything else needs a pilot.
+          if (route !== 'GET /bootstrap') throw pilotRefused('Open Weld Pilot or MTO Pilot to continue.');
+          (req as AuthRequest).user = access.present(id);
+        } else (req as AuthRequest).user = access.pilotAccount(id, header ?? query);
+      } catch (error) { return next(error); }
+    } else (req as AuthRequest).user = access.user((req as AuthRequest).user);
     const projectBulk = availability?.features.includes('project-bulk-edit') && /^\/bulk\/(?:projects|isometrics)$/.test(req.path);
     if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
     next();
@@ -94,6 +115,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   });
   app.get('/api/bootstrap', (req, res) => {
     const user = (req as AuthRequest).user;
+    if (pilots && !user.pilot) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: {}, activity: [], mainProjects: access.mainProjects(user.id) }); return; }
     const rows = Object.fromEntries(RESOURCES.filter(r =>r.key==='attachments'||canResource(user,r.key)).map(r => [r.key, readableRows(req, r.key, true)]));
     const activity = visibleAudit(req, store.activity(100));
     res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity });
@@ -118,7 +140,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
-    access.input(resource.key, req.body);
+    access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
@@ -126,19 +148,19 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.put('/api/records/:resource/:id', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
-    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id)));
+    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
       if (resource.key === 'users' && req.body.password) { store.db.prepare('INSERT INTO credentials VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash').run(row.id, passwordHash(req.body.password)); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.id); }
-      if (resource.key === 'users' || resource.key === 'profiles') ensureAdministrator(store);
+      if (resource.key === 'users' || resource.key === 'profiles') ensureAdmin();
       return row;
     }); res.json({ record: access.project(resource.key, row) });
   });
   app.post('/api/records/:resource/:id/archive', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'delete',access.record(resource.key,String(req.params.id),true));
     if (resource.readonly) throw new AppError(405, 'Transaction history cannot be archived.');
-    const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdministrator(store); return row; });
+    const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
   });
   app.post('/api/actions/:key', (req, res) => {
@@ -154,7 +176,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     access.input(resource.key, req.body.changes);
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password'))) throw new AppError(422, 'An update field is invalid.');
-    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdministrator(store); return result; }); res.json({ count: records.length });
+    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
   });
   /** Flag columns of the isometrics list for an export: derived from the welds, results and releases the account may read. */
   const isoFlagExport = (req: Request, isos: Row[]) => {
@@ -243,7 +265,10 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       if (!req.file) throw new AppError(422, 'Choose a file.');
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
-      const record = store.transaction(() => { const row = store.create('attachments', { name, entityType: key, entityId: req.body.entityId, documentType: req.body.documentType || 'Attachment', mime: req.file!.mimetype, size: req.file!.size, note: req.body.note || '' }, actorOf(req)); documents.save(row.id, req.file!); return row; });
+      // A new signature image replaces the current one; earlier images stay as attachments (history).
+      const signature = pilots && key === 'signatures';
+      if (signature) assertSignatureImage(req.file);
+      const record = store.transaction(() => { const row = store.create('attachments', { name, entityType: key, entityId: req.body.entityId, documentType: signature ? String(target.kind) : req.body.documentType || 'Attachment', mime: req.file!.mimetype, size: req.file!.size, note: req.body.note || '' }, actorOf(req)); documents.save(row.id, req.file!); return row; });
       res.status(201).json({ record });
     } catch (error) { documents.discard(req.file); throw error; }
   });
@@ -271,7 +296,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       const key=String(_req.params.resource||/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||'');
       const fields=translated.fields?Object.fromEntries(Object.entries(translated.fields).filter(([name])=>access.field(key,name))):undefined;
       const message=availability&&translated.status===409?'This record is in use or has changed. Refresh and check its linked records.':availability&&translated.fields&&!Object.keys(fields||{}).length?'Please check the record and try again.':translated.message;
-      res.status(translated.status).json({ error: message, ...(fields&&Object.keys(fields).length?{fields}:{}) });
+      res.status(translated.status).json({ error: message, ...(fields&&Object.keys(fields).length?{fields}:{}), ...(translated.code?{code:translated.code}:{}) });
     }
     else if (translated instanceof multer.MulterError) res.status(422).json({ error: 'The file is too large or could not be uploaded.' });
     else if (translated instanceof SyntaxError) res.status(400).json({ error: 'The request contains invalid JSON.' });

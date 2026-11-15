@@ -78,8 +78,11 @@ export function pagePilots(pathname: string): PilotKey[] {
   return [...PILOT_KEYS];
 }
 
-/** Pilots the account may enter, after the release projection of its module levels. */
-export const allowedPilots = (user: Pick<User, 'permissions'>): Pilot[] => PILOTS.filter(pilot => (user.permissions[pilot.module] || 0) > 0);
+/**
+ * Pilots the account may enter. The server lists them (`user.pilots`: enabled per pilot, with a profile that opens
+ * the pilot's module); otherwise they follow the projected module levels of the single profile.
+ */
+export const allowedPilots = (user: Pick<User, 'permissions' | 'pilots'>): Pilot[] => user.pilots ? PILOTS.filter(pilot => user.pilots!.includes(pilot.key)) : PILOTS.filter(pilot => (user.permissions[pilot.module] || 0) > 0);
 
 /** Where an old, un-prefixed URL now lives. Materials pages go to MTO, everything else to Weld, unless only the other pilot is open to the account and also has the page. */
 export function legacyPilotPath(pathname: string, allowed: PilotKey[] = [...PILOT_KEYS]): string {

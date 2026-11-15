@@ -109,3 +109,27 @@ export function seed(store: Store) {
     store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_version','1')").run();
   });
 }
+
+/**
+ * Sample profiles and accounts for access per pilot (local sample workspace of the hosted profile only; never
+ * called for a connected database). The accounts have no password: an administrator sets one under User accounts
+ * before they can sign in. Runs once; existing records with the same id or name are left untouched.
+ */
+export function seedAccessSamples(store: Store) {
+  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_access_v1'").get()) return;
+  store.transaction(() => {
+    const exists = (key: string, id: string, field: string, value: string) => store.list(key, true).some(row => row.id === id || String(row[field]).toLowerCase() === value.toLowerCase());
+    const profile = (id: string, data: Record<string, unknown>) => { if (!exists('profiles', id, 'name', String(data.name))) store.create('profiles', data, SYSTEM, id); };
+    profile('profile-qaqc', { name: 'Highest rights for QAQC', description: 'QA/QC: welds, inspections and releases; reads the material side.', generalPermission: 'Read & write', materialsPermission: 'Read only', weldingPermission: 'Administration', toolsPermission: 'No access', settingsPermission: 'No access' });
+    profile('profile-workprep', { name: 'Standard profile for workpreparator', description: 'Work preparation: material take-off, ordering and logistics.', generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read only', toolsPermission: 'No access', settingsPermission: 'No access' });
+    profile('profile-review', { name: 'Only review', description: 'External reviewer: reads projects, isometrics and their records.', generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only', toolsPermission: 'No access', settingsPermission: 'No access' });
+    const ready = ['profile-qaqc', 'profile-workprep', 'profile-review'].every(id => { try { store.get('profiles', id); return true; } catch { return false; } });
+    const company = (id: string) => store.list('companies').some(row => row.id === id) ? id : '';
+    const user = (id: string, data: Record<string, unknown>) => { if (ready && !exists('users', id, 'email', String(data.email))) store.create('users', { active: true, ...data, companyId: company(String(data.companyId || 'company-north')) }, SYSTEM, id); };
+    user('user-sample-qaqc', { name: 'Mila Kovač', email: 'mila.kovac@example.com', title: 'QA/QC inspector', phone: '+31 10 555 0175', profileId: 'profile-review', weldEnabled: true, weldProfileId: 'profile-qaqc', mtoEnabled: false });
+    user('user-sample-workprep', { name: 'Daan Visser', email: 'daan.visser@example.com', title: 'Work preparation', phone: '+31 10 555 0168', profileId: 'profile-review', weldEnabled: false, mtoEnabled: true, mtoProfileId: 'profile-workprep' });
+    user('user-sample-engineer', { name: 'Sara Jansen', email: 'sara.jansen@example.com', title: 'Project engineer', phone: '+31 10 555 0193', profileId: 'profile-review', weldEnabled: true, weldProfileId: 'profile-qaqc', mtoEnabled: true, mtoProfileId: 'profile-review' });
+    user('user-sample-reviewer', { name: 'External reviewer', email: 'reviewer@example.com', title: 'Client inspector', companyId: 'company-stelux', profileId: 'profile-review' });
+    store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_access_v1','1')").run();
+  });
+}

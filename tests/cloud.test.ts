@@ -118,12 +118,14 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     assert.throws(() => cloudDatabase(db), /not an evaluation database/);
     const hostedEnv = { ...cloudEnv, STELUX_CLOUD_DATABASE: 'workspace', DATABASE_URL: testUrl!, STELUX_DEMO_DATABASE_URL: 'postgresql://wrong:wrong@127.0.0.1:1/unused' };
     for (const field of ['material1Id','material2Id','certificate1Id','certificate2Id']) db.exec(`ALTER TABLE welds DROP COLUMN "${field}"`);
+    for (const [table, field] of [['users', 'companyId'], ['users', 'weldProfileId'], ['users', 'mtoProfileId'], ['signatures', 'userId']]) db.exec(`ALTER TABLE "${table}" DROP COLUMN "${field}"`);
     assert.throws(() => verifyWeldingTraceability(db), /Prepare welding traceability/);
     assert.throws(() => createCloudApp(hostedEnv), /Prepare welding traceability/);
     for (const table of ['calculation_lines', 'cut_list', 'calculation_norms']) db.exec(`DROP TABLE ${table}`);
     const prepared = prepareWeldingTraceability(db);
     assert.equal(prepared.recordsPreserved, true); assert.equal(prepared.counts.users, 1);
     for (const table of ['calculation_norms', 'calculation_lines', 'cut_list']) assert.ok(db.prepare('SELECT to_regclass(?) AS name').get(`stelux.${table}`)?.name);
+    for (const [table, field] of [['users', 'weldProfileId'], ['users', 'mtoProfileId'], ['users', 'companyId'], ['signatures', 'userId']]) assert.ok(db.prepare("SELECT column_name FROM information_schema.columns WHERE table_schema='stelux' AND table_name=? AND column_name=?").get(table, field), `${table}.${field}`);
     assert.equal(prepareWeldingTraceability(db).recordsPreserved, true);
     assert.equal(db.prepare('SELECT hash FROM credentials').get()?.hash, savedCredential);
     const runtime = createCloudApp(hostedEnv);
@@ -140,11 +142,11 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
       const login = await hosted.request('/api/auth/login', 'POST', credentials);
       assert.equal(login.status, 200);
       const cookie = login.headers.get('set-cookie')!.split(';')[0];
-      const bootstrap = await hosted.request('/api/bootstrap', 'GET', undefined, cookie);
+      const bootstrap = await hosted.request('/api/bootstrap?pilot=weld', 'GET', undefined, cookie);
       assert.equal(bootstrap.status, 200);
       assert.equal((await bootstrap.json()).rows.welds.find((row: { id: string }) => row.id === 'weld-1').description, 'Existing workspace record');
       assert.equal((await hosted.request('/api/auth/setup', 'POST', credentials)).status, 409);
-      assert.equal((await hosted.request('/api/reports/lisl', 'GET', undefined, cookie)).status, 200);
+      assert.equal((await hosted.request('/api/reports/lisl?pilot=weld', 'GET', undefined, cookie)).status, 200);
       assert.equal(db.prepare('SELECT hash FROM credentials').get()?.hash, savedCredential);
       assert.equal(existing.list('users').length, 1);
     } finally { await hosted.close(); runtime.store.close(); }

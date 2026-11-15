@@ -19,10 +19,21 @@ export function passwordMatches(password: unknown, stored: string) {
   const actual = scryptSync(password, salt, 64); const expected = Buffer.from(hash, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
-export function publicUser(store: Store, id: string): User {
+/**
+ * The profile that applies to an account in a pilot, or null when the account is not enabled there. Without a
+ * pilot (or for accounts saved before access per pilot) it is the account's permission profile.
+ * `_siteId` is the seam for access per project site (next task); it is not evaluated yet.
+ */
+export function effectiveProfileId(row: Row, pilot?: 'weld' | 'mto', _siteId?: string): string | null {
+  if (!pilot) return String(row.profileId);
+  if (row[`${pilot}Enabled`] === false) return null;
+  return String(row[`${pilot}ProfileId`] || row.profileId);
+}
+/** The account's identity and permissions from its permission profile, or from `profileId` where given. */
+export function publicUser(store: Store, id: string, profileId?: string): User {
   const row = store.get('users', id);
   if (!row.active) throw new AppError(401, 'This account is inactive.');
-  const profile = store.get('profiles', row.profileId);
+  const profile = store.get('profiles', profileId ?? row.profileId);
   const capabilities=profile.permissionMode==='Detailed permissions'?parsePermissionRules(profile.permissionRules):undefined;
   const permissions = capabilities?moduleSummary(capabilities):Object.fromEntries((['general', 'materials', 'welding', 'tools', 'settings'] as Module[]).map(m => [m, Math.max(0, permissionValue(profile[`${m}Permission`]))])) as User['permissions'];
   return { id: row.id, name: String(row.name), email: String(row.email), profileId: String(row.profileId), permissions,...(capabilities?{capabilities}:{}) };
@@ -52,7 +63,7 @@ export function authMiddleware(store: Store, cookieName = 'stelux_session') {
     } catch (error) { next(error instanceof AppError ? error : new AppError(401, 'Sign in to your workspace.')); }
   };
 }
-export function ensureAdministrator(store: Store) {
-  const exists = store.list('users').some(u => {if(!u.active)return false;const user=publicUser(store,u.id);return ['users','profiles'].every(key=>canResource(user,key,'show')&&canResource(user,key,'insert')&&canResource(user,key,'edit'));});
+export function ensureAdministrator(store: Store, accounts: (id: string) => User[] = id => [publicUser(store, id)]) {
+  const exists = store.list('users').some(u => {if(!u.active)return false;return accounts(u.id).some(user=> ['users','profiles'].every(key=>canResource(user,key,'show')&&canResource(user,key,'insert')&&canResource(user,key,'edit')));});
   if (!exists) throw new AppError(409, 'Keep at least one active administrator in this workspace.');
 }

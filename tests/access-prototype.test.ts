@@ -108,7 +108,7 @@ for (const releaseProfile of ['access-prototype', HOSTED_RELEASE_PROFILE] as con
   const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '';
   t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const request = async (path: string, method = 'GET', data?: unknown) => {
-    const response = await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, Cookie: cookie }, body: data === undefined ? undefined : JSON.stringify(data) });
+    const response = await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, Cookie: cookie, ...(releaseProfile === HOSTED_RELEASE_PROFILE ? { 'X-Stelux-Pilot': 'weld' } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   assert.equal((await request('/reports/lisl')).status, 401);
@@ -129,7 +129,8 @@ for (const releaseProfile of ['access-prototype', HOSTED_RELEASE_PROFILE] as con
   const wps = store.get('wps', weld.wpsId); store.update('wps', wps.id, { active: false }, wps._version);
   assert.equal((await request('/records/welds', 'POST', { weldNo: 'NEW', isoId: weld.isoId, wpsId: wps.id })).status, 422);
   const profile = store.create('profiles', { name: 'Prototype viewer', generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only' });
-  assert.equal((await request('/records/users', 'POST', { name: 'Viewer', email: 'viewer@example.test', profileId: profile.id, password: 'Prototype-Viewer-Test-Only', active: true })).status, 404);
+  // The hosted profile delivers user administration (to administrators); the prototype does not.
+  assert.equal((await request('/records/users', 'POST', { name: 'Viewer API', email: 'viewer-api@example.test', profileId: profile.id, password: 'Prototype-Viewer-Test-Only', active: true })).status, releaseProfile === HOSTED_RELEASE_PROFILE ? 201 : 404);
   const viewer = store.create('users', { name: 'Viewer', email: 'viewer@example.test', profileId: profile.id, active: true });
   store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(viewer.id, passwordHash('Prototype-Viewer-Test-Only'));
   assert.equal((await request('/auth/login', 'POST', { email: 'viewer@example.test', password: 'Prototype-Viewer-Test-Only' })).status, 200);

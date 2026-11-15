@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiUrl } from './api.ts';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Download, FileStack, Plus, Pencil, Printer, ScanLine, ClipboardCheck } from 'lucide-react';
 import { LISL_COLUMNS } from '../shared/lisl.ts';
@@ -26,7 +27,7 @@ export function DataLisl({ scopeIsoId = '', scopeProjectId = '', embedded = fals
     ['Registered welds', filtered.length], ['Welded', filtered.filter(row => row.values['Weld date']).length],
     ['VT accepted', filtered.filter(row => row.values.VT === 'Yes').length], ['NDT required', filtered.filter(row => row.values['NDT Req#'] === 'Yes').length],
   ];
-  const csvUrl = `/api/reports/lisl?${new URLSearchParams({ projectId, isoId, siteId, ndtRequired, q: query.trim() })}`;
+  const csvUrl = apiUrl(`/reports/lisl?${new URLSearchParams({ projectId, isoId, siteId, ndtRequired, q: query.trim() })}`);
   function cell(key: string, value: unknown, weld: Row | undefined) {
     const display = value === '' || value === null || value === undefined ? <span className="muted">—</span> : String(value);
     if (key === 'Isometric' && weld) return <button className="record-link" onClick={() => openRecord('isometrics', String(weld.isoId))}>{display}</button>;

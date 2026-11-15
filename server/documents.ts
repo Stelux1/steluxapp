@@ -1,5 +1,5 @@
 import multer from 'multer';
-import { existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Response } from 'express';
 import { AppError, type Store } from './store.ts';
@@ -25,6 +25,12 @@ export function documentStorage(store: Store, dataDir: string, mode: DocumentSto
       else store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(id, file.filename);
     },
     discard(file?: Express.Multer.File) { if (file?.path && existsSync(file.path)) unlinkSync(file.path); },
+    /** The stored bytes of an attachment, or null when the file is unavailable (server-side use, e.g. documents that print signatures). */
+    read(id: string): Buffer | null {
+      if (mode === 'database') { const blob = store.db.prepare('SELECT content FROM upload_blobs WHERE attachment_id=?').get(id) as { content: string } | undefined; return blob ? Buffer.from(blob.content, 'base64') : null; }
+      const path = store.db.prepare('SELECT filename FROM upload_paths WHERE attachment_id=?').get(id) as { filename: string } | undefined;
+      return path && existsSync(join(uploadsDir, path.filename)) ? readFileSync(join(uploadsDir, path.filename)) : null;
+    },
     download(id: string, name: string, res: Response) {
       res.setHeader('Cache-Control', 'no-store');
       if (mode === 'database') {
@@ -34,7 +40,8 @@ export function documentStorage(store: Store, dataDir: string, mode: DocumentSto
       } else {
         const path = store.db.prepare('SELECT filename FROM upload_paths WHERE attachment_id=?').get(id) as { filename: string } | undefined;
         if (!path || !existsSync(join(uploadsDir, path.filename))) throw new AppError(404, 'This file is unavailable.');
-        res.download(join(uploadsDir, path.filename), name);
+        // Relative to the uploads folder: `send` refuses absolute paths with a dot segment (such as `.data/`), even here.
+        res.download(path.filename, name, { root: uploadsDir });
       }
     },
   };

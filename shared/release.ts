@@ -1,7 +1,7 @@
 import type { ActionDefinition, Availability, Field, Resource, Row } from './types.ts';
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
-import { RESOURCE_MAP } from './resources.ts';
+import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -121,6 +121,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
+    // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
+    // canResource) and each user's own signatures.
+    for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
@@ -133,7 +136,10 @@ export const fieldAvailable = (availability: Availability | undefined, key: stri
 export const actionAvailable = (availability: Availability | undefined, key: string, type?: unknown) => !availability || Object.hasOwn(availability.actions, key) && (type === undefined || !key.startsWith('inspection-') || availability.inspectionTypes.includes(String(type)));
 export function projectRow(availability: Availability | undefined, key: string, row: Row): Row {
   if (!availability) return row;
-  return Object.fromEntries(Object.entries(row).filter(([name]) => name === 'id' || ['_version', '_archived', '_createdAt', '_updatedAt'].includes(name) || fieldAvailable(availability, key, name))) as Row;
+  const output = Object.fromEntries(Object.entries(row).filter(([name]) => name === 'id' || ['_version', '_archived', '_createdAt', '_updatedAt'].includes(name) || fieldAvailable(availability, key, name))) as Row;
+  // Accounts saved before access per pilot existed are enabled in both pilots (see shared/resources.ts).
+  if (key === 'users' && availability.features.includes('pilots')) for (const name of ['weldEnabled', 'mtoEnabled']) if (typeof output[name] !== 'boolean') output[name] = true;
+  return output;
 }
 
 const descriptions: Record<string, string> = {
@@ -153,10 +159,11 @@ export function projectField(availability: Availability | undefined, field: Fiel
 export function projectResource(availability: Availability | undefined, resource: Resource): Resource {
   if (!availability) return resource;
   const prototype = availability.features.includes('lisl');
-  const columns = availability.features.includes('pilots') && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const pilots = availability.features.includes('pilots');
+  const columns = pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => {
+    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),

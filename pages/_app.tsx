@@ -11,6 +11,7 @@ import '../client/data-lisl.css';
 import '../client/project-workspace.css';
 import '../client/iso-header.css';
 import '../client/pilots.css';
+import '../client/signatures.css';
 
 export default function WorkspaceApp({ Component, pageProps }: AppProps) {
   return <Component {...pageProps}/>;

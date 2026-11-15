@@ -291,10 +291,10 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
   const store = new Store(join(dir, 'test.sqlite')); seed(store);
   writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Workspace</title>');
   const server = createApp(store, dir, { releaseProfile: HOSTED_RELEASE_PROFILE, distDir: dir }).listen(0, '127.0.0.1'); await once(server, 'listening');
-  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '';
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '', pilot = 'weld';
   t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
   const request = async (path: string, method = 'GET', data?: unknown) => {
-    const response = await fetch(origin + path, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
+    const response = await fetch(origin + path, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', 'X-Stelux-Pilot': pilot, Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   const password = 'Iso-List-Test-Password';
@@ -304,7 +304,7 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
     assert.equal((await request('/api/auth/login', 'POST', { email: user.email, password })).status, 200);
   };
-  return { store, request, signIn, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Iso admin', email: 'iso-admin@example.test', password })).status, 201) };
+  return { store, request, signIn, usePilot: (key: string) => { pilot = key; }, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Iso admin', email: 'iso-admin@example.test', password })).status, 201) };
 }
 
 test('hosted API: copy and phases work for a writer, a missing right is a 403 and the server refuses forged fields', async t => {
@@ -312,13 +312,16 @@ test('hosted API: copy and phases work for a writer, a missing right is a 403 an
   const copy = (data: Record<string, unknown>) => f.request('/api/actions/copy-isometrics', 'POST', { isoIds: ['iso-9'], projectId: 'project-cooling', ...data });
   await f.signIn('Welding read only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read only' });
   assert.equal((await copy({ copyWelds: true })).status, 403, 'no add right on welds');
-  assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 201);
+  // Material requirements belong to MTO Pilot: copied from there, refused from Weld Pilot (the pilot is the boundary).
+  assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 403, 'materials are not copied from Weld Pilot');
+  f.usePilot('mto'); assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 201); f.usePilot('weld');
   assert.equal(f.store.list('welds').filter(w => copyOfProject(f.store, w.isoId as string)).length, 0);
   await f.signIn('General read only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'Read & write' });
   assert.equal((await copy({ projectId: 'project-skid', isoIds: ['iso-1'] })).status, 403);
   assert.equal((await f.request('/api/actions/phases', 'POST', { isoIds: ['iso-1'], prefab_doc: 'Complete' })).status, 403);
   await f.signIn('Full writer', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write' });
-  assert.equal((await copy({ isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true, copyMaterials: true, copyCalculations: true })).status, 201);
+  assert.equal((await copy({ isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true, copyMaterials: true, copyCalculations: true })).status, 403, 'one pilot copies its own records');
+  assert.equal((await copy({ isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true })).status, 201);
   const clash = await copy({ isoIds: ['iso-1'], projectId: 'project-skid' }); assert.equal(clash.status, 422); assert.match((await clash.json()).error, /STX-CW-001 already exists in project STX-2403\. Nothing was copied\./);
   assert.equal((await copy({ isoIds: ['iso-2'], projectId: 'project-skid', _version: 3 })).status, 404, 'undelivered field names are refused');
   const phases = await f.request('/api/actions/phases', 'POST', { isoIds: ['iso-1', 'iso-2'], field_test: 'Complete' }); assert.equal(phases.status, 201);
@@ -338,6 +341,8 @@ test('hosted export gives the flag columns as Yes / No / n/a, and n/a where the 
   assert.deepEqual(['NoBo', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'].map(c => by('STX-CW-003')[c]), ['Yes', 'No', 'No', 'No', 'Yes', 'Yes', 'No']);
   assert.deepEqual([by('STX-SK-010').Pfb, by('STX-SK-010').Fld, by('STX-CW-001').Pfb], ['n/a', 'No', 'No']);
   await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' });
+  assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Pilot');
+  f.usePilot('mto');
   const limited = (await table('iso-3')).at(0)!;
   assert.deepEqual([limited.Pfb, limited.Fld, limited.M], ['n/a', 'n/a', 'No']);
 });

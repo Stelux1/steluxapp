@@ -7,7 +7,7 @@ import { Modal, Progress } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
-import { ApiError, api, formatNumber } from './api.ts';
+import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
 import { priorityLabel } from '../shared/priority.ts';
@@ -51,7 +51,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
     const file = fileOf(kind), text = show(number), rev = currentRevision(rows, iso.id, kind);
     return <div className="iso-slot" key={kind}>
       <div className="iso-slot-main"><FileText size={18} aria-hidden="true"/><div><small>{label}</small>
-        {file ? <a className="text-link" href={`/api/files/${file.id}`} target="_blank" rel="noreferrer">{text}<Download size={13} aria-hidden="true"/></a> : <strong>{text}</strong>}
+        {file ? <a className="text-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer">{text}<Download size={13} aria-hidden="true"/></a> : <strong>{text}</strong>}
         <span className="iso-slot-meta">{kind === 'ISO' && iso.irn ? <>IRN {String(iso.irn)} · </> : null}
           {historyAvailable ? <button className="text-link" onClick={() => setHistory(true)} aria-label={`${kind} revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}
           {!file && ' · no file'}</span></div></div>

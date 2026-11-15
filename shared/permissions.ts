@@ -1,6 +1,6 @@
 import observed from '../reference/permissions-observed.json' with {type:'json'};
 import type {Module,PermissionRules,PermissionVerb,Row,User} from './types.ts';
-import { actionAvailable, resourceAvailable, rowAvailable } from './release.ts';
+import { actionAvailable, resourceAvailable, rowAvailable, type PilotKey } from './release.ts';
 
 export const PERMISSION_VERBS:PermissionVerb[]=['show','insert','edit','delete','export','import','print'];
 export const VERB_LABELS:Record<PermissionVerb,string>={show:'View',insert:'Add',edit:'Edit',delete:'Archive',export:'Export',import:'Import',print:'Print'};
@@ -55,8 +55,42 @@ export function resourceScopes(key:string,row?:Partial<Row>):string[]{
  if(row&&key==='inspection_results')return [row.type==='PWHT'?'97':row.type==='NDT PRE'?'94':row.type==='VI'||row.type==='PRE-HT'?'local-visual-results':'76'];
  return RESOURCE_SCOPES[key]||[];
 }
+/**
+ * Pilots an area belongs to: welding areas to Weld Pilot, materials areas to MTO Pilot; shared project data,
+ * administration and the shared catalogs to both; tools areas to neither. Shown in the profile editor and used
+ * as the pilot boundary below.
+ */
+export function areaPilots(key:string):PilotKey[]{
+ const area=areas.get(key);if(!area)return [];
+ if(SHARED_PILOT_SCOPES.includes(key)||area.module==='general'||area.module==='settings')return ['weld','mto'];
+ return area.module==='welding'?['weld']:area.module==='materials'?['mto']:[];
+}
+/**
+ * An account evaluated inside a pilot: the other pilot's module and areas are removed, so the pilot in the
+ * request is the boundary even where the profile itself would allow more. Shared areas keep this profile's rights.
+ */
+export function pilotBoundary(user:User,pilot:PilotKey):User{
+ const other:Module=pilot==='weld'?'materials':'welding';
+ return {...user,pilot,permissions:{...user.permissions,[other]:0},...(user.capabilities?{capabilities:Object.fromEntries(Object.entries(user.capabilities).filter(([key])=>areaPilots(key).includes(pilot)))}:{})};
+}
+/** Pilots profile: an administrator manages users and profiles (module levels: settings Administration; matrix: view, add and edit on both). */
+export function isAdministrator(user:User):boolean{
+ if(user.capabilities)return ['26','53'].every(key=>(['show','insert','edit'] as PermissionVerb[]).every(verb=>user.capabilities![key]?.includes(verb)));
+ return (user.permissions.settings||0)>=3;
+}
+const OWN_SIGNATURE:PermissionVerb[]=['show','insert','edit','import','print'];
+/** Pilots profile: everyone keeps their own signatures; an administrator may view (never write) another user's. */
+function signatureAccess(user:User,verb:PermissionVerb,row?:Row):boolean{
+ if(!row)return verb==='show'||verb==='insert';
+ if(row.userId===user.id)return OWN_SIGNATURE.includes(verb);
+ return isAdministrator(user)&&(verb==='show'||verb==='print');
+}
 export function canResource(user:User,key:string,verb:PermissionVerb='show',row?:Row):boolean{
  if(!resourceAvailable(user.availability,key)||row&&!rowAvailable(user.availability,key,row))return false;
+ if(user.availability?.features.includes('pilots')){
+  if((key==='users'||key==='profiles')&&!isAdministrator(user))return false;
+  if(key==='signatures')return signatureAccess(user,verb,row);
+ }
  const scopes=user.availability&&!row&&['inspection_requests','inspection_results'].includes(key)?user.availability.inspectionTypes.flatMap(type=>resourceScopes(key,{type})):resourceScopes(key,row);
  return scopes.some(scope=>canScope(user,scope,scopeOperation(scope,verb)));
 }
