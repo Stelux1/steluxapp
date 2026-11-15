@@ -1,5 +1,6 @@
 import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
 import type { Field, Resource, Module } from './types.ts';
+import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
 const d = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'date', ...extra });
@@ -16,11 +17,34 @@ function add(key: string, title: string, singular: string, module: Module, group
 function catalog(key: string, title: string, singular: string, module: Module, group: string, extra: Field[] = []) {
   add(key, title, singular, module, group, `Manage ${title.toLowerCase()} used throughout your workspace.`, [t('name', 'Name', { required: true }), ...extra, note()], undefined, { unique: [['name']] });
 }
-add('sites', 'Project sites', 'project site', 'general', 'Workspace', 'The locations where your projects come together.', [t('name', 'Site name', { required: true }), ...contact], ['name', 'residence', 'phone', 'email'], { unique: [['name']] });
+const SETTINGS = 'Project settings', DOCUMENTS = 'Document settings', PROGRESS = 'Iso progress';
+const siteSettings: Field[] = [
+  b('mandatoryFields', 'Mandatory fields', { section: SETTINGS, hint: 'Require the reference fields when a weld with a welder or a material certificate is saved.' }),
+  s('flangeStandard', 'Flange tightening standard', FLANGE_STANDARDS, { section: SETTINGS, default: FLANGE_STANDARDS[0], hint: 'Pre-fills torque values; values already entered are kept.' }),
+  b('wpsValidation', 'Validation on WPS', { section: SETTINGS, hint: 'Only welders qualified for the weld’s WPS can be assigned.' }),
+  b('projectCertificates', 'Project-specific Material Certificates', { section: SETTINGS, hint: 'Offer and print only certificates linked to the project.' }),
+  s('materialDisplay', 'Material Management Display Setting', MATERIAL_DISPLAYS, { section: SETTINGS, default: MATERIAL_DISPLAYS[0], hint: 'What the MTO isometric view lists.' }),
+  s('defectNorm', 'Defect norm', DEFECT_NORMS, { section: SETTINGS, default: DEFECT_NORMS[0], hint: 'Limits the defect codes offered for a rejected NDT result.' }),
+  n('repairLimit', 'Repair performance limit (%)', { section: SETTINGS, max: 100, step: 0.1, hint: 'Leave empty to use 5 %.' }),
+  s('ndtMeasurement', 'NDT measurement', NDT_MEASUREMENTS, { section: SETTINGS, default: NDT_MEASUREMENTS[0], hint: 'Inch-weighted counts large welds more; per weld counts every weld once.' }),
+  t('irnCode', 'IRN Code', { section: SETTINGS }),
+  t('prefix', 'Prefix', { section: DOCUMENTS }),
+  s('releaseDocDrawing', 'Release doc drawing no', RELEASE_DOC_DRAWINGS, { section: DOCUMENTS, default: RELEASE_DOC_DRAWINGS[0] }),
+  t('hydrotestPlan', 'Hydrotest Execution Plan', { section: DOCUMENTS }),
+  t('flangeProcedureNo', 'Flange procedure No.', { section: DOCUMENTS }),
+  ...[['signSubQaqc', 'Subcontractor QA/QC'], ['signSubConstruction', 'Subcontractor Construction'], ['signPrincipalUi', 'Principal UI'], ['signContractorQaqc', 'Contractor QA/QC'], ['signContractorConstruction', 'Contractor Construction'], ['signNobo', 'NoBo']].map(([name, label]) => t(name, `Signature title: ${label}`, { section: DOCUMENTS })),
+  t('vtDocNo', 'VT Doc.No. & Rev.No.', { section: DOCUMENTS }), t('vtProcedureNo', 'VT Procedure No.', { section: DOCUMENTS }),
+  t('vtType2No', 'VT type 2 no', { section: DOCUMENTS }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS }), d('vtType2Date', 'VT type 2 date', { section: DOCUMENTS }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS }),
+  ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL [GU] Field ${i}`, { section: DOCUMENTS })),
+  t('lislDocNo', 'LISL Doc.No. & Rev.No.', { section: DOCUMENTS }), t('lislProcedureNo', 'LISL Procedure No.', { section: DOCUMENTS }),
+  ...PROGRESS_PHASES.map(phase => n(phase.field, `${phase.label} phase (%)`, { section: PROGRESS, max: 100, step: 1 })),
+  ...PROGRESS_PHASES.flatMap(phase => phase.activities.map(activity => n(activity.field, `${phase.label} · ${activity.label} (%)`, { section: PROGRESS, max: 100, step: 1 }))),
+];
+add('sites', 'Project sites', 'project site', 'general', 'Workspace', 'The locations where your projects come together.', [t('name', 'Site name', { required: true }), ...contact, ...siteSettings], ['name', 'residence', 'phone', 'email'], { unique: [['name']] });
 add('companies', 'Companies', 'company', 'general', 'Workspace', 'Customers, contractors, and partner companies.', [t('name', 'Company name', { required: true }), ...contact, note()], ['name', 'residence', 'phone', 'email'], { unique: [['name']] });
 add('warehouses', 'Warehouses', 'warehouse', 'general', 'Workspace', 'Material storehouses and tool warehouses in one place.', [t('name', 'Warehouse name', { required: true }), r('siteId', 'Project site', 'sites'), r('companyId', 'Company', 'companies'), ...contact, s('use', 'Used for', ['Materials', 'Tools', 'Both'], { default: 'Both' })], ['name', 'siteId', 'use', 'residence', 'phone'], { unique: [['name']] });
 add('projects', 'Projects', 'project', 'general', 'Workspace', 'Plan, track, and connect every part of a project.', [
-  t('internnumber', 'Internal project number', { required: true }), t('externnumber', 'External project number'), r('siteId', 'Project site', 'sites', { required: true }), r('companyId', 'Company', 'companies'), note(), t('contact', 'Contact name'), t('phone', 'Contact phone'), t('authority', 'Authority'), status(), d('startdate', 'Start date'), d('enddate', 'End date'), n('workingdays', 'Working days'), n('amounthours', 'Hours per day'), n('adminhours', 'Admin template hours'),
+  t('internnumber', 'Internal project number', { required: true }), t('externnumber', 'External project number'), r('siteId', 'Project site', 'sites', { required: true }), r('companyId', 'Company', 'companies'), note(), t('contact', 'Contact name'), t('phone', 'Contact phone'), t('authority', 'Authority'), status(), b('weldPilot', 'Weld Pilot', { default: true, section: 'Applications', hint: 'Show this project in Weld Pilot.' }), b('mtoPilot', 'MTO Pilot', { default: true, section: 'Applications', hint: 'Show this project in MTO Pilot.' }), d('startdate', 'Start date'), d('enddate', 'End date'), n('workingdays', 'Working days'), n('amounthours', 'Hours per day'), n('adminhours', 'Admin template hours'),
   ...['adminprefab', 'prefab', 'service', 'install', 'commision'].flatMap((phase, i) => [d(`${phase}start`, `${['Admin prefab', 'Prefab', 'Service', 'Installation', 'Commissioning'][i]} start`, { section: 'Schedule' }), d(`${phase}end`, `${['Admin prefab', 'Prefab', 'Service', 'Installation', 'Commissioning'][i]} end`, { section: 'Schedule' })])
 ], ['internnumber', 'description', 'siteId', 'contact', 'status', 'enddate'], { unique: [['siteId', 'internnumber']] });
 export const phaseFields = [b('prefab_materials', 'Materials complete'), b('prefab_est', 'Estimation complete'), b('prefab_welds', 'Welds complete'), b('prefab_doc', 'Prefab documents complete'), b('field_doc', 'Field documents complete'), b('field_test', 'Field tests complete'), b('field_release', 'Field released'), b('prep_finished', 'Preparation complete')].map(f => ({ ...f, section: 'Phases' }));

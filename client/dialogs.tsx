@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ACTIONS } from './catalog.ts';
@@ -10,6 +10,7 @@ import { api, post, ApiError, formatNumber } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Modal, FieldInput, revealInvalidField } from './components.tsx';
 import { PermissionProfileEditor } from './permission-profile-editor.tsx';
+import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
@@ -18,8 +19,12 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]]))}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
   const groups = [...new Set(editorFields.filter(f=>!f.hidden).map(f => f.section || 'Details'))];
+  // A long form is often scrolled past the message when it is saved: bring it back into view.
+  useEffect(() => { if (error) document.querySelector('.modal-body > .alert.error')?.scrollIntoView({ block: 'nearest' }); }, [error, fields]);
   async function submit(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError(''); setFields({});
+    e.preventDefault(); setError(''); setFields({});
+    if (resourceKey === 'sites') { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
+    setBusy(true);
     try { const payload = record && user.availability ? Object.fromEntries(Object.entries(values).filter(([name,value]) => {
       const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
       const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
@@ -43,7 +48,13 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
       return next;
     });
   }
-  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div></details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+}
+/** Running totals of the isometric progress weights: phases must reach 100 %, and so must each active phase. */
+function ProgressTotals({ values }: { values: Record<string, unknown> }) {
+  const totals = progressTotals(values), weights = progressWeights(values);
+  const lines = [{ key: 'phases', label: 'Shop + Field + Site', total: totals.phases, applies: weights.configured }, ...PROGRESS_PHASES.map(phase => ({ key: phase.key, label: `${phase.label} activities`, total: totals.activities[phase.key], applies: weights.phases[phase.key] > 0 }))];
+  return <div className="progress-totals" role="status" aria-live="polite" aria-label="Progress weight totals"><p>Phases must total 100 %, and so must the activities of every phase that has a weight. Leave everything empty until the weights are agreed.</p><ul>{lines.map(line => <li key={line.key} className={!line.applies ? 'idle' : line.total === 100 ? 'ok' : 'off'}><span>{line.label}</span><strong>{line.total}% / 100%</strong></li>)}</ul></div>;
 }
 interface Line { materialId?: string; lineId?: string; quantity: number | string; chargeNo?: string }
 export function WorkflowDialog({ actionKey, defaults = {}, onClose }: {actionKey: string; defaults?: Record<string, unknown>; onClose: () => void}) {

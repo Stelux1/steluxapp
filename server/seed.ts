@@ -9,7 +9,12 @@ export function seed(store: Store) {
     add('profiles', 'profile-admin', { name: 'Administrator', generalPermission: 'Administration', materialsPermission: 'Administration', weldingPermission: 'Administration', toolsPermission: 'Administration', settingsPermission: 'Administration' });
     add('profiles', 'profile-operator', { name: 'Project operator', generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write', toolsPermission: 'Read & write', settingsPermission: 'No access' });
     add('profiles', 'profile-viewer', { name: 'Viewer', generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only', toolsPermission: 'Read only', settingsPermission: 'No access' });
-    add('sites', 'site-north', { name: 'North fabrication yard', address: '18 Foundry Road', residence: 'Rotterdam', zip: '3089', email: 'north@example.com' });
+    add('sites', 'site-north', { name: 'North fabrication yard', address: '18 Foundry Road', residence: 'Rotterdam', zip: '3089', phone: '+31 10 555 0142', email: 'north@example.com',
+      mandatoryFields: true, flangeStandard: 'ASME B16.5 torque table (2012)', wpsValidation: true, projectCertificates: true, materialDisplay: 'Materials added to isometrics', defectNorm: 'ISO 6520-1', repairLimit: 4, ndtMeasurement: 'Inch-weighted', irnCode: 'NFY-IRN',
+      prefix: 'NFY', releaseDocDrawing: 'Drawing no + iso', hydrotestPlan: 'HEP-NFY-001 rev 2', flangeProcedureNo: 'FP-2026-03', signSubQaqc: 'QA/QC Manager', signSubConstruction: 'Construction Manager', signPrincipalUi: 'Principal inspector', signContractorQaqc: 'Contractor QA/QC lead', signContractorConstruction: 'Contractor site manager', signNobo: 'Notified body inspector',
+      vtDocNo: 'VT-NFY-01 rev B', vtProcedureNo: 'PR-VT-004', vtType2No: 'VT2-118', vtType2Rev: 'A', vtType2Date: '2026-06-15', vtType2OrderNo: 'PO-44017', lislField1: 'Fabrication package', lislField2: 'Welding coordinator', lislField3: 'Cooling water', lislDocNo: 'LISL-NFY-01 rev C', lislProcedureNo: 'PR-LISL-002',
+      weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10,
+      fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 });
     add('sites', 'site-river', { name: 'Riverside installation', address: '42 Harbour Lane', residence: 'Antwerp', zip: '2000' });
     add('companies', 'company-stelux', { name: 'Stelux Engineering', residence: 'Belgrade', email: 'projects@example.com' });
     add('companies', 'company-north', { name: 'Northline Process', residence: 'Rotterdam', email: 'office@example.com' });
@@ -27,7 +32,7 @@ export function seed(store: Store) {
     const projects = [
       { id: 'project-cooling', internnumber: 'STX-2401', externnumber: 'NLP-CW-04', description: 'Cooling water expansion', siteId: 'site-north', companyId: 'company-north', contact: 'Alex Morgan', authority: 'Project manager', startdate: '2026-09-01', enddate: '2026-11-28', status: 'Active' },
       { id: 'project-steam', internnumber: 'STX-2402', externnumber: 'RIV-ST-02', description: 'Riverside steam network', siteId: 'site-river', companyId: 'company-stelux', contact: 'Sam Rivers', startdate: '2026-09-14', enddate: '2026-12-18', status: 'Active' },
-      { id: 'project-skid', internnumber: 'STX-2403', externnumber: 'NLP-SK-01', description: 'Process skid fabrication', siteId: 'site-north', companyId: 'company-north', contact: 'Jamie Ellis', startdate: '2026-08-10', enddate: '2026-10-30', status: 'Active' }
+      { id: 'project-skid', internnumber: 'STX-2403', externnumber: 'NLP-SK-01', description: 'Process skid fabrication', siteId: 'site-north', companyId: 'company-north', contact: 'Jamie Ellis', mtoPilot: false, startdate: '2026-08-10', enddate: '2026-10-30', status: 'Active' }
     ];
     projects.forEach(p => { const { id, ...data } = p; add('projects', id, { ...data, amounthours: 8, workingdays: 60 }); });
     add('test_systems', 'test-cw', { name: 'CW-01', projectId: 'project-cooling', medium: 'Water', pressure: '15 bar' });

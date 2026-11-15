@@ -26,7 +26,7 @@ Add weld (26 inputs) and Edit weld share the layout. Buttons in edit: Add new ·
 - Weld no.* · Weld type [sel 18] · WPS number [sel — only WPS available to this project] · Fitup Date · Weld Date
 - Welder, Welder 2, Welder 3, Welder 4 [sel — filled after the dialog opens; option text `ML396, Name | …`]. "Multiple welders?" reveals welders 2–4.
 - Dia. [sel 55 from Weld diameters, first option "-- Length in mm --"] · Length in mm [number] (only for explicit length) · NDT percent [number 0–100, only with explicit length and NDT required]
-- Coating 1 · Coating weld · Coating 2 · Sleeve · Spool [sel — spools of this isometric]
+- Coating 1 · Coating weld · Coating 2 · Sleeve · Spool [sel, 18 options — names from the **Spools catalog** that are enabled on the site, e.g. "Spool J", "SP01"; a spool on an isometric is the pair isometric + spool name. Our model keeps spools per isometric; treat that as a known difference, not something to change in this flow]
 - KR · FP · Ins. length 1 · Ins. length 2 · Weld process [sel 12]
 - Welding wire 1 · Pos 1 · Welding wire 2 · Pos 2
 - Charge number 1 [sel] with checkbox "Upd. prev. weld"; Charge number 2 [sel] with checkbox "Upd. next weld" (copies the chosen charge to the adjoining side of the neighbouring weld). Options: `CONN ISO`, `EXISTING`, then material parts / certificates; after choosing, the dialog shows read-only **Index number, Material, Description, Diameter** fetched from the certificate.

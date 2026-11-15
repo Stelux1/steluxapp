@@ -1,6 +1,7 @@
 import type { ActionDefinition, Availability, Field, Resource, Row } from './types.ts';
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
+import { RESOURCE_MAP } from './resources.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -76,6 +77,15 @@ const prototypeAvailability: Availability = {
   navigation: [...weldingAvailability.navigation, 'materials', 'certifications', 'coatings', 'test_systems', 'pwht_processes', 'pwht_locations'],
   features: [...weldingAvailability.features, 'lisl', 'project-bulk-edit'],
 };
+/**
+ * Deliver a resource to a profile with all of its fields (or only `names`) and its menu entry. Fields the
+ * profile already delivers are kept, so it can extend an existing entry as well as add a new resource.
+ */
+export function deliverResource(availability: Availability, key: string, names?: string[]) {
+  if (!RESOURCE_MAP[key]) throw new Error(`Unknown resource ${key}.`);
+  availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...(names ?? RESOURCE_MAP[key].fields.map(field => field.name))])];
+  if (!availability.navigation.includes(key)) availability.navigation.push(key);
+}
 export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => {
   if (profile === 'full') return undefined;
   const availability = structuredClone(profile === 'welding-demo' ? weldingAvailability : prototypeAvailability);
@@ -97,6 +107,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       'cut-list': fields('project iso name material spool quantity lengthMm totalMm'),
     });
     availability.navigation.push('iso_materials', 'operation_phases', 'calculation_norms', 'calculation_lines', 'cut_list');
+    deliverResource(availability, 'sites');
+    deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
@@ -129,7 +141,7 @@ export function projectField(availability: Availability | undefined, field: Fiel
 export function projectResource(availability: Availability | undefined, resource: Resource): Resource {
   if (!availability) return resource;
   const prototype = availability.features.includes('lisl');
-  const columns = prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const columns = availability.features.includes('pilots') && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
     fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => {

@@ -6,6 +6,7 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { RELATIONS } from '../shared/welding.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
+import { validateProgressWeights } from '../shared/site-settings.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
@@ -130,6 +131,7 @@ export class Store {
       data[field.name] = value as Value;
     }
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
+    if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
     if(key==='profiles'&&data.permissionMode==='Detailed permissions'){try{data.permissionRules=JSON.stringify(parsePermissionRules(data.permissionRules));}catch(e){throw new AppError(422,(e as Error).message,{permissionRules:(e as Error).message});}}
     if(key==='pqr'&&!data.name)data.name=this.next('PQR');

@@ -1,12 +1,13 @@
 import type { Row } from './types.ts';
 
-/** Project sites are the main projects; projects are their numbered subprojects. */
-export function projectScope(rows: Record<string, Row[]>, siteId: string): Record<string, Row[]> {
-  if (!siteId) return rows;
-  const scoped = { ...rows };
-  scoped.sites = (rows.sites || []).filter(row => row.id === siteId);
-  scoped.projects = (rows.projects || []).filter(row => row.siteId === siteId);
-  const projects = new Set(scoped.projects.map(row => row.id));
+/** Row key that switches a project on for each pilot. Projects without the key (older records) are enabled. */
+const PILOT_FLAGS: Record<string, string> = { weld: 'weldPilot', mto: 'mtoPilot' };
+export const projectInPilot = (project: Row, pilot?: string) => !pilot || !PILOT_FLAGS[pilot] || project[PILOT_FLAGS[pilot]] !== false;
+
+/** Keep only what hangs off the given projects: isometrics, their weld and material records, and documents. */
+function narrowToProjects(rows: Record<string, Row[]>, projectRows: Row[], sites = rows.sites || []): Record<string, Row[]> {
+  const scoped: Record<string, Row[]> = { ...rows, projects: projectRows, sites };
+  const projects = new Set(projectRows.map(row => row.id));
   scoped.isometrics = (rows.isometrics || []).filter(row => projects.has(String(row.projectId)));
   const isos = new Set(scoped.isometrics.map(row => row.id));
   for (const key of ['welds', 'spools', 'revisions', 'iso_materials', 'calculation_lines', 'cut_list', 'releases', 'punchlists', 'flanges']) scoped[key] = (rows[key] || []).filter(row => isos.has(String(row.isoId)));
@@ -16,4 +17,21 @@ export function projectScope(rows: Record<string, Row[]>, siteId: string): Recor
   const ids = Object.fromEntries(Object.entries(scoped).map(([key, values]) => [key, new Set(values.map(row => row.id))]));
   scoped.attachments = (rows.attachments || []).filter(row => ids[String(row.entityType)]?.has(String(row.entityId)));
   return scoped;
+}
+
+/**
+ * Visibility filter of the pilots: a project that is switched off for the current pilot, and everything
+ * hanging off it, is left out of the workspace. This is a view of the data, not a security boundary; the
+ * server still returns every record the account may read.
+ */
+export function pilotScope(rows: Record<string, Row[]>, pilot?: string): Record<string, Row[]> {
+  const projects = rows.projects || [];
+  if (!pilot || projects.every(project => projectInPilot(project, pilot))) return rows;
+  return narrowToProjects(rows, projects.filter(project => projectInPilot(project, pilot)));
+}
+
+/** Project sites are the main projects; projects are their numbered subprojects. */
+export function projectScope(rows: Record<string, Row[]>, siteId: string): Record<string, Row[]> {
+  if (!siteId) return rows;
+  return narrowToProjects(rows, (rows.projects || []).filter(row => row.siteId === siteId), (rows.sites || []).filter(row => row.id === siteId));
 }
