@@ -23,6 +23,7 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
     isometrics, projects: load('projects') || [], sites: load('sites') || [],
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),
     releases: load('releases'), punch: load('punchlists'), requirements: load('iso_materials'),
+    materials: load('materials'), customMaterials: load('custom_materials'), operationPhases: load('operation_phases'),
     planning: Boolean(availability?.features.includes('project-planning')),
   });
 }

@@ -31,6 +31,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const cookieName = options.releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session' : availability ? 'blitzkrieg_session' : 'stelux_session';
   const access = releaseAccess(store, availability);
   const pilots = Boolean(availability?.features.includes('pilots'));
+  store.requireMaterialGroup = pilots;
   const presentUser = (id: string) => access.present(id);
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
@@ -102,7 +103,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       } catch (error) { return next(error); }
     } else (req as AuthRequest).user = access.user((req as AuthRequest).user);
     const projectBulk = availability?.features.includes('project-bulk-edit') && /^\/bulk\/(?:projects|isometrics)$/.test(req.path);
-    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
+    // Mass edit of the Material database (MTO Pilot catalogs); other hosted bulk routes stay closed.
+    const materialBulk = pilots && req.path === '/bulk/materials';
+    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !materialBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
     next();
   });
   app.param('resource', (_req, _res, next, key) => { try { access.resource(key); next(); } catch (error) { next(error); } });
@@ -225,7 +228,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     let raw: Record<string, string>[]; try { raw = parse(req.file.buffer, { columns: true, bom: true, skip_empty_lines: true, trim: true, max_record_size: 100_000 }); } catch { throw new AppError(422, 'This CSV could not be read. Check its headers and delimiters.'); }
     if (!raw.length || raw.length > 1000) throw new AppError(422, 'Import between 1 and 1,000 rows at a time.');
     const converted = raw.map(row =>{const result:Record<string,unknown>= Object.fromEntries(resource.fields.filter(f => f.type !== 'password').map(f => {
-      let value: unknown = row[f.name] ?? row[f.label] ?? f.default??'';
+      let value: unknown = row[f.name] ?? row[f.label] ?? f.aliases?.map(alias => row[alias]).find(item => item !== undefined) ?? f.default??'';
       if (f.type === 'number') value = value === '' ? null : Number(String(value).replace(',', '.'));
       if (f.type === 'checkbox') value = ['true', '1', 'yes', 'y'].includes(String(value).toLowerCase());
       if (f.ref && value) { const choices = store.list(f.ref).filter(r => (r.id === value || store.display(f.ref!, r) === value)&&(!f.refCategory||r.category===f.refCategory)); value = choices.length === 1 ? choices[0].id : value; }

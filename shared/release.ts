@@ -2,6 +2,7 @@ import type { ActionDefinition, Availability, Field, Resource, Row } from './typ
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { deliverMtoMaterials } from './mto-materials.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -121,6 +122,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
+    // MTO catalogs and the Materials tab of the isometric; orders, stock and picklists are delivered as data for Ord.? / Inv. / Picked.
+    deliverMtoMaterials(availability, deliverResource, key => RESOURCE_MAP[key].fields.map(field => field.name));
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
@@ -163,7 +166,7 @@ export function projectResource(availability: Availability | undefined, resource
   const columns = pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => {
+    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),
