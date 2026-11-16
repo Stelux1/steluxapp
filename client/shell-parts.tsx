@@ -41,14 +41,15 @@ export function NotificationBell() {
 
 /**
  * Hosted profile: the account menu. The trigger shows the user's name; the menu lists the main projects the account may work
- * on (a click makes one active) and Logout. Changing the password stays under System.
+ * on under "Change site" (a click makes one the main project of the whole session: every pilot and every open tab follows)
+ * and Logout. Changing the password stays under System.
  */
 export function AccountMenu({ onLogout }: { onLogout: () => void }) {
   const { user, allRows, siteId, selectSite } = useWorkspace(); const navigate = useNavigate();
   const sites = (allRows.sites || []).filter((site: Row) => !site._archived).sort((a: Row, b: Row) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }));
   return <Dropdown className="user-menu" label="Account menu" trigger={<span className="avatar-summary"><span className="user-avatar small">{user.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</span><span className="user-menu-name">{user.name}</span><ChevronDown size={13}/></span>}>
     <div className="user-menu-info"><strong>{user.name}</strong><small>{user.email}</small></div>
-    {sites.length > 0 && <div className="user-menu-sites" role="group" aria-label="Change project site"><span className="user-menu-heading">Change project site</span>
+    {sites.length > 0 && <div className="user-menu-sites" role="group" aria-label="Change site"><span className="user-menu-heading">Change site</span>
       {sites.map(site => <button type="button" key={site.id} aria-current={site.id === siteId ? 'true' : undefined} onClick={() => { selectSite(site.id); navigate('/dashboard'); }}>{site.id === siteId ? <Check size={14}/> : <span className="menu-gap"/>}{String(site.name)}</button>)}</div>}
     <button type="button" onClick={onLogout}><LogOut size={15}/>Logout</button>
   </Dropdown>;

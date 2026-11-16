@@ -12,7 +12,8 @@ import { documentStorage } from '../server/documents.ts';
 import { currentSignature } from '../server/signatures.ts';
 import { releaseAccess } from '../server/release-access.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.ts';
-import { areaPilots, canResource, canScope, isAdministrator, parsePermissionRules, PERMISSION_AREAS, pilotBoundary, type CopyParts } from '../shared/permissions.ts';
+import { areaPilots, canChangeRights, canResource, canScope, isAdministrator, parsePermissionRules, PERMISSION_AREAS, pilotBoundary, usersProfilesRight, type CopyParts } from '../shared/permissions.ts';
+import { SITE_SCOPE_SPECIFIC } from '../shared/site-scope.ts';
 import { isoBlockers, isoProgress, isoQuality } from '../shared/iso-status.ts';
 import type { IsoSummary } from '../shared/iso-summary.ts';
 import { isoBudgets as mtoIsoBudgets, materialStatus } from '../shared/mto-materials.ts';
@@ -656,4 +657,127 @@ test('entering a pilot depends on the application being enabled; with no area ri
   const row = f.store.get('users', empty.id); f.store.update('users', empty.id, { weldEnabled: false }, row._version);
   const refused = await as.request('/bootstrap', { pilot: 'weld' }); assert.equal(refused.status, 403); assert.equal((await json(refused)).code, 'pilot');
   assert.equal(await status(await as.request('/bootstrap', { pilot: 'mto' })), 200);
+});
+
+// ----- access-users-profiles-013: Users accounts (26) and Profiles (53) box by box -------------------------------------
+const ALL_26 = ['show', 'insert', 'edit', 'delete', 'export'], ALL_53 = ['show', 'insert', 'edit', 'delete', 'export'];
+test('Users accounts and Profiles follow their own boxes: Show + Export lists and exports accounts, nothing more', async t => {
+  const f = await fixture(t);
+  // The pure rule: matrix boxes one by one; module levels keep the administrator rule; links are read only.
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  const matrix = (rules: Record<string, string[]>): User => ({ id: 'u', name: 'U', email: 'u@example.test', profileId: 'p', availability: hosted, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 1 }, capabilities: rules as User['capabilities'] });
+  const viewer = matrix({ '26': ['show', 'export'] });
+  assert.deepEqual(['show', 'export', 'insert', 'edit', 'delete'].map(verb => usersProfilesRight(viewer, 'users', verb as 'show')), [true, true, false, false, false]);
+  assert.equal(usersProfilesRight(viewer, 'profiles', 'show'), false);
+  assert.equal(usersProfilesRight(matrix({ '26': ALL_26 }), 'user_sites', 'insert'), false, 'project-site links are written through the user form only');
+  assert.equal(canChangeRights(matrix({ '26': ALL_26, '53': ['show', 'insert'] })), false);
+  assert.ok(canChangeRights(matrix({ '26': ['edit'], '53': ['edit'] })));
+  const levels: User = { ...viewer, capabilities: undefined };
+  assert.equal(usersProfilesRight({ ...levels, permissions: { ...levels.permissions, settings: 2 } }, 'users', 'show'), false, 'module levels: administrators only, as before');
+  assert.ok(usersProfilesRight({ ...levels, permissions: { ...levels.permissions, settings: 3 } }, 'users', 'edit'));
+  // Over the API.
+  const reader = f.account('Account reader', { profileId: detailed(f.store, 'Accounts show and export', { '26': ['show', 'export'], '63': ['show'] }) });
+  const as = f.client(); await as.login(reader.email);
+  for (const pilot of ['weld', 'mto']) {
+    const list = await as.request('/records/users', { pilot }); assert.equal(list.status, 200, pilot);
+    assert.ok((await json<{ rows: Row[] }>(list)).rows.every(row => row.password === undefined), 'passwords stay write-only');
+    const exported = await as.request('/export/users?format=csv', { pilot }); assert.equal(exported.status, 200, `${pilot} export`);
+    assert.ok(!(await exported.text()).includes('password'), 'the export has no password column');
+    const boot = await json<{ rows: Record<string, Row[]> }>(await as.request('/bootstrap', { pilot }));
+    assert.ok(boot.rows.users.length > 0); assert.equal(boot.rows.profiles, undefined, 'no Profiles box, no profiles');
+    assert.equal(await status(await as.request('/records/profiles', { pilot })), 403);
+  }
+  assert.equal(await status(await as.request(`/history/users/${reader.id}`, { pilot: 'weld' })), 200);
+  const other = f.store.list('users').find(row => row.email === 'access-admin@example.test')!;
+  assert.equal(await status(await as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'New account', email: 'new-account@example.test', profileId: 'profile-admin', active: true, password: 'New-Account-Password' } })), 403, 'no Insert box');
+  assert.equal(await status(await as.request(`/records/users/${other.id}`, { method: 'PUT', pilot: 'weld', data: { name: 'Renamed', _version: other._version } })), 403, 'no Edit box');
+  assert.equal(await status(await as.request(`/records/users/${other.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: other._version } })), 403, 'no Delete box');
+  assert.equal(f.store.get('users', other.id).name, 'Access admin');
+});
+
+test('a profile editor without Edit on User accounts edits profiles but not rights or accounts; Edit on accounts alone cannot change a profile or a password', async t => {
+  const f = await fixture(t);
+  const keyUser = f.account('Profile editor', { profileId: detailed(f.store, 'Profiles insert and edit', { '26': ['show'], '53': ['show', 'insert', 'edit'] }) });
+  const as = f.client(); await as.login(keyUser.email);
+  const reviewer = detailed(f.store, 'Reviewer matrix', { '63': ['show'] });
+  // Profiles: add, rename and describe.
+  const created = await as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name: 'Key user profile', permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '63': ['show', 'edit'] }) } });
+  assert.equal(created.status, 201);
+  let target = f.store.get('profiles', reviewer);
+  assert.equal(await status(await as.request(`/records/profiles/${reviewer}`, { method: 'PUT', pilot: 'weld', data: { name: 'Reviewer (renamed)', _version: target._version } })), 200);
+  // Rights of a profile: Edit on both 26 and 53.
+  target = f.store.get('profiles', reviewer);
+  const rights = await as.request(`/records/profiles/${reviewer}`, { method: 'PUT', pilot: 'weld', data: { permissionRules: JSON.stringify({ '63': ['show', 'insert', 'edit'] }), _version: target._version } });
+  assert.equal(rights.status, 403); assert.match((await json<{ error: string }>(rights)).error, /Edit right on both User accounts and Profiles/);
+  assert.deepEqual(JSON.parse(String(f.store.get('profiles', reviewer).permissionRules)), { '63': ['show'] });
+  // An account's profile: refused (no Edit on 26).
+  const someone = f.account('Someone', { profileId: reviewer });
+  assert.equal(await status(await as.request(`/records/users/${someone.id}`, { method: 'PUT', pilot: 'weld', data: { profileId: 'profile-admin', _version: f.store.get('users', someone.id)._version } })), 403);
+  // Edit on User accounts without Edit on Profiles: the account's details yes, its profile or password no.
+  const manager = f.account('Account editor', { profileId: detailed(f.store, 'Accounts edit only', { '26': ['show', 'insert', 'edit'], '53': ['show'] }) });
+  const m = f.client(); await m.login(manager.email);
+  let row = f.store.get('users', someone.id);
+  assert.equal(await status(await m.request(`/records/users/${someone.id}`, { method: 'PUT', pilot: 'weld', data: { title: 'Inspector', _version: row._version } })), 200);
+  row = f.store.get('users', someone.id);
+  for (const change of [{ profileId: 'profile-admin' }, { weldProfileId: 'profile-admin' }, { mtoProfileId: reviewer }]) {
+    const refused = await m.request(`/records/users/${someone.id}`, { method: 'PUT', pilot: 'weld', data: { ...change, _version: row._version } });
+    assert.equal(refused.status, 403, JSON.stringify(change)); assert.match((await json<{ error: string }>(refused)).error, /Edit right on both/);
+  }
+  assert.equal(f.store.get('users', someone.id).profileId, reviewer, 'rolled back');
+  const admin = f.store.list('users').find(item => item.email === 'access-admin@example.test')!;
+  const takeover = await m.request(`/records/users/${admin.id}`, { method: 'PUT', pilot: 'weld', data: { password: 'Taken-Over-Password', _version: admin._version } });
+  assert.equal(takeover.status, 403, 'no password of another account');
+  assert.equal((await f.client().request('/auth/login', { method: 'POST', data: { email: 'access-admin@example.test', password: 'Taken-Over-Password' } })).status, 401);
+  // A new account always gets a profile, so adding one needs the same rights.
+  assert.equal(await status(await m.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'Added', email: 'added@example.test', profileId: reviewer, active: true, password: 'Added-Account-Password' } })), 403);
+  assert.equal(f.store.list('users').some(item => item.email === 'added@example.test'), false);
+});
+
+test('an account cannot widen its own profile, its own applications or its own site list; the last administrator stays', async t => {
+  const f = await fixture(t);
+  const managerProfile = detailed(f.store, 'User administration', { '26': ALL_26, '53': ALL_53, '63': ['show'] });
+  const narrower = detailed(f.store, 'User administration light', { '26': ['show'], '53': ['show'] });
+  const manager = f.account('User administrator', { profileId: managerProfile, mtoEnabled: false });
+  const as = f.client(); await as.login(manager.email);
+  const own = () => f.store.get('users', manager.id);
+  // Own profile: never wider; narrower is allowed.
+  for (const change of [{ profileId: 'profile-admin' }, { weldProfileId: 'profile-admin' }, { mtoEnabled: true }]) {
+    const refused = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { ...change, _version: own()._version } });
+    assert.equal(refused.status, 403, JSON.stringify(change)); assert.match((await json<{ error: string }>(refused)).error, /cannot widen your own access/);
+  }
+  assert.deepEqual([own().profileId, own().mtoEnabled], [managerProfile, false]);
+  // Own site list (w2-access-core rule, still in place).
+  assert.equal(await status(await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: ['site-north'], _version: own()._version } })), 403);
+  // The rights of the profile its own account uses: never wider.
+  let profile = f.store.get('profiles', managerProfile);
+  const wider = await as.request(`/records/profiles/${managerProfile}`, { method: 'PUT', pilot: 'weld', data: { permissionRules: JSON.stringify({ '26': ALL_26, '53': ALL_53, '63': ['show', 'insert', 'edit', 'delete'] }), _version: profile._version } });
+  assert.equal(wider.status, 403); assert.match((await json<{ error: string }>(wider)).error, /cannot widen your own access/);
+  // Another profile's rights: allowed with Edit on both.
+  const reviewer = detailed(f.store, 'Reviewer for edit', { '63': ['show'] }), reviewerRow = f.store.get('profiles', reviewer);
+  assert.equal(await status(await as.request(`/records/profiles/${reviewer}`, { method: 'PUT', pilot: 'weld', data: { permissionRules: JSON.stringify({ '63': ['show', 'edit'] }), _version: reviewerRow._version } })), 200);
+  // Narrowing its own profile is allowed.
+  profile = f.store.get('profiles', managerProfile);
+  assert.equal(await status(await as.request(`/records/profiles/${managerProfile}`, { method: 'PUT', pilot: 'weld', data: { permissionRules: JSON.stringify({ '26': ALL_26, '53': ALL_53 }), _version: profile._version } })), 200);
+  // The last administrator: once the manager is the only one, it cannot narrow itself away.
+  const admin = f.store.list('users').find(item => item.email === 'access-admin@example.test')!;
+  assert.equal(await status(await as.request(`/records/users/${admin.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: admin._version } })), 200, 'another administrator remains (the manager)');
+  const last = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { profileId: narrower, _version: own()._version } });
+  assert.equal(last.status, 409, 'the last administrator cannot be removed');
+  assert.equal(own().profileId, managerProfile);
+});
+
+// ----- w1-left-6: storehouses are MTO Pilot records -----------------------------------------------------------------------
+test('a Weld Pilot session gets no storehouses, even for an account with MTO rights; MTO Pilot keeps them', async t => {
+  const f = await fixture(t);
+  const both = f.account('Both pilots writer', { profileId: f.profile('All rights writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW }) });
+  const as = f.client(); await as.login(both.email);
+  const weld = await json<{ rows: Record<string, Row[]>; activity: { entityType: string }[] }>(await as.request('/bootstrap', { pilot: 'weld' }));
+  assert.deepEqual(weld.rows.warehouses ?? [], [], 'no storehouse rows in the Weld Pilot bootstrap');
+  assert.ok(!weld.activity.some(event => event.entityType === 'warehouses'));
+  const warehouse = f.store.list('warehouses')[0]; assert.ok(warehouse, 'sample storehouse');
+  for (const path of ['/records/warehouses', `/history/warehouses/${warehouse.id}`, '/export/warehouses?format=csv']) assert.equal(await status(await as.request(path, { pilot: 'weld' })), 403, path);
+  assert.equal(await status(await as.request(`/records/warehouses/${warehouse.id}`, { method: 'PUT', pilot: 'weld', data: { phone: '1', _version: warehouse._version } })), 403);
+  const mto = await json<{ rows: Record<string, Row[]> }>(await as.request('/bootstrap', { pilot: 'mto' }));
+  assert.ok(mto.rows.warehouses.length > 0, 'MTO Pilot unchanged');
+  assert.equal(await status(await as.request('/records/warehouses', { pilot: 'mto' })), 200);
 });

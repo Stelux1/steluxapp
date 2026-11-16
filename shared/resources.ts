@@ -45,6 +45,8 @@ const siteSettings: Field[] = [
   // Automatic IRN numbers: switched on only by the fill-irn action (server/iso-pages.ts); the counter is the last number given.
   b('irnAuto', 'Automatic IRN numbers', { hidden: true, section: SETTINGS }),
   n('irnCounter', 'IRN counter', { hidden: true, section: SETTINGS }),
+  // Hosted "Archived" (reference: last field of Project settings): ticked, the saved site moves to the archived list (server/user-admin.ts `siteArchiveInput`).
+  b('archived', 'Archived', { hidden: true, section: SETTINGS, hint: 'Moves this project site to the archived list. Its records stay available there.' }),
   t('prefix', 'Prefix', { section: DOCUMENTS }),
   s('releaseDocDrawing', 'Release doc drawing no', RELEASE_DOC_DRAWINGS, { section: DOCUMENTS, default: RELEASE_DOC_DRAWINGS[0] }),
   t('hydrotestPlan', 'Hydrotest Execution Plan', { section: DOCUMENTS }),
@@ -243,7 +245,7 @@ resources.push(...HYDROTEST_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);
 /** Fields above that only the pilots profile shows. */
-export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'] };
+export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'], sites: ['archived'] };
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {

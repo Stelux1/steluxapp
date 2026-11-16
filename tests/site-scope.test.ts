@@ -623,3 +623,32 @@ test('an out-of-scope isometric gets the same answer on its PDF as on its record
   // A missing isometric stays "not found".
   assert.equal((await north.as.request('/pdf/lisl?isoId=iso-missing', { pilot: 'weld' })).status, 404);
 });
+
+test('the Request archive of an account that reaches every main project follows the session\'s main project on the server (scn-SC-D6)', async t => {
+  const f = await fixture(t);
+  seedMtoLogistics(f.store, SYSTEM);
+  const writer = f.profile('All sites logistics', { generalPermission: RW, materialsPermission: RW, weldingPermission: NONE });
+  const all = f.account('All sites logistics', { profileId: writer, weldEnabled: false });
+  await all.login();
+  const siteOfRequest = (request: Row) => resolver(f.store).siteOf('service_requests', request);
+  const requests = f.store.list('service_requests');
+  const north = requests.find(row => siteOfRequest(row) === NORTH)!, river = requests.find(row => siteOfRequest(row) === RIVER)!;
+  assert.ok(north && river, 'sample requests on both main projects');
+  // No main project chosen yet: as before, every request.
+  const before = (await json<{ rows: Row[] }>(await all.as.request('/records/service_requests', { pilot: 'mto' }))).rows;
+  assert.ok(before.some(row => row.id === north.id) && before.some(row => row.id === river.id));
+  // Riverside chosen for the session: lists, records and their routes follow it; the rest of the workspace does not narrow.
+  assert.equal((await all.as.request('/auth/site', { method: 'POST', data: { siteId: RIVER } })).status, 200);
+  const listed = (await json<{ rows: Row[] }>(await all.as.request('/records/service_requests', { pilot: 'mto' }))).rows;
+  assert.ok(listed.length > 0 && listed.every(row => siteOfRequest(row) === RIVER), 'Riverside requests only');
+  const boot = await json<Bootstrap>(await all.as.request('/bootstrap', { pilot: 'mto' }));
+  assert.ok(boot.rows.service_requests.every(row => siteOfRequest(row) === RIVER));
+  assert.ok(boot.rows.isometrics.some(row => row.id === 'iso-1'), 'other records of every main project stay');
+  assert.equal(boot.user.siteId, RIVER); assert.equal(boot.user.siteLimited, undefined);
+  const refused = await all.as.request(`/history/service_requests/${north.id}`, { pilot: 'mto' });
+  assert.equal(refused.status, 403); assert.equal((await json(refused)).code, 'site');
+  assert.equal((await all.as.request(`/records/service_requests/${north.id}`, { method: 'PUT', pilot: 'mto', data: { note: 'Other site', _version: north._version } })).status, 403);
+  assert.equal((await all.as.request(`/records/service_requests/${north.id}/archive`, { method: 'POST', pilot: 'mto', data: { _version: north._version } })).status, 403);
+  assert.equal((await all.as.request(`/history/service_requests/${river.id}`, { pilot: 'mto' })).status, 200);
+  assert.equal(f.store.get('service_requests', north.id).note, north.note, 'nothing changed');
+});

@@ -132,6 +132,24 @@ export function isAdministrator(user:User):boolean{
  if(user.capabilities)return ['26','53'].every(key=>(['show','insert','edit'] as PermissionVerb[]).every(verb=>user.capabilities![key]?.includes(verb)));
  return (user.permissions.settings||0)>=3;
 }
+/** Record types of Users accounts (26) and Profiles (53); user_sites are the project-site links of an account (26). */
+export const USERS_PROFILES_AREAS:Record<string,string>={users:'26',user_sites:'26',profiles:'53'};
+/**
+ * Pilots profile: a right on Users accounts (26) or Profiles (53). A matrix profile follows its own boxes one by one
+ * (Show lists and opens, Export exports, Insert adds, Edit edits, Delete archives); the project-site links of an account
+ * are only ever written through the user form, so they are read only here. A profile with module levels keeps the
+ * administrator rule (settings Administration, which the built-in Administrator profile has). The writes that change
+ * rights need more on the server (server/user-admin.ts): Edit on both 26 and 53 to change an account's profile or a
+ * profile's rights, never wider for one's own account.
+ */
+export function usersProfilesRight(user:User,key:string,verb:PermissionVerb):boolean{
+ const area=USERS_PROFILES_AREAS[key];if(!area)return false;
+ if(!user.capabilities)return isAdministrator(user);
+ if(key==='user_sites'&&!['show','export'].includes(verb))return false;
+ return canScope(user,area,scopeOperation(area,verb));
+}
+/** Pilots profile: whether the account may change which profile an account has, or the rights of a profile (Edit on both 26 and 53). */
+export const canChangeRights=(user:User)=>usersProfilesRight(user,'users','edit')&&usersProfilesRight(user,'profiles','edit');
 const OWN_SIGNATURE:PermissionVerb[]=['show','insert','edit','import','print'];
 /**
  * Pilots profile: Show / Insert on the Signatures area (96) decide whether an account opens and saves signatures; within
@@ -146,7 +164,8 @@ function signatureAccess(user:User,verb:PermissionVerb,row?:Row):boolean{
 export function canResource(user:User,key:string,verb:PermissionVerb='show',row?:Row):boolean{
  if(!resourceAvailable(user.availability,key)||row&&!rowAvailable(user.availability,key,row))return false;
  if(user.availability?.features.includes('pilots')){
-  if((key==='users'||key==='user_sites'||key==='profiles'||key==='company_data')&&!isAdministrator(user))return false;
+  if(USERS_PROFILES_AREAS[key])return usersProfilesRight(user,key,verb);
+  if(key==='company_data'&&!isAdministrator(user))return false;
   if(key==='signatures')return signatureAccess(user,verb,row);
  }
  const scopes=user.availability&&!row&&['inspection_requests','inspection_results'].includes(key)?user.availability.inspectionTypes.flatMap(type=>resourceScopes(key,{type})):resourceScopes(key,row);

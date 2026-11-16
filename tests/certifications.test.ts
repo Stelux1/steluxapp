@@ -278,7 +278,8 @@ test('main project of certificates and wires over the API: lists, records, welds
   for (const path of ['/history/certifications/certificate-2', '/history/welding_wires/wire-3']) assert.equal((await north.request(path)).status, 403, path);
   // A main project out of reach named by id: the record routes' refusal (403, scn-SC-D9).
   assert.equal((await north.request('/pdf/certification-index?siteId=site-river')).status, 403);
-  assert.equal((await north.request('/certifications/zip?siteId=site-river')).status, 404);
+  const zip = await north.request('/certifications/zip?siteId=site-river'); assert.equal(zip.status, 403); assert.equal((await zip.json()).code, 'site');
+  assert.equal((await north.request('/certifications/zip?siteId=site-missing')).status, 404, 'a main project that does not exist stays unknown');
   // Creating in, or moving to, the other main project is refused; links to its projects too.
   assert.equal((await north.request('/records/certifications', { method: 'POST', data: { siteId: 'site-river', name: 'X', allProjects: true } })).status, 403);
   const own = await json(await north.request('/records/certifications', { method: 'POST', data: { siteId: 'site-north', name: 'N-1', chargeNo: 'H-1', certType: '3.1', diameterId: 'diameter-6', materialPartId: 'part-0', materialTypeId: 'material-type-a106b', schedule: '40', wallThickness: '3.91', allProjects: true } }));
@@ -329,7 +330,7 @@ test('Import certifications: preview with per-cell errors, then commit with the 
   const reader = await f.signIn('Import reader', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only' });
   assert.equal((await reader.request('/certifications/import/preview', { method: 'POST', data: await body([good]) })).status, 403);
   const river = await f.signIn('River importer', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write' }, { weld: ['site-river'] });
-  assert.equal((await river.request('/certifications/import', { method: 'POST', data: { siteId: 'site-north', rows: [preview[0]] } })).status, 404, 'the main project of another site is unknown');
+  assert.equal((await river.request('/certifications/import', { method: 'POST', data: { siteId: 'site-north', rows: [preview[0]] } })).status, 403, 'the main project of another site is refused as on the record routes');
 });
 
 test('Export to ZIP and Duplicate certificate', async t => {

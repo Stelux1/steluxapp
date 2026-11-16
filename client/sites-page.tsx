@@ -1,26 +1,48 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpDown, ChevronLeft, ChevronRight, FolderOpen, Pencil, Plus, Printer } from 'lucide-react';
+import { ArrowUpDown, ChevronLeft, ChevronRight, FolderOpen, Pencil, Plus, Printer, Trash2 } from 'lucide-react';
 import { SITE_DEFAULT_SORT, SITE_LIST_COLUMNS, SITE_PAGE_SIZES, siteListRows } from '../shared/site-list.ts';
 import { EMPTY_TABLE_TEXT, NO_MATCH_TEXT, entriesText } from '../shared/ui-texts.ts';
 import { NO_RIGHTS_TEXT } from '../shared/pilots.ts';
 import type { Row } from '../shared/types.ts';
 import { RESOURCE_MAP } from './catalog.ts';
-import { apiUrl } from './api.ts';
+import { apiUrl, post } from './api.ts';
 import { ArchiveRecordButton, ArchiveRecordDialog } from './archive-record.tsx';
-import { Badge, EmptyState, SearchInput, TableScroll } from './components.tsx';
+import { Badge, EmptyState, Modal, SearchInput, TableScroll } from './components.tsx';
 import { useWorkspace } from './context.tsx';
 import { RecordEditor } from './dialogs.tsx';
 
+/** Reference "Delete project site" dialog (weld__general__project-sites.txt #deleteProjectSite). */
+export const SITE_DELETE = { title: 'Delete project site', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' };
+/** The server refuses to delete a site that still has projects (409); the dialog says so before Delete is pressed. */
+export const SITE_DELETE_BLOCKED = 'This project site still has projects and cannot be deleted. Delete its projects first.';
+export const siteHasProjects = (projects: Row[], siteId: string) => projects.some(project => !project._archived && project.siteId === siteId);
+
+/** Delete project site: "Are you sure?" and Delete; the site leaves the list (archived underneath, as every delete of the reference is). */
+export function DeleteSiteDialog({ site, onClose }: { site: Row; onClose: () => void }) {
+  const { allRows, refresh, notify } = useWorkspace();
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const blocked = siteHasProjects(allRows.projects || [], site.id) ? SITE_DELETE_BLOCKED : '';
+  async function submit() {
+    setBusy(true); setError('');
+    try { await post(`/records/sites/${site.id}/archive`, { _version: site._version }); await refresh(); notify('Project site deleted.'); onClose(); }
+    catch (failure) { setError((failure as Error).message); setBusy(false); }
+  }
+  return <Modal title={SITE_DELETE.title} subtitle={String(site.name)} onClose={onClose}>
+    <div className="modal-body">{(error || blocked) && <div className="alert error" role="alert">{error || blocked}</div>}<p>{SITE_DELETE.text}</p></div>
+    <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{SITE_DELETE.cancel}</button><button type="button" className="btn danger" disabled={busy || Boolean(blocked)} onClick={() => void submit()}><Trash2 size={15}/>{SITE_DELETE.button}</button></div>
+  </Modal>;
+}
+
 /**
  * General data → Project sites (both pilots): the table of main projects. The name opens that site's Projects and makes it
- * the active site; Options open Projects, edit and archive. The card screen "Select a main project" stays the choice after sign-in.
+ * the active site; Options open Projects, edit and delete (an archived site can be restored). The card screen "Select a main project" stays the choice after sign-in.
  */
 export function SitesPage() {
   const { allRows, canRecord, selectSite, user } = useWorkspace(); const navigate = useNavigate();
   const def = RESOURCE_MAP.sites;
   const [archived, setArchived] = useState(false), [query, setQuery] = useState(''), [size, setSize] = useState(SITE_PAGE_SIZES[1]), [page, setPage] = useState(0);
-  const [sort, setSort] = useState(SITE_DEFAULT_SORT), [editor, setEditor] = useState<Row | 'new' | null>(null), [archiving, setArchiving] = useState<Row | null>(null);
+  const [sort, setSort] = useState(SITE_DEFAULT_SORT), [editor, setEditor] = useState<Row | 'new' | null>(null), [archiving, setArchiving] = useState<Row | null>(null), [deleting, setDeleting] = useState<Row | null>(null);
   const all = allRows.sites || [];
   const rows = useMemo(() => siteListRows(all, { archived, query, sort }), [all, archived, query, sort]);
   if (!canRecord('sites')) return <div className="page"><EmptyState title={NO_RIGHTS_TEXT} description="Ask an administrator to add the right to your permission profile."/></div>;
@@ -52,7 +74,8 @@ export function SitesPage() {
           <td className="actions-cell"><span className="site-options">
             {!site._archived && <button type="button" className="icon-btn" aria-label={`Open projects of ${String(site.name)}`} title="Projects" onClick={() => open(site)}><FolderOpen size={16}/></button>}
             {!site._archived && canRecord('sites', 'edit', site) && <button type="button" className="icon-btn" aria-label={`Edit project site ${String(site.name)}`} title="Edit project site" onClick={() => setEditor(site)}><Pencil size={16}/></button>}
-            <ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/>
+            {!site._archived && canRecord('sites', 'delete', site) && <button type="button" className="icon-btn" aria-label={`Delete project site ${String(site.name)}`} title="Delete project site" onClick={() => setDeleting(site)}><Trash2 size={16}/></button>}
+            {site._archived && <ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/>}
           </span></td></tr>)}
           {!shown.length && <tr><td colSpan={SITE_LIST_COLUMNS.length + 1} className="empty-cell" role="status">{query.trim() ? NO_MATCH_TEXT : EMPTY_TABLE_TEXT}</td></tr>}
         </tbody></table></TableScroll>
@@ -60,6 +83,7 @@ export function SitesPage() {
         <div><button type="button" className="icon-btn" disabled={current === 0} aria-label="Previous page" onClick={() => setPage(current - 1)}><ChevronLeft size={17}/></button><span>{current + 1} / {pages}</span><button type="button" className="icon-btn" disabled={current >= pages - 1} aria-label="Next page" onClick={() => setPage(current + 1)}><ChevronRight size={17}/></button></div></div>
     </div>
     {archiving && <ArchiveRecordDialog resourceKey="sites" record={archiving} onClose={() => setArchiving(null)}/>}
+    {deleting && <DeleteSiteDialog site={deleting} onClose={() => setDeleting(null)}/>}
     {editor && <RecordEditor resourceKey="sites" record={editor === 'new' ? undefined : editor} onClose={() => setEditor(null)}/>}
   </div>;
 }
