@@ -5,6 +5,7 @@
  */
 import type { Field, Row } from './types.ts';
 import type { Relation } from './welding.ts';
+import { PHASE_LABELS } from './iso-pages.ts';
 
 type SiteLike = Record<string, unknown> | undefined | null;
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : value === null || value === undefined ? '' : String(value).trim();
@@ -71,6 +72,8 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   welder_certificates: { name: 'Name', certificateTypeId: 'Certificate', processId: 'Weld process' },
   // Punch lists → Add item (capture of 2026-11-16): the category select is "Type", the isometric select "ISO".
   punchlists: { category: 'Type', isoId: 'ISO' },
+  // Isometrics → Set phase (capture weld__iso__0001.txt:1185): the boxes carry the reference names.
+  isometrics: PHASE_LABELS,
   // MTO Pilot catalogs (captures mto.md → Logistic, weld-catalogs.md → Material supplier).
   suppliers: { name: 'Name', zip: 'Zip code', residence: 'Residence', email: 'Email address' },
   service_companies: { name: 'Name', email: 'Email address' },

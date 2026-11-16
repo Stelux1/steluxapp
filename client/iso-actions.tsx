@@ -5,6 +5,7 @@ import { RESOURCE_MAP } from './catalog.ts';
 import { post } from './api.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import type { Row } from '../shared/types.ts';
+import { phaseBoxes } from '../shared/iso-pages.ts';
 
 type Change = 'keep' | 'on' | 'off';
 
@@ -21,8 +22,9 @@ function PhaseBox({ id, label, current, change, onChange }: { id: string; label:
 
 /** Set phase: the eight phase flags of one isometric or of every checked one. Only the flags that were changed are sent. */
 export function PhaseDialog({ records, onClose, onDone }: { records: Row[]; onClose: () => void; onDone?: () => void }) {
-  const { refresh, notify } = useWorkspace();
-  const flags = (RESOURCE_MAP.isometrics?.fields || []).filter(field => field.section === 'Phases');
+  const { refresh, notify, user } = useWorkspace();
+  // One isometric: "Isometric formatted" before "Welds defined (WP)"; the mass dialog the other way round (reference).
+  const flags = phaseBoxes((RESOURCE_MAP.isometrics?.fields || []).filter(field => field.section === 'Phases'), user.availability?.features.includes('pilots') ? records.length : 0);
   const [changes, setChanges] = useState<Record<string, Change>>({}), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const stored = (name: string): boolean | 'mixed' => records.every(row => row[name] === true) ? true : records.every(row => row[name] !== true) ? false : 'mixed';
   const changed = flags.filter(field => (changes[field.name] || 'keep') !== 'keep');

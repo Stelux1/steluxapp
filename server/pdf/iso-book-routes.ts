@@ -7,7 +7,7 @@ import type { AuthRequest } from '../auth.ts';
 import { checkResourcePermission } from '../auth.ts';
 import { scopeRows } from '../site-scope.ts';
 import type { releaseAccess } from '../release-access.ts';
-import { PDF_DOCUMENTS } from './documents.ts';
+import { canDocument, PDF_DOCUMENTS } from './documents.ts';
 import { bookPlans, partState, type Rows } from './iso-book-parts.ts';
 import { appendBook, Budget, collectChunks, createBook, type BookEnvironment, type Chunk, type CoverModel, type SkippedFile } from './iso-book.ts';
 import { RESOURCES } from '../../shared/resources.ts';
@@ -15,7 +15,8 @@ import { canResource, REPORT_RESOURCES } from '../../shared/permissions.ts';
 import { bookRequestError, ISO_BOOK_LIMITS, type BookPartInfo, type BookPartsResponse, type BookRequest } from '../../shared/iso-book.ts';
 import { currentRevision } from '../../shared/revisions.ts';
 import { projectInPilot } from '../../shared/project-scope.ts';
-import type { Availability, Row } from '../../shared/types.ts';
+import { PILOT_KEYS } from '../../shared/release.ts';
+import type { Availability, Row, User } from '../../shared/types.ts';
 
 export interface IsoBookRouteDependencies {
   app: Express; store: Store; documents: ReturnType<typeof documentStorage>; availability?: Availability;
@@ -48,20 +49,30 @@ export function registerIsoBookRoutes({ app, store, documents, availability, acc
 
   function environmentFor(req: Request, now: Date): BookEnvironment {
     const user = (req as unknown as AuthRequest).user;
+    // The same account in its other pilot (when it may enter it): a document it may print there is offered and delivered here too.
+    // Only the account's own rights decide; nothing is read that it could not read in that pilot.
+    const other = user.pilot ? PILOT_KEYS.find(pilot => pilot !== user.pilot) : undefined;
+    let otherUser: User | null = null;
+    if (other) { try { otherUser = access.pilotAccount(user.id, other); } catch { otherUser = null; } }
+    const accounts = otherUser ? [user, otherUser] : [user];
+    const asAccount = (account: User) => ({ user: account }) as unknown as Request;
     // Documents are not a resource of their own: an attachment is readable when its record is (the rule of `access.visible`).
-    const rows: Rows = Object.fromEntries(RESOURCES.filter(resource => resource.key === 'attachments' || canResource(user, resource.key)).map(resource => [resource.key, readableRows(req, resource.key, true)]));
+    const rowsOf = (account: User): Rows => Object.fromEntries(RESOURCES.filter(resource => resource.key === 'attachments' || canResource(account, resource.key)).map(resource => [resource.key, readableRows(account === user ? req : asAccount(account), resource.key, true)]));
+    const accountRows = new Map(accounts.map(account => [account, rowsOf(account)] as const));
+    const rows: Rows = { ...(otherUser ? accountRows.get(otherUser)! : {}), ...accountRows.get(user)! };
     const reportRows = new Map<string, Rows>();
-    const forReport = (report: string): Rows => {
-      let value = reportRows.get(report);
+    const forReport = (account: User, report: string): Rows => {
+      const memo = `${account.pilot}:${report}`;
+      let value = reportRows.get(memo);
       if (!value) {
         const primary = REPORT_RESOURCES[report] || [];
-        value = Object.fromEntries(Object.entries(rows).filter(([key]) => key !== 'attachments' || canResource(user, 'attachments')).map(([key, list]) => [key, list.filter(row => !primary.includes(key) || canResource(user, key, 'export', row))]));
-        reportRows.set(report, value);
+        value = Object.fromEntries(Object.entries(accountRows.get(account)!).filter(([key]) => key !== 'attachments' || canResource(account, 'attachments')).map(([key, list]) => [key, list.filter(row => !primary.includes(key) || canResource(account, key, 'export', row))]));
+        reportRows.set(memo, value);
       }
       return value;
     };
     const environment: BookEnvironment = {
-      user, rows, registry: PDF_DOCUMENTS, now,
+      user, ...(otherUser ? { alsoUsers: [otherUser] } : {}), rows, registry: PDF_DOCUMENTS, now,
       // The same two checks as the file download route.
       canFile(file) {
         try {
@@ -74,15 +85,17 @@ export function registerIsoBookRoutes({ app, store, documents, availability, acc
       certificateLinks: () => scopeRows('certificate_projects', store.list('certificate_projects')),
       generate(definition, iso, query) {
         const origin = publicOrigin || `${req.protocol}://${req.get('host')}`;
-        // The isometric's project, when the account may read it in this pilot (the isometric itself is readable).
-        const project = (rows.projects || []).find(row => row.id === iso.projectId && !row._archived && (!user.pilot || projectInPilot(row, user.pilot))) ?? null;
+        // The account (in this pilot, else in the other one) whose rights allow the document builds it from what that account reads.
+        const account = accounts.find(candidate => canDocument(candidate, definition)) ?? user, own = accountRows.get(account)!;
+        // The isometric's project, when the account may read it in its pilot (the isometric itself is readable).
+        const project = (own.projects || []).find(row => row.id === iso.projectId && !row._archived && (!account.pilot || projectInPilot(row, account.pilot))) ?? null;
         if (definition.scope === 'project') {
           if (!project) throw new AppError(404, 'This project could not be found.');
-          return definition.build({ store, documents, user, rows: forReport(''), query, now, publicOrigin, origin, project, site: environment.site(project.siteId) ?? null });
+          return definition.build({ store, documents, user: account, rows: forReport(account, ''), query, now, publicOrigin, origin, project, site: environment.site(project.siteId) ?? null });
         }
         // A document of its own record prints only what traces back to this isometric (and its project).
-        if (definition.scope === 'scoped') return definition.build({ store, documents, user, rows: forReport(definition.report), query, now, isometrics: [iso], isoIds: new Set([iso.id]), projectIds: new Set(project ? [project.id] : []) });
-        return definition.build({ store, documents, user, iso, rows: forReport(definition.report), query, now, publicOrigin, origin });
+        if (definition.scope === 'scoped') return definition.build({ store, documents, user: account, rows: forReport(account, definition.report), query, now, isometrics: [iso], isoIds: new Set([iso.id]), projectIds: new Set(project ? [project.id] : []) });
+        return definition.build({ store, documents, user: account, iso, rows: forReport(account, definition.report), query, now, publicOrigin, origin });
       },
       read: file => documents.read(file.id),
     };

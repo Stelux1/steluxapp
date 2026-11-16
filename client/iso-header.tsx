@@ -4,8 +4,7 @@ import { AlertCircle, Check, ChevronDown, Download, FileText, Loader2, Plus, Upl
 import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
-import { WorkflowDialog } from './dialogs.tsx';
-import { DrawingRevisions } from './drawing-revisions.tsx';
+import { AddRevisionDialog, DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpLinkControl } from './itp-dashboard.tsx';
 import { materialStatus } from '../shared/mto-materials.ts';
 import { hydrotestState } from '../shared/hydrotest.ts';
@@ -14,6 +13,7 @@ import { PunchStatus } from './punch.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
+import { currentRevisionFile } from '../shared/iso-pages.ts';
 import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
 import { priorityLabel } from '../shared/priority.ts';
 import { BLOCKER_TITLES } from '../shared/iso-status.ts';
@@ -63,7 +63,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   const canRevise = canRun('revision', { isoId: iso.id }), historyAvailable = canRecord('revisions');
   // MTO Pilot reads no test systems: the server summary carries the name of this isometric's own one.
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);
-  const fileOf = (kind: string) => documents.find(row => row.documentType === `${kind} revision ${currentRevision(rows, iso.id, kind)}` || row.documentType === kind);
+  const fileOf = (kind: string) => documents.find(row => row.documentType === `${kind} revision ${currentRevision(rows, iso.id, kind)}` || row.documentType === kind) ?? currentRevisionFile(rows, iso.id, kind, currentRevision(rows, iso.id, kind));
   const itps = [['ITP', iso.itpNo], ['ITP 2', iso.itpNo2]] as const;
 
   const slot = (kind: string, number: unknown, label: string) => {
@@ -76,8 +76,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
           {!file && ' · no file'}</span></div></div>
       <div className="iso-slot-actions">
         {pilot?.pilot.key === 'weld' && kind !== 'ISO' && <ItpLinkControl iso={iso} slot={kind === 'ITP' ? 1 : 2}/>}
-        {canImport && <button className="icon-btn" aria-label={`Upload ${kind} document`} title={`Upload ${kind} document`} onClick={() => onUpload(kind)}><Upload size={16}/></button>}
-        {canRevise && <button className="icon-btn" aria-label={`Add ${kind} revision`} title={`Add ${kind} revision`} onClick={() => setRevision(kind)}><Plus size={17}/></button>}
+        {canRevise && <button className="icon-btn" aria-label={`Add ${kind === 'ISO' ? 'rev' : kind + ' revision'}`} title={kind === 'ISO' ? 'Add rev' : kind === 'ITP' ? 'Add ITP revision' : 'Add ITP revision 2'} onClick={() => setRevision(kind)}><Plus size={17}/></button>}
       </div>
     </div>;
   };
@@ -123,7 +122,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       </section>)}</div>
       <div className="modal-footer"><button className="btn" onClick={() => setBlockers(false)}>Close</button></div>
     </Modal>}
-    {revision && <WorkflowDialog actionKey="revision" defaults={{ isoId: iso.id, type: revision }} onClose={() => setRevision('')}/>}
+    {revision && <AddRevisionDialog iso={iso} kind={revision} onClose={() => setRevision('')}/>}
     {history && <Modal title="Revision history" subtitle={show(iso.isoNo)} onClose={() => setHistory(false)} wide><div className="modal-body"><DrawingRevisions isoId={iso.id}/></div><div className="modal-footer"><button className="btn" onClick={() => setHistory(false)}>Close</button></div></Modal>}
   </div>;
 }

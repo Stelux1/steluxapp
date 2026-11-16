@@ -30,7 +30,7 @@ export const DUPLICATE_PARTS: DuplicatePart[] = [
 export const DUPLICATE_PART_KEYS = DUPLICATE_PARTS.map(part => part.key);
 /** Contact fields that travel with "Project settings" (the reference keeps them in that tab). The IRN Code identifies one site and is never copied. */
 const CONTACT = ['address', 'zip', 'residence', 'phone', 'email'];
-export const NOT_COPIED = ['name', 'irnCode'];
+export const NOT_COPIED = ['name', 'irnCode', 'irnAuto', 'irnCounter'];
 /** The site fields a ticked "Site settings" part copies. */
 export function duplicateFields(part: DuplicatePart): string[] {
   const fields = RESOURCE_MAP.sites.fields.filter(field => !NOT_COPIED.includes(field.name));

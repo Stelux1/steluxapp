@@ -138,6 +138,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Set phase (bulk and single) and Copy isometrics: only the flags the user changes are sent.
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
+    // Add new (Edit isometric) and Automatically add IRN numbers (the project's isometric overview).
+    availability.actions['add-new-isometric'] = fields('isoId projectId values copyWelds copyMaterials copyCalculations');
+    availability.actions['fill-irn'] = fields('siteId');
     // Prefab / Field release pages, Reopen, request archive and field work packages (see shared/releases.ts).
     for (const key of ['releases', 'field_packages']) deliverResource(availability, key);
     Object.assign(availability.actions, structuredClone(RELEASE_ACTIONS));

@@ -11,6 +11,7 @@ import { availableWps, RELATIONS, relationMatches } from '../shared/welding.ts';
 import { WPS_COPY_FIELDS } from '../shared/wps.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
 import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
+import { deleteRefusal, guardIrn, guardSiteIrn } from './iso-pages.ts';
 import { allowedSites, inSiteScope, isSiteRefusal, siteScopeFor } from './site-scope.ts';
 import { STANDARD_DOCUMENT_MESSAGE, isStandardAttachmentName } from '../shared/weld-catalogs.ts';
 
@@ -65,6 +66,9 @@ export function releaseAccess(store: Store, availability?: Availability) {
     // A WPS copy is made by the copy action (server/wps.ts); a plain write cannot make or change one.
     if (!action && key === 'wps' && WPS_COPY_FIELDS.some(name => value[name] !== undefined)) throw new AppError(422, 'Use Copy to copy a WPS to another project site.');
     if (!action && key === 'punchlists') { const refusal = punchWriteError(value, existing); if (refusal) throw new AppError(422, refusal); }
+    // Automatic IRN numbers: a typed IRN is refused while the main project numbers its isometrics itself; only the fill-irn action switches that on.
+    if (!action && pilots && key === 'isometrics') guardIrn(store, value, existing);
+    if (!action && pilots && key === 'sites' && (value.irnAuto === true || (value.irnCounter !== undefined && value.irnCounter !== '' && value.irnCounter !== null))) guardSiteIrn(value);
     if (!action && key === 'welds' && (!existing || value.isoId !== undefined || value.wpsId !== undefined)) {
       const wpsId = value.wpsId ?? existing?.wpsId;
       if (wpsId) {
@@ -113,6 +117,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
   /** Deleting or bringing back a weld of a completed phase is refused too. */
   function archive(key: string, row: Row) {
     if (pilots && key === 'welds') assertWeldUnlocked(store, row);
+    // Delete in the reference: an isometric with welds, materials, reservations, calculations or started work, and a project that is not blank, stay (422: its sentence reaches the user).
+    if (pilots && !row._archived) { const refusal = deleteRefusal(store, key, row); if (refusal) throw new AppError(422, refusal); }
     // The documents the reference ships cannot be deleted.
     if (pilots && key === 'attachment_names' && !row._archived && isStandardAttachmentName(row)) throw new AppError(422, STANDARD_DOCUMENT_MESSAGE);
   }

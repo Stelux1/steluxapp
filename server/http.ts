@@ -35,6 +35,7 @@ import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate
 import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
+import { assignIrn } from './iso-pages.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
@@ -130,7 +131,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const materialBulk = pilots && req.path === '/bulk/materials';
     // Controlled / Accepted of the ticked welding wires and certificates (nothing else is bulk-editable there, see the route).
     const flagBulk = pilots && FLAG_BULK_RESOURCES.some(key => req.path === `/bulk/${key}`);
-    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk && !flagBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
+    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk && !flagBulk || req.path === '/revisions' && !pilots)) return next(new AppError(404, 'This resource could not be found.'));
     // The rest of the request runs inside the account's project site scope (derived once, see server/site-scope.ts).
     runInSiteScope(scope, next);
   });
@@ -217,7 +218,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
-    const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } return row; });
+    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {
@@ -248,7 +249,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     access.input(action.key, req.body, true);
     const permissionData={...req.body};if(action.key==='inspection-result')permissionData.type=access.record('inspection_requests',req.body.requestId).type;
     // Pilots: the current pilot decides the isometric copy; each ticked part follows its own pilot (see copyParts).
-    const copyAcross=pilots&&action.key==='copy-isometrics';
+    const copyAcross=pilots&&(action.key==='copy-isometrics'||action.key==='add-new-isometric');
     if(copyAcross)for(const part of ['copyWelds','copyMaterials','copyCalculations'] as const)delete permissionData[part];
     checkActionPermission(req,action.key,permissionData);
     if(copyAcross)assertCopyInScope(store,store.get('users',(req as unknown as AuthRequest).user.id),req.body);
@@ -334,9 +335,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const disk = keepSiteScope(documents.upload);
   app.post('/api/revisions',disk.single('file'),(req,res)=>{
     try{
-      checkActionPermission(req,'revision',req.body);if(req.file)checkResourcePermission(req,'revisions','import');
+      access.input('revision',req.body,true);checkActionPermission(req,'revision',req.body);if(req.file)checkResourcePermission(req,'revisions','import');
       const name=req.file?basename(req.file.originalname).replace(/[\r\n]/g,''):'';
-      if(req.file&&!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name))throw new AppError(422,'Choose a PDF, image, CSV, Excel, Word, or text file.');
+      if(req.file&&!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name))throw new AppError(422,'Choose a PDF, image, CSV, Excel, Word, or text file.');if(pilots&&req.file&&!/\.pdf$/i.test(name))throw new AppError(422,'Choose a PDF file for the revision.');
       const result=store.transaction(()=>{
         const revision=runAction(store,'revision',req.body,actorOf(req));
         const record=revision.record!;
@@ -346,7 +347,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
         }
         return revision;
       });
-      res.status(201).json(result);
+      res.status(201).json(access.result(result));
     }catch(error){documents.discard(req.file);throw error;}
   });
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
