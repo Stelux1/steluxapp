@@ -11,7 +11,7 @@ import {
 } from '../shared/weld-dashboard.ts';
 import { DEFAULT_NDT_PERCENT, ITP_SLOTS, itpNdtPercent, itpUsage } from '../shared/itp-dashboard.ts';
 import { TRACERS_REQUIRED, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_REMOVABLE_HINT } from '../shared/inspections.ts';
-import { allowedScopes, itpActive, itpLatest, itpPickerOptions, itpScope, type LinkSlot } from '../shared/itps.ts';
+import { UNLINK_ITP, allowedScopes, itpActive, itpLatest, itpPickerOptions, itpScope, type LinkSlot } from '../shared/itps.ts';
 import type { Row } from '../shared/types.ts';
 import { DashboardReports } from './dashboard-reports.tsx';
 
@@ -330,7 +330,11 @@ export function ItpLinkControl({ iso, slot: slotNumber }: { iso: Row; slot: 1 | 
     catch (failure) { setError(((failure as ApiError).fields && Object.values((failure as ApiError).fields!)[0]) || (failure as Error).message || 'Saving failed.'); }
     finally { setBusy(false); }
   }
-  if (linked) return <button className="icon-btn" aria-label={`Unlink ITP ${show(linked.number)} from ${slot.label}`} title="Unlink ITP" disabled={busy} onClick={() => void send('/itps/unlink', { isoId: iso.id, slot: slotNumber }, 'ITP unlinked. The number stays as free text.')}>{busy ? <Loader2 size={16} className="spin"/> : <Unlink size={16}/>}</button>;
+  if (linked) return <>
+    <button type="button" className="btn subtle small iso-itp-unlink" aria-label={`${UNLINK_ITP.button} ${show(linked.number)} from ${slot.label}`} title={UNLINK_ITP.title} disabled={busy} onClick={() => { setError(''); setOpen(true); }}><Unlink size={14} aria-hidden="true"/>{UNLINK_ITP.button}</button>
+    {open && <Modal title={UNLINK_ITP.title} onClose={() => setOpen(false)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertTriangle size={18}/><span>{error}</span></div>}<p>{UNLINK_ITP.confirm(show(linked.number))}</p></div>
+      <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={() => setOpen(false)}>{UNLINK_ITP.cancel}</button><button type="button" className="btn danger" disabled={busy} onClick={() => void send('/itps/unlink', { isoId: iso.id, slot: slotNumber }, 'ITP unlinked. The number stays as free text.')}>{busy && <Loader2 size={15} className="spin"/>}{UNLINK_ITP.button}</button></div></Modal>}
+  </>;
   if (!allowedScopes(iso, itps, side).length) return null;
   return <>
     <button className="icon-btn" aria-label={`Link ITP to ${slot.label}`} title="Link ITP" onClick={() => { setError(''); setOpen(true); }}><Link2 size={16}/></button>

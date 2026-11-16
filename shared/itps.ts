@@ -129,6 +129,8 @@ export function linkItp(iso: Row, itp: Row | undefined, itps: Row[], projectLink
   return { values: xRay === null ? values : { ...values, xRay } };
 }
 
+/** The unlink control of a linked ITP row and its confirmation (reference weldpilotItpUnlinkModal and its texts "Unlink", "Unlink %s from this asset?"). */
+export const UNLINK_ITP = { button: 'Unlink', title: 'Unlink ITP', cancel: 'Cancel', confirm: (number: string) => `Unlink ${number} from this asset?` } as const;
 /** Unlink one slot: the link goes; the number and revision stay as free text, and so does X Ray %. */
 export const unlinkValues = (slot: 1 | 2): Record<string, string> => slot === 1 ? { itpId: '' } : { itp2Id: '' };
 

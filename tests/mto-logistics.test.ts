@@ -774,3 +774,13 @@ test('after Start the MTO dashboard counts the issued lines as Picked (10 and 3)
   const other = mtoDashboard(rowsOf(store), { today: day, phaseId: '' }).board.find(row => row.isoId === 'iso-9')!.lines.find(line => line.requirementId === 'req-exe-other')!;
   assert.deepEqual([other.covered, other.shortage], [1, 1]);
 });
+
+test('SC2 N-C: the Options cell of Isometric execution stays a table cell, its buttons wrap inside it (no overflow into the next row)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../client/mto-logistics.tsx', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../client/mto-logistics.css', import.meta.url), 'utf8');
+  // A flex container on a <td> takes it out of table layout: the row keeps one line's height and the wrapped Reserve hangs under the next row.
+  assert.ok(css.includes('.mto-page .mto-options { display: flex;'), 'the options are a flex row');
+  assert.doesNotMatch(source, /<td className="[^"]*\bmto-options\b/, 'no table cell carries the flex class');
+  assert.match(source, /<td className="actions-cell"><div className="mto-options execution-options">/, 'the execution buttons sit in a box inside the cell');
+});

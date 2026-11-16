@@ -70,7 +70,8 @@ export function WorkspaceProvider({ user, onUnauthenticated, children }: { user:
   }, [sessionSites, ready, sessionSiteId, refresh]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 4500); return () => clearTimeout(timer); }, [toast]);
   const label = (resource: string, id: unknown) => {
-    const row = data.rows[resource]?.find(r => r.id === id); if (!row) return id ? 'Unavailable record' : '—';
+    // A welder the account does not read, named by a readable weld: its stamp (code and name) from the bootstrap.
+    const row = data.rows[resource]?.find(r => r.id === id) ?? (resource === 'welders' ? data.welderStamps?.find(stamp => stamp.id === id) as Row | undefined : undefined); if (!row) return id ? 'Unavailable record' : '—';
     if(resource==='welders'&&!row.name)return String(row.number);
     if (resource === 'pqr' && data.user.availability?.features.includes('pilots')) return pqrNumber(row, data.rows.qualification_options);
     if (resource === 'iso_materials' && !row.materialId) return String(row.materialNo || 'Custom material');

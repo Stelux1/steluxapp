@@ -34,6 +34,25 @@ export function seedItpSamples(store: Store) {
     if (number === 23) Object.assign(changes, { tracer: true, tracerOfId: 'weld-11' });
     if (Object.keys(changes).length) store.update('welds', weld.id, changes, weld._version, SYSTEM);
   }
+  nameWeldedWps(store);
+}
+
+/**
+ * Sample data only: "Validation on WPS" offers a welder for a WPS when one of the welder's qualification documents names
+ * it, so every qualification document of a sample welder names the sample WPS that welder welds (SA2 N-D1).
+ */
+export function nameWeldedWps(store: Store) {
+  const welded = new Map<string, Set<string>>();
+  for (const weld of store.list('welds')) for (const field of ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id']) {
+    const welderId = String(weld[field] || ''), wpsId = String(weld.wpsId || '');
+    if (welderId && wpsId) welded.set(welderId, (welded.get(welderId) || new Set()).add(wpsId));
+  }
+  for (const document of store.list('welder_certificates')) {
+    if (document.isDocument === true) continue;
+    const named = String(document.wpsIds || '').split(',').map(id => id.trim()).filter(Boolean);
+    const all = [...new Set([...named, ...(welded.get(String(document.welderId)) || [])])].sort();
+    if (all.join(',') !== named.join(',')) store.update('welder_certificates', document.id, { wpsIds: all.join(',') }, document._version, SYSTEM);
+  }
 }
 
 /**

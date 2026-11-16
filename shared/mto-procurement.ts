@@ -80,13 +80,16 @@ export function openOrderOutstanding(rows: Rows): Map<string, number> {
   return result;
 }
 type Entry = ReturnType<typeof requirementExecution>[number];
-/** One row per material: the need of the given requirement lines, less what open orders of that material on their project sites still bring (mto-procurement-stock-016). */
+/**
+ * One row per material: the need of the given requirement lines, less what open orders of that material on their project sites still bring (mto-procurement-stock-016).
+ * The need is what the lines' own orders do not cover (`notOrdered`): an order line that names no requirement is netted once, as outstanding, never also as ordered.
+ */
 function planMaterials(rows: Rows, entries: Entry[]): PlannedMaterial[] {
   const sites = projectSites(rows), outstanding = openOrderOutstanding(rows);
   const groups = new Map<string, PlannedMaterial & { sites: Set<string> }>();
   for (const entry of entries) {
     const group = groups.get(entry.identity) || { identity: entry.identity, material: entry.material, requirementIds: [], isoIds: [], need: 0, outstanding: 0, quantity: 0, sites: new Set<string>() };
-    group.need = round(group.need + entry.toOrder);
+    group.need = round(group.need + entry.notOrdered);
     group.requirementIds.push(entry.requirement.id);
     if (!group.isoIds.includes(entry.iso.id)) group.isoIds.push(entry.iso.id);
     group.sites.add(sites.get(text(entry.iso.projectId)) || '');
@@ -100,7 +103,7 @@ function planMaterials(rows: Rows, entries: Entry[]): PlannedMaterial[] {
 /** Order materials: one row per material over the requirement lines not (fully) ordered, its quantity netted by open orders, sorted by Material group. */
 export function orderPlanning(rows: Rows, filter: ScopeFilter = {}): PlannedMaterial[] {
   const entries = requirementExecution(rows, { projectId: filter.projectId, isoId: filter.isoId })
-    .filter(entry => entry.toOrder > 0 && includes([entry.material.materialNo, entry.material.description, entry.material.materialGroup, entry.material.articleNo], filter.query));
+    .filter(entry => entry.notOrdered > 0 && includes([entry.material.materialNo, entry.material.description, entry.material.materialGroup, entry.material.articleNo], filter.query));
   return planMaterials(rows, entries).filter(group => group.quantity > 0)
     .sort((a, b) => naturalCompare(text(a.material.materialGroup), text(b.material.materialGroup)) || naturalCompare(text(a.material.materialNo), text(b.material.materialNo)) || a.identity.localeCompare(b.identity));
 }
@@ -113,7 +116,7 @@ export function orderRequestLines(rows: Rows, requirementIds: string[]): { lines
   for (const id of requirementIds) {
     const entry = execution.find(item => item.requirement.id === id);
     if (!entry) return { lines: [], error: { status: 404, message: 'A selected material requirement is unavailable.' } };
-    if (!(entry.toOrder > 0)) return { lines: [], error: { status: 409, message: 'A selected requirement is already fully ordered.' } };
+    if (!(entry.notOrdered > 0)) return { lines: [], error: { status: 409, message: 'A selected requirement is already fully ordered.' } };
     entries.push(entry);
   }
   const lines = planMaterials(rows, entries);

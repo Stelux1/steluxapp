@@ -75,6 +75,8 @@ const HIDDEN_REFS: Record<string, { field: string; target: (row: Row) => string 
   iso_materials: [{ field: 'revisionId', target: () => 'revisions' }],
   punchlists: [{ field: 'signAttachmentId', target: () => 'attachments' }],
 };
+/** Text fields that hold a comma separated list of record ids: the qualification documents' WPS (Validation on WPS). */
+const HIDDEN_LIST_REFS: Record<string, { field: string; target: string }[]> = { welder_certificates: [{ field: 'wpsIds', target: 'wps' }] };
 /** Always marked so the copies are told apart in pickers that list every main project. */
 const ALWAYS_MARKED: Record<string, string[]> = { sites: ['name'], warehouses: ['name'], projects: ['internnumber'] };
 /** Catalog-material snapshots that repeat the material number as text. */
@@ -233,6 +235,7 @@ function plan(target: Store, source: Store, dryRun: boolean): DemoCopyResult {
       if (targetId === null && field?.required) throw new AppError(500, `${memoKey} requires ${dep.key}/${dep.id}, which is not copied.`);
       data[dep.field] = targetId ?? '';
     }
+    for (const list of HIDDEN_LIST_REFS[key] || []) if (text(row[list.field])) data[list.field] = text(row[list.field]).split(',').map(part => part.trim()).filter(Boolean).map(ref => copy(list.target, ref)).filter(Boolean).join(',');
     let targetId: string | null;
     if (!scoped(key, id)) {
       const found = findMatch(key, data);

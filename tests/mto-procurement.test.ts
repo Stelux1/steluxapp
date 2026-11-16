@@ -436,3 +436,37 @@ test('E4: a requirement named only by a line merged per material cannot be delet
   allocateOpenOrders(rows(s), lines, () => 'project-cooling');
   assert.deepEqual(lines.map(item => [item.blockingBackorder, item.notOrdered]), [[0, 4], [10, 0], [2, 3]], 'the merged line blocks its own requirements (a 10, then b 2), not another line of its project');
 });
+
+test('SC2 N-A: an open order line that names no requirement is netted once (Order materials need − outstanding)', t => {
+  const s = fixture(t);
+  // Sample order PO-2026-0003 (Riverside, pending, no requirement link): SS-P114 42 m and SS-T114 16.
+  const order = s.list('orders').find(o => o.number === 'PO-2026-0003')!;
+  const lines = s.list('order_lines').filter(l => l.orderId === order.id);
+  const pipe = s.list('materials').find(m => m.materialNo === 'SS-P114')!, tee = s.list('materials').find(m => m.materialNo === 'SS-T114')!;
+  assert.deepEqual(lines.map(l => [l.materialId, Number(l.quantity), Number(l.received), l.requirementId || '', l.requirementIds || '']).sort(), [[pipe.id, 42, 0, '', ''], [tee.id, 16, 0, '', '']].sort());
+  // The scenario's need on Riverside: pipe 4 + 30 + 34 = 68 m, tees 12 + 70 = 82.
+  s.create('iso_materials', { isoId: 'iso-4', materialId: pipe.id, quantity: 30 }, actor);
+  s.create('iso_materials', { isoId: 'iso-4', materialId: pipe.id, quantity: 34 }, actor);
+  s.create('iso_materials', { isoId: 'iso-5', materialId: tee.id, quantity: 70 }, actor);
+  const need = (materialId: string) => s.list('iso_materials').filter(r => r.materialId === materialId).reduce((sum, r) => sum + Number(r.quantity), 0);
+  const outstanding = (materialId: string) => lines.filter(l => l.materialId === materialId).reduce((sum, l) => sum + Number(l.quantity) - Number(l.received), 0);
+  assert.equal(need(pipe.id), 68); assert.equal(need(tee.id), 82);
+  // By hand: need − outstanding, the one open line of each material counted once: 68 − 42 = 26 m, 82 − 16 = 66.
+  assert.equal(need(pipe.id) - outstanding(pipe.id), 26); assert.equal(need(tee.id) - outstanding(tee.id), 66);
+  const plan = orderPlanning(rows(s), { projectId: 'project-steam' });
+  const pipeRow = plan.find(g => g.material.id === pipe.id), teeRow = plan.find(g => g.material.id === tee.id);
+  assert.ok(pipeRow, 'the pipe is listed and can be ordered');
+  assert.deepEqual([pipeRow.need, pipeRow.outstanding, pipeRow.quantity], [68, 42, 26]);
+  assert.deepEqual([teeRow!.need, teeRow!.outstanding, teeRow!.quantity], [82, 16, 66]);
+  // Ordering the pipe orders exactly the 26 m still missing.
+  const placed = hostedRun(s, 'order-requirements', { requirementIds: pipeRow.requirementIds });
+  assert.equal(Number(s.list('order_lines').find(l => l.orderId === placed.id && l.materialId === pipe.id)!.quantity), 26);
+});
+
+test('SC2 N-F: Receive materials step 2 empties the Today rec. fields once the receipt is saved, before it returns to Material take in', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../client/mto-procurement.tsx', import.meta.url), 'utf8');
+  const step2 = source.slice(source.indexOf('function TakeInOrder'), source.indexOf('function TakeInOrder') + 4000);
+  assert.match(step2, /await post\('\/actions\/receive', \{ orderId, supplierId, items \}\); setQuantities\(\{\}\); await refresh\(\); notify\('Materials taken in\.'\); onDone\(\);/, 'a second click cannot receive the same quantities again');
+  assert.match(source, /<TakeInOrder orderId=\{orderId\} supplierId=\{params\.get\('supplier'\) \|\| ''\} onDone=\{\(\) => setParams\(\{\}\)\}\/>/, 'and the page goes back to the take-in log');
+});

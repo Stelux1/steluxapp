@@ -31,6 +31,8 @@ export interface PdfRouteDependencies {
  * records that trace back to them. `POST /api/pdf/:document` is the same for documents that can be `attachable`: the file is
  * also stored as a document of each record in `attachTo` (the account needs the import right on that record, as for a file upload).
  */
+/** Query values that name one record by id, and the record types they can name. */
+const QUERY_RECORDS: Record<string, string[]> = { welderId: ['welders'], releaseId: ['releases'], requestId: ['hydrotest_requests'], orderId: ['orders', 'transfer_orders'] };
 export function registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin }: PdfRouteDependencies) {
   /** A record of a main project out of reach is refused with the record routes' 403 (`site`); anything else is left to the document's own answer. */
   const refuseOutOfReach = (key: string, id: string) => { try { store.get(key, id, true); } catch (error) { if (isSiteRefusal(error)) throw error; } };
@@ -59,6 +61,8 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
       // An isometric or project of a main project out of reach is refused like on the record routes (403 `site`), not reported missing.
       if (query.isoId && !isometrics.some(row => row.id === query.isoId)) refuseOutOfReach('isometrics', query.isoId);
       if (query.projectId) refuseOutOfReach('projects', query.projectId);
+      // The same for any other record a document names by id (welder card, release, hydrotest request, order): 403 `site`, not "could not be found".
+      for (const [name, keys] of Object.entries(QUERY_RECORDS)) if (query[name]) for (const key of keys) refuseOutOfReach(key, query[name]);
       const rows = readable(REPORT_RESOURCES[definition.report] || []);
       if (definition.scope === 'scoped') {
         const projectIds = new Set((rows.projects || []).filter(project => !project._archived && projectInPilot(project, user.pilot)).map(project => project.id));

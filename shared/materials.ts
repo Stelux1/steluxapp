@@ -50,6 +50,6 @@ export function requirementExecution(rows:Record<string,Row[]>,filters:{projectI
     const linkedPick=picks.filter(p=>p.requirementId===requirement.id&&materialIdentity(p)===identity).reduce((n,p)=>n+Number(p.quantity),0);const pickAllocation=Math.min(Math.max(0,cap-linkedPick),legacyPick.get(pickKey)||0);legacyPick.set(pickKey,round((legacyPick.get(pickKey)||0)-pickAllocation));
     if(filters.projectId&&iso.projectId!==filters.projectId||filters.isoId&&iso.id!==filters.isoId)return [];
     const ordered=round(linkedOrder+orderAllocation);const picked=round(linkedPick+pickAllocation);const site=projectSite.get(String(iso.projectId))||'';const inventory=site?Math.max(0,available.get(site+'|'+identity)||0):0;
-    return [{requirement,iso,material:materialRecord(rows,requirement)||requirement,identity,required,ordered,picked,inventory,toOrder:round(Math.max(0,required-ordered)),toPick:round(Math.max(0,required-picked))}];
+    return [{requirement,iso,material:materialRecord(rows,requirement)||requirement,identity,required,ordered,picked,inventory,toOrder:round(Math.max(0,required-ordered)),notOrdered:round(Math.max(0,required-linkedOrder)),toPick:round(Math.max(0,required-picked))}];
   });
 }

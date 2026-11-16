@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type FormEvent } from 'react';
-import { flangeEditorResource, flangeFieldInDialog, flangeInputErrors, flangeIsoPrefill } from '../shared/flanges.ts';
+import { flangeEditorResource, flangeFieldInDialog, flangeInputErrors } from '../shared/flanges.ts';
+import { editorChange, editorFieldValues, editorPayload, flangeOpenValues } from './editor-values.ts';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ACTIONS } from './catalog.ts';
@@ -41,7 +42,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   // Welding wire (hosted): the certificate file is chosen in the same dialog and attached once the wire is saved.
   const [file, setFile] = useState<File | null>(null); const withFile = ['welding_wires', 'ndt_processes'].includes(resourceKey) && Boolean(user.availability?.features.includes('pilots')) && canRecord(resourceKey, 'import', record);
   const fileField = <div className={FORM_FILE_AFTER[resourceKey] ? 'field full-width' : 'field'} key="file"><label htmlFor="field-file">File</label><input id="field-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.csv,.xlsx,.docx,.txt" onChange={e => setFile(e.target.files?.[0] ?? null)}/><small className="field-hint">PDF, images, CSV, Excel, Word or text · up to 20 MB</small></div>;
-  const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.form?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):FORM_ENABLEMENT[resourceKey]??true}:{}),...(resourceKey==='users'&&!record&&user.availability?.features.includes('pilots')?newUserProfileDefaults(activeRows(rows,'profiles')):{})}));
+  const [values, setValues] = useState<Record<string, unknown>>(() => ({...editorFieldValues(def.fields, record, defaults),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.form?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):FORM_ENABLEMENT[resourceKey]??true}:{}),...(resourceKey==='users'&&!record&&user.availability?.features.includes('pilots')?newUserProfileDefaults(activeRows(rows,'profiles')):{})}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   // Isometric (hosted): the PDFs chosen in the form are attached once the isometric is saved (Add: three inputs, Edit: Isometric).
@@ -55,7 +56,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   const irnLocked = hosted && resourceKey === 'isometrics' && (rows.sites || []).some(site => site.irnAuto === true && site.id === (rows.projects || []).find(project => project.id === (values.projectId || record?.projectId))?.siteId);
   const groups = [...new Set(editorFields.filter(shown).map(f => f.section || 'Details'))];
   // Flange form: the project follows the isometric (or the only project), and the isometric's own values fill what is still empty (Add and Edit).
-  useEffect(() => { if (resourceKey !== 'flanges') return; setValues(start => { const current = record?.assetTag && !String(start.line_number ?? '').trim() ? { ...start, line_number: record.assetTag } : start, iso = rows.isometrics?.find(row => row.id === current.isoId), live = (rows.projects || []).filter(row => !row._archived); return { ...current, projectId: iso?.projectId || current.projectId || (live.length === 1 ? live[0].id : ''), ...flangeIsoPrefill(iso, current) }; }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (resourceKey !== 'flanges') return; setValues(start => flangeOpenValues(start, record, rows.isometrics, rows.projects)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // A long form is often scrolled past the message when it is saved: bring it back into view.
   useEffect(() => { if (error) document.querySelector('.modal-body > .alert.error')?.scrollIntoView({ block: 'nearest' }); }, [error, fields]);
   async function submit(e: FormEvent) {
@@ -66,12 +67,11 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     if (resourceKey === 'diameters' && user.availability) { const numbers = diameterNumbers(values); if (Object.keys(numbers.errors).length) { setError(numbers.errors.sizeinch ?? numbers.errors.outline ?? DIAMETER_NUMBER_MESSAGE); setFields(numbers.errors); return; } }
     if (resourceKey === 'sites' && (!record || !hosted || progressWeights(record).configured || weightsChanged)) { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
     setBusy(true);
-    try { const payload = record && user.availability ? Object.fromEntries(Object.entries(values).filter(([name,value]) => {
+    try { const payload = editorPayload(values, record, Boolean(user.availability), name => {
       const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
-      const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
-      // Weights are saved together: a main project without weights gets all of them once one is entered.
-      return JSON.stringify(value)!==JSON.stringify(previous)||(resourceKey==='sites'&&weightsChanged&&PROGRESS_FIELDS.includes(name)&&!progressWeights(record).configured);
-    })) : values; const saved = await api<{ record?: Row }>(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.form ? { enabledSiteId: enablement.siteId } : {}), ...(!record && user.availability?.features.includes('pilots') && SITE_OWNED[resourceKey] ? { siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); const saveNote = `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`;
+      return relation&&record?relationIds(rows,relation,record.id):field?.type==='password'?'':record?.[name]??field?.default??(field?.type==='checkbox'?false:'');
+    }, // Weights are saved together: a main project without weights gets all of them once one is entered.
+    name => Boolean(record&&resourceKey==='sites'&&weightsChanged&&PROGRESS_FIELDS.includes(name)&&!progressWeights(record).configured)); const saved = await api<{ record?: Row }>(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.form ? { enabledSiteId: enablement.siteId } : {}), ...(!record && user.availability?.features.includes('pilots') && SITE_OWNED[resourceKey] ? { siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); const saveNote = `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`;
       // Welder (hosted): the photo chosen in the form is attached once the welder is saved.
       if (photo && withPhoto && saved.record) { const body = new FormData(); body.set('file', photo); body.set('entityType', 'welders'); body.set('entityId', saved.record.id); body.set('documentType', 'Photo'); try { await api('/files', { method: 'POST', body }); } catch (e) { await refresh(); notify(`${saveNote.slice(0, -1)}, but the photo was not attached: ${(e as Error).message}`); onClose(); return; } }
       if (isoForm && saved.record) { const failed = await uploadIsoFiles(saved.record, isoPdfs, Boolean(record)); if (failed.length) { await refresh(); notify(`${saveNote.slice(0, -1)}, but the ${failed.join(' and ')} PDF was not attached. Attach it from the Documents tab.`); onClose(); return; } }
@@ -80,23 +80,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }
   }
   function change(name: string, value: unknown) {
-    setValues(current => {
-      const next = { ...current, [name]: value };
-      if (resourceKey === 'flanges' && name === 'isoId') { const iso = rows.isometrics?.find(row => row.id === value); if (iso?.projectId) next.projectId = iso.projectId; Object.assign(next, flangeIsoPrefill(iso, next)); }
-      if (resourceKey === 'flanges' && name === 'projectId' && rows.isometrics?.find(row => row.id === next.isoId)?.projectId !== value) next.isoId = '';
-      if (name === 'isoId') { next.spoolId = ''; if (user.availability) next.wpsId = ''; }
-      if (name === 'isoId' && ['cut_list', 'calculation_lines'].includes(resourceKey)) next.requirementId = '';
-      if (name === 'materialId' && value) { next.customMaterialId = ''; next.customMaterial = false; }
-      const side = /^[a-z]+([12])Id$/.exec(name)?.[1];
-      if (resourceKey === 'welds' && side && name.startsWith('material')) { next[`certificate${side}Id`] = ''; next[`chargeNo${side}`] = ''; }
-      if (resourceKey === 'welds' && side && name.startsWith('certificate') && value) {
-        const certificate = rows.certifications?.find(row => row.id === value);
-        if (certificate?.materialId) next[`material${side}Id`] = certificate.materialId;
-        if (certificate?.chargeNo) next[`chargeNo${side}`] = certificate.chargeNo;
-      }
-      if (resourceKey === 'welders' && name === 'combination' && !value) { next.welder1Id = ''; next.welder2Id = ''; }
-      return next;
-    });
+    setValues(current => editorChange(resourceKey, current, name, value, { fields: def.fields, hosted: Boolean(user.availability), isometrics: rows.isometrics, certifications: rows.certifications }));
   }
   // User form (hosted), 'Specific project site(s)': the per-site 'Home location | Profile' table replaces the site list and the pilot's single profile.
   const siteProfileField = (f: { name: string }) => {

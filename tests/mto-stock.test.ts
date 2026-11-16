@@ -788,3 +788,14 @@ test('mto-catalogs-024: storehouses are company-wide: no project site, and the p
   assert.doesNotMatch(warehouses.description, /tool warehouses/);
   assert.ok(fixture().list('warehouses').every(row => !row.siteId));
 });
+
+test('SC2 N-D: the Material log names the Pick List of an issue once, for new and older issue rows', async () => {
+  const { movementAction } = await import('../shared/mto-stock.ts');
+  const rows = { isometrics: [{ id: 'iso-4', _version: 1, _archived: false, _createdAt: '', _updatedAt: '', isoNo: 'STX-ST-004' }] } as unknown as Record<string, import('../shared/types.ts').Row[]>;
+  const issue = (extra: Record<string, unknown>) => ({ id: 'm', _version: 1, _archived: false, _createdAt: '', _updatedAt: '', type: 'Issue', quantity: -4, isoId: 'iso-4', ...extra }) as unknown as import('../shared/types.ts').Row;
+  // As Start writes it: the note "Isometric execution <ISO> | Pick List <no>" and the number.
+  assert.deepEqual(movementAction(rows, issue({ note: 'Isometric execution STX-ST-004 | Pick List 00012', pickListNo: '00012' })), { action: 'Isometric execution STX-ST-004', reference: 'Pick List 00012' });
+  assert.deepEqual(movementAction(rows, issue({ note: 'Isometric execution STX-ST-004 | Pick List 00012' })), { action: 'Isometric execution STX-ST-004', reference: 'Pick List 00012' }, 'a row without the number reads it from its note');
+  assert.deepEqual(movementAction(rows, issue({ note: 'PICK-7 · issued' })), { action: 'Isometric execution STX-ST-004', reference: 'Pick List PICK-7' }, 'an older issue keeps its first note part');
+  assert.deepEqual(movementAction(rows, issue({ note: '' })), { action: 'Isometric execution STX-ST-004', reference: '-' });
+});

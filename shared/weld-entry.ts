@@ -129,6 +129,22 @@ export const sideCellTexts = (summary: SideSummary) => ({ index: summary.index |
 /** The Wdr cell: one stamp per welder (text = welder code, tooltip = welder name); "------" when no welder. */
 export const NO_WELDER_TEXT = '------';
 export const welderStamps = (welders: Values[]) => welders.map(welder => ({ code: text(welder.welderCode || welder.number), name: text(welder.name || welder.number) }));
+/** The few welder fields a weld's stamps show (code and name), without the rest of the welder record. */
+export interface WelderStamp { id: string; number: string; welderCode: string; name: string }
+/**
+ * Stamps of the welders the given welds name that are not among the welder records the account reads (SC2 N-H): an account
+ * that may read a weld sees who welded it, without the welder record itself. `lookup` reads a welder outside the account's reach.
+ */
+export function missingWelderStamps(welds: Values[], welders: Values[], lookup: (id: string) => Values | undefined): WelderStamp[] {
+  const known = new Set(welders.map(row => text(row.id))), stamps = new Map<string, WelderStamp>();
+  for (const weld of welds) for (const field of WELDERS) {
+    const id = text(weld[field]);
+    if (!id || known.has(id) || stamps.has(id)) continue;
+    const welder = lookup(id);
+    if (welder) stamps.set(id, { id, number: text(welder.number), welderCode: text(welder.welderCode), name: text(welder.name) });
+  }
+  return [...stamps.values()];
+}
 /** Search over the weld table: every word must occur somewhere in the row's text (case does not matter). */
 export const weldMatchesSearch = (rowText: string, query: string) => text(query).toLowerCase().split(/\s+/).filter(Boolean).every(word => rowText.toLowerCase().includes(word));
 /** One entry of the Dia. select: its value is the id of the first diameter row that has this size. */
@@ -741,6 +757,14 @@ export const WELD_OPTIONS_MENU: { key: string; label: string; dividerBefore?: bo
 ];
 export const WELD_DELETE_WORDING = { one: 'Delete weld', many: 'Delete selected', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' } as const;
 export const WELD_BRING_BACK_WORDING = { title: 'Bring weld back', text: 'Are you sure?', button: 'Bring back', cancel: 'Cancel', icon: 'Bring weld back', showActive: 'Show active welds', emptyTitle: 'No welds added yet for this isometric.', emptyText: 'Use Add weld or Add welds to create the first weld.' } as const;
+/**
+ * The deleted-welds view after "Bring back": it stays open while deleted welds are left, otherwise the active welds are shown again (SA2 N-D2).
+ * Its empty text: the reference's "No welds added yet …" only when the isometric has no weld at all, never while active welds exist.
+ */
+export const stayInDeletedView = (deletedLeft: number) => deletedLeft > 0;
+export const deletedViewEmpty = (activeWelds: number) => activeWelds > 0
+  ? { title: 'No deleted welds on this isometric.', description: `Choose ${WELD_BRING_BACK_WORDING.showActive} in Options to return to the weld list.` }
+  : { title: WELD_BRING_BACK_WORDING.emptyTitle, description: WELD_BRING_BACK_WORDING.emptyText };
 /** The Stamp dialog's select: "<name> / <stamp>", as the reference prints it (also for a person without a stamp number). */
 export const stampOptionLabel = (engineer: Values) => `${text(engineer.name)} / ${text(engineer.stamp)}`;
 export const STAMP_NONE = '-----------';

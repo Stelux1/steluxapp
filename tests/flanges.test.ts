@@ -520,3 +520,43 @@ test('old flanges stay valid without a record; a free Flange Size and the Note a
   assert.equal(created.status, 201); const record = (await created.json()).record;
   assert.deepEqual([record.flange_size, record.flange_rating, record.note], ['DN150', 'PN 16', 'Spare flange']);
 });
+
+test('SB2 N9-3: the flange protocol PDF prints every moment in local time (signatures as the passes and the footer)', async t => {
+  const zone = process.env.TZ; process.env.TZ = 'Europe/Amsterdam'; t.after(() => { if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone; });
+  assert.equal(F.flangeMoment('2026-11-16T18:09:00.000Z'), '2026-11-16 19:09', 'a stored instant is shown on the local clock');
+  assert.equal(F.flangeMoment('2026-11-16T19:07'), '2026-11-16 19:07', 'a typed local date-time stays as typed');
+  assert.equal(F.flangeMoment(''), '');
+  const { flangeProtocolPdf } = await import('../server/pdf/flange-record.ts');
+  const { readPdf } = await import('./pdf-helpers.ts');
+  const flange = row({ id: 'f1', flange_id: 'SB2-FL-01', target_moment_nm: 300 });
+  const signature = (role: string) => ({ row: row({ id: `s-${role}`, role, signer_name: role === 'QA/QC' ? 'QC Person' : 'Tech Person', _createdAt: '2026-11-16T18:09:00.000Z' }), image: null });
+  const { bytes } = await flangeProtocolPdf({
+    item: { row: flange, isoNo: 'STX-CW-002', projectId: 'p', projectName: 'STX-2401', status: 'Planned' }, record: row({ id: 'r1', flangeId: 'f1' }),
+    passes: [row({ id: 'p1', pass_number: 1, torque_nm: 295, stress_value: null, tool_id: 'TW', operator_name: 'Op', performed_at: '2026-11-16T19:07', result: 'OK' })],
+    bolts: [], leakTests: [row({ id: 'l1', test_type: 'Hydrostatic', result: 'Passed', tested_at: '2026-11-16T19:08' })], labels: [], deviations: [],
+    signatures: { Technician: signature('Technician'), 'QA/QC': signature('QA/QC') } as never, procedureNo: '', company: null, generatedAt: new Date('2026-11-16T18:10:00.000Z'), preview: false,
+  });
+  const text = (await readPdf(bytes)).pages.flatMap(page => page.text).join(' ');
+  assert.match(text, /Tech Person - 2026-11-16 19:09/); assert.match(text, /QC Person - 2026-11-16 19:09/);
+  assert.match(text, /16\.11\.2026 19:10/, 'the footer is local time too');
+  assert.doesNotMatch(text, /18:09|18:10/, 'no UTC time is left in the document');
+});
+
+test('SB2 N9-4: Record pass asks for a measured stress only when the flange has a Target Stress', async t => {
+  const base = { pass_number: 1, torque_nm: 300, tool_id: 'TW-77', operator_name: 'R. Bolt', performed_at: '2026-11-16T10:00' };
+  assert.deepEqual(F.passInputErrors(base, { target_moment_nm: 300, target_stress: '' }), {}, 'torque only: no stress needed');
+  assert.deepEqual(F.passInputErrors(base, { target_moment_nm: 300, target_stress: 'n/a' }), {}, 'a Target Stress that is no number asks for none');
+  assert.ok(F.passInputErrors(base, { target_moment_nm: 300, target_stress: '240' }).stress_value, 'a numeric Target Stress needs the measured stress');
+  assert.ok(F.passInputErrors({ ...base, stress_value: -1 }, { target_moment_nm: 300 }).stress_value, 'a stress typed anyway must be above 0');
+  assert.equal(F.passStressRequired({ target_stress: '240' }), true); assert.equal(F.passStressRequired({ target_stress: '' }), false);
+  const f = await hostedFixture(t); await f.setup();
+  await f.signIn('Torque fitter', { generalPermission: RW, materialsPermission: NONE, weldingPermission: RW });
+  const flange = f.store.list('flanges')[0];
+  f.store.update('flanges', flange.id, { target_moment_nm: 300, target_stress: '' }, flange._version);
+  const saved = await f.request(`/api/flanges/${flange.id}/passes`, 'POST', { ...base, stress_value: '' });
+  assert.equal(saved.status, 201, await saved.clone().text());
+  const pass = (await saved.json()).record as Row; assert.equal(pass.result, 'OK'); assert.equal(pass.stress_value, null);
+  const withTarget = f.store.get('flanges', flange.id); f.store.update('flanges', flange.id, { target_stress: '240' }, withTarget._version);
+  const refused = await f.request(`/api/flanges/${flange.id}/passes`, 'POST', { ...base, stress_value: '' });
+  assert.equal(refused.status, 422); assert.equal((await refused.json()).fields.stress_value, 'Enter the measured stress, above 0.');
+});

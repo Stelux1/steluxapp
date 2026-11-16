@@ -60,6 +60,8 @@ import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope,
 import { registerProjectImportRoutes } from './project-import.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
+import { withEveryMainProject } from './site-scope.ts';
+import { missingWelderStamps } from '../shared/weld-entry.ts';
 import { activeSite, allowPilotSwitch, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
 /** User accounts of the hosted pilots: a new account has no application ticked, and a ticked application needs a profile (access-users-profiles-004). Runs after the access checks. */
@@ -198,6 +200,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     store.transaction(() => { store.db.prepare('UPDATE credentials SET hash=? WHERE user_id=?').run(hash, user.id); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id); });
     const token = newSession(store, user.id, res, cookieName); if (site) setTokenSite(store, token, site); res.json({ ok: true });
   });
+  // The welders that readable welds name but the account does not read: their code and name only, so the weld shows who welded it (SC2 N-H).
+  const weldStamps = (rows: Record<string, Row[]>) => rows.welds?.length ? missingWelderStamps(rows.welds, rows.welders || [], id => withEveryMainProject(store, () => { try { return store.get('welders', id, true); } catch { return undefined; } })) : [];
   app.get('/api/bootstrap', (req, res) => {
     const user = (req as AuthRequest).user;
     const sessionSiteId = pilots ? { sessionSiteId: (req as AuthRequest).sessionSiteId || '' } : {};
@@ -209,7 +213,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const rows = Object.fromEntries(RESOURCES.filter(r =>r.key==='attachments'||canResource(user,r.key)).map(r => [r.key, readableRows(req, r.key, true)]));
     const activity = visibleAudit(req, store.activity(100));
     // Pilots: one summary per visible isometric and the Status (%) of each visible project (the same numbers in both pilots), and what Copy isometrics may carry.
-    const extra = pilots && user.pilot ? { isoSummaries: rows.isometrics ? isoSummariesFor(store, availability, pilotIsometrics(rows.isometrics, user.pilot)) : {}, projectStatus: rows.projects ? projectStatusesFor(store, availability, rows.projects) : {}, copyParts: access.copyParts(user.id, user.siteId) } : {};
+    const extra = pilots && user.pilot ? { isoSummaries: rows.isometrics ? isoSummariesFor(store, availability, pilotIsometrics(rows.isometrics, user.pilot)) : {}, projectStatus: rows.projects ? projectStatusesFor(store, availability, rows.projects) : {}, copyParts: access.copyParts(user.id, user.siteId), welderStamps: weldStamps(rows) } : {};
     res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra, ...siteRows, ...sessionSiteId });
   });
   // The company logo of Company data, for the application selector (any signed-in account: it is the workspace's own branding).
