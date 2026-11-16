@@ -72,10 +72,10 @@ export function PdfReportsMenu({ iso }: { iso: Row }) {
 }
 
 /** The options dialog of a document: for an isometric, or (`scope: 'project'` entries) for a project. */
-export function PdfDialog({ item, iso, projectId = '', onClose }: { item: PdfMenuItem; iso?: Row; projectId?: string; onClose: () => void }) {
+export function PdfDialog({ item, iso, projectId = '', phaseId = '', onClose }: { item: PdfMenuItem; iso?: Row; projectId?: string; /** The operation phase the dialog opens on (the MTO report: the Type chosen on the Materials panel). */ phaseId?: string; onClose: () => void }) {
   const { rows, user, siteId } = useWorkspace(); const id = useId();
   const [type, setType] = useState('All'), [weldRecord, setWeldRecord] = useState(true), [signature, setSignature] = useState(false);
-  const [welds, setWelds] = useState<string[] | null>(null), [perPage, setPerPage] = useState('4'), [columns, setColumns] = useState('3'), [labelRows, setLabelRows] = useState('8'), [phase, setPhase] = useState(''), [project, setProject] = useState(projectId);
+  const [welds, setWelds] = useState<string[] | null>(null), [perPage, setPerPage] = useState('4'), [columns, setColumns] = useState('3'), [labelRows, setLabelRows] = useState('8'), [phase, setPhase] = useState(phaseId), [project, setProject] = useState(projectId);
   const isoWelds = iso ? (rows.welds || []).filter(weld => !weld._archived && weld.isoId === iso.id).sort((a, b) => String(a.weldNo).localeCompare(String(b.weldNo), 'en', { numeric: true })) : [];
   const projects = (rows.projects || []).filter(row => !row._archived && (!siteId || row.siteId === siteId));
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [done, setDone] = useState('');

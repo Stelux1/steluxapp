@@ -83,7 +83,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
       let items:Input[]=[];let projectId=str(data.projectId);
       if(key==='order-requirements'){
-        const selected=ids(data.requirementIds,'material requirement');const rows=Object.fromEntries(['isometrics','iso_materials','orders','order_lines','picklists','stock','materials','custom_materials'].map(k=>[k,store.list(k)]));const execution=requirementExecution(rows);
+        const selected=ids(data.requirementIds,'material requirement');const rows=Object.fromEntries(['isometrics','iso_materials','orders','order_lines','picklists','stock','materials','custom_materials','material_quantity_changes'].map(k=>[k,store.list(k)]));const execution=requirementExecution(rows);
         const requirements=selected.map(id=>{const entry=execution.find(e=>e.requirement.id===id);if(!entry)throw new AppError(404,'A selected material requirement is unavailable.');if(!entry.toOrder)throw new AppError(409,'A selected requirement is already fully ordered.');return entry;});
         const projects=[...new Set(requirements.map(r=>String(r.iso.projectId)))];projectId=projects.length===1?projects[0]:'';
         items=requirements.map(r=>({materialId:r.requirement.materialId||'',customMaterialId:r.requirement.customMaterialId||'',requirementId:r.requirement.id,isoId:r.iso.id,quantity:r.toOrder}));

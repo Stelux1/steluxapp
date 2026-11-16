@@ -191,7 +191,8 @@ export function OrderArchive() {
   const { rows, label } = useWorkspace();
   const allowed = useProcurementAccess('order-archive');
   const [projectId, setProject] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState('');
-  const [detail, setDetail] = useState(''); const [trail, setTrail] = useState('');
+  // A link from the Ord.? column of an isometric (?order=<id>) opens that order.
+  const [detail, setDetail] = useState(() => new URLSearchParams(window.location.search).get('order') || ''); const [trail, setTrail] = useState('');
   const rangeError = dateRangeError(from, to);
   const orders = useMemo(() => rangeError ? [] : archivedOrders(rows, { projectId, from, to }), [rows, projectId, from, to, rangeError]);
   if (!allowed) return <NoAccess title="Order archive"/>;
