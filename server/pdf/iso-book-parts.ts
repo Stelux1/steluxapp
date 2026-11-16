@@ -14,6 +14,8 @@ import type { Row, User } from '../../shared/types.ts';
 export type Rows = Record<string, Row[]>;
 export interface BookContext {
   user: User;
+  /** The same account evaluated in its other pilot: a document it may print there is offered and delivered here too. */
+  alsoUsers?: User[];
   /** Records the account may read (archived included, like the other documents). */
   rows: Rows;
   registry: AnyPdfDefinition[];
@@ -182,7 +184,7 @@ export function partFiles(plan: PartPlan, context: BookContext, iso: Row): Row[]
 /** What the part holds for the isometric and the account: permitted generators and downloadable files, or the reason it is disabled. */
 export function partState(plan: PartPlan, context: BookContext, iso: Row): PartState {
   if (plan.key === 'task-sheet') return { available: true, generators: [], files: [] };
-  const permitted = plan.generators.filter(definition => canDocument(context.user, definition));
+  const permitted = plan.generators.filter(definition => [context.user, ...(context.alsoUsers || [])].some(account => canDocument(account, definition)));
   // A document of its own record contributes only when the isometric has such a record (a request, a release, a pick list).
   const printable = permitted.filter(definition => definition.scope !== 'scoped' || !definition.bookRuns || definition.bookRuns(context.rows, iso).length > 0);
   const all = plan.files ? partFiles(plan, context, iso) : [], files = all.filter(file => context.canFile(file));

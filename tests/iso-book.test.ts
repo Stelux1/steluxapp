@@ -84,10 +84,12 @@ test('the dialog lists every part in the reference order; parts without a genera
   // Documents of other tasks fill their parts when the isometric has something to print: the NDT request of iso-1, its punch
   // items and flanges, the project's certificate index.
   for (const key of ['ndt', 'punch-list', 'punch-list-blank', 'flange-report', 'certificate-index', 'lisl:lisl-gu', 'lisl:lisl-wq2']) assert.equal(part(key).available, true, key);
-  for (const key of ['itp', 'isometric', 'wps', 'pqr', 'material-certificates', 'pick-lists', 'mto-report', 'prefab-release', 'field-release']) {
+  for (const key of ['itp', 'isometric', 'wps', 'pqr', 'material-certificates', 'pick-lists', 'prefab-release', 'field-release']) {
     assert.equal(part(key).available, false, key); assert.ok(part(key).reason && part(key).reason!.length > 10, `${key} says why`);
   }
-  assert.match(part('pick-lists').reason!, /permission profile/, 'pick lists are an MTO Pilot document');
+  // The MTO report is an MTO Pilot document the administrator may read in that pilot: offered in Weld Pilot too (scn-SB-N8).
+  assert.equal(part('mto-report').available, true, 'mto-report');
+  assert.doesNotMatch(part('pick-lists').reason!, /permission profile/, 'pick lists are not refused to an account that may read them in MTO Pilot');
   assert.match(part('prefab-release').reason!, /No Prefab release/);
   assert.match(part('itp').reason!, /No ITP document/);
   const custom = listing.parts.filter(item => item.source === 'custom');
@@ -328,4 +330,26 @@ test('other profiles keep behaving as before: no ISO Book endpoints', async t =>
     assert.equal((await f.admin.request('/iso-book/parts?isoIds=iso-1')).status, 404, profile);
     assert.equal((await f.admin.request('/iso-book', { method: 'POST', data: { isoIds: ['iso-1'], parts: ['task-sheet'] } })).status, 404, profile);
   }
+});
+
+test('scn-SB-N8: a part the account may read in its other pilot is offered and delivered in this one; an account that may not read it anywhere is refused', async t => {
+  const f = await fixture(t);
+  // The administrator reads the MTO report in MTO Pilot: Weld Pilot offers and delivers it too (it was denied before).
+  const listing = await f.parts(f.admin, 'iso-1');
+  assert.equal(listing.parts.find(part => part.key === 'mto-report')!.available, true);
+  const delivered = await f.book(f.admin, { isoIds: ['iso-1'], parts: ['mto-report'] });
+  assert.ok((await pdfOf(delivered)).length > 100);
+  // Welding rights only in Weld Pilot, the full profile in MTO Pilot, and the same account without MTO access.
+  const base = { '4': ['show'], '5': ['show'], '63': ['show'], '64': ['show'], '37': ['show'], '42': ['show'], '44': ['show'], '68': ['show'], '85': ['show'], '87': ['show'], '76': ['show'], '86': ['show'] };
+  const weldOnly = f.profile('Welding only', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(base) });
+  const full = String(f.store.list('users').find(user => user.email === 'book-admin@example.test')!.profileId);
+  const both = f.account('Both pilots', { profileId: weldOnly, weldEnabled: true, weldProfileId: weldOnly, mtoEnabled: true, mtoProfileId: full });
+  const single = f.account('Weld only', { profileId: weldOnly, weldEnabled: true, weldProfileId: weldOnly, mtoEnabled: false });
+  const a = f.client(), b = f.client(); await a.login(both.email); await b.login(single.email);
+  const part = (response: BookPartsResponse) => response.parts.find(item => item.key === 'mto-report')!;
+  assert.equal(part(await f.parts(a, 'iso-1')).available, true, 'enabled and readable in the other pilot');
+  assert.ok((await pdfOf(await f.book(a, { isoIds: ['iso-1'], parts: ['mto-report'] }))).length > 100);
+  const refused = part(await f.parts(b, 'iso-1'));
+  assert.equal(refused.available, false); assert.match(refused.reason!, /permission profile/);
+  assert.equal((await f.book(b, { isoIds: ['iso-1'], parts: ['mto-report'] })).status, 422, 'asking for the part is refused');
 });

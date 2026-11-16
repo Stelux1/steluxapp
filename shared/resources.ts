@@ -42,6 +42,9 @@ const siteSettings: Field[] = [
   n('repairLimit', 'Repair performance limit (%)', { section: SETTINGS, max: 100, step: 0.1, hint: 'Leave empty to use 5 %.' }),
   s('ndtMeasurement', 'NDT measurement', NDT_MEASUREMENTS, { section: SETTINGS, default: NDT_MEASUREMENTS[0], hint: 'Inch-weighted counts large welds more; per weld counts every weld once.' }),
   t('irnCode', 'IRN Code', { section: SETTINGS }),
+  // Automatic IRN numbers: switched on only by the fill-irn action (server/iso-pages.ts); the counter is the last number given.
+  b('irnAuto', 'Automatic IRN numbers', { hidden: true, section: SETTINGS }),
+  n('irnCounter', 'IRN counter', { hidden: true, section: SETTINGS }),
   t('prefix', 'Prefix', { section: DOCUMENTS }),
   s('releaseDocDrawing', 'Release doc drawing no', RELEASE_DOC_DRAWINGS, { section: DOCUMENTS, default: RELEASE_DOC_DRAWINGS[0] }),
   t('hydrotestPlan', 'Hydrotest Execution Plan', { section: DOCUMENTS }),

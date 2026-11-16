@@ -11,7 +11,7 @@ import { IsoBookDialog } from './iso-book.tsx';
 type Option = 'type' | 'weldRecord' | 'signature' | 'welds' | 'perPage' | 'labelGrid' | 'phase' | 'project';
 export type PdfPilot = 'weld' | 'mto';
 /** Where an entry is offered: the Reports menu of the isometric page, the Certifications page or the materials of an isometric (MTO Pilot). */
-export type PdfPage = 'isometric' | 'certifications' | 'materials';
+export type PdfPage = 'isometric' | 'certifications' | 'materials' | 'projects';
 /**
  * One entry of the Reports menu (the order of the reference: LISL Report, A3, [GU], [MV], [ISS], [WQ], [WQ ver 2], [GU Rev 2], [GU Rev 3], Blank LISL template, Weld card, Weld labels, Punch list - blank, then ISO Book; `extra` entries such as Welder's summary follow it). Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
  * `pilots` and `page` say where it belongs (default: the isometric page of Weld Pilot); `scope: 'project'` entries are about a
@@ -34,6 +34,8 @@ export const PDF_MENU: PdfMenuItem[] = [
   { key: 'punch-list-blank', label: 'Punch list - blank', options: [], report: 'pdf-punch', pilots: ['weld'], page: 'isometric' },
   { key: 'mto-report', label: 'MTO report', options: ['phase'], report: 'mto', pilots: ['mto'], page: 'materials' },
   { key: 'certification-index', label: 'Certification index', options: ['project'], report: '', resource: 'certifications', pilots: ['weld', 'mto'], page: 'certifications', scope: 'project' },
+  // The punch-list button of a project row (Projects page): the punch items of that project.
+  { key: 'punch-list', label: 'Punch list', options: ['project'], report: 'pdf-punch', pilots: ['weld'], page: 'projects', scope: 'project' },
   { key: 'welders-summary', label: "Welder's summary", options: [], report: 'wdi', pilots: ['weld'], page: 'isometric', extra: true },
 ];
 /** The entries that belong to a pilot and a page. */

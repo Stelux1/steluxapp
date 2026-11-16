@@ -20,6 +20,7 @@ import { runMtoLogisticsAction } from './mto-logistics.ts';
 import { createSpoolServiceRequest, moveSpoolsToLaydown, nextNumber } from './spool-logistics.ts';
 import { duplicateSite } from './site-duplicate.ts';
 import { reorderAttachmentNames } from './attachment-names.ts';
+import { assignIrn, editedHeader, fillIrn, siteNumbersIrn } from './iso-pages.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -46,6 +47,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
     const patch = (resource: string, row: Row, input: Input) => store.update(resource, row.id, input, row._version, actor);
     if (key === 'duplicate-site') return duplicateSite(store, data, actor);
     if (key === 'reorder-attachment-names') return reorderAttachmentNames(store, data, actor);
+    if (key === 'fill-irn') return fillIrn(store, data, actor);
     if (key.startsWith('punch-')) return { resource: 'punchlists', record: runPunchAction(store, key, data, actor).record };
     const warehouse = (id: unknown, tool: boolean) => {
       const row = ensure('warehouses', id);
@@ -220,18 +222,24 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       for (const id of ids(data.isoIds, 'isometric')) patch('isometrics', ensure('isometrics', id), phases);
       return { resource: 'isometrics' };
     }
-    if (key === 'copy-isometrics') {
+    if (key === 'copy-isometrics' || key === 'add-new-isometric') {
+      // Add new (Edit isometric): one source, the header as edited in the form, the target is the form's project; the rules are those of Copy isometrics.
+      const addNew = key === 'add-new-isometric';
+      const edited = addNew ? editedHeader(data.values) : {};
       const flag = (name: string) => { if (data[name] !== undefined && typeof data[name] !== 'boolean') throw new AppError(422, 'Choose whether to copy welds, materials and calculations.'); return data[name] === true; };
       const copyWelds = flag('copyWelds'), copyMaterials = flag('copyMaterials'), copyCalculations = flag('copyCalculations');
       if (copyCalculations && !copyMaterials) throw new AppError(422, 'Calculations refer to materials: tick Copy materials as well, or leave Copy calculations unticked.');
       const target = ensure('projects', data.projectId);
-      const sources = ids(data.isoIds, 'isometric').map(id => ensure('isometrics', id));
+      // The form carries the source's IRN; where the main project numbers its isometrics, the new one gets its own below.
+      if (addNew && siteNumbersIrn(store, target)) delete edited.irn;
+      const sources = (addNew ? [str(data.isoId)] : ids(data.isoIds, 'isometric')).map(id => ensure('isometrics', id));
+      const numberOf = (source: Row) => String(addNew && edited.isoNo !== undefined ? edited.isoNo : source.isoNo).trim();
       // Copy within one main project: every source isometric's project belongs to the same project site as the target.
       for (const source of sources) if (ensure('projects', source.projectId).siteId !== target.siteId) throw new AppError(422, 'Isometrics can only be copied to another subproject of the same main project.');
       // All or nothing: an ISO number that exists in the target (or is chosen twice) stops the copy before anything is written.
       const taken = new Set(store.list('isometrics').filter(row => row.projectId === target.id).map(row => String(row.isoNo).trim().toLowerCase()));
       const clashes: string[] = [];
-      for (const source of sources) { const number = String(source.isoNo).trim(); if (taken.has(number.toLowerCase())) clashes.push(number); taken.add(number.toLowerCase()); }
+      for (const source of sources) { const number = numberOf(source); if (taken.has(number.toLowerCase())) clashes.push(number); taken.add(number.toLowerCase()); }
       if (clashes.length) throw new AppError(422, `ISO number${clashes.length === 1 ? '' : 's'} ${clashes.join(', ')} already exist${clashes.length === 1 ? 's' : ''} in project ${target.internnumber}. Nothing was copied.`);
       // What a copy carries: descriptive and technical fields, but not the project-bound assignments, the progress or the phase flags.
       const leftOut = new Set(['projectId', 'testSystemId', 'fieldPackageId', 'itpId', 'itp2Id']);
@@ -240,7 +248,9 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       const copies: Row[] = [];
       // A copy keeps the references its source had, even to catalog records since switched off on the site.
       store.keepingReferences(() => { for (const source of sources) {
-        const copy = add('isometrics', { ...Object.fromEntries(carried.map(name => [name, source[name]])), projectId: target.id });
+        const copy = add('isometrics', { ...Object.fromEntries(carried.map(name => [name, source[name]])), ...edited, projectId: target.id });
+        // A main project that numbers its isometrics itself gives the copy its own IRN, never the source's.
+        if (siteNumbersIrn(store, target)) { const header: Input = { projectId: target.id }; assignIrn(store, header, actor); if (header.irn) { store.update('isometrics', copy.id, { irn: header.irn }, copy._version, actor); } }
         const counts: string[] = [];
         // Spools are created on the copy when a copied weld or cut-list line names one.
         const spools = new Map<string, string>();
