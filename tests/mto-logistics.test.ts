@@ -689,7 +689,9 @@ test('mto-logistics-004 / -005: Confirm stores both documents; Sign online signs
   await f.signIn('Logistics signer', FULL);
   const service = await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1', 'spool-7'], companyId: 'service-pwht', note: 'Two projects' }); assert.equal(service.status, 201);
   const head = (await service.json() as { records: Row[] }).records[0];
-  const files = () => f.store.list('attachments').filter(row => row.entityType === 'service_requests' && row.entityId === head.id);
+  // The documents sit on the request's head in the archive; the records of one Confirm share their creation time, so read the files of all of them.
+  const requestIds = () => f.store.list('service_requests').filter(row => row.number === head.number && row.spoolId).map(row => row.id);
+  const files = () => f.store.list('attachments').filter(row => row.entityType === 'service_requests' && requestIds().includes(String(row.entityId)));
   assert.deepEqual(files().map(row => row.documentType).sort(), ['CoatingRelease', 'ServiceRequest']);
   assert.ok(files().every(row => /^\d{8}_S\d+_R\d{5}-(ServiceRequest|CoatingRelease)\.pdf$/.test(String(row.name)) && String(row.name).includes(`_R${head.number}-`)));
   for (const kind of ['service-request', 'coating-release']) { const response = await f.request(`/api/service-requests/${head.id}/document/${kind}`); assert.equal(response.status, 200, kind); assert.equal(response.headers.get('content-type'), 'application/pdf'); }
@@ -738,7 +740,7 @@ test('mto-logistics-004 / -005: Confirm stores both documents; Sign online signs
   assert.equal((await f.request(`/api/service-requests/${request.id}/document/signed`)).status, 200);
   // The archive row carries the documents and the sign-off.
   const archive = requestArchive(rowsOf(f.store), { kind: 'Spool' });
-  const row = archive.find(entry => entry.headId === head.id)!;
+  const row = archive.find(entry => entry.ids.includes(head.id))!;
   assert.ok(row.files.serviceRequest && row.files.coatingRelease && row.files.signed); assert.equal(row.signOff?.via, 'Online'); assert.deepEqual(row.documents, []);
   assert.equal(archive.find(entry => entry.headId === request.id)!.signOff?.via, 'Upload');
 });

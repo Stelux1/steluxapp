@@ -205,7 +205,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
         if(!company)for(const request of open){if(date<String(request.date))throw new AppError(422,'The move date cannot be before the request date.');patch('service_requests',request,{status:'Completed',completedAt:date});}
         if(company){
           // A material line on no laydown can be sent as well (mto-logistics-010: the laydown rule was ours); the request carries the signed-in user's name unless one was given.
-          const request=add('service_requests',{number,name:str(data.name)||actor.name,requirementId:requirement.id,companyId:company.id,materialLaydownId:laydown?.id||current?.laydownId||'',date,requestedAt:new Date().toISOString(),addedBy:actor.name,status:'Requested',note});
+          const request=add('service_requests',{number,name:str(data.name)||actor.name,requirementId:requirement.id,companyId:company.id,materialLaydownId:laydown?.id||current?.laydownId||'',date,requestedAt:date===today()?new Date().toISOString():`${date}T00:00:00.000Z`,addedBy:actor.name,status:'Requested',note});
           created.push(request);updateLocation(requirement,{laydownId:'',companyId:company.id});event(requirement,'Service request',{companyId:company.id,requestId:request.id});
         }else{updateLocation(requirement,{laydownId:laydown!.id,companyId:''});event(requirement,'Move to laydown',{laydownId:laydown!.id});}
       }
