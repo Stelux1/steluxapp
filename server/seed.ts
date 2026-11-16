@@ -129,6 +129,9 @@ export function seed(store: Store) {
     action('release', { isoIds: ['iso-3'], type: 'Prefab', reportNo: 'PFR-002', engineerId: 'qa-1', date: '2026-10-22' });
     action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
+    // A reopened release in the history: iso-9's prefab release was reopened after the client's dimensional check and issued again.
+    action('reopen-release', { isoId: 'iso-9', type: 'Prefab', reason: 'Client dimensional check found spool SP-009 out of tolerance; shop welds re-inspected after the correction.', date: '2026-10-21' });
+    action('release', { isoIds: ['iso-9'], type: 'Prefab', reportNo: 'PFR-003', engineerId: 'qa-1', date: '2026-10-23' });
     seedHydrotest(store);
     // Field work packages: descriptions, a second package for the steam network and the first assignments (see shared/releases.ts).
     store.update('field_packages', 'fwp-1', { description: 'Cooling water loop, area 1: prefab spools erected and welded in the field.' }, store.get('field_packages', 'fwp-1')._version, SYSTEM);

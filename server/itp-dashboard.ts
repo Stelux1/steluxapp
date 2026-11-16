@@ -27,7 +27,9 @@ export function seedItpSamples(store: Store) {
     const number = Number(String(weld.weldNo).slice(1));
     const changes: Record<string, unknown> = {};
     if (number > 15 && number <= 30) changes.wpsId = 'wps-2';
-    if (number === 7 || number === 23) changes.tracer = true;
+    // Tracers of the rejected welds: W007 traces W005 (its second tracer comes with the inspection samples), W023 traces W011.
+    if (number === 7) Object.assign(changes, { tracer: true, tracerOfId: 'weld-5' });
+    if (number === 23) Object.assign(changes, { tracer: true, tracerOfId: 'weld-11' });
     if (Object.keys(changes).length) store.update('welds', weld.id, changes, weld._version, SYSTEM);
   }
 }

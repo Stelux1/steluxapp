@@ -181,7 +181,7 @@ test('the inspection sample seed builds repairs, tracers, NDT Pre, PWHT and a vi
   const store = new Store(':memory:'); seed(store); seedInspectionSamples(store); seedInspectionSamples(store); t.after(() => store.close());
   const welds = store.list('welds');
   assert.deepEqual(welds.filter(w => w.repairOfId).map(w => w.weldNo).sort(), ['W005R1', 'W011R1']);
-  assert.equal(welds.filter(w => w.tracerOfId === 'weld-11').length, 2); assert.equal(welds.filter(w => w.tracerOfId === 'weld-5').length, 1);
+  assert.equal(welds.filter(w => w.tracerOfId === 'weld-11').length, 2); assert.equal(welds.filter(w => w.tracerOfId === 'weld-5').length, 2, 'W005 has its two tracers (W013, W007)');
   const iso2 = store.get('isometrics', 'iso-2');
   const status = isoBlockers({ iso: iso2, welds, weldTypes: store.list('weld_types'), diameters: store.list('diameters'), results: store.list('inspection_results') });
   assert.ok(!status.groups.find(group => group.key === 'repair')?.items.some(item => item.weldId === 'weld-11'), 'W011 is closed by its accepted repair');
