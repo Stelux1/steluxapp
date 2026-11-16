@@ -1,0 +1,7 @@
+# 5.13.04 Creating and Managing WPS Records
+URL: https://websonik.com/kennisbank/5-13-04-creating-and-managing-wps-records/ — Updated 22-06-2026
+4.1 Create New WPS modal: fields Project (required), WPS Number (required, full identifier), WPS Number (Short) (optional), Pre-fill source (Empty / PQR / Template, optional). Buttons Cancel, Create WPS (validates, opens new draft in editor).
+4.2 From PQR: choose "Start from PQR", field Select PQR (required then), Create WPS, review pre-filled values on all tabs.
+4.3 From template: field Select template (saved WPS template; templates created from editor via Actions -> Save as Template).
+4.4 Use for Project (master -> project copy): prerequisites source WPS Approved + flagged Master template + Insert right. On list a row with blue Master badge and Approved: Options -> blue Use for project (share icon). Modal fields (Dutch labels): Doelproject (target project, required), WPS Number voor de kopie (copy's number; empty = auto-number), PQR-koppelingen meenemen (copy linked PQR documents; checked by default). Buttons Cancel, Projectkopie maken (creates draft copy, opens editor). The copy follows its own review/approve cycle for the target project incl. customer signatures if configured. Master stays unchanged; each project copy is an independent draft.
+4.5 Delete confirmation: only Draft; approved/review cannot be deleted. Warning "cannot be undone"; buttons Cancel, Delete.

@@ -1,0 +1,6 @@
+# 5.21 Certifications
+URL: https://websonik.com/kennisbank/5-21-certifications/ — Updated 27-08-2024
+Process and manage material certificates, to know where each material component was used (project, isometric, weld level). 'Add certification': enter all data and select the PDF (PDF upload not mandatory; can be done later via 'Bewerk invoer' (edit entry)). 'Import certifications': download the import file, prepare per chapter 1.2 (CSV rules), import; PDFs must still be uploaded afterwards via 'Bewerk invoer'. Export via 'Export to ZIP' top right. A page icon next to the index number = a certificate PDF is uploaded; click to view. Pencil in column 'Opties' edits; icon with three rows shows in which projects, isometrics and weld numbers the material is used (traceability). 'Filter' searches certificates within projects. Screenshots (4): the certificates list and the usage view. The column list of the import CSV is not given in text.
+
+## Screenshot findings (from screenshot)
+Add certification dialog fields: Charge number, Attest number, Material ("Choose Material from DB"), Diameter, Material part, Type of material, Schedule, Wall thickness, Hot yield, Impact strength, Certificate-type, Supplier, Project, checkboxes Controlled and Accepted, Note, File (PDF).

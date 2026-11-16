@@ -1,0 +1,3 @@
+# 5.13.12 Error Messages and Validation
+URL: https://websonik.com/kennisbank/5-13-12-error-messages-and-validation/ — Updated 22-06-2026
+Table message -> cause -> fix: Insufficient rights (missing flag; ask admin s/i/e/d/m/x); WPS not found (invalid ID/deleted); Cannot delete (status not Draft); Validation failed on submit (required fields empty; complete mandatory tabs); PQR link required (norm/rules require PQR; link on Links tab); All approval steps must be signed (Approve too early); Content locked after signing (edit during review; create revision or reject/restart); Signatures invalidated (data changed after sign; re-sign); Compatibility warning (invalid material/process combo); Choose target project (Use for project without project).

@@ -17,3 +17,6 @@ backups/
 test-results/
 output/playwright/
 .playwright-cli/
+
+# raw reference captures (client data and third-party source; kept out of git)
+reference/montavar/raw/

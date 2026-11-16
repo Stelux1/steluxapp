@@ -1,0 +1,10 @@
+# 5.23 NDT process
+URL: https://websonik.com/kennisbank/5-23-ndt-process/ — Updated 29-10-2025
+Add NDT processes (procedures) and link them to an NDT process group; indicate whether they affect the **WPR (welder performance report)** and whether they also apply in the project where created.
+Length welds with NDT percentages: in Edit Weld ('Bewerken Las') choose "Length in mm…" in the **Dia.** dropdown, enter the length in mm, activate **NDT req.**, enter NDT percentage (e.g. 5%, 10%), click Update. The NDT percentage calculation method was changed to support this.
+Small changes: NDT Request memo now bold red for visibility (instructions for NDT firms); mandatory fields in Edit Weld improved so only relevant fields light up depending on the action; the **WQ number** in the Weld Card (Wel Card) is clickable and opens the linked document.
+Screenshots: NDT process table (2024-08-28); Edit Weld with length option.
+
+## Screenshot findings (from screenshot)
+- **Edit weld dialog** (full weld form; shown in screenshot 2): Weld no., Weld type, WPS number, Fitup Date, Welder, Welder 2, Welder 3, Welder 4 (four welders per weld), Weld Date, **Dia.** (dropdown; special option "Length in mm..."), **Length in mm** (numeric, e.g. 1200; appears only for that option), Coating 1, Coating 2, Welding wire 1, Welding wire 2, Spool, Pos 1, Charge number 1, Pos 2, Charge number 2; checkboxes NDT Req. Pre, **NDT Req.** (when ticked a field **NDT percent** with placeholder "0-100" appears), Pre HT / PWHT Req., Repair, Tracer. Buttons "Add new", Update, Cancel. The weld table behind has an extra column "D" (e.g. 2", "222mm") and S (spool).
+- **NDT process list** (image 1): page title "NDT process", button "+ Add NDT process", toolbar CSV/Excel, Search; columns NDT process, Group (e.g. VT, RT, UT...), WPR (Yes/No), Enabled on this site (Yes/No), Options (edit, delete). **Edit NDT process dialog**: NDT process (name), Description, Method (dropdown), File (Choose file), checkbox "Welder Performance Report (WPR)", checkbox "Enable on this site (...) for subsidiary ..." (project-site enable), Update / Cancel.

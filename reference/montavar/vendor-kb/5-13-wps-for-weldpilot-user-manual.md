@@ -1,0 +1,3 @@
+# 5.13.00 WPS for WeldPilot User Manual
+URL: https://websonik.com/kennisbank/5-13-wps-for-weldpilot-user-manual/ — Updated 22-06-2026
+Contents page of the English manual for module "WPS for WeldPilot" (WPS Designer), version June 2026: create, review, approve, maintain Welding Procedure Specifications. Chapters 5.13.01 Introduction, 02 Getting Started, 03 WPS List Overview, 04 Creating and Managing WPS Records, 05 WPS Editor, 06 Approval Workflow and Signatures, 07 PDF Export and Official Documents, 08 Source Data Management, 09 Search/Filters/List Actions, 10 Administration and Permissions, 11 Common Workflows, 12 Error Messages and Validation, 13 Best Practices, 14 FAQ.

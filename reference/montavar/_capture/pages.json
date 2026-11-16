@@ -1,0 +1,318 @@
+{
+ "base": "https://montavar.websonik.nl",
+ "note": "Sweep 1: every menu page of both pilots, opened by URL only (no clicks). MTOPilot Isometric execution (page=iso-execution) is left out on purpose: opening it recalculates cached material status.",
+ "pages": [
+  {
+   "slug": "weld__start__dashboard",
+   "path": "/weldpilot/"
+  },
+  {
+   "slug": "weld__general__project-sites",
+   "path": "/weldpilot/index.php?page=project-sites"
+  },
+  {
+   "slug": "weld__general__companies",
+   "path": "/weldpilot/companies/"
+  },
+  {
+   "slug": "weld__general__attachment-names",
+   "path": "/weldpilot/iso-docs/"
+  },
+  {
+   "slug": "weld__start__daily-reporting",
+   "path": "/weldpilot/daily-reporting/"
+  },
+  {
+   "slug": "weld__welder__welders",
+   "path": "/weldpilot/index.php?page=personnel&type=1&view=welders"
+  },
+  {
+   "slug": "weld__welder__roles",
+   "path": "/weldpilot/roles/"
+  },
+  {
+   "slug": "weld__welder__certificates",
+   "path": "/weldpilot/certificates/"
+  },
+  {
+   "slug": "weld__welder__customs",
+   "path": "/weldpilot/customs/"
+  },
+  {
+   "slug": "weld__welddata__pqr",
+   "path": "/weldpilot/pqr/"
+  },
+  {
+   "slug": "weld__welddata__wps-designer",
+   "path": "/weldpilot/index.php?page=wps-designer"
+  },
+  {
+   "slug": "weld__welddata__wps-methods",
+   "path": "/weldpilot/wps/"
+  },
+  {
+   "slug": "weld__welddata__weld-process",
+   "path": "/weldpilot/welding-process/"
+  },
+  {
+   "slug": "weld__welddata__weld-type",
+   "path": "/weldpilot/weld-type/"
+  },
+  {
+   "slug": "weld__welddata__coating",
+   "path": "/weldpilot/coating/"
+  },
+  {
+   "slug": "weld__welddata__spools",
+   "path": "/weldpilot/material-spools/"
+  },
+  {
+   "slug": "weld__reportgen__form-designer",
+   "path": "/weldpilot/index.php?page=drag-drop-forms-vue3"
+  },
+  {
+   "slug": "weld__reportgen__my-templates",
+   "path": "/weldpilot/index.php?page=form-templates"
+  },
+  {
+   "slug": "weld__material__weld-diameters",
+   "path": "/weldpilot/weld-diameters/"
+  },
+  {
+   "slug": "weld__material__material-part",
+   "path": "/weldpilot/material-part/"
+  },
+  {
+   "slug": "weld__material__type-of-material",
+   "path": "/weldpilot/type-material/"
+  },
+  {
+   "slug": "weld__material__material-supplier",
+   "path": "/weldpilot/material-supplier/"
+  },
+  {
+   "slug": "weld__material__welding-wire",
+   "path": "/weldpilot/index.php?page=welding-wires"
+  },
+  {
+   "slug": "weld__material__certifications",
+   "path": "/weldpilot/index.php?page=certifications"
+  },
+  {
+   "slug": "weld__ndt__process-groups",
+   "path": "/weldpilot/ndt-process-groups/"
+  },
+  {
+   "slug": "weld__ndt__process",
+   "path": "/weldpilot/ndt-process/"
+  },
+  {
+   "slug": "weld__ndt__defect-codes",
+   "path": "/weldpilot/ndt-defects/"
+  },
+  {
+   "slug": "weld__ndt__locations",
+   "path": "/weldpilot/ndt-location/"
+  },
+  {
+   "slug": "weld__ndt__pwht-process",
+   "path": "/weldpilot/pwht-process/"
+  },
+  {
+   "slug": "weld__ndt__pwht-locations",
+   "path": "/weldpilot/pwht-location/"
+  },
+  {
+   "slug": "weld__welding__projects",
+   "path": "/weldpilot/index.php?page=project-sites&id=1&view=projects"
+  },
+  {
+   "slug": "weld__welding__isometrics-list",
+   "path": "/weldpilot/index.php?page=isometrics-list"
+  },
+  {
+   "slug": "weld__welding__itps",
+   "path": "/weldpilot/index.php?page=weldpilot-itps"
+  },
+  {
+   "slug": "weld__welding__ndt-pwht-manager",
+   "path": "/weldpilot/index.php?page=ndt-requests-pre"
+  },
+  {
+   "slug": "weld__welding__ndt-batch-import",
+   "path": "/weldpilot/index.php?page=ndt-batch-import"
+  },
+  {
+   "slug": "weld__welding__iso-pdf-import",
+   "path": "/weldpilot/index.php?page=iso-pdf-import"
+  },
+  {
+   "slug": "weld__welding__qaqc-engineers",
+   "path": "/weldpilot/test-engineers/"
+  },
+  {
+   "slug": "weld__welding__export-weld-data",
+   "path": "/weldpilot/export-welds/"
+  },
+  {
+   "slug": "weld__releases__prefab-release",
+   "path": "/weldpilot/index.php?page=isometrics-finished&show=hideReleased"
+  },
+  {
+   "slug": "weld__releases__field-release",
+   "path": "/weldpilot/index.php?page=isometrics-finished-field&show=hideReleased"
+  },
+  {
+   "slug": "weld__releases__assign-fwp",
+   "path": "/weldpilot/index.php?page=assign-fwp&tab=assign-iso"
+  },
+  {
+   "slug": "weld__releases__hydrotest-release",
+   "path": "/weldpilot/index.php?page=hydrotest-request&tab=test-systems"
+  },
+  {
+   "slug": "weld__releases__request-archive",
+   "path": "/weldpilot/index.php?page=requests-archive&from=01.01.2020&to=31.12.2026"
+  },
+  {
+   "slug": "weld__releases__punch-lists",
+   "path": "/weldpilot/index.php?page=punchlists"
+  },
+  {
+   "slug": "weld__releases__flange-management",
+   "path": "/weldpilot/index.php?page=flanges"
+  },
+  {
+   "slug": "weld__system__user-accounts",
+   "path": "/weldpilot/index.php?page=users"
+  },
+  {
+   "slug": "weld__system__profiles",
+   "path": "/weldpilot/profiles/"
+  },
+  {
+   "slug": "weld__system__signatures",
+   "path": "/weldpilot/index.php?page=signatures"
+  },
+  {
+   "slug": "weld__user__user-manuals",
+   "path": "/weldpilot/index.php?page=user-manuals"
+  },
+  {
+   "slug": "mto__start__dashboard",
+   "path": "/mtopilot/"
+  },
+  {
+   "slug": "mto__general__project-sites",
+   "path": "/mtopilot/index.php?page=project-sites"
+  },
+  {
+   "slug": "mto__general__storehouses",
+   "path": "/mtopilot/index.php?page=lagers"
+  },
+  {
+   "slug": "mto__materials__material-database",
+   "path": "/mtopilot/index.php?page=material-database&projectSite=1"
+  },
+  {
+   "slug": "mto__materials__material-part",
+   "path": "/mtopilot/material-part/"
+  },
+  {
+   "slug": "mto__materials__type-of-material",
+   "path": "/mtopilot/type-material/"
+  },
+  {
+   "slug": "mto__materials__uoms",
+   "path": "/mtopilot/material-uoms/"
+  },
+  {
+   "slug": "mto__materials__spools",
+   "path": "/mtopilot/material-spools/"
+  },
+  {
+   "slug": "mto__materials__operation-phases",
+   "path": "/mtopilot/material-types/"
+  },
+  {
+   "slug": "mto__materials__material-supplier",
+   "path": "/mtopilot/material-supplier/"
+  },
+  {
+   "slug": "mto__order__order-materials",
+   "path": "/mtopilot/index.php?page=material-order"
+  },
+  {
+   "slug": "mto__order__pending-order",
+   "path": "/mtopilot/index.php?page=material-not-receive"
+  },
+  {
+   "slug": "mto__order__material-take-in",
+   "path": "/mtopilot/index.php?page=material-receive"
+  },
+  {
+   "slug": "mto__order__material-inventory",
+   "path": "/mtopilot/index.php?page=material-inventory"
+  },
+  {
+   "slug": "mto__order__materials-list",
+   "path": "/mtopilot/index.php?page=material-list"
+  },
+  {
+   "slug": "mto__order__order-archive",
+   "path": "/mtopilot/index.php?page=material-order-archive&from=01.01.2020&to=31.12.2026"
+  },
+  {
+   "slug": "mto__order__certifications",
+   "path": "/mtopilot/index.php?page=certifications"
+  },
+  {
+   "slug": "mto__projects__projects",
+   "path": "/mtopilot/index.php?page=project-sites&id=1&view=projects"
+  },
+  {
+   "slug": "mto__projects__isometrics-list",
+   "path": "/mtopilot/index.php?page=isometrics-list"
+  },
+  {
+   "slug": "mto__projects__pick-list-archive",
+   "path": "/mtopilot/index.php?page=picklist-archive&from=01.01.2020&to=31.12.2026"
+  },
+  {
+   "slug": "mto__logistic__service-companies",
+   "path": "/mtopilot/service-companies/"
+  },
+  {
+   "slug": "mto__logistic__service-request",
+   "path": "/mtopilot/index.php?page=spools-transport"
+  },
+  {
+   "slug": "mto__logistic__service-request-materials",
+   "path": "/mtopilot/index.php?page=spools-transport-materials"
+  },
+  {
+   "slug": "mto__logistic__request-archive",
+   "path": "/mtopilot/index.php?page=requests-archive&from=01.01.2020&to=31.12.2026"
+  },
+  {
+   "slug": "mto__logistic__laydown-areas",
+   "path": "/mtopilot/index.php?page=material-laydowns"
+  },
+  {
+   "slug": "mto__logistic__laydown-materials",
+   "path": "/mtopilot/index.php?page=material-laydowns-material"
+  },
+  {
+   "slug": "mto__system__user-accounts",
+   "path": "/mtopilot/users/"
+  },
+  {
+   "slug": "mto__system__profiles",
+   "path": "/mtopilot/profiles/"
+  },
+  {
+   "slug": "shared__selector",
+   "path": "/dashboard/index.php"
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+# 5.40 Prefab release
+URL: https://websonik.com/kennisbank/5-40-prefab-release/ — Updated 12-06-2026
+Before pressing **"Prefab complete"** all NDT must be performed and their statuses/reports processed. Do this after all prefab welds (those flagged as prefab) are finished and the **prefab release indicator** has appeared.
+Generate a 'Prefab release note' in the release section: go to filter and select the **ITP**; click 'Go'; tick isometrics to release; click 'Release selected' to release them to the next phase. The release note collects all reviewed isometrics released to the next phase.
+After the prefab folders are approved: Options menu -> 'Upload signed docs': select the report number and file, 'Upload'. Uploaded docs are in menu 'Release archive' both unsigned and signed versions; a printer icon next to the original means the signed version has been uploaded.
+Screenshots (7): Afbeelding140 (release screen), 141 (release note). Article does not state padlock/reopen rules.
+
+## Screenshot findings (from screenshot)
+- Image 1: weld list of an isometric. Right-hand status block shows Status 80% with a button/badge **"Prefab complete"** and grey text "Field not ready" (tooltip-like); Hydrotest completed "No | PTC"; Punch "No". Weld table columns WN, Type, Wdr, VI, NDT (Pre), NDT, PWHT, Idx, Chg.No., Material (1), Idx, Chg.No., Material (2), WPS, S, Options; options column has edit pencil, delete trash and a round action icon; a green tick button appears on a row where the weld can be completed. NoBo shown red "No".
+- Image 2: **Filter** dialog of the Prefab release page with fields Project (All), ITP No (dropdown listing ITP numbers with revisions, e.g. "200.026-BNI-ITP-101 rev.1"), Show (dropdown); buttons Go / Cancel.
+- Image 3: **Prefab release** page: buttons "Release selected", "Options", "Filter"; Search; table columns Options (checkbox), Project, ISO (link), IRN, Rev. no., ITP No, ITP No 2, Spools (e.g. "A", "A B"), Piping class, Drawing no., NoBo (Yes in red), X Ray %, PWHT (No in green), Priority (e.g. "Prio 4").
+- Image 4: sample **Field Release note** (same layout as prefab release note) beside a photo of coloured document folders: title "Field Release note", Report No (e.g. 00015), Project, ITP no.; table columns ITP number, Spools, System / Medium, Doc. Number / Drg. Number, Rev.; footer with three signature boxes (contractor / supplier QA/QC, Client, notified body/NoBo) each with name, signature and date; printed date/time at bottom.
+- Image 5: **Upload signed docs** dialog: "Select report" dropdown (e.g. "00001 - 200.026-BNI-ITP-101 rev.1"), "Document (only PDFs are allowed)" with Choose file, Upload / Cancel.
+- Image 6: **Release archive** dialog: search box; list "File" of entries like "00001 | 20210803_S17_000001_200.026-BNI-ITP-101 rev.1_Release.pdf" each followed by a printer icon (signed version uploaded) and entries without printer icon (unsigned only).

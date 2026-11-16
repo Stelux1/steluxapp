@@ -1,0 +1,13 @@
+# 3.21 Project
+URL: https://websonik.com/kennisbank/3-21-project/
+Last updated 12-06-2026
+
+## Text
+- Projects can be split in several ways: part of a unit, an operational system; maintenance and projects can be combined. In the example a project is divided into operational systems; each operational system has isometrics and each isometric has the required materials. Two ways to begin: add materials manually or import via CSV.
+- Manual: menu "Project Data" -> "Projects" -> "Add Project", fill the data, "Add". Optionally add isometrics: "Add Isometric", fill, "Add"; repeat.
+- Add materials to an isometric: click the (plus/arrow) icon next to that isometric, click "Add", then choose a custom material or one from the library.
+- Imports of projects, isometrics and materials: take time, prepare CSV well. Advice: do not make all fields mandatory during import (longer import time); fill the data afterwards. Large files take time; wait until it finishes.
+
+## Screenshots (from screenshot)
+1. Composite: (top) "Projects" list (project "Zandbak") with columns Intern prj. no., Extern prj. no., Project d(escription)..., Phone, Authority, Options; buttons Export, "Options (With selected items)", "Import", "+ Add project" (red frame) and the Add project form (fields tiny, e.g. Intern prj. no., Extern prj. no., Project description, Client/Authority, phone, etc.; not legible). (middle) "Iso overview" under the project: columns ISO, IRN, Rev. no., ITP No, Asset tag, Piping class..., Priority, Status (shows "NAN%"), Started, Options; buttons "Options", "Add" (red frame) and the Add isometric form (fields tiny: Iso number, Title/Date, Customer number, Drawing no., Piping class, Test pressure, Test system, Priority, Chemical clean, Tracing spec, checkboxes NoBo / PWHT, file inputs Isometric / ITP document / ITP document 2, Notes rich-text editor; partly illegible). (bottom) isometric "Materials" page: header block with ISO No / ITP No / ITP No 2 / Asset tag on the left and Status "NAN%", Hydrotest completed "No", Material status "Empty" + refresh button on the right; buttons "Import", "Add" (red frame), "MTOPilot" dropdown, "Print", "All types" filter; table columns Group, Mat.no., DIA, ..., Qty., UOM, Ord.?, Inv., Picked?, Options. Dialog "Add material" with Material group (Choose group), Material (search), Type (dropdown, value "Shop"), Quantity (5); Add / Cancel.
+2. Dialog "Import all projects data from CSV" with blue Notes box: import can take long, depends on file size; 10,000 rows can take up to 2 minutes; be patient and do not terminate the process. "Choose file", "Download sample CSV file", Import / Cancel.

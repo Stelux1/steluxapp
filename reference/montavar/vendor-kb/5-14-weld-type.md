@@ -1,0 +1,6 @@
+# 5.14 Weld type
+URL: https://websonik.com/kennisbank/5-14-weld-type/ — Updated 05-11-2024
+Table 'Lastypes' (weld types): edit or create new type and mark whether it is a **prefab or field weld**; add an **abbreviation**; per project indicate which types are used. Previously 2 welders could be linked to a weld; now **up to four welders** per weld. New: field **'Joint type'** (lasverbindingstype) in the Weld type menu. The data appears on the renewed **LISL (Las Inspectie Standaard Lijst)** which can be exported; used to select welds for NDT (X-ray, ultrasonic), compare counts/types and make periodic settlements (billing) based on quantity and type of welds. Screenshot (2024-11-05 10.18.56): weld type table.
+
+## Screenshot findings (from screenshot)
+Weld type page: title "Weld type", button "+ Add weld type", CSV / Excel / print buttons, Search. Columns: Weld type (name, e.g. "[GU] Field Weld - Branch", "Field weld", "[GU] Shop Weld", "Shop weld", "[GU] Field Weld", "[GU] Shop Weld - Weldolet"), Type (Shop / Field), Abbreviation (FW, FW, J, P, U, JN), Joint type (e.g. BR, BW, BW, BW, BW, WL — red outlined = the new column), Enabled on this site (Yes), Options (edit, delete). 6 rows shown.

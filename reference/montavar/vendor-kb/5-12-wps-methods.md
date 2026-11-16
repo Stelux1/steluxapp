@@ -1,0 +1,11 @@
+# 5.12 WPS methods
+URL: https://websonik.com/kennisbank/5-12-wps-methods/ — Updated 06-03-2026
+'WPS-bibliotheek' (library) with all WPS. 'Add WPS method' adds one. Per project you indicate if a WPS is available. A WPS can be uploaded as PDF to be attached later to a handover document; WPS methods with a PDF are shown as blue clickable link. WPS can be (de)activated individually or in bulk: select several, press 'Options'. Pencil icon edits; per WPS indicate if used on the project site.
+WPS registration before project start: customer often wants to approve a set of WPS before welding. Now you can copy an existing WPS registration and link it directly to a project, then only add the approved WPS document. How: keep the original WPS templates inactive; in WPS overview click 'Kopiëren' (Copy), choose project location, click 'Copy'. Copying a template activates the copy on the selected project. Original stays unchanged, marked with **black icon**; copy has **red icon** and cannot be copied again (origin stays clear). WPS archived together with project.
+Update 05-03-2026: the 'WPS copy' option can be switched off completely (only originals visible/selectable); request through the vendor helpdesk.
+6 screenshots (list with columns, options, copy dialog).
+
+## Screenshot findings (from screenshot)
+- WPS methods list ("WPS methods / Active", link "[Show inactive]" toggles to "Inactive"/"[Show active]"): button "+ Add WPS method", CSV / Excel / print, Search. Columns: **WPS number** (blue link when a PDF is attached), **Weld process** (e.g. 141, GTAW, SMAW, "141-2-ISO"), **WPS definition** (e.g. "EN-ISO-GTAW-D=25.0-9999.9 / T=3.0-20.2 -FM-1/FM-2", "S355, S235, A106, A333 / Range of Thickness (mm) 2.77 - 11"), **Joint type** (e.g. "1/2 V-JOINT", "Butt Weld", "Fillet Weld", "Branch", "BW"), **Enabled on this site** (Yes / No in green/red), Options (copy icon, edit pencil, delete trash) and a checkbox for bulk.
+- **Edit WPS method** dialog fields: WPS number, Weld process, WPS definition, Joint type, Project, **PQR**, Document (file upload), plus a checkbox for enabling on the site.
+- **Copy** dialog: "Copy WPS to another Project site" with a Project dropdown, buttons Copy (green) / Cancel; copy icon is in the Options column of the Inactive list (templates).
