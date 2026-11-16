@@ -64,3 +64,16 @@
   .release-doc-signatures > div { break-inside: avoid; border-color: #888; }
   .release-doc-tabs { display: none !important; }
 }
+
+/* Table tools, top bar and archive of the release pages. */
+.release-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.release-tool-buttons { display: inline-flex; gap: 6px; }
+.release-length { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.release-length select { min-height: 34px; }
+.release-topbar { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 0; }
+.release-count { margin: 0; padding: 0 16px 14px; font-size: 13px; color: var(--muted); }
+.release-archive-file { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.release-archive-file .text-link { overflow-wrap: anywhere; text-align: left; }
+.release-archive-signed { display: flex; align-items: center; gap: 6px; margin: 4px 0 0 24px; font-size: 13px; overflow-wrap: anywhere; }
+.release-archive-table td { white-space: normal; }
+.iso-release-batch { margin: 0; font-size: 12px; color: var(--muted); }

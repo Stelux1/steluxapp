@@ -1,5 +1,6 @@
 import type { Row } from '../shared/types.ts';
-import { COMPLETION_FIELDS, RELEASE_PHASES, activeRelease, fwpAccepts, phaseCompleted, releaseCheck, releaseDocumentData, type ReleasePhase } from '../shared/releases.ts';
+import { COMPLETION_FIELDS, ITP_MISSING, RELEASE_PHASES, activeRelease, fwpAccepts, nextReportNo, phaseCompleted, releaseCheck, releaseDocumentData, releaseItpOf, type ReleasePhase } from '../shared/releases.ts';
+import { itpLatest } from '../shared/itps.ts';
 import { AppError, SYSTEM, validDate, type Actor, type Store } from './store.ts';
 
 type Input = Record<string, unknown>;
@@ -31,16 +32,18 @@ function checkOf(store: Store, iso: Row, type: ReleasePhase) {
 const isoName = (iso: Row) => String(iso.isoNo || iso.id);
 
 /**
- * The `release` action (the release document). A Prefab or Field release is created only for isometrics whose phase
- * is completed and not released already; the whole batch is one transaction, so a blocked isometric stops every record of the request.
- * Each record keeps who released and when, the numbering of the main project's Document settings and its signature block titles.
- * Hydrotest records keep their earlier behaviour (no checks) and get the same document data.
+ * The `release` action (the release document, "Release selected"). A Prefab or Field release is one document for one ITP:
+ * the checked isometrics must all hold the chosen ITP in the phase's slot (Prefab: ITP No, Field: ITP No 2) and have
+ * their phase completed and not released already; the whole batch is one transaction, so a blocked isometric stops every
+ * record of the request. The report number is assigned automatically per main project and phase (00001, 00002 …) unless
+ * one is sent (hydrotest, imports). Each record keeps who released and when, the ITP, and the numbering of the main
+ * project's Document settings. Hydrotest records keep their earlier behaviour (a report number, no checks).
  * The system actor (sample data, imports of historic releases) is not checked.
  */
 export function releaseIsometrics(store: Store, data: Input, actor: Actor, defaults: { date: string; note: string }): ActionResult {
   const type = str(data.type);
   if (!['Prefab', 'Field', 'Hydrotest'].includes(type)) throw new AppError(422, 'Choose a release type.');
-  const reportNo = str(data.reportNo); if (!reportNo) throw new AppError(422, 'Enter a report number.');
+  let reportNo = str(data.reportNo); if (!reportNo && type === 'Hydrotest') throw new AppError(422, 'Enter a report number.');
   if (data.engineerId) store.get('qa_engineers', data.engineerId);
   if (data.signatureId) {
     const signature = store.get('signatures', data.signatureId);
@@ -49,24 +52,42 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
     if (store.hostedRules && actor.id !== SYSTEM.id && signature.userId !== actor.id) throw new AppError(403, 'You can only sign a release with your own signature.', { signatureId: 'Choose one of your own signatures.' });
   }
   const isometrics = ids(data.isoIds, 'isometric').map(id => store.get('isometrics', id));
-  if (type !== 'Hydrotest' && actor.id !== SYSTEM.id) {
-    // The release document follows the phase's Complete on the isometric: only completed isometrics are released.
+  let itp = '';
+  if (type !== 'Hydrotest') {
     const phase = type as ReleasePhase; const releases = store.list('releases');
-    const refused = isometrics.flatMap(iso => {
-      if (activeRelease(releases, iso.id, phase)) return [{ iso, message: `${phase} is already released.` }];
-      return phaseCompleted(iso, phase, releases) ? [] : [{ iso, message: `${phase} is not complete yet. Mark it ${phase} complete on the isometric first.` }];
-    });
-    if (refused.length) {
-      const shown = refused.slice(0, 3).map(item => `${isoName(item.iso)}: ${item.message}`).join(' ');
-      throw new AppError(422, `Nothing was released. ${shown}${refused.length > 3 ? ` ${refused.length - 3} more isometrics are blocked.` : ''}`);
+    if (actor.id !== SYSTEM.id) {
+      // The release document follows the phase's Complete on the isometric: only completed isometrics are released.
+      const refused = isometrics.flatMap(iso => {
+        if (activeRelease(releases, iso.id, phase)) return [{ iso, message: `${phase} is already released.` }];
+        if (!phaseCompleted(iso, phase, releases)) return [{ iso, message: `${phase} is not complete yet. Mark it ${phase} complete on the isometric first.` }];
+        return releaseItpOf(iso, phase) ? [] : [{ iso, message: ITP_MISSING[phase] }];
+      });
+      if (refused.length) {
+        const shown = refused.slice(0, 3).map(item => `${isoName(item.iso)}: ${item.message}`).join(' ');
+        throw new AppError(422, `Nothing was released. ${shown}${refused.length > 3 ? ` ${refused.length - 3} more isometrics are blocked.` : ''}`);
+      }
+      // One document per ITP: the chosen ITP (or, without one, the single ITP all checked isometrics share).
+      const held = [...new Set(isometrics.map(iso => releaseItpOf(iso, phase)))];
+      itp = str(data.itp) || (held.length === 1 ? held[0] : '');
+      if (!itp) throw new AppError(422, 'Choose one ITP first: the checked isometrics have different ITPs, and a release document is made per ITP.', { itp: 'Choose an ITP.' });
+      const other = isometrics.filter(iso => releaseItpOf(iso, phase) !== itp);
+      if (other.length) throw new AppError(422, `Nothing was released. ${other.slice(0, 3).map(iso => `${isoName(iso)}: ${phase === 'Prefab' ? 'ITP No' : 'ITP No 2'} is ${releaseItpOf(iso, phase)}, not the chosen ITP ${itp}.`).join(' ')}${other.length > 3 ? ` ${other.length - 3} more isometrics are blocked.` : ''}`, { itp: 'Release one ITP at a time.' });
+      if (new Set(isometrics.map(iso => siteOf(store, iso)?.id ?? '')).size > 1) throw new AppError(422, 'Release the isometrics of one main project at a time.');
+    } else itp = str(data.itp) || releaseItpOf(isometrics[0], phase);
+    if (!reportNo) {
+      const site = siteOf(store, isometrics[0])?.id ?? '', siteOfIso = new Map<string, string>();
+      const inSite = (release: Row) => { const key = String(release.isoId); if (!siteOfIso.has(key)) { let id = ''; try { id = siteOf(store, store.get('isometrics', key, true))?.id ?? ''; } catch { id = ''; } siteOfIso.set(key, id); } return siteOfIso.get(key) === site; };
+      reportNo = nextReportNo(store.list('releases', true), type, inSite);
     }
   }
+  const itpEntry = itp ? store.list('itps').find(entry => String(entry.number) === itp) : undefined;
+  const itpRev = itpEntry ? itpLatest(itpEntry, store.list('attachments')).revNo : '';
   const number = store.next(type === 'Hydrotest' ? 'HYDRO' : 'REL'); const now = new Date().toISOString();
   const created = isometrics.map(iso => store.create('releases', {
     number, isoId: iso.id, type, reportNo, date: defaults.date, engineerId: data.engineerId || '', signatureId: data.signatureId || '', note: defaults.note,
-    status: 'Released', releasedBy: actor.name, releasedAt: now, ...releaseDocumentData(siteOf(store, iso), iso),
+    status: 'Released', releasedBy: actor.name, releasedAt: now, ...(type === 'Hydrotest' ? {} : { itp, itpRev }), ...releaseDocumentData(siteOf(store, iso), iso),
   }, actor));
-  for (const record of created) store.audit('releases', record.id, 'released', `${type} release ${number} · ${reportNo}`, actor);
+  for (const record of created) store.audit('releases', record.id, 'released', `${type} release ${number} · ${reportNo}${itp ? ` · ${itp}` : ''}`, actor);
   return { resource: 'releases', records: created };
 }
 

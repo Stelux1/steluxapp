@@ -12,6 +12,7 @@ import {
 } from '../../shared/pdf-documents.ts';
 import { flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../../shared/pdf-lists.ts';
 import { REQUEST_DOCUMENT } from '../../shared/inspections.ts';
+import { releaseFileName, siteSequence } from '../../shared/releases.ts';
 import { pickListReports } from '../../shared/mto-logistics.ts';
 import type { Row } from '../../shared/types.ts';
 
@@ -96,7 +97,8 @@ const releaseDefinition = (type: 'Prefab' | 'Field'): PdfScopedDefinition => ({
     const signer = store.list('signatures').find(row => row.id === model.release.signatureId);
     const signature = signer ? signatureOf(store, documents, text(signer.userId)) : null;
     const { bytes } = await releasePdf({ model, company: companyForDocuments(store, documents), generatedAt: now, rows, signature });
-    return { bytes, fileName: `${isoDate(now)}-${projectNumber(rows, model.iso, model.context.project)}-${type}-release-${safe(model.docNo, 'document')}` };
+    // The vendor's archive pattern: date_S<site>_<report no>_<ITP> rev.<n>_Release (shared/releases.ts releaseFileName).
+    return { bytes, fileName: releaseFileName({ date: model.release.date || now.toISOString(), site: siteSequence(rows.sites, text(model.context.site?.id)), reportNo: model.reportNo, itpLabel: model.itpLabel }).replace(/\.pdf$/, '') };
   },
 });
 

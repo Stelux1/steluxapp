@@ -19,8 +19,8 @@ import { resourcePath } from '../client/records.tsx';
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
 const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive', '/materials/materials-list', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
-// The Prefab release, Field release and Request archive pages share the releases route and differ by ?view= (see client/releases.tsx).
-EXPLICIT_ROUTES.push('/welding/releases');
+// The Prefab release and Field release pages share the releases route and differ by ?view= (see client/releases.tsx).
+EXPLICIT_ROUTES.push('/welding/releases', '/welding/field_packages');
 const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.map(item => ({ pilot, group, item }))));
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
@@ -41,6 +41,19 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
 
+test('the Weld Pilot menu has no Weld process and no Request archive (hidden by design in the reference); the MTO Pilot keeps its service request archive', () => {
+  const labels = PILOT_MAP.weld.groups.flatMap(group => group.items.map(item => item.label));
+  for (const hidden of ['Weld process', 'Request archive']) assert.ok(!labels.includes(hidden), hidden);
+  assert.deepEqual(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.map(item => item.label), ['PQR', 'WPS methods', 'Weld type', 'Coating', 'Spools']);
+  assert.ok(PILOT_MAP.mto.groups.flatMap(group => group.items).some(item => item.label === 'Request archive' && item.resource === 'service_requests'));
+});
+
+test('the Assign Iso to FWP menu item opens the assign tab of the field work package page', () => {
+  const item = PILOT_MAP.weld.groups.find(group => group.title === 'Releases')!.items.find(entry => entry.label === 'Assign Iso to FWP')!;
+  assert.equal(pilotItemPath(item), '/welding/field_packages?tab=assign');
+  assert.deepEqual(pilotItemResources(item), ['field_packages']);
+});
+
 test('every menu item resolves to a real page and resource items use resourcePath()', () => {
   catalog.configureCatalog();
   for (const { pilot, item } of items) {
@@ -56,7 +69,9 @@ test('every menu item resolves to a real page and resource items use resourcePat
   const listed = new Set(items.map(({ item }) => pilotItemPath(item)?.split('?')[0]));
   // Calculation lines and cut list open inside "MTO & calculations";
   // inspection requests open as the request archives of the NDT/PWHT Manager.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025).
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'weld_processes'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
   assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
 
