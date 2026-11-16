@@ -1,3 +1,4 @@
+import { checkItpLinkAccess } from './itp-dashboard.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
@@ -141,6 +142,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body);
+    checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
@@ -149,6 +151,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
+    checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));

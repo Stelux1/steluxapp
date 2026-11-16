@@ -121,6 +121,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
+    // ITP / KNR register (Weld Pilot → Welding data → ITPs) and its project links; the links have no menu page.
+    deliverResource(availability, 'itps', [...RESOURCE_MAP.itps.fields.map(field => field.name), 'projectIds']);
+    availability.resources.itp_projects = fields('itpId projectId ownerArchived');
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);

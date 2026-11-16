@@ -10,6 +10,7 @@ import { PhaseDialog } from './iso-actions.tsx';
 import { DataLisl } from './data-lisl.tsx';
 import { wdiProgress } from '../shared/wdi.ts';
 import { WdiProgress } from './wdi-progress.tsx';
+import { MtoDashboardPlaceholder, WeldDashboard } from './itp-dashboard.tsx';
 import { IsometricHeader } from './iso-header.tsx';
 import { ArchiveRecordButton, ArchiveRecordDialog } from './archive-record.tsx';
 const PlanningRegister = lazy(() => import('./project-planning.tsx').then(module => ({ default: module.PlanningRegister })));
@@ -50,7 +51,7 @@ export function MainProjects() {
 export function ProjectOverview() {
   const { rows, siteId, canRecord, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
   const [editor, setEditor] = useState(false);
-  const site = rows.sites?.find(row => row.id === siteId);
+  const site = rows.sites?.find(row => row.id === siteId), hosted = Boolean(pilot);
   const projects = activeRows(rows, 'projects'), isos = activeRows(rows, 'isometrics'), welds = activeRows(rows, 'welds');
   const welded = welds.filter(weld => weld.date).length;
   const ndt = welds.filter(weld => weld.ndoReq).length;
@@ -62,16 +63,20 @@ export function ProjectOverview() {
   });
   return <div className="page workflow-page project-overview">
     <div className="page-heading"><div><div className="eyebrow">MAIN PROJECT · DASHBOARD</div><h1>{String(site?.name || 'Project overview')}</h1><p>Execution and traceability across this project's subprojects.</p></div><div className="heading-actions"><Link className="btn" to="/workspace/main-projects"><ArrowLeft size={16}/>All main projects</Link>{canRecord('projects', 'insert') && <button className="btn primary" onClick={() => setEditor(true)}><Plus size={16}/>Add subproject</button>}</div></div>
-    <div className="workflow-stats">{[
+    {pilot?.pilot.key === 'mto' ? <MtoDashboardPlaceholder/> : <>
+    {!hosted && <div className="workflow-stats">{[
       ['Subprojects', projects.length, `${isos.length} isometrics`, FolderKanban], ['Registered welds', welds.length, `${welded} welded`, ScanLine], ['WDI total', formatNumber(wdi), 'Diameter inches · all registered welds', FileStack], ['NDT required', ndt, 'Welds marked for examination', ScanLine],
-    ].map(([title, value, description, Icon]) => { const I = Icon as typeof FileStack; return <div className="panel workflow-stat" key={String(title)}><span className="project-card-icon"><I size={20}/></span><small>{String(title)}</small><strong>{String(value)}</strong><span>{String(description)}</span></div>; })}</div>
+    ].map(([title, value, description, Icon]) => { const I = Icon as typeof FileStack; return <div className="panel workflow-stat" key={String(title)}><span className="project-card-icon"><I size={20}/></span><small>{String(title)}</small><strong>{String(value)}</strong><span>{String(description)}</span></div>; })}</div>}
     <section className="panel project-wdi-panel"><WdiProgress welds={welds} diameters={rows.diameters || []}/></section>
+    {hosted ? <WeldDashboard/> : <>
     <div className="project-analytics-grid"><section className="panel"><div className="panel-heading"><div><span className="eyebrow">PRODUCTION</span><h2>Weld activity by date</h2></div><Badge>{welded} dated welds</Badge></div><div className="project-production-chart" role="img" aria-label={`Welds completed by week: ${weekly.map(item => `${item.week}: ${item.welds}`).join(', ')}`}><ResponsiveContainer width="100%" height={210}><BarChart data={weekly} margin={{ left: -20, right: 20, bottom: 5 }}><CartesianGrid vertical={false} stroke="#e2eaf5" strokeDasharray="3 4"/><XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fill: '#586b88', fontSize: 12 }}/><YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: '#586b88', fontSize: 12 }}/><Tooltip cursor={{ fill: '#edf4ff' }}/><Bar dataKey="welds" name="Completed welds" fill="#0064e8" radius={[5, 5, 0, 0]} maxBarSize={36}/></BarChart></ResponsiveContainer></div></section>
       <section className="panel workflow-steps"><div className="panel-heading"><div><span className="eyebrow">PROJECT WORKFLOW</span><h2>Continue your work</h2></div></div>{[['/workspace/projects', '01', 'Subprojects', 'Open a subproject and its drawing list'], ['/workspace/isometrics', '02', 'ISO overview', 'Revisions, ITP references, and weld progress'], ['/welding/lisl', '03', 'LISL register', 'Welds and both material certificates']].filter(([path]) => path !== '/welding/lisl' || canReadReport('lisl') && (!pilot || pagePilots(path).includes(pilot.pilot.key))).map(([path, step, title, text]) => <Link key={path} to={path}><span>{step}</span><div><strong>{title}</strong><small>{text}</small></div><ArrowRight size={16}/></Link>)}</section></div>
     <section className="panel"><div className="panel-heading"><div><span className="eyebrow">SUBPROJECTS</span><h2>Project progress</h2></div><Link className="text-link" to="/workspace/projects">View all subprojects<ArrowRight size={15}/></Link></div><TableScroll><table className="data-table"><thead><tr><th>Subproject</th><th>Name</th><th>Isometrics</th><th>WDI progress</th><th>Status</th><th/></tr></thead><tbody>{projects.map(project => {
       const drawings = isos.filter(iso => iso.projectId === project.id), scope = welds.filter(weld => drawings.some(iso => iso.id === weld.isoId)), progress = wdiProgress(scope, rows.diameters || []);
       return <tr key={project.id}><td><button className="record-link" onClick={() => openRecord('projects', project.id)}>{String(project.internnumber)}</button></td><td>{String(project.description || '—')}</td><td>{drawings.length}</td><td><div className="subproject-progress"><Progress value={progress.percent}/><span>{formatNumber(progress.completed)} / {formatNumber(progress.total)} dia-inch</span></div></td><td><Badge>{String(project.status || 'Active')}</Badge></td><td><button className="icon-btn" aria-label={`Open subproject ${project.internnumber}`} onClick={() => openRecord('projects', project.id)}><ArrowRight size={16}/></button></td></tr>;
     })}</tbody></table></TableScroll>{!projects.length && <EmptyState title="No subprojects yet" description="Add the first subproject to start building this project's drawing list."/>}</section>
+    </>}
+    </>}
     {editor && <RecordEditor resourceKey="projects" defaults={{ siteId }} onClose={() => setEditor(false)}/>}
   </div>;
 }

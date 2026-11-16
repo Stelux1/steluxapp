@@ -8,6 +8,7 @@ import { RELATIONS } from '../shared/welding.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
+import { isoItpLinks, itpSlotRefresh } from '../shared/itp-dashboard.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
@@ -132,6 +133,7 @@ export class Store {
       data[field.name] = value as Value;
     }
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
+    if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
@@ -203,6 +205,7 @@ export class Store {
       }
       this.audit(key, id, 'updated', `Updated ${this.resource(key).singular} ${this.display(key, existing)}`, actor);
       this.syncRelations(key,id,input,actor);
+      if (key === 'itps') for (const change of itpSlotRefresh(this.get(key, id), this.list('isometrics'))) this.update('isometrics', change.id, change.values, this.get('isometrics', change.id)._version, actor);
       return this.get(key, id);
     });
   }
