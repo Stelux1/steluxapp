@@ -333,3 +333,14 @@ test('the punch progress is stored on the isometric and drives the field progres
   assert.equal((await f.viewer(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '100 %', _version: iso._version + 1 } })).status, 403);
   assert.ok(punchKind(row('x')) && punchKpis([]).length === 8);
 });
+
+test('hosted Add item labels follow the capture: the category is "Type" and the isometric "ISO"; other profiles keep theirs', async () => {
+  const { projectResource } = await import('../shared/release.ts');
+  const { RESOURCES } = await import('../shared/resources.ts');
+  const punch = RESOURCES.find(resource => resource.key === 'punchlists')!;
+  const label = (profile: Parameters<typeof availabilityFor>[0], name: string) => projectResource(availabilityFor(profile), punch).fields.find(field => field.name === name)?.label;
+  assert.equal(label(HOSTED_RELEASE_PROFILE, 'category'), 'Type');
+  assert.equal(label(HOSTED_RELEASE_PROFILE, 'isoId'), 'ISO');
+  assert.equal(label('full', 'category'), 'Category');
+  assert.equal(label('full', 'isoId'), 'Isometric');
+});

@@ -69,6 +69,8 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   welding_wires: { name: 'Index number', classification: 'Rod type', diameter: 'mm', certType: 'Certificate-type', description: 'Note' },
   certifications: { name: 'Attest number', chargeNo: 'Charge number', certType: 'Certificate-type', materialId: 'Material No', diameter: 'Diameter', description: 'Note' },
   welder_certificates: { certificateTypeId: 'Certificate', processId: 'Weld process' },
+  // Punch lists → Add item (capture of 2026-11-16): the category select is "Type", the isometric select "ISO".
+  punchlists: { category: 'Type', isoId: 'ISO' },
 };
 /** List columns of the reference (labels come from the fields above). */
 export const HOSTED_COLUMNS: Record<string, string[]> = {
