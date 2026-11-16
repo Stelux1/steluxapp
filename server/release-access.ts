@@ -127,7 +127,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
     } catch { return null; }
     if (availability) {
-      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'released', 'reopened', 'finished', 'passed', 'removed', 'transferred', 'returned', 'corrected', 'adjusted', 'completed', 'cancelled'].includes(event.action)) return null;
+      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'released', 'reopened', 'finished', 'passed', 'removed', 'transferred', 'returned', 'corrected', 'adjusted', 'completed', 'cancelled', 'approved', 'promoted'].includes(event.action)) return null;
       if (event.action === 'inspected' && !availability.inspectionTypes.some(type => ['accepted', 'rejected'].some(result => event.summary.startsWith(`${type} ${result} · `)))) return null;
     }
     // Release and Reopen keep their sentences: they carry the report number and the reason the user typed.

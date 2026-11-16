@@ -51,8 +51,8 @@ function audited(store: Store, row: Row, changes: Input, event: string, summary:
 /**
  * The actions of a punch item, each in the caller's transaction: Open -> Finished with the sign-off (and the client
  * approval), Mark as Client approved, Promote to Punch (open pre-punch items) and Remove. Every change is one audited
- * update of the item. Approval and promotion are audited as updates: the hosted activity log shows the known events only
- * (server/release-access.ts).
+ * update of the item. Approval and promotion have their own events ("approved", "promoted"), known to the hosted
+ * activity log (server/release-access.ts).
  */
 export function runPunchAction(store: Store, key: string, data: Input, actor: Actor): { resource: string; record: Row; records?: undefined } {
   const row = store.get('punchlists', data.punchId);
@@ -66,11 +66,11 @@ export function runPunchAction(store: Store, key: string, data: Input, actor: Ac
   }
   if (key === 'punch-approve') {
     allowed(store, row, 'approve');
-    return { resource: 'punchlists', record: audited(store, row, { clientApproved: true, approvedAt: today(), approvedBy: actor.name }, 'updated', 'Client approved punch item', actor) };
+    return { resource: 'punchlists', record: audited(store, row, { clientApproved: true, approvedAt: today(), approvedBy: actor.name }, 'approved', 'Client approved punch item', actor) };
   }
   if (key === 'punch-promote') {
     allowed(store, row, 'promote');
-    return { resource: 'punchlists', record: audited(store, row, { punchType: 'Punch' }, 'updated', 'Promoted to Punch punch item', actor) };
+    return { resource: 'punchlists', record: audited(store, row, { punchType: 'Punch' }, 'promoted', 'Promoted to Punch punch item', actor) };
   }
   if (key === 'punch-remove') {
     allowed(store, row, 'remove');

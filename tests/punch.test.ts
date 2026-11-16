@@ -344,6 +344,10 @@ test('Mark as Client approved, Promote to Punch, and a passed phase locks its it
   assert.equal((await promote(pre.id, f.viewer)).status, 403);
   assert.equal((await promote(pre.id)).status, 201); assert.equal(f.store.get('punchlists', pre.id).punchType, 'Punch');
   assert.equal((await promote(pre.id)).status, 422);
+  // The activity log names both steps instead of "Updated".
+  const events = async (id: string) => (await json<{ events: { summary: string; action: string }[] }>(await f.worker(`/history/punchlists/${id}`))).events;
+  assert.ok((await events(item.id)).some(event => event.action === 'approved' && event.summary === 'Approved punch item'), JSON.stringify(await events(item.id)));
+  assert.ok((await events(pre.id)).some(event => event.action === 'promoted' && event.summary === 'Promoted punch item'), JSON.stringify(await events(pre.id)));
   // Finish the pre-punch A item: its phase passes; the item is Passed, locked for edits, files and removal.
   assert.equal((await f.worker(`/punch/${item.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 'sign.png', type: 'image/png', bytes: PNG }) })).status, 201);
   const passed = f.store.get('punchlists', item.id);
