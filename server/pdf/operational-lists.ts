@@ -1,3 +1,4 @@
+import { PDFDocument } from 'pdf-lib';
 import type { CompanyForDocuments } from './company.ts';
 import { A4_LANDSCAPE, A4_PORTRAIT, documentHeader, noteBlock, plainTable, renderOperational, signatureBlock, type Step } from './operational-blocks.ts';
 import { printDate } from '../../shared/pdf-lisl.ts';
@@ -8,16 +9,25 @@ import { flangeAssetTag, flangePath, type FlangeItem } from '../../shared/flange
 import { columns, lineHeight, spacer, type Block } from './engine.ts';
 import { DEFAULT_LABEL_GRID, LABEL_MARGIN, labelGeometry, type LabelGrid } from './weld-labels.ts';
 import { renderBlocks } from './weld-cards.ts';
+import { loadUploaded } from './iso-book.ts';
 
 const text = (value: unknown) => String(value ?? '').trim();
 type Rows = Record<string, Row[]>;
 interface Common { company: CompanyForDocuments | null; generatedAt: Date; rows: Rows }
 
-export interface PunchPdfInput extends Common { model: PunchListModel }
-/** Punch list (filled): the items the page shows under its filters, landscape. */
-export function punchPdf(input: PunchPdfInput) {
+export interface PunchPdfInput extends Common {
+  model: PunchListModel;
+  /** The imported isometric drawing of each isometric of `model.drawings` (bytes null when the isometric has no readable file). */
+  drawings?: { iso: string; bytes: Uint8Array | null }[];
+}
+/**
+ * Punch list (filled): the items the page shows under its filters (or the ticked ones), landscape. With the isometric drawing option the
+ * drawing PDF of each listed isometric follows the list, one after the other; an isometric without a readable drawing is named in the list.
+ */
+export async function punchPdf(input: PunchPdfInput): Promise<{ bytes: Uint8Array; layout: Awaited<ReturnType<typeof renderOperational>>['layout'] }> {
   const { model, company } = input, documents = model.options.documents;
-  return renderOperational({
+  const loaded = await Promise.all((input.drawings ?? []).map(async drawing => ({ iso: drawing.iso, result: drawing.bytes ? await loadUploaded(`ISO ${drawing.iso}`, drawing.bytes) : { skipped: 'No drawing file is uploaded.' } })));
+  const list = await renderOperational({
     page: A4_LANDSCAPE, title: 'Punch list', generatedAt: input.generatedAt,
     async layout(pdf) {
       const kpis = model.kpis.map(card => `${card.label} ${card.count}`).join('  -  ');
@@ -25,9 +35,15 @@ export function punchPdf(input: PunchPdfInput) {
       const widths = documents ? [4, 9, 9, 4, 28, 8, 12, 7, 17, 9] : [4, 10, 10, 4, 34, 8, 14, 8, 10];
       const steps: Step[] = [{ table: plainTable(punchColumns(documents), widths, model.lines.map(line => punchRowCells(line, documents)), { size: 6.5, headerSize: 6.5, maxLines: 4 }) }];
       if (!model.lines.length) steps.push({ block: noteBlock('', 'No punch items match these filters.'), before: 6 });
+      if (loaded.length) steps.push({ table: plainTable(['Isometric', 'Drawing'], [10, 30], loaded.map(({ iso, result }) => [iso, 'unit' in result ? `Appended, ${result.unit.pages} page${result.unit.pages === 1 ? '' : 's'}` : `Not included: ${result.skipped}`]), { size: 7, headerSize: 7 }), before: 8 });
       return { header, steps };
     },
   });
+  const units = loaded.flatMap(entry => 'unit' in entry.result ? [entry.result.unit] : []);
+  if (!units.length) return list;
+  const out = await PDFDocument.load(list.bytes);
+  for (const unit of units) for (const page of await out.copyPages(unit.doc, unit.doc.getPageIndices())) out.addPage(page);
+  return { bytes: await out.save(), layout: list.layout };
 }
 
 export interface BlankPunchPdfInput extends Common { iso: Row }

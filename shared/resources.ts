@@ -152,6 +152,8 @@ add('punchlists', 'Punch lists', 'punch item', 'welding', 'Releases', 'Track pre
   b('clientApproved', 'Client approved', { hidden: true }), d('approvedAt', 'Client approved on', { hidden: true }), t('approvedBy', 'Client approved by', { hidden: true }),
   d('passedAt', 'Passed on', { hidden: true }), t('passedBy', 'Passed by', { hidden: true }), t('passRemarks', 'Remarks', { type: 'textarea', hidden: true }),
   d('removedAt', 'Removed on', { hidden: true }), t('removedBy', 'Removed by', { hidden: true }), t('removeReason', 'Reason for removal', { type: 'textarea', hidden: true }),
+  // Written only by Report passed: the item that records a passed round of a phase (see shared/punch.ts).
+  b('reportPassed', 'Passed report', { hidden: true }),
 ], ['number', 'projectId', 'isoId', 'category', 'description', 'dueDate', 'contractorId', 'punchType', 'status'], { display: 'name' });
 add('flanges', 'Flange Management', 'flange', 'welding', 'Releases', 'Bolted connections: bolting, tightening, inspection and commissioning.', FLANGE_FIELDS, FLANGE_COLUMNS, { unique: [['isoId', 'flange_id']] });
 // Flange ID is optional, but the unique rule (isometric, Flange ID) stays: the hosted database holds its index. The store refuses a second flange without a Flange ID on one isometric at the field (server/store.ts).

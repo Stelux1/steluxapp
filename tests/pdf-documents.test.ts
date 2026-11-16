@@ -22,6 +22,7 @@ import { hydrotestPdf } from '../server/pdf/hydrotest-book.ts';
 import { blankPunchPdf, flangePdf, pickListPdf, punchPdf } from '../server/pdf/operational-lists.ts';
 import { FOOTER_HEIGHT, type Layout } from '../server/pdf/engine.ts';
 import type { Row } from '../shared/types.ts';
+import { PDFDocument } from 'pdf-lib';
 import { readPdf } from './pdf-helpers.ts';
 import { pdfDocumentQuery } from '../client/pdf-documents.tsx';
 import { PDF_MENU } from '../client/pdf-reports.tsx';
@@ -350,6 +351,33 @@ test('Punch list (filled): the page filters narrow the items; the Document colum
   for (const bad of ['punchType=Final', 'category=Z', 'kpi=nothing']) assert.equal((await f.admin.request(`/pdf/punch-list?${bad}`, { pilot: 'weld' })).status, 422, bad);
   assert.equal((await f.admin.request('/pdf/punch-list?isoId=missing', { pilot: 'weld' })).status, 404);
   assert.equal((await f.admin.request('/pdf/punch-list?projectId=missing', { pilot: 'weld' })).status, 404);
+});
+
+test('Punch list print: ticked rows print on their own, the view and due filters apply, and the isometric drawing option appends the drawings', async t => {
+  const f = await fixture(t);
+  const rows = rowsOf(f.store), isoIds = allIsos(rows), projectIds = new Set(rows.projects.map(row => row.id));
+  const open = rows.punchlists.filter(row => !row._archived && row.status === 'Open');
+  const [first, second] = open.filter(row => row.isoId);
+  const selected = punchListModel(rows, punchListOptions({ ids: `${first.id},${second.id}`, view: 'open' }).options, isoIds, projectIds, '2026-11-16');
+  assert.deepEqual(selected.lines.map(line => line.item.id).sort(), [first.id, second.id].sort(), 'only the two ticked rows');
+  assert.equal(selected.lines.length, 2); assert.deepEqual(selected.drawings, [], 'no drawings unless asked for');
+  assert.ok(selected.filters.includes('Selected items (2)'));
+  const withDrawing = punchListModel(rows, punchListOptions({ ids: `${first.id},${second.id}`, isoDrawing: '1' }).options, isoIds, projectIds, '2026-11-16');
+  assert.deepEqual(withDrawing.drawings.map(iso => iso.id).sort(), [...new Set([first.isoId, second.isoId])].map(String).sort(), 'the isometric of each printed row');
+  const all = punchListModel(rows, punchListOptions({ view: 'open' }).options, isoIds, projectIds, '2026-11-16');
+  assert.ok(all.lines.length > 0 && all.lines.every(line => line.status.startsWith('Open')), 'the Open view prints only Open items');
+  assert.ok(punchListModel(rows, punchListOptions({ view: 'finished' }).options, isoIds, projectIds, '2026-11-16').lines.every(line => line.status.startsWith('Finished')));
+  assert.ok(punchListModel(rows, punchListOptions({ view: 'open', due: 'overdue' }).options, isoIds, projectIds, '2026-11-16').lines.every(line => line.status.includes('overdue')));
+  // The drawing follows the list: the PDF grows by the pages of the drawing, and an isometric without one is named.
+  const drawing = await PDFDocument.create(); drawing.addPage([300, 200]); drawing.addPage([300, 200]);
+  const plain = await punchPdf({ model: withDrawing, company: null, generatedAt: NOW, rows });
+  const printed = await punchPdf({ model: withDrawing, company: null, generatedAt: NOW, rows, drawings: [{ iso: 'ISO-A', bytes: await drawing.save() }, { iso: 'ISO-B', bytes: null }] });
+  assert.equal((await PDFDocument.load(printed.bytes)).getPageCount(), (await PDFDocument.load(plain.bytes)).getPageCount() + 2);
+  const texts = (await readPdf(printed.bytes)).pages.flatMap(page => page.text);
+  assert.ok(texts.some(line => line.includes('Appended, 2 pages')) && texts.some(line => line.includes('Not included: No drawing file is uploaded.')));
+  // Through the route: the ticked ids reach the document.
+  const route = await get(f, `punch-list?ids=${first.id},${second.id}`);
+  assert.ok(route.some(line => line.includes('Selected items (2)')));
 });
 
 test('Punch list - blank: the header of one isometric and empty rows', async t => {

@@ -4,7 +4,7 @@ import { printDate, type LabelValueItem } from './pdf-lisl.ts';
 import { currentRevision } from './revisions.ts';
 import { inspectionCellState, latestResult, locationField, processField, NDT_ROUNDS, type CellStatus, type InspectionKind } from './inspections.ts';
 import { PHASE_LOCATION, RELEASE_PHASES, releaseDocumentNumber, signatureTitlesOf, weldPhase, type ReleasePhase, type SignatureTitle } from './releases.ts';
-import { punchCounts, punchStatus } from './punch.ts';
+import { punchCounts, punchStatus, withPunchPhases } from './punch.ts';
 import { HYDROTEST_DOCUMENT_TYPES, HYDROTEST_REQUEST_RESOURCE, SPOOL_COLUMNS, isPdfName, spoolFacts, spoolsOfSystem, storedList } from './hydrotest.ts';
 
 /**
@@ -196,7 +196,7 @@ export interface PunchSummaryLine { label: string; open: number; finished: numbe
 export interface PunchSummary { lines: PunchSummaryLine[]; overdue: number; blocking: number; passed: number; removed: number }
 /** Punch summary of one isometric: open and finished by type, overdue, blocking (open A / B), passed and removed. */
 export function punchSummary(items: Row[], today?: string): PunchSummary {
-  const counts = punchCounts(items, today), mine = live(items);
+  const counts = punchCounts(items, today), mine = live(withPunchPhases(items));
   return {
     lines: [{ label: 'Pre-punch', open: counts.prePunchOpen, finished: counts.prePunchFinished }, { label: 'Punch', open: counts.punchOpen, finished: counts.punchFinished }],
     overdue: counts.overdue, blocking: counts.blocking, passed: mine.filter(row => punchStatus(row) === 'Passed').length, removed: mine.filter(row => punchStatus(row) === 'Removed').length,

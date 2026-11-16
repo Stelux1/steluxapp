@@ -1,6 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { ExternalLink, FileText, Loader2 } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
+import { PUNCH_PRINT_OPTIONS, punchPrintHint } from '../shared/punch.ts';
 import { ApiError, apiBlob, apiUrl } from './api.ts';
 import { Modal } from './components.tsx';
 import { useWorkspace } from './context.tsx';
@@ -39,6 +40,8 @@ interface ButtonProps {
   /** Extra permission check (the row's own export right). */
   allowed?: boolean;
   hint?: string;
+  /** A line above the options, and the text of the dialog's cancel button (`Close` when absent). */
+  intro?: string; cancel?: string;
 }
 
 /** The query string of the chosen options: checkboxes as 1 / 0, text when filled, a choice list only when it is a subset. */
@@ -54,17 +57,17 @@ export function pdfDocumentQuery(params: Record<string, string>, options: PdfOpt
 }
 const initialValues = (options: PdfOption[]) => Object.fromEntries(options.map(option => [option.name, option.kind === 'checkbox' ? option.defaultValue ?? false : option.kind === 'choices' ? option.choices.map(choice => choice.value) : '']));
 
-export function PdfDocumentButton({ document: key, report, params, label, title, subtitle, fileName, options = [], submit, attach = false, blocked, allowed = true, hint }: ButtonProps) {
+export function PdfDocumentButton({ document: key, report, params, label, title, subtitle, fileName, options = [], submit, attach = false, blocked, allowed = true, hint, intro, cancel }: ButtonProps) {
   const { canReadReport, hasFeature } = useWorkspace(); const pilot = usePilot();
   const [open, setOpen] = useState(false);
   if (!hasFeature('pilots') || !pilot || !allowed || !canReadReport(report, 'export')) return null;
   return <>
     <button type="button" className="btn small pdf-doc-button" disabled={Boolean(blocked)} title={blocked || hint} onClick={() => setOpen(true)}><FileText size={14} aria-hidden="true"/>{label}</button>
-    {open && <PdfDocumentDialog document={key} params={params} label={label} title={title} subtitle={subtitle} fileName={fileName} options={options} submit={submit} attach={attach} onClose={() => setOpen(false)}/>}
+    {open && <PdfDocumentDialog document={key} params={params} label={label} title={title} subtitle={subtitle} fileName={fileName} options={options} submit={submit} attach={attach} intro={intro} cancel={cancel} onClose={() => setOpen(false)}/>}
   </>;
 }
 
-function PdfDocumentDialog({ document: key, params, label, title, subtitle, fileName, options, submit, attach, onClose }: { document: string; params: Record<string, string>; label: string; title?: string; subtitle?: string; fileName: string; options: PdfOption[]; submit?: string; attach: boolean; onClose: () => void }) {
+function PdfDocumentDialog({ document: key, params, label, title, subtitle, fileName, options, submit, attach, intro, cancel, onClose }: { document: string; params: Record<string, string>; label: string; title?: string; subtitle?: string; fileName: string; options: PdfOption[]; submit?: string; attach: boolean; intro?: string; cancel?: string; onClose: () => void }) {
   const { refresh } = useWorkspace(); const id = useId();
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues(options));
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [done, setDone] = useState('');
@@ -90,6 +93,7 @@ function PdfDocumentDialog({ document: key, params, label, title, subtitle, file
         {error && <div className="alert error" role="alert">{error}</div>}
         {done && <div className="alert success" role="status">{done}{!attach && <> <a className="text-link" href={apiUrl(path)} target="_blank" rel="noreferrer">Open in a new tab<ExternalLink size={13} aria-hidden="true"/></a></>}</div>}
         {!options.length && <p className="muted">The document is created from the records as they are now.</p>}
+        {intro && options.length > 0 && <p className="muted">{intro}</p>}
         {options.map(option => {
           const field = `${id}-${option.name}`;
           if (option.kind === 'checkbox') return <div className="field checkbox-field" key={option.name}><label htmlFor={field}><input id={field} type="checkbox" checked={Boolean(values[option.name])} disabled={busy} onChange={event => set(option.name, event.target.checked)}/><span>{option.label}</span></label>{option.hint && <small>{option.hint}</small>}</div>;
@@ -100,7 +104,7 @@ function PdfDocumentDialog({ document: key, params, label, title, subtitle, file
           return <fieldset className="field pdf-doc-choices" key={option.name}><legend>{option.label}</legend>{option.choices.map(choice => <label key={choice.value}><input type="checkbox" checked={chosen.includes(choice.value)} disabled={busy} onChange={event => set(option.name, event.target.checked ? [...chosen, choice.value] : chosen.filter(value => value !== choice.value))}/>{choice.label}</label>)}{option.hint && <small>{option.hint}</small>}</fieldset>;
         })}
       </div>
-      <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button><button type="submit" className="btn primary" disabled={busy}>{busy ? <><Loader2 size={15} className="spin"/>Creating PDF…</> : submit || 'Create PDF'}</button></div>
+      <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>{cancel || 'Close'}</button><button type="submit" className="btn primary" disabled={busy}>{busy ? <><Loader2 size={15} className="spin"/>Creating PDF…</> : submit || 'Create PDF'}</button></div>
     </form>
   </Modal>;
 }
@@ -149,11 +153,16 @@ export function HydrotestPdfButton({ request }: { request: Row }) {
   return <PdfDocumentButton document="hydrotest-request" report="pdf-hydrotest" params={{ requestId: request.id }} label="Request PDF" title="Hydrotest request" subtitle={text(request.recordNo)} fileName={`Hydrotest-request-${safe(request.recordNo)}`}
     options={[{ name: 'isometrics', label: 'Include isometric(s)', kind: 'checkbox', defaultValue: request.includeIsometrics !== false, hint: 'Lists the isometrics of the test system.' }]}/>;
 }
-export interface PunchPdfFilters { projectId: string; punchType: string; category: string; kpi: string; q: string }
-/** Punch list of the page: the filters currently chosen on the page are printed. */
-export function PunchListPdfButton({ filters }: { filters: PunchPdfFilters }) {
-  return <PdfDocumentButton document="punch-list" report="pdf-punch" params={{ projectId: filters.projectId, punchType: filters.punchType, category: filters.category, kpi: filters.kpi, q: filters.q.trim() }} label="Print PDF" title="Punch list" subtitle="Prints the items the page shows under its filters."
-    fileName="Punch-list" options={[{ name: 'documents', label: 'Include punch document', kind: 'checkbox', defaultValue: true, hint: 'Adds a Document column that names the photos, documents and sign-off of each item.' }]}/>;
+export interface PunchPdfFilters { projectId: string; isoId: string; punchType: string; category: string; view: string; due: string; q: string }
+/**
+ * The one Print button of the Punch lists page. The dialog says what is printed: the ticked rows (`selected`, on their own) or
+ * all items matching the current filter, and offers the optional attachments: the Document column and the imported isometric
+ * drawing (PDF) of each printed isometric.
+ */
+export function PunchListPdfButton({ filters, selected = [] }: { filters: PunchPdfFilters; selected?: string[] }) {
+  return <PdfDocumentButton document="punch-list" report="pdf-punch" params={{ projectId: filters.projectId, isoId: filters.isoId, punchType: filters.punchType, category: filters.category, view: filters.view, due: filters.due, q: filters.q.trim(), ids: selected.join(',') }}
+    label="Print" title="Print" subtitle={punchPrintHint(selected.length)} submit="Print" cancel="Cancel" fileName="Punch-list" intro="Optional attachments (only for items in this report):"
+    options={[{ name: 'documents', label: PUNCH_PRINT_OPTIONS.documents, kind: 'checkbox', defaultValue: false }, { name: 'isoDrawing', label: PUNCH_PRINT_OPTIONS.isoDrawing, kind: 'checkbox', defaultValue: false }]}/>;
 }
 /** Flange report of the ticked flanges (the page's checkboxes). */
 export function FlangeReportPdfButton({ ids }: { ids: string[] }) {
