@@ -5,6 +5,7 @@ import {
   KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows, isTracer,
   locationField, managerColumns, managerRequests, managerWelds, processField, requestNumberError, resultLabel, roundErrors, roundLabel, tracerError, tracerSummary,
   weldResults, type InspectionKind, type ManagerTab, type RoundInput,
+  VISUAL_NO_CHOICE,
 } from '../shared/inspections.ts';
 import { api, post, ApiError, apiUrl, formatDate } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
@@ -287,6 +288,9 @@ export function UploadPwhtDialog({ isoId, weldIds, onClose }: MassProps) {
 
 // ----- visual inspection hub ---------------------------------------------------------------------------------
 
+type VisualChoice = 'Accepted' | 'Not accepted' | 'Not applicable';
+const VISUAL_CHOICES: VisualChoice[] = ['Accepted', 'Not accepted', 'Not applicable'];
+
 /** Options → Visual inspection: New upload (one VI report to several welds) and the Visual reports archive. */
 export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
   const { rows, canRun, canRecord, label, siteId } = useWorkspace();
@@ -294,7 +298,8 @@ export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
   const [tab, setTab] = useState<'new' | 'archive'>('new');
   const [filter, setFilter] = useState(weldIds?.length ? 'select' : 'all');
   const [selected, setSelected] = useState<string[]>(weldIds?.length ? weldIds : []);
-  const [outcome, setOutcome] = useState<Record<string, 'Accepted' | 'Not applicable'>>({});
+  // Every listed weld starts without a result; only the welds given one are sent (PARITY "Visual inspection hub").
+  const [outcome, setOutcome] = useState<Record<string, VisualChoice>>({});
   const [itp, setItp] = useState(''), [activityNo, setActivity] = useState(''), [engineerId, setEngineer] = useState(''), [customNo, setCustom] = useState(''), [reportNo, setReport] = useState(''), [date, setDate] = useState(today()), [files, setFiles] = useState<File[]>([]);
   const { busy, error, setError, run } = useSubmit(onClose);
   const chosen = filter === 'all' ? pool.map(weld => weld.id) : selected;
@@ -306,11 +311,13 @@ export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
     event.preventDefault();
     if (!chosen.length) { setError('Select at least one weld.'); return; }
     if (!reportNo.trim()) { setError('Enter the report number.'); return; }
-    const accepted = chosen.filter(id => (outcome[id] || 'Accepted') === 'Accepted'), notApplicable = chosen.filter(id => outcome[id] === 'Not applicable');
+    const pick = (value: VisualChoice) => chosen.filter(id => outcome[id] === value);
+    const accepted = pick('Accepted'), notAccepted = pick('Not accepted'), notApplicable = pick('Not applicable'), count = accepted.length + notAccepted.length + notApplicable.length;
+    if (!count) { setError(VISUAL_NO_CHOICE); return; }
     void run(async () => {
-      const saved = await post<{ records: Row[] }>('/actions/visual-inspection', { weldIds: chosen, accepted, notApplicable, itp, activityNo, engineerId, customNo, reportNo: reportNo.trim(), date });
+      const saved = await post<{ records: Row[] }>('/actions/visual-inspection', { weldIds: chosen, accepted, notAccepted, notApplicable, itp, activityNo, engineerId, customNo, reportNo: reportNo.trim(), date });
       const failed = files.length && saved.records[0] ? await uploadFiles('inspection_results', saved.records[0].id, files, 'Visual inspection report') : 0;
-      return failed ? `Visual report saved; ${failed} file${failed === 1 ? '' : 's'} could not be uploaded.` : `Visual report ${reportNo.trim()} saved for ${chosen.length} weld${chosen.length === 1 ? '' : 's'}.`;
+      return failed ? `Visual report saved; ${failed} file${failed === 1 ? '' : 's'} could not be uploaded.` : `Visual report ${reportNo.trim()} saved for ${count} weld${count === 1 ? '' : 's'}.`;
     });
   }
   const files_ = (ids: string[]) => (rows.attachments || []).filter(file => !file._archived && file.entityType === 'inspection_results' && ids.includes(String(file.entityId)));
@@ -327,11 +334,15 @@ export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
         <Text id="vi-date" label="Inspection date" type="date" value={date} onChange={setDate} required/>
       </div>
       {filter === 'select' && <WeldPicker welds={pool} value={selected} onChange={setSelected}/>}
-      {chosen.length ? <TableScroll><table className="data-table"><thead><tr><th scope="col">Weld</th><th scope="col">Accepted</th><th scope="col">Not applicable</th></tr></thead><tbody>{chosen.map(id => { const weld = rows.welds?.find(row => row.id === id); return <tr key={id}><th scope="row">{weldName(weld)}</th>{(['Accepted', 'Not applicable'] as const).map(value => <td key={value}><input type="radio" name={`vi-${id}`} aria-label={`${value}: weld ${weldName(weld)}`} checked={(outcome[id] || 'Accepted') === value} onChange={() => setOutcome(current => ({ ...current, [id]: value }))}/></td>)}</tr>; })}</tbody></table></TableScroll> : <EmptyState title="No welds to inspect" description="Welds appear here once a welder is recorded on them."/>}
+      {chosen.length ? <>
+        <div className="logistics-actions"><button type="button" className="btn small" onClick={() => setOutcome(current => ({ ...current, ...Object.fromEntries(chosen.map(id => [id, 'Accepted' as const])) }))}>Set all to Accepted</button><button type="button" className="btn small" onClick={() => setOutcome({})}>Clear all</button></div>
+        <TableScroll><table className="data-table"><thead><tr><th scope="col">Weld</th><th scope="col">No result</th>{VISUAL_CHOICES.map(value => <th key={value} scope="col">{value}</th>)}</tr></thead><tbody>{chosen.map(id => { const weld = rows.welds?.find(row => row.id === id); return <tr key={id}><th scope="row">{weldName(weld)}</th>{(['', ...VISUAL_CHOICES] as const).map(value => <td key={value || 'none'}><input type="radio" name={`vi-${id}`} aria-label={`${value || 'No result'}: weld ${weldName(weld)}`} checked={(outcome[id] || '') === value} onChange={() => setOutcome(current => { const next = { ...current }; if (value) next[id] = value; else delete next[id]; return next; })}/></td>)}</tr>; })}</tbody></table></TableScroll>
+        <small className="field-hint">Only welds with a result are saved; the others keep their earlier visual inspection.</small>
+      </> : <EmptyState title="No welds to inspect" description="Welds appear here once a welder is recorded on them."/>}
       <FilePicker id="vi-files" label="Files" files={files} onChange={setFiles}/>
     </div><Footer busy={busy} onClose={onClose} submit="Save visual report" disabled={!chosen.length}/></form>
       : <div className="modal-body"><EmptyState title="Read only" description="Your profile does not allow recording visual inspections. The archive stays available."/></div>
-      : <div className="modal-body">{reports.length ? <TableScroll><table className="data-table"><thead><tr><th scope="col">Report No.</th><th scope="col">Inspection date</th><th scope="col">ITP</th><th scope="col">Activity No.</th><th scope="col">QA/QC engineer</th><th scope="col">Custom No.</th><th scope="col">Welds</th><th scope="col">Files</th><th scope="col"><span className="sr-only">Report PDF</span></th></tr></thead><tbody>{reports.map(([number, list]) => <tr key={number}><td>{number}</td><td>{formatDate(list[0].date)}</td><td>{String(list[0].itp || '—')}</td><td>{String(list[0].activityNo || '—')}</td><td>{list[0].engineerId ? label('qa_engineers', list[0].engineerId) : '—'}</td><td>{String(list[0].customNo || '—')}</td><td>{list.map(row => `${label('welds', row.weldId)}${row.result === 'Not applicable' ? ' (n/a)' : ''}`).join(', ')}</td><td><FileLinks files={files_(list.map(row => row.id))}/></td><td><VisualReportPdfButton reportNo={number}/></td></tr>)}</tbody></table></TableScroll> : <EmptyState title="No visual reports yet" description="Saved visual reports are listed here."/>}</div>}
+      : <div className="modal-body">{reports.length ? <TableScroll><table className="data-table"><thead><tr><th scope="col">Report No.</th><th scope="col">Inspection date</th><th scope="col">ITP</th><th scope="col">Activity No.</th><th scope="col">QA/QC engineer</th><th scope="col">Custom No.</th><th scope="col">Welds</th><th scope="col">Files</th><th scope="col"><span className="sr-only">Report PDF</span></th></tr></thead><tbody>{reports.map(([number, list]) => <tr key={number}><td>{number}</td><td>{formatDate(list[0].date)}</td><td>{String(list[0].itp || '—')}</td><td>{String(list[0].activityNo || '—')}</td><td>{list[0].engineerId ? label('qa_engineers', list[0].engineerId) : '—'}</td><td>{String(list[0].customNo || '—')}</td><td>{list.map(row => `${label('welds', row.weldId)}${row.result === 'Not applicable' ? ' (n/a)' : row.result === 'Rejected' ? ' (not accepted)' : ''}`).join(', ')}</td><td><FileLinks files={files_(list.map(row => row.id))}/></td><td><VisualReportPdfButton reportNo={number}/></td></tr>)}</tbody></table></TableScroll> : <EmptyState title="No visual reports yet" description="Saved visual reports are listed here."/>}</div>}
     {tab === 'archive' && <Footer busy={false} onClose={onClose}/>}
   </Modal>;
 }

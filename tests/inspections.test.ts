@@ -163,7 +163,9 @@ test('actions: mass requests, uploads, Pre-HT/PWHT, visual reports and tracers v
   assert.throws(() => rules.run('pwht-upload', { weldIds: ['weld-1'], reportNo: 'PWHT-9' }), /does not require PWHT/);
   rules.run('pwht-upload', { weldIds: ['weld-2'], reportNo: 'PWHT-2026-102', checked: true, date: '2026-10-26' });
   const pwht = store.list('inspection_results').find(r => r.reportNo === 'PWHT-2026-102')!; assert.equal(pwht.result, 'Accepted'); assert.equal(pwht.checked, true);
-  assert.throws(() => rules.run('visual-inspection', { weldIds: ['weld-1', 'weld-10'], accepted: ['weld-1'], reportNo: 'VT-1', date: '2026-10-26' }), /accepted or not applicable/);
+  assert.throws(() => rules.run('visual-inspection', { weldIds: ['weld-1', 'weld-10'], reportNo: 'VT-1', date: '2026-10-26' }), /at least one weld/);
+  assert.throws(() => rules.run('visual-inspection', { weldIds: ['weld-1'], accepted: ['weld-1'], notApplicable: ['weld-1'], reportNo: 'VT-1', date: '2026-10-26' }), /one result per weld/);
+  assert.throws(() => rules.run('visual-inspection', { weldIds: ['weld-1'], accepted: ['weld-10'], reportNo: 'VT-1', date: '2026-10-26' }), /not in the report/);
   rules.run('visual-inspection', { weldIds: ['weld-1', 'weld-10'], accepted: ['weld-1'], notApplicable: ['weld-10'], itp: 'ITP 2', activityNo: '5.1', engineerId: 'qa-1', customNo: 'C-1', reportNo: 'VT-1', date: '2026-10-26' });
   const vi = store.list('inspection_results').filter(r => r.reportNo === 'VT-1');
   assert.deepEqual(vi.map(r => r.result).sort(), ['Accepted', 'Not applicable']); assert.equal(vi[0].engineerId, 'qa-1'); assert.equal(vi[0].itp, 'ITP 2');
@@ -275,6 +277,16 @@ test('HTTP: an inspector saves NDT per weld in Weld Pilot; a reader, another pil
   assert.equal(f.store.list('inspection_results').filter(r => r.reportNo === 'VT-X').length, 0);
   // The visual report goes through for the inspector.
   assert.equal((await inspector.request('/actions/visual-inspection', 'POST', 'weld', { weldIds: ['weld-1'], accepted: ['weld-1'], reportNo: 'VT-X', date: '2026-10-28', engineerId: 'qa-1', itp: 'ITP 1' })).status, 201);
+  // Only the weld given a result is written: weld-10 and weld-19 are listed without a choice and keep what they had.
+  f.store.create('inspection_results', { requestId: '', weldId: 'weld-19', type: 'VI', round: 'Initial', result: 'Not applicable', reportNo: 'VT-EARLIER', date: '2026-10-20', note: '' });
+  const before = f.store.list('inspection_results').filter(r => r.type === 'VI' && r.weldId === 'weld-19').map(r => ({ id: r.id, result: r.result, reportNo: r.reportNo, version: r._version }));
+  const none = await inspector.request('/actions/visual-inspection', 'POST', 'weld', { weldIds: ['weld-1', 'weld-10', 'weld-19'], reportNo: 'VT-Y', date: '2026-10-29' });
+  assert.equal(none.status, 422); assert.match((await none.json()).error, /at least one weld/);
+  const one = await inspector.request('/actions/visual-inspection', 'POST', 'weld', { weldIds: ['weld-1', 'weld-10', 'weld-19'], notAccepted: ['weld-10'], reportNo: 'VT-Y', date: '2026-10-29' });
+  assert.equal(one.status, 201); assert.equal((await one.json()).records.length, 1);
+  const vtY = f.store.list('inspection_results').filter(r => r.reportNo === 'VT-Y');
+  assert.deepEqual(vtY.map(r => [r.weldId, r.result]), [['weld-10', 'Rejected']], 'exactly one result, for the weld with a choice');
+  assert.deepEqual(f.store.list('inspection_results').filter(r => r.type === 'VI' && r.weldId === 'weld-19').map(r => ({ id: r.id, result: r.result, reportNo: r.reportNo, version: r._version })), before, 'the earlier Not applicable on weld-19 is unchanged');
   // The QA/QC engineers the visual report offers are readable inside Weld Pilot.
   assert.equal((await inspector.request('/records/qa_engineers', 'GET', 'weld')).status, 200);
 });

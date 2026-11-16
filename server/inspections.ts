@@ -1,7 +1,7 @@
 import { Store, AppError, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import {
-  NDT_ROUNDS, NDT_TYPES, REPAIR_COPY_FIELDS, REQUEST_PREFIX, EXTRA_RESULT_OPTION, currentRequest, locationField, nextRepairNumber,
+  NDT_ROUNDS, NDT_TYPES, REPAIR_COPY_FIELDS, REQUEST_PREFIX, EXTRA_RESULT_OPTION, VISUAL_NO_CHOICE, currentRequest, locationField, nextRepairNumber,
   processField, repairDue, requestNumberError, roundErrors, tracerError, tracersOf, type RoundInput,
 } from '../shared/inspections.ts';
 
@@ -169,17 +169,26 @@ export function inspectionRules(store: Store, actor: Actor) {
         const itp = short(data.itp, 'ITP'); if (itp && !['ITP 1', 'ITP 2'].includes(itp)) throw new AppError(422, 'Choose ITP 1 or ITP 2.');
         const engineerId = short(data.engineerId, 'QA/QC engineer'); if (engineerId) store.get('qa_engineers', engineerId);
         const extra = { itp, activityNo: short(data.activityNo, 'Activity No.'), engineerId, customNo: short(data.customNo, 'Custom No.') };
-        const selected = ids(data.weldIds, 'weld'), acceptedIds = optionalIds(data.accepted, 'weld'), naIds = optionalIds(data.notApplicable, 'weld');
-        if (selected.some(id => acceptedIds.includes(id) === naIds.includes(id)) || [...acceptedIds, ...naIds].some(id => !selected.includes(id))) throw new AppError(422, 'Mark every selected weld as accepted or not applicable.');
+        // Only the welds the user chose a result for are written; a listed weld without a choice keeps what it had (PARITY "Visual inspection hub").
+        const selected = ids(data.weldIds, 'weld'), choices = new Map<string, string>();
+        for (const [list, result] of [[data.accepted, 'Accepted'], [data.notAccepted, 'Rejected'], [data.notApplicable, EXTRA_RESULT_OPTION]] as const) {
+          for (const id of optionalIds(list, 'weld')) {
+            if (!selected.includes(id)) throw new AppError(422, 'A result was chosen for a weld that is not in the report.');
+            if (choices.has(id)) throw new AppError(422, 'Choose one result per weld.');
+            choices.set(id, result);
+          }
+        }
+        if (!choices.size) throw new AppError(422, VISUAL_NO_CHOICE);
         const written: Row[] = [];
         for (const id of selected) {
-          const weld = store.get('welds', id); const result = acceptedIds.includes(id) ? 'Accepted' : EXTRA_RESULT_OPTION;
+          const result = choices.get(id); if (!result) continue;
+          const weld = store.get('welds', id);
           const previous = store.list('inspection_results').find(row => row.weldId === id && row.type === 'VI' && row.reportNo === reportNo);
           const request = previous ? store.get('inspection_requests', previous.requestId) : requestFor(weld, 'VI');
           const values = { requestId: request.id, weldId: id, type: 'VI', round: 'Initial', result, reportNo, date: inspectionDate, examinedLength: weldLengthMm(store, weld), ...extra };
           written.push(previous ? store.update('inspection_results', previous.id, values, previous._version, actor) : store.create('inspection_results', { ...values, note: '' }, actor));
           patch('inspection_requests', store.get('inspection_requests', request.id), { status: result });
-          store.audit('welds', id, 'inspected', `VI ${result.toLowerCase()} · ${reportNo}`, actor);
+          store.audit('welds', id, 'inspected', `VI ${(result === 'Rejected' ? 'Not accepted' : result).toLowerCase()} · ${reportNo}`, actor);
         }
         return { resource: 'inspection_results', records: written };
       }
