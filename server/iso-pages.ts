@@ -2,6 +2,7 @@ import { RESOURCE_MAP } from '../shared/resources.ts';
 import type { Row } from '../shared/types.ts';
 import { headerFields, highestIrnCounter, IRN_AUTO_MESSAGE, irnNumber, isometricDeleteRefusal, nextIrnSeries, projectDeleteRefusal } from '../shared/iso-pages.ts';
 import { AppError, type Actor, type Store } from './store.ts';
+import { COMPLETION_FIELDS } from '../shared/iso-status.ts';
 
 type Input = Record<string, unknown>;
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : value === undefined || value === null ? '' : String(value).trim();
@@ -31,10 +32,19 @@ function takeIrn(store: Store, site: Row, actor: Actor): string {
 
 /** A typed IRN is refused while the main project numbers its isometrics itself (the field is read only there). */
 export function guardIrn(store: Store, value: Input, existing?: Row) {
+  const moved = Boolean(existing) && value.projectId !== undefined && text(value.projectId) !== text(existing!.projectId);
+  if (value.irn === undefined && !moved) return;
+  const refuse = () => { throw new AppError(422, IRN_AUTO_MESSAGE, { irn: IRN_AUTO_MESSAGE }); };
+  // Judged on the main project before and after the write (sec1-007): a move must not bring an IRN into a main project that numbers itself.
+  const before = existing ? siteOfProject(store, existing.projectId) : undefined;
+  const after = value.projectId !== undefined ? siteOfProject(store, value.projectId) : before;
+  if (moved && after?.irnAuto === true && after.id !== before?.id) {
+    if (text(value.irn !== undefined ? value.irn : existing?.irn)) refuse();
+    return;
+  }
   if (value.irn === undefined) return;
-  const site = siteOfProject(store, existing?.projectId ?? value.projectId);
-  if (site?.irnAuto !== true) return;
-  if (text(value.irn) !== text(existing?.irn)) throw new AppError(422, IRN_AUTO_MESSAGE, { irn: IRN_AUTO_MESSAGE });
+  if (before?.irnAuto !== true && after?.irnAuto !== true) return;
+  if (text(value.irn) !== text(existing?.irn)) refuse();
 }
 /** A new isometric of a main project with automatic IRN numbers gets the next one. */
 export function assignIrn(store: Store, value: Input, actor: Actor) {
@@ -76,7 +86,10 @@ export function editedHeader(values: unknown): Input {
   if (values === undefined || values === null) return {};
   if (typeof values !== 'object' || Array.isArray(values)) throw new AppError(422, 'Check the fields of the isometric.');
   const header: Input = {};
+  // The completion fields are dropped as on the record routes (only complete-phase and release set them, sec1-006).
+  const completion = new Set(Object.values(COMPLETION_FIELDS).flatMap(fields => [fields.at, fields.by]));
   for (const [name, value] of Object.entries(values as Input)) {
+    if (completion.has(name)) continue;
     if (!HEADER_FIELDS.includes(name)) throw new AppError(422, 'Check the fields of the isometric.');
     header[name] = value;
   }

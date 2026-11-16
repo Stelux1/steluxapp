@@ -1,5 +1,6 @@
 import { Store, AppError, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
+import { scopeRows } from './site-scope.ts';
 import {
   NDT_ROUNDS, NDT_TYPES, REPAIR_COPY_FIELDS, REQUEST_PREFIX, EXTRA_RESULT_OPTION, VISUAL_NO_CHOICE, currentRequest, locationField, nextRepairNumber,
   processField, repairDue, roundErrors, roundLockedError, roundsHaveNa, naBlockErrors, tracerError, tracersOf, tracerProposal, weldWelderIds, type RoundInput, type TracerContext,
@@ -186,7 +187,10 @@ export function inspectionRules(store: Store, actor: Actor) {
       const weld = store.get('welds', str(query.weldId));
       const welderId = str(query.welderId);
       if (welderId && !weldWelderIds(weld).includes(welderId)) throw new AppError(422, 'Welder for error must be one of the welders of this weld.');
-      return tracerProposal(weld, welds(), results(), tracerContext(), { welderId, pending: query.pending === '1' || query.pending === true });
+      // Only welds the request may read: of its main project and of projects switched on for the pilot (sec1-004).
+      const context = tracerContext();
+      const scoped: TracerContext = { requests: scopeRows('inspection_requests', context.requests || []), isometrics: scopeRows('isometrics', context.isometrics || []), itps: scopeRows('itps', context.itps || []) };
+      return tracerProposal(weld, scopeRows('welds', welds()), scopeRows('inspection_results', results()), scoped, { welderId, pending: query.pending === '1' || query.pending === true });
     },
     run(key: string, data: Input): { resource: string; record?: Row; records?: Row[] } {
       const date = data.date ? validDate(data.date) : today();

@@ -113,6 +113,11 @@ export const headingHasOptions = (pilotActive: boolean, tab: string) => pilotAct
 
 /** What Add new takes from the form: the header fields (the project-bound assignments, progress and phases start empty, as in a copy). */
 export const HEADER_LEFT_OUT = ['projectId', 'testSystemId', 'fieldPackageId', 'itpId', 'itp2Id'];
-export const headerFields = (fields: Field[]) => fields.filter(field => !HEADER_LEFT_OUT.includes(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
+/**
+ * Fields only the server sets, never Add new or a copy (sec1-006): Prefab / Field completion (complete-phase and release,
+ * `COMPLETION_FIELDS` of shared/iso-status.ts), X Ray % (from the linked ITP) and the punch progress.
+ */
+export const ISO_SERVER_OWNED = ['prefabCompletedAt', 'prefabCompletedBy', 'fieldCompletedAt', 'fieldCompletedBy', 'xRay', 'punchProgress'];
+export const headerFields = (fields: Field[]) => fields.filter(field => !HEADER_LEFT_OUT.includes(field.name) && !ISO_SERVER_OWNED.includes(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
 /** The three boxes next to Add new, as the reference names them. */
 export const ADD_NEW_COPY_OPTIONS = [['copyWelds', 'Copy Welds'], ['copyMaterials', 'Copy Materials'], ['copyCalculations', 'Copy Calculations']] as const;

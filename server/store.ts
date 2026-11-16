@@ -6,6 +6,7 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { RELATIONS, relationMatches } from '../shared/welding.ts';
 import { SITE_REFUSED } from '../shared/site-scope.ts';
+import { SITE_OWNED } from '../shared/welder-data.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
@@ -142,6 +143,11 @@ export class Store {
     const field = keys && [...keys].reverse().map(name => def.fields.find(f => f.name === name)).find(f => f && !f.ref);
     const value = field && String(data[field.name] ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80);
     if (!field || !value) return this.translate(error);
+    // A record that belongs to one main project (certificates, welding wires), or a clash with a record the request may not
+    // read: only that the value is in use, not the value or where (sec1-009).
+    const clash = others.find(row => keys!.every(name => same(row[name], data[name])));
+    const hidden = Boolean(this.hostedRules && SITE_OWNED[key]) || Boolean(clash && !this.guardAllows(key, clash));
+    if (hidden) return Object.assign(new AppError(409, `This ${field.label} is already in use.`, { [field.name]: 'This value is already in use.' }), { kind: 'duplicate' as const });
     return Object.assign(new AppError(409, `${field.label} ${value} already exists.`, { [field.name]: 'This value is already in use.' }), { kind: 'duplicate' as const });
   }
   resource(key: string): Resource { const def = RESOURCE_MAP[key]; if (!def) throw new AppError(404, 'This record type does not exist.'); return def; }
