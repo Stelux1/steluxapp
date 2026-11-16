@@ -257,10 +257,10 @@ test('the reference labels and order are used for the test system form and the h
   assert.deepEqual(ACTIONS['hydrotest-result'].fields.map(field => field.label), ['Test system', 'Accepted?']);
 });
 
-test('the Spools tab row: Paint spec. of the spool (else the isometric), Asset tag and Test pressure of the isometric', () => {
+test('the Spools tab row: Paint spec., Asset tag and Test pressure of the isometric', () => {
   const iso1 = row('i', { isoNo: '0001', assetTag: 'N011-HV10001-0001', testPressure: '29', paintSpec: 'A10' });
   assert.deepEqual(spoolFacts(row('s', { name: 'SP01', diameter: 'ND250' }), iso1, row('p', { internnumber: '20240101' })), ['20240101', '0001', 'SP01', 'ND250', 'A10', 'N011-HV10001-0001', '29']);
-  assert.equal(spoolFacts(row('s', { name: 'SP01', paintSpec: 'PS-02' }), iso1, undefined)[4], 'PS-02');
+  assert.equal(spoolFacts(row('s', { name: 'SP01', paintSpec: 'PS-02' }), iso1, undefined)[4], 'A10', 'a stored copy on the spool does not win (mto-catalogs-022)');
 });
 
 // ----- through the HTTP layer ---------------------------------------------------------------------------------

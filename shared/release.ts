@@ -165,7 +165,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Reference form of a test system: Test system, Description, accepted by client. Project, medium and pressure are no
     // longer offered (stored values stay on the records); spools carry their test system (shared/hydrotest.ts).
     availability.resources.test_systems = fields('name description accepted');
-    availability.resources.spools = [...new Set([...availability.resources.spools, 'paintSpec', 'testSystemId'])];
+    // Paint spec. of a spool is its isometric's (mto-catalogs-022), so only the test system is added.
+    availability.resources.spools = [...new Set([...availability.resources.spools, 'testSystemId'])];
     for (const resource of HYDROTEST_RESOURCES) availability.resources[resource.key] = resource.fields.map(field => field.name);
     for (const action of HYDROTEST_ACTIONS) availability.actions[action.key] = action.fields.map(field => field.name);
     // Flange Management (Weld Pilot → Releases): the flange record and its page.

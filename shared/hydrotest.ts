@@ -226,9 +226,9 @@ export const colourMeaning = (system: Row | undefined | null) => !system ? 'No t
 /** Columns of the Spools tab, in the order of the reference. */
 export const SPOOL_COLUMNS = ['Project', 'ISO', 'Spool', 'Diameter', 'Paint spec.', 'Asset tag', 'Test pressure', 'Test system', 'Check'];
 /**
- * The first seven cells of a spool row (Project … Test pressure); '' where nothing is stored. Paint spec. is the spool's,
- * else its isometric's; Asset tag and Test pressure are the isometric's (a spool carries neither).
+ * The first seven cells of a spool row (Project … Test pressure); '' where nothing is stored. Paint spec., Asset tag and
+ * Test pressure are the isometric's (mto-catalogs-022: a spool's paint spec. is its isometric's).
  */
 export function spoolFacts(spool: Row, iso: Row | undefined, project: Row | undefined): string[] {
-  return [text(project?.internnumber), text(iso?.isoNo), text(spool.name), text(spool.diameter), text(spool.paintSpec) || text(iso?.paintSpec), text(iso?.assetTag), text(iso?.testPressure)];
+  return [text(project?.internnumber), text(iso?.isoNo), text(spool.name), text(spool.diameter), text(iso?.paintSpec), text(iso?.assetTag), text(iso?.testPressure)];
 }
