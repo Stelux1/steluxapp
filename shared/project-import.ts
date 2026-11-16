@@ -344,7 +344,7 @@ export const IMPORT_STEPS: Record<ImportMode, string[]> = {
   projects: [
     'Download the Excel template. Row 1 says what each column expects, row 2 holds the column headers; enter one project per row from row 3.',
     'Upload the file and check the preview. Rows with errors are marked and are not imported.',
-    'Click Import. New projects are added to this main project; an existing project (same Internal project number) takes the filled cells.',
+    'Click Import. New projects are added to this main project; an existing project (same Sub Projects number) takes the filled cells.',
   ],
   full: [
     'Download the template (full + welds), or Excel (current data) to start from the projects and isometrics of this main project.',

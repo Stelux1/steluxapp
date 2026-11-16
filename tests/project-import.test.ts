@@ -87,8 +87,11 @@ test('the plan: a row without Intern prj. no. or Iso number is reported and plan
     row(5, { 'projects.internnumber': 'P-2' }),
   ], columns, emptyContext(), { mode: 'full', withWelds: true });
   assert.deepEqual(plan.rows.map(item => item.action), ['New', 'Error', 'Error']);
-  assert.match(plan.rows[1].errors.join(' '), /Internal project number: Required/);
-  assert.match(plan.rows[2].errors.join(' '), /ISO number: Required/);
+  // The message names the column by its header, the Edit project label ("Sub Projects" since w4-project-iso-pages).
+  assert.equal(header(columns, 'projects.internnumber'), 'Sub Projects');
+  assert.match(plan.rows[1].errors.join(' '), /Sub Projects: Required/);
+  assert.equal(header(columns, 'isometrics.isoNo'), 'Iso number');
+  assert.match(plan.rows[2].errors.join(' '), /Iso number: Required/);
   assert.deepEqual(plan.projects.map(item => item.internnumber), ['P-1'], 'the error rows plan no project');
   assert.equal(plan.isometrics[0].ranges[0].numbers.length, 3);
   assert.equal(plan.rows[0].qty, '2.346');
