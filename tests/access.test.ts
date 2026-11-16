@@ -406,8 +406,13 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   for (const text of [...records, ...f.store.list('welders', true).map(row => String(row.name)), 'H-1042', ...f.store.list('iso_materials', true).map(row => row.id)]) assert.ok(!payload.includes(text), `summary carries ${text}`);
   for (const [id, item] of Object.entries(view.isoSummaries!)) {
     // budgets is present only while the isometric has classified material lines; every other key always.
-    assert.deepEqual(Object.keys(item).filter(key => key !== 'budgets').sort(), ['blockers', 'flags', 'hydrotest', 'kpi', 'materialStatus', 'progress', 'punch', 'quality'], id);
-    assertAggregates(item, id);
+    // budgets and testSystemName are present only where they apply; every other key always.
+    assert.deepEqual(Object.keys(item).filter(key => key !== 'budgets' && key !== 'testSystemName').sort(), ['blockers', 'flags', 'hydrotest', 'kpi', 'materialStatus', 'progress', 'punch', 'quality'], id);
+    // The one label: the isometric's own test system name, nothing else of the test system.
+    const iso = f.store.get('isometrics', id), system = iso.testSystemId ? f.store.get('test_systems', String(iso.testSystemId)) : undefined;
+    assert.equal(item.testSystemName, system ? String(system.name) : undefined, `${id} test system name`);
+    const { testSystemName: _label, ...aggregates } = item;
+    assertAggregates(aggregates, id);
   }
   // Material status %, the MTO budgets, punch counts and the hydrotest state are the shared formulas over every record,
   // and reach Weld Pilot too although it reads no material line, order, stock or pick list.

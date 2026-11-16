@@ -61,6 +61,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   }, [rows, iso, site, budgets, summary, weldItems]);
   const canEdit = canRecord('isometrics', 'edit', iso), canImport = canRecord('isometrics', 'import', iso);
   const canRevise = canRun('revision', { isoId: iso.id }), historyAvailable = canRecord('revisions');
+  // MTO Pilot reads no test systems: the server summary carries the name of this isometric's own one.
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);
   const fileOf = (kind: string) => documents.find(row => row.documentType === `${kind} revision ${currentRevision(rows, iso.id, kind)}` || row.documentType === kind);
   const itps = [['ITP', iso.itpNo], ['ITP 2', iso.itpNo2]] as const;
@@ -93,7 +94,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       <dl className="iso-facts"><Fact label="NoBo">{iso.noBo ? 'Yes' : 'No'}</Fact><Fact label="NoBo Reg. no. / serial">{show(iso.noBoReg)} / {show(iso.noBoSerial)}</Fact><Fact label="PED Cat.-Mod">{show(iso.ped)}</Fact><Fact label="X Ray %">{show(iso.xRay)}</Fact></dl>
     </Card>
     <Card title="Technical">
-      <dl className="iso-facts"><Fact label="Piping class">{show(iso.pipingClass)}</Fact><Fact label="PWHT">{iso.pwht ? 'Yes' : 'No'}</Fact><Fact label="Test pressure">{show(iso.testPressure)}</Fact><Fact label="Test system">{show(testSystem?.name)}</Fact></dl>
+      <dl className="iso-facts"><Fact label="Piping class">{show(iso.pipingClass)}</Fact><Fact label="PWHT">{iso.pwht ? 'Yes' : 'No'}</Fact><Fact label="Test pressure">{show(iso.testPressure)}</Fact><Fact label="Test system">{show(testSystem?.name ?? isoSummaries?.[iso.id]?.testSystemName)}</Fact></dl>
     </Card>
     <ProgressCard key={`${iso.id}-${iso._version}`} iso={iso} progress={status.progress} budgets={budgets} editable={canEdit}/>
     <Card title="Status" className="iso-status-card">

@@ -11,7 +11,8 @@ import type { Store } from './store.ts';
  * record the release profile delivers (welds, inspection results, releases, punch items, test systems and hydrotest requests, material requirements with
  * the orders, stock and pick lists that cover them),
  * whatever the caller's pilot or profile may read. Only aggregates leave this function (see `IsoSummary`):
- * percentages, counts per blocker group, punch counts, budget totals and yes / no flags, never a weld, result, welder or material line.
+ * percentages, counts per blocker group, punch counts, budget totals and yes / no flags, never a weld, result, welder or material line,
+ * plus one label: the name of the isometric's own test system (`testSystemName`), for the isometrics passed in only.
  *
  * `isometrics` must already be the caller's visible isometrics (release projection, isometric permission and
  * per-pilot project enablement); a summary is produced for exactly those. Cost: one read of each collection

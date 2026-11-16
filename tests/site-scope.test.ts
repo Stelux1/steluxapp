@@ -118,6 +118,24 @@ test('the scope resolves records from one read per collection, not one query per
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('the isometric summary names the test system for an MTO-only account, only for isometrics of its own main projects', async t => {
+  const f = await fixture(t);
+  // A test system on a Riverside isometric, so the other main project has a name that must not leak.
+  const river = f.store.create('test_systems', { name: 'RIVER-TS-07', projectId: String(f.store.get('isometrics', 'iso-4').projectId), medium: 'Water', pressure: '10 bar' }, SYSTEM);
+  const iso4 = f.store.get('isometrics', 'iso-4'); f.store.update('isometrics', 'iso-4', { testSystemId: river.id }, iso4._version, SYSTEM);
+  const reader = f.profile('MTO reader', { generalPermission: RW, materialsPermission: RW, weldingPermission: NONE });
+  const mtoOnly = f.account('North MTO only', { profileId: reader, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
+  await mtoOnly.login();
+  const raw = await (await mtoOnly.as.request('/bootstrap', { pilot: 'mto' })).text(), body = JSON.parse(raw) as Bootstrap & { isoSummaries: Record<string, { testSystemName?: string }> };
+  assert.equal(body.rows.test_systems, undefined, 'MTO Pilot reads no test systems');
+  assert.equal(body.isoSummaries['iso-1'].testSystemName, 'CW-01', 'its own isometric carries the name');
+  assert.equal(body.isoSummaries['iso-7']?.testSystemName, undefined, 'an isometric without a test system has none');
+  assert.equal(body.isoSummaries['iso-4'], undefined, 'no summary for an isometric outside its main projects');
+  assert.ok(!raw.includes('RIVER-TS-07'), 'the other main project\'s test system name never appears');
+  // The administrator sees the Riverside name in either pilot.
+  assert.equal((await json<{ isoSummaries: Record<string, { testSystemName?: string }> }>(await f.admin.request('/bootstrap', { pilot: 'mto' }))).isoSummaries['iso-4'].testSystemName, 'RIVER-TS-07');
+});
+
 test('Weld Pilot limited to one main project: every read path returns nothing of the other one; MTO Pilot (all sites) returns everything', async t => {
   const f = await fixture(t);
   const writer = f.profile('Site writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });

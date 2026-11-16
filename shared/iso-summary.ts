@@ -12,7 +12,9 @@ import { isoFlags, isoKpiFacts, isoListContext, type IsoFlags, type IsoKpiFacts 
  * The hosted profile computes it on the server from every record of the isometric, whichever pilot asks, so
  * Weld Pilot and MTO Pilot show the same progress, quality, blocker total, flags and KPI cards. It must never
  * carry a record: no weld numbers, welder names, heat / charge numbers, result details or material lines.
- * Only counts, percentages and yes / no values belong here (see `tests/access.test.ts`).
+ * Only counts, percentages and yes / no values belong here (see `tests/access.test.ts`), with ONE label as the
+ * exception: `testSystemName`, the name of the isometric's own test system, so the MTO Pilot header can show it
+ * (MTO Pilot reads no test systems). No other field of the test system and no other text may be added.
  *
  * Adding a value: compute it in `isoSummary()` below from the grouped rows (extend `IsoSummarySource` and the
  * server's loader in `server/iso-summary.ts` if it needs another collection), keep it an aggregate, add it to
@@ -43,6 +45,8 @@ export interface IsoSummary {
   punch: PunchCounts | null;
   /** Hydrotest state (shared/hydrotest.ts `hydrotestState`). */
   hydrotest: { inScope: boolean; completed: boolean };
+  /** The only label: the name of the isometric's test system; absent without one (or while test systems are not delivered). */
+  testSystemName?: string;
 }
 
 /** Every collection the summary reads. `null`: the collection is not delivered by the release profile. */
@@ -93,6 +97,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
   const requirements = groupBy(source.requirements, row => String(row.isoId));
   const projects = new Map(source.projects.map(row => [row.id, row]));
   const sites = new Map(source.sites.map(row => [row.id, row]));
+  const testSystemNames = new Map((source.testSystems || []).filter(row => !row._archived && String(row.name ?? '').trim()).map(row => [row.id, String(row.name).trim()]));
   const context = isoListContext({ welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, planning: source.planning });
   const output: Record<string, IsoSummary> = {};
   for (const iso of source.isometrics) {
@@ -115,6 +120,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       materialStatus: { percent: material },
       punch: source.punch ? punchCounts(punch.get(iso.id) || []) : null,
       hydrotest: { inScope: hydrotest.inScope, completed: hydrotest.completed },
+      ...(testSystemNames.has(String(iso.testSystemId ?? '')) ? { testSystemName: testSystemNames.get(String(iso.testSystemId))! } : {}),
     };
   }
   return output;
