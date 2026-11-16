@@ -33,6 +33,7 @@ import { siteOfRecord } from './weld-catalogs.ts';
 import { companyForDocuments } from './pdf/company.ts';
 import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate.ts';
 import { reportWorkbook } from './report-export.ts';
+import { SPOOL_EXPORT_COLUMNS, spoolExportLines } from '../shared/mto-logistics.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
@@ -254,7 +255,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if(copyAcross)assertCopyInScope(store,store.get('users',(req as unknown as AuthRequest).user.id),req.body);
     if(copyAcross){const parts=access.copyParts((req as unknown as AuthRequest).user.id);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}
     if (pilots && action.key === 'duplicate-site') { const parts = duplicateParts(req.body.parts ?? []); if (parts) for (const resource of duplicateReadResources(parts)) checkResourcePermission(req, resource); }
-    const done = runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')) });
+    const done = runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')), hosted: Boolean(availability?.features.includes('pilots')) });
     if (pilots) announce((req as unknown as AuthRequest).user.id, action.key, done);
     res.status(201).json(access.result(done));
   });
@@ -289,6 +290,20 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const output = rows.map(row => Object.fromEntries(fields.map(f => {const flagValue=flagExport?.value(row,f.name);if(flagValue!==undefined)return [f.label,flagValue];const relation=(RELATIONS[resource.key]||[]).find(r=>r.field===f.name);if(relation)return [f.label,JSON.stringify(store.list(relation.resource).filter(l=>l[relation.ownerKey]===row.id&&inSiteScope(relation.resource,l)).map(l=>visibleLabel(relation.target,l[relation.targetKey])))];let value = row[f.name]; if (f.ref && value)value=visibleLabel(f.ref,value);if (typeof value === 'boolean') value = value ? 'Yes' : 'No'; return [f.label, value ?? '']; })));
     return { resource, output, fields };
   };
+  // MTO Pilot, Service request -> Export: the spool list as an Excel file, in the order of the page (Last request ascending) and after its filters.
+  app.get('/api/export-spools', async (req, res) => {
+    if (!availability?.features.includes('pilots')) throw new AppError(404, 'This resource could not be found.');
+    checkResourcePermission(req, 'spools', 'export'); checkResourcePermission(req, 'service_requests', 'show');
+    const rows = Object.fromEntries(['projects', 'isometrics', 'spools', 'service_requests', 'laydowns', 'service_companies'].map(key => [key, readableRows(req, key)])) as Record<string, Row[]>;
+    const query = (name: string) => typeof req.query[name] === 'string' ? String(req.query[name]).slice(0, 150) : '';
+    const filters = { projectId: query('projectId'), spoolName: query('spoolName'), show: query('show'), paintSpec: query('paintSpec'), diameter: query('diameter'), chemicalClean: query('chemicalClean'), currently: query('currently'), lastReport: query('lastReport') };
+    const names = (resource: string, id: string) => { const row = rows[resource]?.find(item => item.id === id); return row ? store.display(resource, row) : ''; };
+    const workbook = new ExcelJS.Workbook(); workbook.creator = 'Blitzkrieg';
+    const sheet = workbook.addWorksheet('Service request'); sheet.columns = SPOOL_EXPORT_COLUMNS.map(header => ({ header, key: header, width: 20 }));
+    sheet.addRows(spoolExportLines(rows, filters, names));
+    sheet.getRow(1).font = { name: 'Outfit', bold: true, color: { argb: 'FFFFFFFF' } }; sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF061B42' } }; sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    res.attachment('blitzkrieg-spools.xlsx'); await workbook.xlsx.write(res); res.end();
+  });
   app.get('/api/export/:resource', async (req, res) => {
     const { resource, output, fields } = exportRows(req);
     if (req.query.format === 'xlsx') {

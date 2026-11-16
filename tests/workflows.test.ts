@@ -85,9 +85,9 @@ test('revisions preserve previous revision; phase changes leave unselected flags
   runAction(s, 'phases', { isoIds: ['iso-1', 'iso-2'], prefab_doc: 'Complete', field_release: 'Keep current' }, actor); assert.equal(s.get('isometrics', 'iso-1').prefab_doc, true); assert.equal(s.get('isometrics', 'iso-1').field_release, original.field_release);
   assert.throws(() => runAction(s, 'revision', { isoId: original.id, type: 'ISO', revNo: '3' }, actor), /differ/);
 });
-test('spool service records change location and completion restores the laydown', t => {
-  const s = fixture(t); const result = runAction(s, 'service', { spoolIds: ['spool-1', 'spool-2'], companyId: 'service-coating', services: 'Coating', laydownId: 'laydown-b' }, actor); assert.ok('records' in result && result.records?.length === 2); assert.equal(s.get('spools', 'spool-1').serviceCompanyId, 'service-coating'); assert.equal(s.get('spools', 'spool-1').laydownId, '');
-  runAction(s, 'complete-service', { requestIds: result.records!.map(r => r.id) }, actor); assert.equal(s.get('spools', 'spool-1').laydownId, 'laydown-b'); assert.equal(s.get('spools', 'spool-1').serviceCompanyId, '');
+test('spool service records change location and moving the spool to a laydown closes the request', t => {
+  const s = fixture(t); const result = runAction(s, 'service', { spoolIds: ['spool-1', 'spool-2'], companyId: 'service-coating', services: 'Coating' }, actor); assert.ok('records' in result && result.records?.length === 2); assert.equal(s.get('spools', 'spool-1').serviceCompanyId, 'service-coating'); assert.equal(s.get('spools', 'spool-1').laydownId, '');
+  runAction(s, 'move-spools', { spoolIds: ['spool-1', 'spool-2'], laydownId: 'laydown-b' }, actor); assert.equal(s.get('spools', 'spool-1').laydownId, 'laydown-b'); assert.ok(result.records!.every(r => s.get('service_requests', r.id).status === 'Completed')); assert.equal(s.get('spools', 'spool-1').serviceCompanyId, '');
 });
 test('stale edits, duplicate scoped identifiers, and mismatched spool/isometric are rejected', t => {
   const s = fixture(t); const project = s.get('projects', 'project-cooling'); s.update('projects', project.id, { contact: 'Updated contact' }, project._version, actor); assert.throws(() => s.update('projects', project.id, { contact: 'Stale contact' }, project._version, actor), /changed/); assert.equal(s.get('projects', project.id).contact, 'Updated contact');

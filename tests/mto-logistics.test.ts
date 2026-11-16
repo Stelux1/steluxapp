@@ -14,7 +14,8 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, pageAvailable, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { PILOTS, pilotItemPath } from '../shared/pilots.ts';
 import { planHostedSchema } from '../server/hosted-schema.ts';
-import { isoStatuses, materialStatus, operationPhaseGroup, percentBand, pickListReports, planReserve, planStart, requestArchive, spoolLocation, spoolRows, startedReports } from '../shared/mto-logistics.ts';
+import { archiveDefaultRange, isoStatuses, laydownContent, laydownHistory, materialStatus, nextRequestNumber, operationPhaseGroup, percentBand, pickListReports, planReserve, planStart, requestArchive, spoolExportLines, spoolHistory, spoolLocation, spoolRows, startedReports } from '../shared/mto-logistics.ts';
+import { ACTIONS } from '../shared/actions.ts';
 import type { Row } from '../shared/types.ts';
 
 const actor = { id: 'mto-test', name: 'MTO test operator' };
@@ -26,8 +27,8 @@ function pinFlanges(store: Store) { for (const row of store.list('stock').filter
 const bare = (t: { after: (fn: () => void) => void }) => { const store = new Store(':memory:'); seed(store); pinFlanges(store); t.after(() => store.close()); return store; };
 const PAYLOADS: Record<string, Record<string, unknown>> = {
   'reserve-iso': { isoId: 'iso-3', date: '2026-10-27' }, 'start-iso': { isoId: 'iso-3', date: '2026-10-27' }, 'take-picklist': { reportNo: 'PL-2026-0002', date: '2026-10-27' },
-  service: { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-10-27' }, 'move-spools': { spoolIds: ['spool-1'], laydownId: 'laydown-a', date: '2026-10-27' },
-  'move-materials': { requirementIds: ['requirement-1'], laydownId: 'mlaydown-rack-1', date: '2026-10-27' },
+  service: { spoolIds: ['spool-1'], companyId: 'service-pwht' }, 'move-spools': { spoolIds: ['spool-1'], laydownId: 'laydown-a' },
+  'move-materials': { requirementIds: ['requirement-1'], laydownId: 'mlaydown-rack-1' },
 };
 
 test('material status is the covered share of the requirement, rounded down, and empty without requirements', () => {
@@ -149,12 +150,14 @@ test('pick lists issued directly count as taken and the archive groups lines per
   assert.deepEqual(pickListReports(rows, { projectId: 'project-cooling' }).map(report => report.isoId), ['iso-1']);
 });
 
-test('spool locations show the service company, the laydown or Transport, and requests group by number in the archive', t => {
+test('spool locations show the service company, the laydown or nothing, and requests group by number in the archive', t => {
   const store = sample(t); const rows = rowsOf(store);
   assert.deepEqual(spoolLocation({ serviceCompanyId: 'c', laydownId: 'l' } as unknown as Row), { type: 'Service', id: 'c' });
   assert.deepEqual(spoolLocation({ laydownId: 'l' } as unknown as Row), { type: 'Laydown', id: 'l' });
-  assert.deepEqual(spoolLocation({} as unknown as Row), { type: 'Transport', id: '' });
+  // mto-logistics-002: a spool on no laydown and at no company is on nothing; the app invents no "Transport" place.
+  assert.deepEqual(spoolLocation({} as unknown as Row), { type: '', id: '' });
   const spools = spoolRows(rows);
+  assert.ok(spools.every(entry => (entry.location.type as string) !== 'Transport'));
   assert.equal(spools.find(entry => entry.spool.id === 'spool-2')!.location.type, 'Service');
   assert.equal(spools.find(entry => entry.spool.id === 'spool-3')!.location.id, 'laydown-c');
   assert.equal(spools.find(entry => entry.spool.id === 'spool-2')!.openRequest!.includeDrawings, true);
@@ -162,15 +165,124 @@ test('spool locations show the service company, the laydown or Transport, and re
   // One request for two spools is one archive line.
   const created = runAction(store, 'service', { spoolIds: ['spool-1', 'spool-5'], companyId: 'service-pwht', name: 'Batch 2', includeDrawings: false, date: '2026-10-27' }, actor);
   assert.equal(created.records!.length, 2); assert.ok(created.records!.every(row => row.includeDrawings === false));
-  const archive = requestArchive(rowsOf(store));
+  const archive = requestArchive(rowsOf(store), { kind: 'Spool' });
   const batch = archive.find(request => request.name === 'Batch 2')!; assert.equal(batch.items.length, 2); assert.equal(batch.kind, 'Spool'); assert.equal(batch.status, 'Requested'); assert.equal(batch.openIds.length, 2);
-  assert.ok(archive.some(request => request.kind === 'Material' && request.status === 'Requested'));
+  assert.ok(requestArchive(rowsOf(store), { kind: 'Material' }).some(request => request.kind === 'Material' && request.status === 'Requested'));
   assert.ok(archive.some(request => request.status === 'Completed' && request.completedAt === '2026-10-22'));
-  assert.deepEqual(requestArchive(rowsOf(store), { from: '2026-10-27' }).map(request => request.name), ['Batch 2']);
+  assert.deepEqual(requestArchive(rowsOf(store), { kind: 'Spool', from: '2026-10-27' }).map(request => request.name), ['Batch 2']);
   assert.deepEqual(archive.map(request => request.date), [...archive.map(request => request.date)].sort().reverse());
-  // Completing the request without a destination leaves the spool in transport.
-  runAction(store, 'complete-service', { requestIds: batch.openIds, date: '2026-10-28' }, actor);
-  assert.equal(spoolRows(rowsOf(store)).find(entry => entry.spool.id === 'spool-1')!.location.type, 'Transport');
+  // Moving the spools to a laydown is their return: the open requests close and the spools are on the laydown, not on "Transport".
+  runAction(store, 'move-spools', { spoolIds: batch.openIds.map(id => store.get('service_requests', id).spoolId), laydownId: 'laydown-a', date: '2026-10-28' }, actor);
+  assert.equal(spoolRows(rowsOf(store)).find(entry => entry.spool.id === 'spool-1')!.location.id, 'laydown-a');
+  assert.equal(requestArchive(rowsOf(store), { kind: 'Spool' }).find(request => request.name === 'Batch 2')!.status, 'Completed');
+});
+
+test('mto-logistics-007: request numbers are five digits and continue after the highest one', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  assert.equal(nextRequestNumber([]), '00001'); assert.equal(nextRequestNumber(['SR-2026-0007', '00002']), '00003'); assert.equal(nextRequestNumber(['00009', '00010']), '00011');
+  const numberOf = (result: { records?: Row[] }) => String(result.records![0].number);
+  const first = runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht' }, actor);
+  assert.match(numberOf(first), /^\d{5}$/);
+  const second = runAction(store, 'service', { spoolIds: ['spool-5'], companyId: 'service-pwht' }, actor);
+  assert.equal(Number(numberOf(second)), Number(numberOf(first)) + 1);
+  // A material request takes the next number of the same sequence; old SR-2026-nnnn numbers stay as stored.
+  const third = runAction(store, 'move-spools', { spoolIds: ['spool-1'], laydownId: 'laydown-a' }, actor); assert.equal(third.resource, 'spools');
+  const fourth = runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht' }, actor);
+  assert.equal(Number(numberOf(fourth)), Number(numberOf(second)) + 1);
+});
+
+test('mto-logistics-007: a third request after 00001 and 00002 is numbered 00003', t => {
+  const store = new Store(':memory:'); t.after(() => store.close()); seed(store);
+  for (const [number, id] of [['00001', 'spool-1'], ['00002', 'spool-2']] as const) store.create('service_requests', { number, spoolId: id, companyId: 'service-coating', date: '2026-10-01', status: 'Completed' }, actor);
+  const result = runAction(store, 'service', { spoolIds: ['spool-3'], companyId: 'service-coating', date: '2026-10-27' }, actor);
+  assert.equal(result.records![0].number, '00003');
+});
+
+test('mto-logistics-003: a hosted service request is named after the signed-in user and stamped now, whatever the client sent', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  const result = runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht', name: 'Client name', date: '2020-01-01', note: 'Pick up Monday', includeDrawings: true }, { id: 'u1', name: 'Matej Spisak' }, { hosted: true });
+  const request = result.records![0];
+  assert.equal(request.name, 'Matej Spisak'); assert.equal(request.addedBy, 'Matej Spisak'); assert.equal(request.date, new Date().toISOString().slice(0, 10));
+  assert.ok(Math.abs(Date.parse(String(request.requestedAt)) - Date.now()) < 60_000, 'the request carries the time it was made');
+  assert.equal(request.note, 'Pick up Monday'); assert.equal(request.includeDrawings, true);
+  // The dialog of the hosted profile has exactly these fields; the other profiles keep Name and Date.
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  assert.deepEqual([...hosted.actions.service].sort(), ['companyId', 'includeDrawings', 'note', 'spoolIds']);
+  assert.deepEqual([...hosted.actions['move-spools']].sort(), ['laydownId', 'spoolIds']);
+  assert.deepEqual([...hosted.actions['move-materials']].sort(), ['laydownId', 'requirementIds']);
+});
+
+test('mto-logistics-013 / -006: moves are stored as spool history, and a spool at a service company returns by Move to laydown', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  const history = () => spoolHistory(rowsOf(store), 'spool-1');
+  assert.deepEqual(history(), [], 'existing spools have no history until their first move');
+  runAction(store, 'move-spools', { spoolIds: ['spool-1'], laydownId: 'laydown-a', date: '2026-11-01' }, actor);
+  const request = runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-11-02' }, actor).records![0];
+  runAction(store, 'move-spools', { spoolIds: ['spool-1'], laydownId: 'laydown-b', date: '2026-11-03' }, actor);
+  assert.deepEqual(history().map(entry => [entry.type, entry.location]), [['Laydown', 'Laydown B — Field'], ['Service', `Ord. No. ${request.number} Thermotech Heat Treatment`], ['Laydown', 'Laydown A — Prefab']]);
+  // The return closed the request, with the move date.
+  assert.equal(store.get('service_requests', request.id).status, 'Completed'); assert.equal(store.get('service_requests', request.id).completedAt, '2026-11-03');
+  assert.equal(store.get('spools', 'spool-1').serviceCompanyId, ''); assert.equal(store.get('spools', 'spool-1').laydownId, 'laydown-b');
+  // There is no Complete step left in the model.
+  assert.equal(ACTIONS['complete-service'], undefined); assert.equal(ACTIONS['complete-material-service'], undefined);
+  assert.equal(ACTIONS.service.fields.some(field => field.name === 'laydownId'), false); assert.equal(ACTIONS['service-materials'].fields.some(field => field.name === 'materialLaydownId'), false);
+  assert.throws(() => runAction(store, 'complete-service', { requestIds: [request.id] }, actor), /does not exist/);
+});
+
+test('mto-logistics-017: a laydown lists the spools on it with their requests, and its history every spool that was moved onto it', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  runAction(store, 'move-spools', { spoolIds: ['spool-1'], laydownId: 'laydown-a', date: '2026-11-01' }, actor);
+  runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-11-02' }, actor);
+  assert.deepEqual(laydownContent(rowsOf(store), 'laydown-a').map(line => line.spool.id).includes('spool-1'), false, 'a spool at a service company is not on the laydown');
+  runAction(store, 'move-spools', { spoolIds: ['spool-1'], laydownId: 'laydown-a', date: '2026-11-03' }, actor);
+  const line = laydownContent(rowsOf(store), 'laydown-a').find(entry => entry.spool.id === 'spool-1')!;
+  assert.equal(line.services, 1); assert.equal(line.treatments.chemicalClean, String(store.get('isometrics', String(line.spool.isoId)).chemicalClean ?? ''));
+  assert.equal(laydownHistory(rowsOf(store), 'laydown-a').filter(entry => entry.spool.id === 'spool-1').length, 2, 'moved onto it twice');
+});
+
+test('mto-catalogs-022: Paint spec., PWHT and Chemical clean of a spool are its isometric’s', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  const isoId = String(store.get('spools', 'spool-1').isoId);
+  const iso = store.get('isometrics', isoId); store.update('isometrics', isoId, { paintSpec: 'A10', chemicalClean: 'N/A', pwht: true }, iso._version, actor);
+  const spool = store.get('spools', 'spool-1'); store.update('spools', 'spool-1', { paintSpec: 'stale copy', chemicalClean: 'stale copy', pwht: false }, spool._version, actor);
+  const entry = spoolRows(rowsOf(store)).find(row => row.spool.id === 'spool-1')!;
+  assert.deepEqual([entry.paintSpec, entry.chemicalClean, entry.pwht], ['A10', 'N/A', true]);
+  assert.equal(store.get('spools', 'spool-1').paintSpec, 'stale copy', 'the stored spool values are kept');
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  assert.ok(['paintSpec', 'chemicalClean', 'pwht'].every(name => !hosted.resources.spools.includes(name) && hosted.resources.isometrics.includes(name)));
+});
+
+test('mto-logistics-012 / -015: the spool filters, the default order (Last request) and the Excel export lines', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM); const rows = rowsOf(store);
+  const label = (resource: string, id: string) => String(rows[resource]?.find(row => row.id === id)?.name ?? id);
+  const all = spoolRows(rows); assert.ok(all.length > 4);
+  const numbers = all.map(entry => entry.lastRequest ? String(entry.lastRequest.number) : '');
+  assert.deepEqual(numbers, [...numbers].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })), 'Last request ascending, spools without a request first');
+  assert.equal(numbers[0], '');
+  const request = all.find(entry => entry.lastRequest)!; const number = String(request.lastRequest!.number);
+  assert.ok(spoolRows(rows, { lastReport: number }).every(entry => entry.lastRequest?.number === number));
+  assert.deepEqual(spoolRows(rows, { currently: `Service:${request.location.id}` }).every(entry => entry.location.type === 'Service'), true);
+  const withPaint = all.find(entry => entry.paintSpec)!;
+  assert.ok(spoolRows(rows, { paintSpec: withPaint.paintSpec.slice(1, 4).toLowerCase() }).every(entry => entry.paintSpec.toLowerCase().includes(withPaint.paintSpec.slice(1, 4).toLowerCase())));
+  assert.deepEqual(spoolRows(rows, { spoolName: String(all[0].spool.name) }).every(entry => entry.spool.name === all[0].spool.name), true);
+  const lines = spoolExportLines(rows, {}, label); assert.equal(lines.length, all.length); assert.equal(lines[0][2], String(all[0].spool.name));
+});
+
+test('mto-logistics-008 / -009 / scn-SC-N8: the archive lists one type, with the creating user, newest first or oldest first, from the last 30 days; an attached document shows in its row', t => {
+  assert.deepEqual(archiveDefaultRange('2026-11-16'), { from: '2026-10-17', to: '2026-11-30' });
+  assert.deepEqual(archiveDefaultRange('2026-03-05'), { from: '2026-02-03', to: '2026-03-31' });
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  const made = runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-11-10' }, { id: 'u1', name: 'Matej Spisak' }).records![0];
+  const spools = requestArchive(rowsOf(store), { kind: 'Spool' }); const materials = requestArchive(rowsOf(store), { kind: 'Material' });
+  assert.ok(spools.every(request => request.kind === 'Spool') && materials.every(request => request.kind === 'Material') && materials.length > 0);
+  assert.equal(spools.find(request => request.number === made.number)!.addedBy, 'Matej Spisak');
+  assert.deepEqual(requestArchive(rowsOf(store), { kind: 'Spool', sort: 'asc' }).map(request => request.number), [...spools].reverse().map(request => request.number));
+  assert.equal(requestArchive(rowsOf(store), { kind: 'Spool', from: '2026-11-01', to: '2026-11-30' }).length, 1);
+  // SC-N8: a document attached to the request (the generic file route) is part of its archive row.
+  assert.deepEqual(spools.find(request => request.number === made.number)!.documents, []);
+  store.create('attachments', { name: 'signed-release.pdf', entityType: 'service_requests', entityId: made.id, documentType: 'Signed release document', mime: 'application/pdf', size: 12 }, actor);
+  const row = requestArchive(rowsOf(store), { kind: 'Spool' }).find(request => request.number === made.number)!;
+  assert.deepEqual(row.documents.map(document => document.name), ['signed-release.pdf']);
 });
 
 test('service companies need an address and the logistics resources carry the new fields', () => {
@@ -187,6 +299,9 @@ test('service companies need an address and the logistics resources carry the ne
   assert.ok(plan.tables.includes('reservations'), 'the hosted database prepares the new table');
   assert.ok(['isoId', 'requirementId', 'materialId', 'customMaterialId'].every(field => plan.columns.some(column => column.table === 'reservations' && column.field === field)));
   assert.ok(plan.indexes.some(index => index.table === 'reservations'));
+  // mto-logistics-013: the spool history is a new record type; the upgrade creates its table and leaves every existing row valid.
+  assert.ok(plan.tables.includes('spool_moves'));
+  assert.ok(['spoolId', 'laydownId', 'requestId'].every(field => plan.columns.some(column => column.table === 'spool_moves' && column.field === field)));
 });
 
 // ---- Through HTTP: hosted profile, both pilots ------------------------------------------------------------------------
@@ -218,8 +333,10 @@ test('the hosted profile delivers the pages, resources and actions of this flow 
   for (const path of ['/mto/materials/iso-execution', '/mto/materials/service-spools', '/mto/materials/service-materials', '/mto/materials/picklists', '/mto/materials/service_requests', '/mto/materials/service_companies', '/mto/materials/laydowns', '/mto/materials/material_laydowns']) assert.ok(pageAvailable(hosted, path, RESOURCES), path);
   // Material inventory (/mto/materials/stock) is the stock flow's page, so stock is no longer data only.
   for (const path of ['/mto/materials/reservations', '/mto/materials/material_locations']) assert.equal(pageAvailable(hosted, path, RESOURCES), false, path);
-  for (const key of ['reserve-iso', 'release-reservation', 'start-iso', 'take-picklist', 'service', 'complete-service', 'move-spools', 'move-materials', 'service-materials', 'complete-material-service']) assert.ok(hosted.actions[key], key);
-  assert.deepEqual(hosted.actions.service.sort(), ['companyId', 'date', 'includeDrawings', 'name', 'note', 'spoolIds']);
+  for (const key of ['reserve-iso', 'release-reservation', 'start-iso', 'take-picklist', 'service', 'move-spools', 'move-materials', 'service-materials']) assert.ok(hosted.actions[key], key);
+  for (const key of ['complete-service', 'complete-material-service']) assert.equal(hosted.actions[key], undefined, key);
+  assert.deepEqual(hosted.actions.service.sort(), ['companyId', 'includeDrawings', 'note', 'spoolIds']);
+  assert.ok(!hosted.actions['service-materials'].includes('materialLaydownId'));
   assert.ok(!hosted.navigation.includes('reservations'));
   const mto = PILOTS.find(pilot => pilot.key === 'mto')!; const labels = Object.fromEntries(mto.groups.flatMap(group => group.items).map(item => [item.label, pilotItemPath(item)]));
   assert.equal(labels['Isometric execution'], '/materials/iso-execution'); assert.equal(labels['Pick List archive'], '/materials/picklists'); assert.equal(labels['Service request'], '/materials/service-spools');
@@ -272,16 +389,23 @@ test('read-only and partial permission profiles cannot reserve, start or take, a
   // ISO execution ("20") may reserve and start, but does not manage service requests.
   await f.signIn('Iso execution', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '20': ['show', 'insert'], '5': ['show'], '64': ['show'], '70': ['show'], '16': ['show'], '21': ['show'] }) });
   assert.equal((await f.request('/api/actions/reserve-iso', 'POST', { isoId: 'iso-6', date: '2026-10-27' })).status, 201);
-  assert.equal((await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-10-27' })).status, 403);
+  assert.equal((await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht' })).status, 403);
   // Full MTO rights: the existing service rules still hold and the new drawings flag is stored.
   await f.signIn('Logistics', FULL);
-  const service = await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht', name: 'Hosted batch', includeDrawings: true, date: '2026-10-27' }); assert.equal(service.status, 201);
-  assert.equal(f.store.list('service_requests').find(row => row.name === 'Hosted batch')!.includeDrawings, true);
-  assert.equal((await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-10-27' })).status, 409, 'an open request blocks a second one');
-  assert.equal((await f.request('/api/actions/move-spools', 'POST', { spoolIds: ['spool-1'], laydownId: 'laydown-a', date: '2026-10-27' })).status, 409, 'a spool at service cannot move');
-  const open = f.store.list('service_requests').find(row => row.name === 'Hosted batch')!;
-  assert.equal((await f.request('/api/actions/complete-service', 'POST', { requestIds: [open.id], laydownId: 'laydown-c', date: '2026-10-28' })).status, 201);
+  // The name and the date of a hosted request are not the client's to send.
+  assert.equal((await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht', name: 'Hosted batch', date: '2026-10-27' })).status, 404);
+  const service = await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht', includeDrawings: true, note: 'Hosted note' }); assert.equal(service.status, 201);
+  const open = f.store.list('service_requests').find(row => row.spoolId === 'spool-1' && row.status !== 'Completed')!;
+  assert.equal(open.includeDrawings, true); assert.equal(open.name, 'Logistics'); assert.match(String(open.number), /^\d{5}$/);
+  assert.equal((await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1'], companyId: 'service-pwht' })).status, 409, 'an open request blocks a second one');
+  // Move to laydown is the return of a spool at a service company: it closes the open request and writes the history.
+  assert.equal((await f.request('/api/actions/move-spools', 'POST', { spoolIds: ['spool-1'], laydownId: 'laydown-c' })).status, 201);
+  assert.equal(f.store.get('service_requests', open.id).status, 'Completed');
   assert.equal(f.store.get('spools', 'spool-1').laydownId, 'laydown-c');
+  assert.deepEqual(f.store.list('spool_moves').filter(row => row.spoolId === 'spool-1').map(row => row.type).sort(), ['Laydown', 'Service']);
+  assert.equal((await f.request('/api/actions/complete-service', 'POST', { requestIds: [open.id] })).status, 404);
+  // The Excel spool export follows the page's order and carries the isometric's treatments.
+  const exported = await f.request('/api/export-spools'); assert.equal(exported.status, 200); assert.match(String(exported.headers.get('content-type')), /spreadsheetml/);
   // Catalogs: Address is required, Name is unique.
   assert.equal((await f.request('/api/records/service_companies', 'POST', { name: 'No address' })).status, 422);
   assert.equal((await f.request('/api/records/service_companies', 'POST', { name: 'Harbour Coatings', address: '5 Quay Street', phone: '+31 10 555 0110' })).status, 201);

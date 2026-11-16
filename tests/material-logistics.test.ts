@@ -19,14 +19,14 @@ test('material laydown movements track requirement lines without changing wareho
  assert.ok(s.activity(100).some(e=>e.entityType==='iso_materials'&&e.entityId===selected[0]&&e.action==='moved'));
  assert.throws(()=>runAction(s,'move-materials',{requirementIds:selected,laydownId:'laydown-b'},actor),/could not be found/i);
 });
-test('catalog and custom material service requests retain names, links, history, and return laydowns',t=>{
+test('catalog and custom material service requests retain names, links and history, and moving them back to a laydown closes the request',t=>{
  const s=fixture(t),catalog=requirements(s)[0];const custom=runAction(s,'add-iso-material',{isoId:'iso-2',source:'Custom',materialNo:'LOG-CUSTOM',description:'Fictional support',uom:'EA',quantity:2},actor).record!;
  const selected=[catalog,custom.id];runAction(s,'move-materials',{requirementIds:selected,laydownId:'material-rack',date:'2026-10-20'},actor);
  const result=runAction(s,'service-materials',{requirementIds:selected,companyId:'service-coating',name:'Material coating batch',note:'Fictional scope',date:'2026-10-21'},actor);
  assert.equal(result.records!.length,2);assert.equal(new Set(result.records!.map(r=>r.number)).size,1);assert.ok(result.records!.every(r=>r.name==='Material coating batch'&&r.materialLaydownId==='material-rack'&&!r.spoolId));
  assert.ok(s.list('material_locations').every(r=>r.companyId==='service-coating'&&!r.laydownId));
- runAction(s,'complete-material-service',{requestIds:result.records!.map(r=>r.id),date:'2026-10-22',note:'Received from service'},actor);
- assert.ok(s.list('service_requests').filter(r=>selected.includes(String(r.requirementId))).every(r=>r.status==='Completed'&&r.completedAt==='2026-10-22'&&String(r.note).includes('Received from service')));
+ runAction(s,'move-materials',{requirementIds:selected,laydownId:'material-rack',date:'2026-10-22',note:'Received from service'},actor);
+ assert.ok(s.list('service_requests').filter(r=>selected.includes(String(r.requirementId))).every(r=>r.status==='Completed'&&r.completedAt==='2026-10-22'));
  assert.ok(s.list('material_locations').every(r=>r.laydownId==='material-rack'&&!r.companyId));assert.equal(s.list('material_location_events').length,6);
  assert.equal(s.get('iso_materials',custom.id).customMaterial,true);
 });
@@ -35,18 +35,17 @@ test('a failing selection rolls back material locations, requests, counters, and
  const before=snapshot(s);assert.throws(()=>runAction(s,'service-materials',{requirementIds:selected,companyId:'service-coating'},actor),/laydown before/);assert.equal(snapshot(s),before);
  assert.throws(()=>runAction(s,'move-materials',{requirementIds:[selected[0],'missing-requirement'],laydownId:'material-rack'},actor),/could not be found/i);assert.equal(snapshot(s),before);
  const result=runAction(s,'service-materials',{requirementIds:[selected[0]],companyId:'service-coating'},actor),open=snapshot(s);
- for(const key of ['move-materials','service-materials'])assert.throws(()=>runAction(s,key,{requirementIds:[selected[0]],laydownId:'material-rack',companyId:'service-coating'},actor),/open service/);
+ assert.throws(()=>runAction(s,'service-materials',{requirementIds:[selected[0]],companyId:'service-coating'},actor),/open service/);
  assert.equal(snapshot(s),open);assert.ok(result.records!.length);
 });
-test('completion rejects wrong target types, earlier dates, and repeats with no partial changes',t=>{
+test('moving a material back from service rejects earlier dates with no partial changes and closes the request otherwise',t=>{
  const s=fixture(t),selected=requirements(s);runAction(s,'move-materials',{requirementIds:selected,laydownId:'material-rack'},actor);
  const material=runAction(s,'service-materials',{requirementIds:selected,companyId:'service-coating',date:'2026-10-21'},actor).records!;
  const spool=runAction(s,'service',{spoolIds:['spool-2'],companyId:'service-coating',name:'Name without services',date:'2026-10-21'},actor).records![0];assert.equal(spool.name,'Name without services');
  const before=snapshot(s);
- assert.throws(()=>runAction(s,'complete-material-service',{requestIds:[material[0].id,spool.id],date:'2026-10-22'},actor),/material service requests/);
- assert.throws(()=>runAction(s,'complete-service',{requestIds:[spool.id,material[0].id],date:'2026-10-22'},actor),/spool service requests/);
- assert.throws(()=>runAction(s,'complete-material-service',{requestIds:material.map(r=>r.id),date:'2026-10-20'},actor),/before the request/);assert.equal(snapshot(s),before);
- runAction(s,'complete-material-service',{requestIds:material.map(r=>r.id),date:'2026-10-22'},actor);const after=snapshot(s);assert.throws(()=>runAction(s,'complete-material-service',{requestIds:[material[0].id],date:'2026-10-23'},actor),/already completed/);assert.equal(snapshot(s),after);
+ assert.throws(()=>runAction(s,'move-materials',{requirementIds:selected,laydownId:'material-rack',date:'2026-10-20'},actor),/before the request/);assert.equal(snapshot(s),before);
+ runAction(s,'move-materials',{requirementIds:selected,laydownId:'material-rack',date:'2026-10-22'},actor);
+ assert.ok(material.every(r=>s.get('service_requests',r.id).status==='Completed'));assert.equal(s.get('service_requests',spool.id).status,'Requested');
 });
 test('material location scope preserves separate requirements for the same stock identity',t=>{
  const s=fixture(t),first=s.list('iso_materials')[0];const extra=s.create('iso_materials',{isoId:first.isoId,materialId:first.materialId,quantity:4},actor);

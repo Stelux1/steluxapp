@@ -13,7 +13,7 @@ import type { Field, Resource, Row } from './types.ts';
 /** Resources of this flow (the reference's Weld data, NDT data, Welding data and General data catalogs). */
 export const WELD_CATALOG_RESOURCES = ['weld_processes', 'weld_types', 'coatings', 'ndt_groups', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'companies', 'attachment_names'];
 /** Catalogs that carry "Enabled on this site". Suppliers, service companies and laydowns only gain the enablement. */
-export const SITE_ENABLED_RESOURCES = ['weld_types', 'coatings', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'suppliers', 'service_companies', 'laydowns'];
+export const SITE_ENABLED_RESOURCES = ['weld_types', 'coatings', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'suppliers', 'service_companies', 'laydowns', 'material_laydowns'];
 /** Tables the hosted database needs for this flow (created by the preparation step, see shared/planning.ts). */
 export const CATALOG_TABLES = ['ndt_defect_codes', 'catalog_sites'];
 /** The link records: one per catalog record and site that was switched explicitly. Written only by the server. */
@@ -25,10 +25,10 @@ export const ENABLED_COLUMN = 'Enabled on this site';
 export const enableLabel = (siteName: string) => `Enable on this site (${siteName})`;
 /**
  * The Add / Edit forms that carry the checkbox "Enable on this site (<site>)", with the box's starting value. The
- * reference ticks nothing; the MTO catalogs (service companies, laydown areas) keep the box they had. On every other
- * catalog the availability is changed only through Options.
+ * reference ticks nothing. On every other catalog (service companies, laydown areas and materials included) the
+ * availability is changed only through Options.
  */
-export const FORM_ENABLEMENT: Record<string, boolean> = { ndt_processes: false, qa_engineers: false, coatings: false, service_companies: true, laydowns: true };
+export const FORM_ENABLEMENT: Record<string, boolean> = { ndt_processes: false, qa_engineers: false, coatings: false };
 export const formEnablement = (key: string) => Object.hasOwn(FORM_ENABLEMENT, key);
 /**
  * Catalogs whose new records a user adds switched off on every main project until the Add form's box is ticked or
@@ -181,6 +181,10 @@ export const CATALOG_WORDING: Record<string, CatalogWording> = {
   qa_engineers: { title: 'QA/QC engineers', add: 'Add QA/QC engineer', edit: 'Edit QA/QC engineer', remove: 'Delete QA/QC engineer' },
   // Weld Pilot → Welder → Roles (capture weld__welder__roles.txt: title, #addRole, Edit role, #deleteRole, 5/20/50/100/500 rows).
   roles: { title: 'Roles', add: 'Add Role', edit: 'Edit role', remove: 'Delete role' },
+  // Weld Pilot / MTO Pilot -> Logistic (captures mto__logistic__service-companies, laydown-areas, laydown-materials): page titles, Add / Edit / Delete dialogs.
+  service_companies: { title: 'Service companies', add: 'Add company', edit: 'Edit company', remove: 'Delete company' },
+  laydowns: { title: 'Laydown areas', add: 'Add laydown', edit: 'Edit laydown', remove: 'Delete laydown' },
+  material_laydowns: { title: 'Laydown areas - Materials', add: 'Add laydown', edit: 'Edit laydown material', remove: 'Delete laydown' },
 };
 /**
  * Catalog pages whose row action reads "Delete" and asks "Are you sure?" in the hosted profile, as the reference does.

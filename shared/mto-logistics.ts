@@ -51,18 +51,20 @@ export function deliverMtoLogistics(availability: Availability, deliver: (availa
   // Records read by the pages below (the archives open on their resource paths, so they are pages as well).
   // Pick lists (the Pick List archive page) and stock are shared with the other MTO flows and delivered once in
   // `availabilityFor()` (shared/release.ts).
-  deliver(availability, 'service_requests', names('number name spoolId requirementId companyId laydownId materialLaydownId date completedAt status note includeDrawings'));
+  deliver(availability, 'service_requests', names('number name spoolId requirementId companyId laydownId materialLaydownId date requestedAt addedBy completedAt status note includeDrawings'));
   // Records without a page of their own.
   merge(availability, 'reservations', names('isoId requirementId materialId customMaterialId quantity date status note'));
   merge(availability, 'material_locations', names('requirementId laydownId companyId date'));
   merge(availability, 'material_location_events', names('number requirementId type laydownId companyId requestId date note'));
-  merge(availability, 'spools', names('paintSpec chemicalClean pwht laydownId serviceCompanyId'));
-  mergeAction(availability, 'service', names('spoolIds companyId name includeDrawings date note'));
-  mergeAction(availability, 'complete-service', names('requestIds laydownId date note'));
-  mergeAction(availability, 'move-spools', names('spoolIds laydownId date note'));
-  mergeAction(availability, 'move-materials', names('requirementIds laydownId date note'));
-  mergeAction(availability, 'service-materials', names('requirementIds companyId name materialLaydownId date note'));
-  mergeAction(availability, 'complete-material-service', names('requestIds materialLaydownId date note'));
+  // A spool carries its location only: Paint spec., PWHT and Chemical clean are read from its isometric (the stored values stay).
+  merge(availability, 'spools', names('laydownId serviceCompanyId'));
+  merge(availability, 'isometrics', names('paintSpec chemicalClean pwht'));
+  merge(availability, 'spool_moves', names('spoolId date type location laydownId requestId'));
+  // Service request (Company, Note, Include isometric drawings, selected spools; the name and the date are set by the server) and Move to laydown (one field).
+  mergeAction(availability, 'service', names('spoolIds companyId includeDrawings note'));
+  mergeAction(availability, 'move-spools', names('spoolIds laydownId'));
+  mergeAction(availability, 'move-materials', names('requirementIds laydownId'));
+  mergeAction(availability, 'service-materials', names('requirementIds companyId name date note'));
   for (const def of MTO_ACTION_DEFS) mergeAction(availability, def.key, def.fields.map(field => field.name));
 }
 
@@ -202,42 +204,136 @@ export const startedReports = (rows: Record<string, Row[]>, isoId: string) => [.
 
 // ---- Logistics -----------------------------------------------------------------------------------------------------
 
-export interface SpoolRow { spool: Row; iso: Row; projectId: string; location: { type: 'Service' | 'Laydown' | 'Transport'; id: string }; lastRequest?: Row; openRequest?: Row }
-/**
- * UNVERIFIED. "Currently on" shows the service company, the laydown, or "Transport" for a spool that is on neither
- * (for example one returned from service without a destination laydown).
- */
-export function spoolLocation(spool: Row): SpoolRow['location'] {
-  return spool.serviceCompanyId ? { type: 'Service', id: String(spool.serviceCompanyId) } : spool.laydownId ? { type: 'Laydown', id: String(spool.laydownId) } : { type: 'Transport', id: '' };
+export type LocationType = 'Service' | 'Laydown' | '';
+export interface SpoolRow {
+  spool: Row; iso: Row; projectId: string; location: { type: LocationType; id: string };
+  /** Paint spec., Chemical clean and PWHT are the isometric's: the spool record keeps only its name, diameter and location. */
+  paintSpec: string; chemicalClean: string; pwht: boolean; lastRequest?: Row; openRequest?: Row;
 }
-export function spoolRows(rows: Record<string, Row[]>, filters: { projectId?: string; isoId?: string } = {}): SpoolRow[] {
+/** "Currently on" is the service company, the laydown, or nothing (an empty cell that still opens the Spool history). */
+export function spoolLocation(spool: Row): SpoolRow['location'] {
+  return spool.serviceCompanyId ? { type: 'Service', id: String(spool.serviceCompanyId) } : spool.laydownId ? { type: 'Laydown', id: String(spool.laydownId) } : { type: '', id: '' };
+}
+/** The treatments of a spool, read from its isometric. */
+export const spoolTreatments = (iso: Row) => ({ paintSpec: String(iso.paintSpec ?? ''), chemicalClean: String(iso.chemicalClean ?? ''), pwht: iso.pwht === true });
+/** UNVERIFIED (the capture shows the same rows for "All" and "Hide finished"): a spool is finished when its isometric's preparation is complete. */
+export const spoolFinished = (iso: Row) => iso.prep_finished === true;
+export interface SpoolFilters { projectId?: string; isoId?: string; spoolName?: string; show?: 'all' | 'hideFinished' | string; paintSpec?: string; diameter?: string; chemicalClean?: string; currently?: string; lastReport?: string }
+const contains = (value: unknown, query?: string) => !query || String(value ?? '').toLowerCase().includes(query.trim().toLowerCase());
+/** The number of a request, compared as a number where it is one ("00002" before "00010"). */
+const requestRank = (row?: Row) => row ? String(row.number) : '';
+export function spoolRows(rows: Record<string, Row[]>, filters: SpoolFilters = {}): SpoolRow[] {
   const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
   const requests = active(rows, 'service_requests').filter(row => row.spoolId);
   return active(rows, 'spools').flatMap(spool => {
     const iso = isos.get(String(spool.isoId)); if (!iso || filters.projectId && iso.projectId !== filters.projectId || filters.isoId && iso.id !== filters.isoId) return [];
     const history = requests.filter(row => row.spoolId === spool.id).sort((a, b) => String(b.date).localeCompare(String(a.date)) || byCreation(b, a));
-    return [{ spool, iso, projectId: String(iso.projectId), location: spoolLocation(spool), lastRequest: history[0], openRequest: history.find(row => row.status !== 'Completed') }];
-  }).sort((a, b) => String(a.iso.isoNo).localeCompare(String(b.iso.isoNo)) || String(a.spool.name).localeCompare(String(b.spool.name)));
+    const entry: SpoolRow = { spool, iso, projectId: String(iso.projectId), location: spoolLocation(spool), ...spoolTreatments(iso), lastRequest: history[0], openRequest: history.find(row => row.status !== 'Completed') };
+    if (filters.spoolName && spool.name !== filters.spoolName || filters.show === 'hideFinished' && spoolFinished(iso)) return [];
+    if (!contains(entry.paintSpec, filters.paintSpec) || !contains(spool.diameter, filters.diameter) || !contains(entry.chemicalClean, filters.chemicalClean)) return [];
+    if (filters.currently && `${entry.location.type}:${entry.location.id}` !== filters.currently) return [];
+    if (filters.lastReport && requestRank(entry.lastRequest) !== filters.lastReport) return [];
+    return [entry];
+  }).sort(bySpoolList);
 }
+/** The default order of the Service request list: Last request ascending (spools without a request first), then ISO and spool. */
+const bySpoolList = (a: SpoolRow, b: SpoolRow) => requestRank(a.lastRequest).localeCompare(requestRank(b.lastRequest), 'en', { numeric: true })
+  || String(a.iso.isoNo).localeCompare(String(b.iso.isoNo), 'en', { numeric: true }) || String(a.spool.name).localeCompare(String(b.spool.name), 'en', { numeric: true });
+
+/** The options of the Spool filter: every spool name once. */
+export const spoolNames = (rows: Record<string, Row[]>) => [...new Set(active(rows, 'spools').map(row => String(row.name)))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+/** The options of the Request filter: the numbers of the spool requests. */
+export const spoolRequestNumbers = (rows: Record<string, Row[]>) => [...new Set(active(rows, 'service_requests').filter(row => row.spoolId).map(row => String(row.number)))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+
+// ---- Spool history ------------------------------------------------------------------------------------------------
+
+export interface SpoolMoveEntry { id: string; date: string; type: string; location: string }
+/** The Spool history of a spool: every laydown move and service request, newest first (Date / Type / Location). */
+export function spoolHistory(rows: Record<string, Row[]>, spoolId: string): SpoolMoveEntry[] {
+  return active(rows, 'spool_moves').filter(row => row.spoolId === spoolId).sort((a, b) => String(b.date).localeCompare(String(a.date)) || byCreation(b, a))
+    .map(row => ({ id: row.id, date: String(row.date), type: String(row.type), location: String(row.location || '') }));
+}
+/** What a service entry of the history says about its place: the request number and the company ("Ord. No. 00069 Farbara"). */
+export const serviceLocationText = (number: string, company: string) => `Ord. No. ${number} ${company}`.trim();
+
+// ---- Laydown content -----------------------------------------------------------------------------------------------
+
+export interface LaydownLine { key: string; spool: Row; iso: Row; projectId: string; treatments: ReturnType<typeof spoolTreatments>; services: number; date?: string }
+const servicesOf = (rows: Record<string, Row[]>, spoolId: string) => new Set(active(rows, 'service_requests').filter(row => row.spoolId === spoolId).map(row => String(row.number))).size;
+/** The spools that are on a laydown now, with the number of service requests each had. */
+export function laydownContent(rows: Record<string, Row[]>, laydownId: string): LaydownLine[] {
+  const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
+  return active(rows, 'spools').filter(spool => spool.laydownId === laydownId && !spool.serviceCompanyId).flatMap(spool => {
+    const iso = isos.get(String(spool.isoId)); if (!iso) return [];
+    return [{ key: spool.id, spool, iso, projectId: String(iso.projectId), treatments: spoolTreatments(iso), services: servicesOf(rows, spool.id) }];
+  }).sort((a, b) => String(a.iso.isoNo).localeCompare(String(b.iso.isoNo), 'en', { numeric: true }) || String(a.spool.name).localeCompare(String(b.spool.name), 'en', { numeric: true }));
+}
+/** The History of a laydown: one line for each time a spool was moved onto it, newest first. */
+export function laydownHistory(rows: Record<string, Row[]>, laydownId: string): LaydownLine[] {
+  const spools = new Map(active(rows, 'spools').map(row => [row.id, row])); const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
+  return active(rows, 'spool_moves').filter(row => row.type === 'Laydown' && row.laydownId === laydownId).sort((a, b) => String(b.date).localeCompare(String(a.date)) || byCreation(b, a)).flatMap(move => {
+    const spool = spools.get(String(move.spoolId)); const iso = spool && isos.get(String(spool.isoId)); if (!spool || !iso) return [];
+    return [{ key: move.id, spool, iso, projectId: String(iso.projectId), treatments: spoolTreatments(iso), services: servicesOf(rows, spool.id), date: String(move.date) }];
+  });
+}
+
+// ---- Requests ------------------------------------------------------------------------------------------------------
+
 /** What a request carries, for the archive: spool names or material numbers. */
 export function requestItem(rows: Record<string, Row[]>, request: Row): string {
   if (request.spoolId) return String(active(rows, 'spools').find(row => row.id === request.spoolId)?.name || 'Unavailable spool');
   const requirement = active(rows, 'iso_materials').find(row => row.id === request.requirementId);
   return requirement ? String(materialRecord(rows, requirement)?.materialNo || requirement.materialNo || 'Unavailable material') : 'Unavailable material';
 }
+/** Request numbers are five digits (00001, 00002, ...); the next one follows the highest five-digit number in use. Older numbers (SR-2026-0004) are shown as stored and never counted. */
+export function nextRequestNumber(numbers: unknown[]): string {
+  const highest = Math.max(0, ...numbers.map(number => /^\d{5}$/.test(String(number)) ? Number(number) : 0));
+  return String(highest + 1).padStart(5, '0');
+}
+/** The Request archive opens on the last 30 days up to the end of the current month ("2026-11-16" gives 2026-10-17 to 2026-11-30). */
+export function archiveDefaultRange(today: string): { from: string; to: string } {
+  const [year, month, day] = today.split('-').map(Number);
+  const text = (date: Date) => date.toISOString().slice(0, 10);
+  return { from: text(new Date(Date.UTC(year, month - 1, day - 30))), to: text(new Date(Date.UTC(year, month, 0))) };
+}
 
-export interface ArchiveRequest { number: string; date: string; name: string; companyId: string; kind: 'Spool' | 'Material'; items: string[]; status: string; completedAt: string; includeDrawings: boolean; openIds: string[] }
-/** Service requests grouped by request number (one request can carry several spools or materials), newest first. */
-export function requestArchive(rows: Record<string, Row[]>, filters: { from?: string; to?: string } = {}): ArchiveRequest[] {
+export interface ArchiveRequest {
+  number: string; date: string; dateTime: string; name: string; companyId: string; kind: 'Spool' | 'Material'; items: string[]; status: string; completedAt: string; includeDrawings: boolean; openIds: string[];
+  /** Records of the request (one per spool or material) and the person who made it. */
+  ids: string[]; addedBy: string; documents: Row[];
+}
+export interface ArchiveFilters { from?: string; to?: string; kind?: 'Spool' | 'Material'; sort?: 'asc' | 'desc' }
+/**
+ * Service requests grouped by request number (one request can carry several spools or materials). The archive lists one
+ * type at a time (default: spools), by date and time, newest first unless `sort` says ascending.
+ */
+export function requestArchive(rows: Record<string, Row[]>, filters: ArchiveFilters = {}): ArchiveRequest[] {
   const groups = new Map<string, Row[]>();
   for (const request of active(rows, 'service_requests')) groups.set(String(request.number), [...(groups.get(String(request.number)) || []), request]);
-  return [...groups].flatMap(([number, requests]) => {
-    const date = requests.map(request => String(request.date || '').slice(0, 10)).sort()[0] || '';
-    if (filters.from && date < filters.from || filters.to && date > filters.to) return [];
+  const attachments = active(rows, 'attachments').filter(row => row.entityType === 'service_requests');
+  const list = [...groups].flatMap(([number, requests]) => {
+    const kind = requests[0].spoolId ? 'Spool' as const : 'Material' as const;
+    const dateTime = requests.map(request => String(request.requestedAt || request.date || '')).sort()[0] || '';
+    const date = requests.map(request => String(request.date || '').slice(0, 10)).sort()[0] || dateTime.slice(0, 10);
+    if (filters.kind && kind !== filters.kind || filters.from && date < filters.from || filters.to && date > filters.to) return [];
     const open = requests.filter(request => request.status !== 'Completed');
     const status = !open.length ? 'Completed' : open.some(request => request.status === 'In progress') ? 'In progress' : 'Requested';
     const completed = requests.map(request => String(request.completedAt || '')).sort();
-    return [{ number, date, name: String(requests[0].name || ''), companyId: String(requests[0].companyId || ''), kind: requests[0].spoolId ? 'Spool' as const : 'Material' as const, items: requests.map(request => requestItem(rows, request)), status,
-      completedAt: open.length ? '' : completed[completed.length - 1] || '', includeDrawings: requests.some(request => request.includeDrawings === true), openIds: open.map(request => request.id) }];
-  }).sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number));
+    const ids = requests.map(request => request.id);
+    return [{ number, date, dateTime, name: String(requests[0].name || ''), companyId: String(requests[0].companyId || ''), kind, items: requests.map(request => requestItem(rows, request)), status,
+      completedAt: open.length ? '' : completed[completed.length - 1] || '', includeDrawings: requests.some(request => request.includeDrawings === true), openIds: open.map(request => request.id),
+      ids, addedBy: String(requests.find(request => request.addedBy)?.addedBy || ''), documents: attachments.filter(row => ids.includes(String(row.entityId))).sort(byCreation) }];
+  });
+  const order = (a: ArchiveRequest, b: ArchiveRequest) => (a.dateTime || a.date).localeCompare(b.dateTime || b.date) || a.number.localeCompare(b.number);
+  return list.sort(filters.sort === 'asc' ? order : (a, b) => order(b, a));
+}
+
+// ---- Spool export ---------------------------------------------------------------------------------------------------
+
+/** The columns of the Excel spool export (Service request -> Export), as on screen. */
+export const SPOOL_EXPORT_COLUMNS = ['Project', 'ISO', 'Spool', 'Diameter', 'Paint spec.', 'PWHT', 'Chemical clean', 'Currently on', 'Last request'];
+/** The rows of the spool export: the list in its default order (Last request ascending), after the same filters as the screen. */
+export function spoolExportLines(rows: Record<string, Row[]>, filters: SpoolFilters, label: (resource: string, id: string) => string): string[][] {
+  return spoolRows(rows, filters).map(entry => [label('projects', entry.projectId), String(entry.iso.isoNo), String(entry.spool.name), String(entry.spool.diameter ?? ''), entry.paintSpec, entry.pwht ? 'Yes' : 'No', entry.chemicalClean,
+    entry.location.id ? label(entry.location.type === 'Service' ? 'service_companies' : 'laydowns', entry.location.id) : '', entry.lastRequest ? String(entry.lastRequest.number) : '']);
 }

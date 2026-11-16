@@ -299,7 +299,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
   if (pathname === PQR_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('pqr')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
-  if (availability.features.includes('pilots') && MTO_LOGISTICS_PAGES.includes(pathname)) return true;
+  if (availability.features.includes('pilots') && (MTO_LOGISTICS_PAGES.includes(pathname) || /^\/materials\/laydowns\/[^/]+$/.test(pathname))) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);
 }
