@@ -623,3 +623,19 @@ test('an out-of-scope isometric gets the same answer on its PDF as on its record
   // A missing isometric stays "not found".
   assert.equal((await north.as.request('/pdf/lisl?isoId=iso-missing', { pilot: 'weld' })).status, 404);
 });
+
+test('the flange assembly record follows its flange: an account limited to one main project neither reads nor writes the record of another', async t => {
+  const f = await fixture(t);
+  const river = f.store.create('flanges', { isoId: 'iso-4', flange_id: 'FL-RIVER' }, SYSTEM), north = f.store.create('flanges', { isoId: 'iso-1', flange_id: 'FL-NORTH' }, SYSTEM);
+  for (const flange of [river, north]) f.store.create('flange_leak_tests', { flangeId: flange.id, test_type: 'Hydrostatic', result: 'Passed', tested_at: '2026-11-16T10:00' }, SYSTEM);
+  assert.deepEqual([river, north].map(flange => resolver(f.store).siteOf('flange_leak_tests', f.store.list('flange_leak_tests').find(row => row.flangeId === flange.id)!)), [RIVER, NORTH]);
+  const writer = f.profile('Flange site writer', { generalPermission: RW, materialsPermission: NONE, weldingPermission: RW });
+  const scoped = f.account('North fitter', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC }, { weld: [NORTH] });
+  await scoped.login();
+  const data = await json<Bootstrap>(await scoped.as.request('/bootstrap', { pilot: 'weld' }));
+  assert.deepEqual(data.rows.flange_leak_tests.map(row => row.flangeId), [north.id], 'only the record of the own main project is delivered');
+  const refused = await scoped.as.request(`/flanges/${river.id}/leak-tests`, { method: 'POST', pilot: 'weld', data: { test_type: 'Hydrostatic', result: 'Passed', tested_at: '2026-11-16T11:00' } });
+  assert.equal(refused.status, 403); assert.equal((await json(refused)).code, 'site');
+  assert.equal((await scoped.as.request(`/flanges/${north.id}/leak-tests`, { method: 'POST', pilot: 'weld', data: { test_type: 'Hydrostatic', result: 'Passed', tested_at: '2026-11-16T11:00' } })).status, 201);
+  assert.equal((await scoped.as.request(`/flanges/${river.id}/protocol-preview`, { pilot: 'weld' })).status, 403);
+});

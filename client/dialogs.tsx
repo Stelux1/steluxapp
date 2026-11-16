@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type FormEvent } from 'react';
-import { flangeInputErrors, flangeIsoPrefill } from '../shared/flanges.ts';
+import { flangeEditorResource, flangeFieldInDialog, flangeInputErrors, flangeIsoPrefill } from '../shared/flanges.ts';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ACTIONS } from './catalog.ts';
@@ -26,7 +26,7 @@ import { SCOPE_PILOTS, SITE_SCOPE_SPECIFIC, siteIdsField, siteScopeField } from 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:props.resourceKey==='certifications'?<CertificationRecordEditor record={props.record} onClose={props.onClose} fallback={<ResourceEditor {...props}/>}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = pilotResource(RESOURCE_MAP[resourceKey], usePilot()?.pilot.key); const { rows,user,refresh, notify, isoSummaries, canRecord, canRun, siteId } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=(user.availability?.features.includes('pilots')?hostedFieldOrder:(_key:string,list:ActionField[])=>list)(resourceKey,[...def.fields,...relationFields(resourceKey),...(enablement.form?[enablementField(enablement.siteName,resourceKey)]:[])]).filter(f=>!f.generated).filter(f=>!(resourceKey==='flanges'&&!record&&f.name==='finished'));
+  const pilotKey = usePilot()?.pilot.key; const def = flangeEditorResource(pilotResource(RESOURCE_MAP[resourceKey], pilotKey), Boolean(pilotKey)); const { rows,user,refresh, notify, isoSummaries, canRecord, canRun, siteId } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=(user.availability?.features.includes('pilots')?hostedFieldOrder:(_key:string,list:ActionField[])=>list)(resourceKey,[...def.fields,...relationFields(resourceKey),...(enablement.form?[enablementField(enablement.siteName,resourceKey)]:[])]).filter(f=>!f.generated).filter(f=>resourceKey!=='flanges'||flangeFieldInDialog(f.name,Boolean(pilotKey),Boolean(record)));
   // Welding wire (hosted): the certificate file is chosen in the same dialog and attached once the wire is saved.
   const [file, setFile] = useState<File | null>(null); const withFile = resourceKey === 'welding_wires' && Boolean(user.availability?.features.includes('pilots')) && canRecord(resourceKey, 'import', record);
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.form?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):FORM_ENABLEMENT[resourceKey]??true}:{})}));
