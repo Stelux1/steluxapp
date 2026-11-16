@@ -7,6 +7,7 @@ import { ACTIONS } from './catalog.ts';
 import { post, formatDate, formatNumber } from './api.ts';
 import { Badge, EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
 import { RecordEditor } from './dialogs.tsx';
+import { ReleasePdfButton } from './pdf-documents.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
 import { currentRevision } from '../shared/revisions.ts';
 import { priorityLabel } from '../shared/priority.ts';
@@ -215,7 +216,7 @@ export function ReleaseDocumentDialog({ releases, onClose }: { releases: Row[]; 
           : <p className="muted">The main project had no signature block titles when this release was made.</p>}
       </article>
     </div>
-    <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button>{printable && <button type="button" className="btn primary" onClick={() => window.print()}><Printer size={15}/>Print / Save as PDF</button>}</div>
+    <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button><ReleasePdfButton release={release}/>{printable && <button type="button" className="btn primary" onClick={() => window.print()}><Printer size={15}/>Print / Save as PDF</button>}</div>
   </Modal>;
 }
 

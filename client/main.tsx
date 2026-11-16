@@ -26,5 +26,6 @@ import './mto-procurement.css';
 import './mto-stock.css';
 import './inspections.css';
 import './mto-logistics.css';
+import './pdf-documents.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

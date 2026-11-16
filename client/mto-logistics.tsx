@@ -8,6 +8,7 @@ import { useWorkspace, activeRows } from './context.tsx';
 import { formatDate, formatNumber, post, type ApiError } from './api.ts';
 import { Badge, EmptyState, FieldInput, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
+import { PickListPdfButton } from './pdf-documents.tsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const includes = (values: unknown[], query: string) => !query || values.some(value => String(value ?? '').toLowerCase().includes(query.toLowerCase()));
@@ -126,7 +127,7 @@ export function PickListArchive() {
       <TableScroll><table className="data-table execution-table"><thead><tr><th>Date</th><th>Report No.</th><th>Project</th><th>ISO No</th><th>Taken?</th><th className="actions-cell">Options</th></tr></thead>
         <tbody>{reports.map(report => <tr key={report.reportNo}><td>{formatDate(report.date)}</td><td><button className="record-link" onClick={() => { setError(''); setOpen(report); }}>{report.reportNo}</button></td><td>{label('projects', report.projectId)}</td>
           <td><button className="record-link" onClick={() => openRecord('isometrics', report.isoId)}>{isoNo(report.isoId)}</button></td><td><Badge color={report.taken ? 'green' : 'amber'}>{report.taken ? 'Yes' : 'No'}</Badge></td>
-          <td className="actions-cell"><button className="btn small" onClick={() => { setError(''); setOpen(report); }}>View</button></td></tr>)}</tbody></table></TableScroll>
+          <td className="actions-cell"><button className="btn small" onClick={() => { setError(''); setOpen(report); }}>View</button> <PickListPdfButton reportNo={report.reportNo}/></td></tr>)}</tbody></table></TableScroll>
       {!reports.length && <EmptyState title="No pick lists found" description="Pick lists appear here when an isometric is started in Isometric execution. Change the dates or project to see more."/>}
       <div className="table-footer"><span>{reports.length} pick list{reports.length === 1 ? '' : 's'}</span><span>A pick list issues its materials from stock when it is marked as taken.</span></div>
     </section>
@@ -134,7 +135,7 @@ export function PickListArchive() {
       <div className="modal-body"><Failure message={error} onClose={() => setError('')}/>
         <TableScroll><table className="data-table"><thead><tr><th>Material</th><th>Description</th><th>Quantity</th><th>Charge / heat no.</th><th>Taken?</th></tr></thead><tbody>{current.lines.map(line => { const material = materialRecord(rows, line);
           return <tr key={line.id}><td>{String(material?.materialNo || 'Unavailable material')}</td><td className="description-cell">{String(material?.description || '')}</td><td>{formatNumber(line.quantity, 3)} {String(material?.uom || '')}</td><td>{String(line.chargeNo || '—')}</td><td><Badge color={isTaken(line) ? 'green' : 'amber'}>{isTaken(line) ? 'Yes' : 'No'}</Badge></td></tr>; })}</tbody></table></TableScroll></div>
-      <div className="modal-footer"><button className="btn" onClick={() => setOpen(null)}>Close</button>
+      <div className="modal-footer"><button className="btn" onClick={() => setOpen(null)}>Close</button><PickListPdfButton reportNo={current.reportNo}/>
         {!current.taken && canRun('take-picklist') && <button className="btn primary" disabled={busy} onClick={() => void take(current)}>{busy && <Loader2 size={15} className="spin"/>}Mark as taken</button>}</div></Modal>}
   </div>;
 }

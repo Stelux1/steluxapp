@@ -1,5 +1,6 @@
 import multer from 'multer';
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { Response } from 'express';
 import { AppError, type Store } from './store.ts';
@@ -23,6 +24,11 @@ export function documentStorage(store: Store, dataDir: string, mode: DocumentSto
     save(id: string, file: Express.Multer.File) {
       if (mode === 'database') store.db.prepare('INSERT INTO upload_blobs VALUES (?,?)').run(id, file.buffer.toString('base64'));
       else store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(id, file.filename);
+    },
+    /** Store bytes made by the server itself (a generated document) for an attachment record, the way an upload is stored. */
+    saveBytes(id: string, bytes: Uint8Array) {
+      if (mode === 'database') store.db.prepare('INSERT INTO upload_blobs VALUES (?,?)').run(id, Buffer.from(bytes).toString('base64'));
+      else { const filename = randomUUID(); writeFileSync(join(uploadsDir, filename), bytes); store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(id, filename); }
     },
     discard(file?: Express.Multer.File) { if (file?.path && existsSync(file.path)) unlinkSync(file.path); },
     /** The stored bytes of an attachment, or null when the file is unavailable (server-side use, e.g. documents that print signatures). */

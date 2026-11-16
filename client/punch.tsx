@@ -7,6 +7,7 @@ import { activeRows, useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
 import { RecordHistory, TablePage } from './records.tsx';
 import { SignaturePad } from './signatures.tsx';
+import { PunchListPdfButton } from './pdf-documents.tsx';
 import {
   PUNCH_FILE_LIMIT, PUNCH_FILE_TYPES, PUNCH_LETTERS, PUNCH_PROGRESS_OPTIONS, PUNCH_SIGN_OFF_DOCUMENT, PUNCH_TYPES, SIGNER_TYPES, canTransition, isOverdue, matchesPunchKpi, punchCategory,
   punchCategoryLabel, punchCounts, punchFinishErrors, punchInputErrors, punchKind, punchKpis, punchStatus, punchToday, type PunchKpiKey, type PunchTransition,
@@ -65,6 +66,7 @@ function PunchList() {
     <div className="page-heading"><div><div className="eyebrow">WELDING · RELEASES</div><h1>{def.title}<span className="heading-count">{items.length}</span></h1><p>Pre-punch and punch items of the isometrics and projects, from the report to the sign-off and the approval.</p></div>
       <div className="heading-actions">
         {printable && <button className="btn" onClick={() => window.print()}><Printer size={16}/>Print</button>}
+        <PunchListPdfButton filters={{ projectId: project, punchType: kind, category: letter, kpi, q }}/>
         {exportable && <Dropdown label="Export punch items" trigger={<span className="btn"><Download size={16}/>Export</span>}><a href={exportUrl('csv')}>CSV file</a><a href={exportUrl('xlsx')}>Excel file</a></Dropdown>}
         {creatable && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add item</button>}
       </div></div>

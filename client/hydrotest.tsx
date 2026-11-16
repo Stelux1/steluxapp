@@ -6,6 +6,7 @@ import { api, apiUrl, formatDate, formatNumber } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Badge, EmptyState, Modal, SearchInput, TableScroll, revealInvalidField } from './components.tsx';
 import { RecordEditor, WorkflowDialog } from './dialogs.tsx';
+import { HydrotestPdfButton } from './pdf-documents.tsx';
 
 type Tab = 'systems' | 'spools';
 type Dialog =
@@ -83,7 +84,7 @@ function TestSystemView({ system, onBack, setDialog }: { system: Row; onBack: ()
       {requests.map(request => { const docs = activeRows(rows, 'attachments').filter(file => file.entityType === 'hydrotest_requests' && file.entityId === request.id).length; return <tr key={request.id}><td>{String(request.recordNo)}</td><td>{formatDate(request.date)}</td><td>{String(request.requiredPressure || '—')}</td><td>{String(request.actualPressure || '—')}</td><td>{request.result ? <Badge color={request.result === 'Passed' ? 'green' : 'red'}>{String(request.result)}</Badge> : <Badge color="amber">Not recorded</Badge>}</td>
         <td><div className="hydrotest-options">{canRecord('hydrotest_requests', 'edit', request) && <button className="btn small" onClick={() => setDialog({ kind: 'editor', resource: 'hydrotest_requests', record: request })} aria-label={`Edit hydrotest request ${request.recordNo}`}><Pencil size={14}/>Edit</button>}
           {canRun('hydrotest-result', {}) && <button className="btn small" onClick={() => setDialog({ kind: 'action', key: 'hydrotest-result', defaults: { requestId: request.id, result: request.result || 'Passed', actualPressure: request.actualPressure || '', date: request.date || undefined, testStart: request.testStart || '', testEnd: request.testEnd || '' } })} aria-label={`Record result of hydrotest request ${request.recordNo}`}><ClipboardCheck size={14}/>Record result</button>}
-          <button className="btn small" onClick={() => setDialog({ kind: 'documents', request })} aria-label={`Documents of hydrotest request ${request.recordNo}`}><Paperclip size={14}/>Documents{docs ? ` (${docs})` : ''}</button></div></td></tr>; })}
+          <button className="btn small" onClick={() => setDialog({ kind: 'documents', request })} aria-label={`Documents of hydrotest request ${request.recordNo}`}><Paperclip size={14}/>Documents{docs ? ` (${docs})` : ''}</button><HydrotestPdfButton request={request}/></div></td></tr>; })}
     </tbody></table></TableScroll> : <EmptyState title="No hydrotest request yet" description="Add a request to record the equipment, the test pressure and the result for this test system."/>}
   </div>;
 }

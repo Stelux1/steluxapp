@@ -22,8 +22,8 @@ export async function api<T = Record<string, unknown>>(url: string, options: Req
   return body;
 }
 /** A file the account may read, as a blob (e.g. an image preview), requested with the current pilot. */
-export async function apiBlob(url: string): Promise<Blob> {
-  const response = await request(url);
+export async function apiBlob(url: string, options: RequestInit = {}): Promise<Blob> {
+  const response = await request(url, options);
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new ApiError(body.error || 'The file could not be loaded.', response.status, body.fields, body.code); }
   return response.blob();
 }

@@ -6,6 +6,7 @@ import { HYDROTEST_ACTION_SCOPES, HYDROTEST_SCOPES } from './hydrotest.ts';
 import { WELDER_DATA_SCOPES } from './welder-data.ts';
 import { inspectionActionScope, TYPED_INSPECTION_ACTIONS } from './inspections.ts';
 import { MTO_ACTION_SCOPES } from './mto-logistics.ts';
+import { PDF_REPORT_RESOURCES } from './pdf-report-keys.ts';
 
 export const PERMISSION_VERBS:PermissionVerb[]=['show','insert','edit','delete','export','import','print'];
 export const VERB_LABELS:Record<PermissionVerb,string>={show:'View',insert:'Add',edit:'Edit',delete:'Archive',export:'Export',import:'Import',print:'Print'};
@@ -129,6 +130,7 @@ export function canAction(user:User,key:string,data:Record<string,unknown>={}):b
  const [scope,verb]=actionScope(key,data);if(!user.capabilities){const area=areas.get(scope);return Boolean(area)&&user.permissions[area!.module]>=2;}return canScope(user,scope,scopeOperation(scope,verb));
 }
 export const REPORT_RESOURCES:Record<string,string[]>={lisl:['welds'],wdi:['welds'],welder:['welders'],tracer:['welds'],'open-welds':['welds'],'weld-cards':['welds'],'inspection-requests':['inspection_requests'],'inspection-results':['inspection_results'],releases:['releases'],mto:['iso_materials'],calculation:['calculation_lines'],'cut-list':['cut_list'],picklists:['picklists'],'order-status':['orders','order_lines'],'spool-locations':['spools'],rentals:['rentals'],'tool-movements':['tool_movements'],revisions:['revisions'],'isometric-status':['isometrics']};
+Object.assign(REPORT_RESOURCES,PDF_REPORT_RESOURCES);
 export function canReport(user:User,key:string,verb:PermissionVerb='show'){return (!user.availability||Object.hasOwn(user.availability.reports,key))&&(REPORT_RESOURCES[key]||[]).some(resource=>canResource(user,resource,verb));}
 export function moduleSummary(rules:PermissionRules):User['permissions']{
  const result={general:0,materials:0,welding:0,tools:0,settings:0};

@@ -7,6 +7,7 @@ import { ArchiveRecordDialog } from './archive-record.tsx';
 import { Badge, EmptyState, SearchInput, TableScroll } from './components.tsx';
 import { activeRows, useWorkspace } from './context.tsx';
 import { RecordEditor } from './dialogs.tsx';
+import { FlangeReportPdfButton } from './pdf-documents.tsx';
 import { usePilot } from './pilot.tsx';
 import { TablePage } from './records.tsx';
 
@@ -51,6 +52,7 @@ function FlangeManagement() {
     <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES</div><h1>Flange Management<span className="heading-count">{items.length}</span></h1><p>Bolted connections per isometric: bolting, tightening, inspection and commissioning.</p></div>
       <div className="heading-actions">
         {canRecord('flanges', 'export') && <button className="btn" onClick={exportCsv} disabled={!shown.length}><Download size={16}/>Export</button>}
+        <FlangeReportPdfButton filters={filters}/>
         <button className={`btn ${open || filterCount ? 'active-filter' : ''}`} aria-expanded={open} aria-controls="flange-filters" onClick={() => setOpen(v => !v)}><SlidersHorizontal size={16}/>Filter{filterCount > 0 && <span className="count-pill">{filterCount}</span>}</button>
         {creatable && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add flange</button>}
       </div></div>

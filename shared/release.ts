@@ -12,6 +12,7 @@ import { deliverMtoMaterials } from './mto-materials.ts';
 import { PROCUREMENT_ACTION_FIELDS, PROCUREMENT_PATHS, PROCUREMENT_RESOURCE_FIELDS } from './mto-procurement.ts';
 import { deliverMtoStock } from './mto-stock.ts';
 import { deliverMtoLogistics, MTO_LOGISTICS_PAGES } from './mto-logistics.ts';
+import { PDF_REPORT_RESOURCES } from './pdf-report-keys.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -184,6 +185,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.features.push('project-planning', 'pilots');
     // NDT per weld, tracers, repairs, visual inspection, Pre-HT / PWHT and the NDT/PWHT Manager (shared/inspections.ts).
     deliverInspections(availability, deliverResource);
+    // Operational PDF documents (server/pdf/operational-documents.ts): access keys only, no report columns.
+    for (const key of Object.keys(PDF_REPORT_RESOURCES)) availability.reports[key] = [];
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
   return availability;

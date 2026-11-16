@@ -4,6 +4,7 @@ import type { documentStorage } from '../documents.ts';
 import { currentSignature } from '../signatures.ts';
 import { companyForDocuments } from './company.ts';
 import { lislPdf, type LislVariant } from './lisl.ts';
+import { OPERATIONAL_DOCUMENTS } from './operational-documents.ts';
 import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
 import type { Row, User } from '../../shared/types.ts';
 
@@ -16,15 +17,35 @@ export interface PdfRequest {
   user: User; iso: Row; rows: Record<string, Row[]>;
   query: Record<string, string>; now: Date;
 }
-export interface PdfResult { bytes: Uint8Array; /** Without extension. */ fileName: string }
+export interface PdfResult {
+  bytes: Uint8Array; /** Without extension. */ fileName: string;
+  /** Records the document can be attached to (see `attachable`): their type and ids, all readable by the account. */
+  attachTo?: { entityType: string; ids: string[] };
+}
 /**
  * A downloadable document. `report` is the report key whose access rules apply (`canReport(user, report, 'export')`);
  * another agent adds a document by appending one entry to PDF_DOCUMENTS.
  */
 export interface PdfDocumentDefinition {
-  key: string; title: string; report: string;
+  key: string; title: string; report: string; scope?: 'isometric';
   build(request: PdfRequest): Promise<PdfResult>;
 }
+/**
+ * What a document of its own record (a request, a release, a pick list, a filtered list) may use: the records the account
+ * may read, the isometrics and projects enabled in the current pilot, and the query. Every record a document prints must
+ * trace back to `isoIds` (or, for project-related records, `projectIds`).
+ */
+export interface PdfScopedRequest {
+  store: Store; documents: ReturnType<typeof documentStorage>; user: User;
+  rows: Record<string, Row[]>; query: Record<string, string>; now: Date;
+  isometrics: Row[]; isoIds: Set<string>; projectIds: Set<string>;
+}
+/** A document that is not about one isometric from the query (`GET /api/pdf/:key?…` without `isoId`). `attachable`: `POST` also stores the file on `attachTo`. */
+export interface PdfScopedDefinition {
+  key: string; title: string; report: string; scope: 'scoped'; attachable?: { documentType: string };
+  build(request: PdfScopedRequest): Promise<PdfResult>;
+}
+export type AnyPdfDefinition = PdfDocumentDefinition | PdfScopedDefinition;
 
 const flag = (value: string | undefined, fallback: boolean) => value === undefined || value === '' ? fallback : ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -49,8 +70,9 @@ const lisl = (key: string, title: string, variant: LislVariant, suffix: string):
   },
 });
 
-export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
+export const PDF_DOCUMENTS: AnyPdfDefinition[] = [
   lisl('lisl', 'LISL Report', 'a4', ''),
   lisl('lisl-a3', 'LISL Report (A3)', 'a3', '-A3'),
   lisl('lisl-blank', 'Blank LISL template', 'blank', '-template'),
+  ...OPERATIONAL_DOCUMENTS,
 ];
