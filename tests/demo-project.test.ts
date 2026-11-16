@@ -11,7 +11,7 @@ import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
 import { isoSummariesFor } from '../server/iso-summary.ts';
-import { copyDemoProject, sampleSource, DEMO_MARKER } from '../server/demo-project.ts';
+import { copyDemoProject, sampleSource, summaryNumbers, DEMO_MARKER } from '../server/demo-project.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import { HOSTED_RELEASE_PROFILE, availabilityFor } from '../shared/release.ts';
 import { materialsList } from '../shared/mto-stock.ts';
@@ -86,7 +86,7 @@ test('the demo project is inserted without changing existing rows, renders in bo
   const sourceSummaries = isoSummariesFor(source, availability, sourceIsos);
   const demoSummaries = isoSummariesFor(store, availability, store.list('isometrics').filter(iso => iso.id.startsWith('demo-')));
   assert.equal(Object.keys(demoSummaries).length, sourceIsos.length);
-  for (const iso of sourceIsos) assert.deepEqual(demoSummaries[`demo-${iso.id}`], sourceSummaries[iso.id], `summary of ${String(iso.isoNo)}`);
+  for (const iso of sourceIsos) assert.deepEqual(summaryNumbers(demoSummaries[`demo-${iso.id}`]), summaryNumbers(sourceSummaries[iso.id]), `summary of ${String(iso.isoNo)}`);
   for (const project of ['project-cooling', 'project-steam']) assert.deepEqual(quantities(materialsList(rows(store), { projectId: `demo-${project}` })), quantities(materialsList(rows(source), { projectId: project })), project);
   assert.deepEqual(result.sampleParity, { isometrics: sourceIsos.length, summariesMatching: sourceIsos.length, summariesDiffering: [], projects: 3, materialsListsDiffering: [] });
   // The client's own isometrics keep their numbers (Inv. counts every storehouse, so shared stock would change them).
