@@ -604,7 +604,8 @@ test('every operational document has an access key that names a resource, and no
 
 test('Visual inspection report: the main project switch Visual Inspection Ver 2 decides the header lines (version 1: Doc.No. & Rev.No. and Procedure No.; version 2: VT type 2 lines and the VT 2 prefix)', async t => {
   const f = await fixture(t);
-  const site = f.store.list('sites')[0];
+  // The sample main project with the VT document settings (the sites share one creation time, so list order does not tell).
+  const site = f.store.list('sites').find(row => row.vtDocNo === 'VT-NFY-01 rev B')!;
   const off = f.store.update('sites', site.id, { vt2Enabled: false }, site._version, SYSTEM);
   const v1 = await get(f, 'visual-report?reportNo=VT-2026-014');
   for (const label of ['VT-NFY-01 rev B', 'VT Procedure No.', 'PR-VT-004']) assert.ok(v1.includes(label), label);
