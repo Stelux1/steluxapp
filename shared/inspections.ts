@@ -66,8 +66,11 @@ export const INSPECTION_RESULT_FIELDS: Field[] = [
   { name: 'itp', label: 'ITP', type: 'select', options: ['ITP 1', 'ITP 2'], hidden: true }, text('activityNo', 'Activity No.'),
   { name: 'engineerId', label: 'QA/QC engineer', type: 'ref', ref: 'qa_engineers', hidden: true }, text('customNo', 'Custom No.'),
   text('preReportNo', 'Pre report number'), { name: 'checked', label: 'Check', type: 'checkbox', default: false, hidden: true },
+  // The NA block of the NDT dialog (one per weld): stored on the request's NA results together with NA length and defect type.
+  { name: 'welderForErrorId', label: 'Welder for error', type: 'ref', ref: 'welders', hidden: true },
 ];
-export const INSPECTION_REQUEST_FIELDS: Field[] = [text('processes', 'NDT processes')];
+/** `welderId`: the welder chosen in the NDT Pre dialog (reference "Welder", required there). */
+export const INSPECTION_REQUEST_FIELDS: Field[] = [text('processes', 'NDT processes'), { name: 'welderId', label: 'Welder', type: 'ref', ref: 'welders', hidden: true }];
 /** Added choices: visual inspection may record "Not applicable" per weld. */
 export const EXTRA_RESULT_OPTION = 'Not applicable';
 /** Visual report saved without a result for any weld (client and server). */
@@ -86,8 +89,13 @@ export const weldRequests = (requests: Row[] | null | undefined, weldId: string,
 export const currentRequest = (requests: Row[] | null | undefined, weldId: string, type: string) => weldRequests(requests, weldId, [type]).find(row => row.status !== 'Cancelled');
 /** Latest outcome of one stored type. */
 export const latestResult = (results: Row[] | null | undefined, weldId: string, type: string) => weldResults(results, weldId, [type])[0];
-/** The weld's latest NDT or NDT Pre outcome is not accepted. */
-export const notAccepted = (weld: Row, results: Row[] | null | undefined) => NDT_TYPES.some(type => latestResult(results, weld.id, type)?.result === 'Rejected');
+/** ReWeld? is ticked on the results of the request the latest result belongs to (the dialog stores it with the NA). */
+const rewelded = (results: Row[] | null | undefined, latest: Row) => live(results).some(row => row.weldId === latest.weldId && row.type === latest.type && textOf(row.requestId) === textOf(latest.requestId) && row.reweld === true);
+/**
+ * The weld's latest NDT or NDT Pre outcome is not accepted: its latest result is NA, or ReWeld? is ticked on that
+ * request (reference weld 002: Initial NA, Remaining Accepted, ReWeld? ticked counts as rejected and expects a repair).
+ */
+export const notAccepted = (weld: Row, results: Row[] | null | undefined) => NDT_TYPES.some(type => { const latest = latestResult(results, weld.id, type); return Boolean(latest) && (latest!.result === 'Rejected' || rewelded(results, latest!)); });
 const accepted = (weld: Row, results: Row[] | null | undefined) => NDT_TYPES.some(type => latestResult(results, weld.id, type)?.result === 'Accepted') && !notAccepted(weld, results);
 
 // ----- requirement and cell state ------------------------------------------------------------------------------
@@ -150,13 +158,32 @@ export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellR
 
 // ----- repairs -------------------------------------------------------------------------------------------------
 
-/** Repair welds made for a weld (`repairOfId`), oldest first. */
-export const repairsOf = (weld: Row, welds: Row[]) => live(welds).filter(row => row.repairOfId === weld.id).sort((a, b) => textOf(a._createdAt).localeCompare(textOf(b._createdAt)) || textOf(a.weldNo).localeCompare(textOf(b.weldNo)));
+/** `010R2` → { base: '010', n: 2 }; the reference also writes `001_2 R1` (with a space). */
+export function repairNumberParts(weldNo: unknown): { base: string; n: number } | null {
+  const match = /^(.+?)\s*R(\d+)$/i.exec(textOf(weldNo));
+  return match && Number(match[2]) > 0 ? { base: match[1].trim(), n: Number(match[2]) } : null;
+}
+const sameNumber = (a: unknown, b: unknown) => textOf(a).replace(/\s+/g, '').toLowerCase() === textOf(b).replace(/\s+/g, '').toLowerCase();
+/**
+ * The weld a repair weld repairs: `repairOfId` (repair welds made by the repair action), otherwise by number on the
+ * same isometric — a weld added by hand as `<no>R1` repairs `<no>`, `<no>R2` repairs `<no>R1` (or `<no>` when there is
+ * no R1). The reference never creates the repair weld itself (weld-inspections-009).
+ */
+export function repairParent(weld: Row, welds: Row[]): Row | undefined {
+  const rows = live(welds);
+  if (textOf(weld.repairOfId)) return rows.find(row => row.id === weld.repairOfId);
+  const parts = repairNumberParts(weld.weldNo); if (!parts) return undefined;
+  const onIso = rows.filter(row => row.id !== weld.id && row.isoId === weld.isoId);
+  for (let n = parts.n - 1; n >= 1; n--) { const previous = onIso.find(row => sameNumber(row.weldNo, `${parts.base}R${n}`)); if (previous) return previous; }
+  return onIso.find(row => sameNumber(row.weldNo, parts.base));
+}
+/** Repair welds made for a weld (`repairOfId` or numbered `<no>R<n>`), oldest first. */
+export const repairsOf = (weld: Row, welds: Row[]) => live(welds).filter(row => row.id !== weld.id && repairParent(row, welds)?.id === weld.id).sort((a, b) => textOf(a._createdAt).localeCompare(textOf(b._createdAt)) || textOf(a.weldNo).localeCompare(textOf(b.weldNo)));
 /** The original weld of a repair chain (`010R2` → `010`). */
 export function repairRoot(weld: Row, welds: Row[]): Row {
   let current = weld; const seen = new Set<string>([weld.id]);
   for (;;) {
-    const parent = live(welds).find(row => row.id === current.repairOfId);
+    const parent = repairParent(current, welds);
     if (!parent || seen.has(parent.id)) return current;
     seen.add(parent.id); current = parent;
   }
@@ -176,14 +203,17 @@ export function repairChain(weld: Row, welds: Row[]): Row[] {
  */
 export function nextRepairNumber(weld: Row, welds: Row[]): string {
   const root = repairRoot(weld, welds);
-  let depth = 0; for (let current = weld; current.id !== root.id; current = live(welds).find(row => row.id === current.repairOfId)!) depth++;
+  let depth = 0; for (let current = weld; current.id !== root.id; current = repairParent(current, welds)!) depth++;
   const used = new Set(live(welds).filter(row => row.isoId === weld.isoId).map(row => textOf(row.weldNo).toLowerCase()));
   let n = depth + 1; while (used.has(`${textOf(root.weldNo)}R${n}`.toLowerCase())) n++;
   return `${textOf(root.weldNo)}R${n}`;
 }
-/** A repair weld is due: the latest NDT / NDT Pre result is not accepted and no repair weld exists for it yet. */
+/**
+ * A repair weld is due: the latest NDT / NDT Pre result is not accepted (NA, or ReWeld? ticked) and no repair weld
+ * exists for it yet. Nothing creates it automatically: the user adds `<no>R1` (see `nextRepairNumber`).
+ */
 export const repairDue = (weld: Row, welds: Row[], results: Row[] | null | undefined) => notAccepted(weld, results) && repairsOf(weld, welds).length === 0;
-/** Fields a repair weld takes over from its original: the weld definition, not its execution. */
+/** Fields a repair weld made by the explicit repair action takes over from its original: the weld definition, not its execution. */
 export const REPAIR_COPY_FIELDS = ['typeId', 'spoolId', 'wpsId', 'lengthMode', 'diameterId', 'dialen', 'ndtpercent', 'ndoReqPre', 'ndoReq', 'pwhtReqPre', 'pwhtReq', 'jointType', 'material1Id', 'material2Id', 'certificate1Id', 'certificate2Id', 'chargeNo1', 'chargeNo2', ...INSPECTION_MASS_EDIT_FIELDS];
 export interface RepairState { open: boolean; original: Row; repair?: Row; }
 /**
@@ -193,7 +223,7 @@ export interface RepairState { open: boolean; original: Row; repair?: Row; }
  */
 export function repairState(weld: Row, welds: Row[], results: Row[] | null | undefined): RepairState | null {
   if (!notAccepted(weld, results)) return null;
-  const parent = live(welds).find(row => row.id === weld.repairOfId);
+  const parent = repairParent(weld, welds);
   if (parent && notAccepted(parent, results)) return null;
   const chain = repairChain(weld, welds);
   return { open: !chain.some(row => accepted(row, results)), original: weld, repair: chain.at(-1) };
@@ -214,22 +244,110 @@ export function tracerSummary(weld: Row, welds: Row[], results: Row[] | null | u
   const tracers = source ? tracersOf(source, welds) : [];
   return { source, tracers, required: TRACERS_REQUIRED, needed: Boolean(source) && tracers.length < TRACERS_REQUIRED, text: `${tracers.length} linked of ${TRACERS_REQUIRED} required` };
 }
-/** Why a set of tracer welds cannot be linked to `weld`, or '' when it can. An empty set unlinks all tracers. */
-export function tracerError(weld: Row, tracerIds: string[], welds: Row[], results: Row[] | null | undefined): string {
+/** Rows the tracer group rule needs besides the welds and results. */
+export interface TracerContext { requests?: Row[] | null; isometrics?: Row[] | null; itps?: Row[] | null; }
+/** The weld's ITP / KNR: the number of the isometric's linked register entry, else its free-text ITP number. */
+export function weldItpCode(weld: Row, context: TracerContext): string {
+  const iso = live(context.isometrics).find(row => row.id === weld.isoId);
+  if (!iso) return '';
+  const linked = textOf(iso.itpId) ? live(context.itps).find(row => row.id === iso.itpId) : undefined;
+  return textOf(linked?.number) || textOf(iso.itpNo);
+}
+const welderIdsOf = (weld: Row) => [1, 2, 3, 4].map(side => textOf(weld[`welder${side}Id`])).filter(Boolean);
+/** The weld's own welders, the choices of "Welder for error". */
+export const weldWelderIds = welderIdsOf;
+/** "Welder for error" stored with the weld's latest NA result, if any. */
+export const welderForErrorOf = (weld: Row, results: Row[] | null | undefined) => textOf(live(results).filter(row => row.weldId === weld.id && NDT_TYPES.includes(textOf(row.type)) && textOf(row.welderForErrorId)).sort(newest)[0]?.welderForErrorId);
+/** A rejected weld's tracer group: welder ("Welder for error" when chosen, else the weld's first welder), WPS and ITP / KNR. */
+export interface TracerGroup { welderId: string; wpsId: string; itpCode: string; }
+export function tracerGroup(weld: Row, results: Row[] | null | undefined, context: TracerContext, welderId?: string): TracerGroup {
+  return { welderId: textOf(welderId) || welderForErrorOf(weld, results) || welderIdsOf(weld)[0] || '', wpsId: textOf(weld.wpsId), itpCode: weldItpCode(weld, context) };
+}
+/** A weld belongs to a group when the group's welder welded it and its WPS and ITP / KNR are the group's. */
+export const inTracerGroup = (weld: Row, group: TracerGroup, context: TracerContext) => Boolean(group.welderId) && welderIdsOf(weld).includes(group.welderId) && textOf(weld.wpsId) === group.wpsId && weldItpCode(weld, context) === group.itpCode;
+/** A weld has an NDT or NDT Pre request (not cancelled) or result: as a tracer it is locked, as a candidate it is not offered. */
+export const hasNdtActivity = (weld: Row, context: TracerContext, results: Row[] | null | undefined) => live(context.requests).some(row => row.weldId === weld.id && NDT_TYPES.includes(textOf(row.type)) && row.status !== 'Cancelled') || live(results).some(row => row.weldId === weld.id && NDT_TYPES.includes(textOf(row.type)) && textOf(row.result) !== '');
+export const TRACER_LOCKED_HINT = 'Current tracer is locked because a request or result already exists.';
+export const TRACER_REMOVABLE_HINT = 'Current tracer. You can deselect it because no request/result exists yet.';
+export const TRACER_MAX_TEXT = `You can select at most ${TRACERS_REQUIRED} tracers per rejected weld.`;
+export const TRACER_PANEL_NOTE = `Assign up to ${TRACERS_REQUIRED} tracer welds per rejected weld in this welder / WPS / ITP-KNR group.`;
+export const TRACER_SELECT_TEXT = `Select up to ${TRACERS_REQUIRED} tracers for this rejected weld.`;
+export const TRACER_NO_CANDIDATES = 'No candidate welds are currently available for this group.';
+
+/**
+ * Why a set of tracer welds cannot be linked to `weld`, or '' when it can. An empty set unlinks all tracers.
+ * With `context` (the server and the NDT dialog always pass it) the reference rules apply as well: a current tracer
+ * with a request or result cannot be removed, and a newly linked tracer must belong to the weld's welder / WPS /
+ * ITP-KNR group and have no NDT request or result yet. `pending`: the weld's NA is saved in the same transaction.
+ */
+export function tracerError(weld: Row, tracerIds: string[], welds: Row[], results: Row[] | null | undefined, context?: TracerContext & { welderId?: string; pending?: boolean }): string {
+  const current = tracersOf(weld, welds);
+  if (context) {
+    const locked = current.find(tracer => !tracerIds.includes(tracer.id) && hasNdtActivity(tracer, context, results));
+    if (locked) return `Weld ${locked.weldNo} cannot be removed as a tracer because a request or result already exists.`;
+  }
   if (!tracerIds.length) return '';
   if (new Set(tracerIds).size !== tracerIds.length) return 'Choose each tracer weld once.';
-  if (tracerIds.length > TRACERS_REQUIRED) return `Link at most ${TRACERS_REQUIRED} tracer welds.`;
-  if (!notAccepted(weld, results)) return 'Tracer welds are linked to a weld whose latest NDT result is not accepted.';
+  if (tracerIds.length > TRACERS_REQUIRED) return TRACER_MAX_TEXT;
+  if (!context?.pending && !notAccepted(weld, results)) return 'Tracer welds are linked to a weld whose latest NDT result is not accepted.';
   if (isTracer(weld)) return 'A tracer weld cannot have tracers of its own.';
   const chain = new Set([repairRoot(weld, welds).id, ...repairChain(repairRoot(weld, welds), welds).map(row => row.id)]);
+  const group = context ? tracerGroup(weld, results, context, context.welderId) : undefined;
   for (const id of tracerIds) {
     const tracer = live(welds).find(row => row.id === id);
     if (!tracer) return 'A selected tracer weld is unavailable.';
     if (chain.has(tracer.id)) return `Weld ${tracer.weldNo} is the weld itself or one of its repairs.`;
     if (textOf(tracer.tracerOfId) && tracer.tracerOfId !== weld.id) return `Weld ${tracer.weldNo} is already a tracer for another weld.`;
     if (tracersOf(tracer, welds).length) return `Weld ${tracer.weldNo} has tracers of its own.`;
+    if (context && group && !current.some(row => row.id === id)) {
+      if (!inTracerGroup(tracer, group, context)) return `Weld ${tracer.weldNo} is not in this welder / WPS / ITP-KNR group.`;
+      if (hasNdtActivity(tracer, context, results)) return `Weld ${tracer.weldNo} already has an NDT request or result.`;
+    }
   }
   return '';
+}
+
+export interface TracerProposalWeld { id: string; weldNo: string; isoId: string; typeId: string; date: string; statusLabel: string; locked?: boolean; }
+export interface TracerProposalSource { source: TracerProposalWeld; pending: boolean; linked: number; expected: number; currentTracers: TracerProposalWeld[]; candidates: TracerProposalWeld[]; }
+export interface TracerProposal { group: TracerGroup; status: { rejectedWelds: number; expectedTracers: number; existingTracers: number; missingTracers: number }; sources: TracerProposalSource[]; }
+const proposalWeld = (weld: Row, extra: Partial<TracerProposalWeld> = {}): TracerProposalWeld => ({ id: weld.id, weldNo: textOf(weld.weldNo), isoId: textOf(weld.isoId), typeId: textOf(weld.typeId), date: textOf(weld.date), statusLabel: 'Open', ...extra });
+const dayNumber = (value: unknown) => { const time = Date.parse(textOf(value)); return Number.isFinite(time) ? time / 86400000 : Number.POSITIVE_INFINITY; };
+/**
+ * Server proposal of tracer welds for a rejected weld's group (reference ajax-weld-dashboard-tracers.php action=list):
+ * every not-accepted weld of the group is a source (the asked weld also while its NA is only entered, `pending`);
+ * per source its current tracers (locked once a request or result exists) and the candidates — welds of the group
+ * that are no source, not in the source's repair chain, not a tracer of another weld and have no NDT request or
+ * result yet — nearest weld date first (our default until the client answers which pool and order the reference uses).
+ */
+export function tracerProposal(weld: Row, welds: Row[], results: Row[] | null | undefined, context: TracerContext, options: { welderId?: string; pending?: boolean } = {}): TracerProposal {
+  const group = tracerGroup(weld, results, context, options.welderId);
+  const rows = live(welds);
+  const pending = Boolean(options.pending) && !notAccepted(weld, results);
+  const sourceRows = rows.filter(row => !isTracer(row) && (row.id === weld.id ? (pending || notAccepted(row, results)) : notAccepted(row, results) && inTracerGroup(row, group, context) && tracerGroup(row, results, context).welderId === group.welderId))
+    .sort((a, b) => Number(b.id === weld.id) - Number(a.id === weld.id) || textOf(a.weldNo).localeCompare(textOf(b.weldNo), 'en', { numeric: true }));
+  const sourceIds = new Set(sourceRows.map(row => row.id));
+  const sources = sourceRows.map(source => {
+    const chain = new Set([repairRoot(source, rows).id, ...repairChain(repairRoot(source, rows), rows).map(row => row.id)]);
+    const currentTracers = tracersOf(source, rows).map(tracer => proposalWeld(tracer, { locked: hasNdtActivity(tracer, context, results), statusLabel: hasNdtActivity(tracer, context, results) ? 'Requested' : 'Open' }));
+    const candidates = rows.filter(row => !sourceIds.has(row.id) && !chain.has(row.id) && !textOf(row.tracerOfId) && !tracersOf(row, rows).length && inTracerGroup(row, group, context) && !hasNdtActivity(row, context, results))
+      .sort((a, b) => Math.abs(dayNumber(a.date) - dayNumber(source.date)) - Math.abs(dayNumber(b.date) - dayNumber(source.date)) || textOf(a.weldNo).localeCompare(textOf(b.weldNo), 'en', { numeric: true }))
+      .map(row => proposalWeld(row));
+    return { source: proposalWeld(source), pending: source.id === weld.id && pending, linked: currentTracers.length, expected: TRACERS_REQUIRED, currentTracers, candidates };
+  });
+  const existing = sources.reduce((sum, entry) => sum + entry.linked, 0);
+  return { group, status: { rejectedWelds: sources.length, expectedTracers: sources.length * TRACERS_REQUIRED, existingTracers: existing, missingTracers: sources.reduce((sum, entry) => sum + Math.max(0, entry.expected - entry.linked), 0) }, sources };
+}
+
+/** Lines of the read-only "Tracer details" dialog (reference getWeldTracerDetail.php). */
+export interface TracerDetailWeld { weld: Row; clicked: boolean; results: { id: string; processId: string; label: string }[]; }
+export interface TracerDetail { source?: TracerDetailWeld; tracers: TracerDetailWeld[]; linked: number; expected: number; }
+export const TRACER_DETAIL_TEXTS = { title: 'Tracer details', original: 'Original rejected weld', linked: 'Linked tracer welds', noSource: 'No source weld link found for this tracer.', noTracers: 'No tracer welds linked to this source.', noNdt: 'No NDT results recorded.', clicked: 'Selected tracer', tracer: 'Tracer', ndtResults: 'NDT results' };
+export function tracerDetail(weld: Row, welds: Row[], results: Row[] | null | undefined): TracerDetail {
+  const summary = tracerSummary(weld, welds, results);
+  const lines = (row: Row, clicked: boolean): TracerDetailWeld => ({ weld: row, clicked, results: live(results).filter(item => item.weldId === row.id && item.type === 'NDT' && ['Accepted', 'Rejected'].includes(textOf(item.result))).sort((a, b) => (NDT_ROUNDS.find(r => r.key === a.round)?.index ?? 9) - (NDT_ROUNDS.find(r => r.key === b.round)?.index ?? 9)).map(item => ({ id: item.id, processId: textOf(item.processId), label: resultLabel(item.result) })) });
+  // A tracer without a source link (flagged by hand) is shown alone, as the reference does.
+  const tracers = summary.source ? summary.tracers : isTracer(weld) ? [weld] : [];
+  return { source: summary.source ? lines(summary.source, summary.source.id === weld.id) : undefined, tracers: tracers.map(row => lines(row, row.id === weld.id)), linked: tracers.length, expected: TRACERS_REQUIRED };
 }
 
 // ----- NDT/PWHT Manager ----------------------------------------------------------------------------------------
@@ -266,22 +384,53 @@ export const REQUEST_PREFIX = 'R';
 /** "Request number" carries the prefix R; empty means "generate one". */
 export const requestNumberError = (value: unknown) => { const number = textOf(value); return !number || (number.startsWith(REQUEST_PREFIX) && number.length <= 40) ? '' : 'Request numbers start with R and have at most 40 characters.'; };
 export interface RoundInput { round: string; processId?: string; filmNo?: string; reportNo?: string; date?: string; result?: string; naLength?: number | string | null; defectType?: string; reweld?: boolean; }
-/** Problems of one round of the NDT dialog by field, given the weld's length in mm (0 when unknown). */
-export function roundErrors(input: RoundInput, length = 0): Record<string, string> {
+/**
+ * Problems of one round (column) of the NDT dialog by field. NA length, Defect type, Welder for error and ReWeld? are
+ * one set per weld, not per round: see `naBlockErrors`.
+ */
+export function roundErrors(input: RoundInput): Record<string, string> {
   const errors: Record<string, string> = {};
   const result = textOf(input.result), round = NDT_ROUNDS.find(item => item.key === input.round);
   if (!round) return { round: 'Choose an examination round.' };
   if (result && !['Accepted', 'Rejected'].includes(result)) errors.result = 'Choose —, NA or Accepted.';
   if (result && !textOf(input.reportNo)) errors.reportNo = 'Enter the NDT Rp/Nr. for this result.';
   if (!result && (textOf(input.filmNo) || textOf(input.reportNo) || textOf(input.date))) errors.result = 'Film Nr., NDT Rp/Nr. and NDT date are saved with a result. Choose a result or clear them.';
-  const na = input.naLength === undefined || input.naLength === null || input.naLength === '' ? null : Number(input.naLength);
-  if (na !== null || textOf(input.defectType)) {
-    if (round.key !== 'Initial' || result !== 'Rejected') errors.naLength = 'NA length and defect type belong to an Initial result of NA.';
-    else if (na !== null && (!Number.isFinite(na) || na < 0 || (length > 0 && na > length))) errors.naLength = length > 0 ? `NA length must be between 0 and ${length} mm.` : 'NA length must be zero or greater.';
-  }
-  if (input.reweld === true && round.key !== 'Remaining') errors.reweld = 'ReWeld? belongs to the Remaining round.';
   if (textOf(input.date) && !/^\d{4}-\d{2}-\d{2}$/.test(textOf(input.date))) errors.date = 'Enter a valid NDT date.';
   return errors;
+}
+/**
+ * The NDT dialog's column lock (reference showNDO: Film Nr., NDT Rp/Nr. and NDT date read-only and NDT res. disabled
+ * in a column without an NDT process): a column takes values only once its NDT process is chosen.
+ */
+export const roundOpen = (input: Pick<RoundInput, 'processId'>) => textOf(input.processId) !== '';
+export const roundLockedError = (input: RoundInput) => !roundOpen(input) && (textOf(input.result) || textOf(input.filmNo) || textOf(input.reportNo) || textOf(input.date)) ? 'Choose the NDT process of this column before entering its values.' : '';
+/** At least one of the five NDT res. is NA (reference __wsappsNdoHasNaResult). */
+export const roundsHaveNa = (rounds: Pick<RoundInput, 'result'>[]) => rounds.some(round => textOf(round.result) === 'Rejected');
+export interface NaBlockInput { naLength?: number | string | null; defectType?: string; welderForErrorId?: string; reweld?: boolean; }
+const blank = (value: unknown) => value === undefined || value === null || textOf(value) === '';
+/**
+ * Problems of the NA block of the NDT dialog. NDT: NA length (mm, digits only), Defect type, Welder for error (one
+ * of the weld's own welders) and ReWeld? are entered only while at least one round is NA. NDT Pre: no NA block
+ * (its NA length is always disabled, reference __ndoShowNAPreUpdate).
+ */
+export function naBlockErrors(input: NaBlockInput, options: { pre: boolean; hasNa: boolean; length?: number; welderIds?: string[] }): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const given = !blank(input.naLength) || !blank(input.defectType) || !blank(input.welderForErrorId) || input.reweld === true;
+  if (options.pre) { if (given) errors.naLength = 'NDT Pre has no NA length, defect type, welder for error or ReWeld?.'; return errors; }
+  if (!options.hasNa) { if (given) errors.naLength = 'NA length, Defect type, Welder for error and ReWeld? are entered with a result of NA.'; return errors; }
+  if (!blank(input.naLength)) {
+    const value = textOf(input.naLength), length = options.length || 0;
+    if (!/^\d+$/.test(value)) errors.naLength = 'NA length is a whole number of millimetres.';
+    else if (length > 0 && Number(value) > length) errors.naLength = `NA length must be between 0 and ${Math.round(length * 10) / 10} mm.`;
+  }
+  if (!blank(input.welderForErrorId) && !(options.welderIds || []).includes(textOf(input.welderForErrorId))) errors.welderForErrorId = 'Welder for error must be one of the welders of this weld.';
+  return errors;
+}
+/** ReWeld? is ticked automatically when an NA is chosen on a weld of at most 3 inch (reference data-ndt-diameter-inches). */
+export function autoReweld(weld: Row, diameters: Row[] | null | undefined): boolean {
+  if (weld.lengthMode === 'Length in mm' || !textOf(weld.diameterId)) return false;
+  const inches = Number(live(diameters).find(row => row.id === weld.diameterId)?.sizeinch);
+  return Number.isFinite(inches) && inches > 0 && inches <= 3;
 }
 /** PDF only for NDT documents. */
 export const inspectionFileError = (documentType: unknown, name: string) => documentType === NDT_DOCUMENT && !/\.pdf$/i.test(name) ? 'NDT documents must be PDF files.' : '';
@@ -295,8 +444,8 @@ const welds = field('weldIds', 'Welds', { type: 'ref', ref: 'welds', multiple: t
 const date = field('date', 'Date', { type: 'date' });
 /** Actions of this flow; their dialogs live in `client/inspections.tsx`. Array inputs (`rounds`) are hidden here. */
 export const INSPECTION_ACTIONS: ActionDefinition[] = [
-  { key: 'ndt-weld', title: 'Create/Update NDT Request', module: 'welding', submit: 'Save', description: 'NDT location, request number and the five examination rounds of one weld.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('requestNo', 'Request number'), field('rounds', 'Rounds', { hidden: true })] },
-  { key: 'tracers', title: 'Tracer details', module: 'welding', submit: 'Save tracers', description: 'Link the tracer welds of a weld whose NDT result is not accepted.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true })] },
+  { key: 'ndt-weld', title: 'Create/Update NDT Request', module: 'welding', submit: 'Save', description: 'NDT location, the five examination rounds and the NA block of one weld.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('requestNo', 'Request number'), field('rounds', 'Rounds', { hidden: true }), field('welderId', 'Welder', { type: 'ref', ref: 'welders' }), field('naLength', 'NA length', { hidden: true }), field('defectType', 'Defect type', { hidden: true }), field('welderForErrorId', 'Welder for error', { type: 'ref', ref: 'welders', hidden: true }), field('reweld', 'ReWeld?', { type: 'checkbox', hidden: true }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true, hidden: true })] },
+  { key: 'tracers', title: 'Save tracers', module: 'welding', submit: 'Save tracers', description: 'Link the tracer welds of the rejected welds of a welder / WPS / ITP-KNR group.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds' }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true }), field('assignments', 'Tracer assignments', { hidden: true })] },
   { key: 'mass-inspection-request', title: 'Generate mass request', module: 'welding', submit: 'Create request', description: 'One request number for the selected welds, with the processes to include and a note.', fields: [field('type', 'Inspection type', { type: 'select', options: ['NDT PRE', 'NDT', 'PRE-HT', 'PWHT'], required: true }), welds, field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('pwhtProcessId', 'PWHT process', { type: 'ref', ref: 'pwht_processes' }), field('pwhtLocationId', 'PWHT location', { type: 'ref', ref: 'pwht_locations' }), date, field('note', 'Note', { type: 'textarea' })] },
   { key: 'inspection-upload', title: 'Upload NDT on multiple welds', module: 'welding', submit: 'Save results', description: 'One report number and result per round for every selected weld.', fields: [field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), welds, field('rounds', 'Rounds', { hidden: true }), date] },
   { key: 'pwht-upload', title: 'Upload Pre-HT/PWHT on multiple welds', module: 'welding', submit: 'Save', description: 'Pre-HT and PWHT report numbers for every selected weld.', fields: [welds, field('preReportNo', 'Pre report number'), field('reportNo', 'Report number'), field('checked', 'Check', { type: 'checkbox' }), date] },

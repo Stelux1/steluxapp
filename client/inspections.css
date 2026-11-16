@@ -13,6 +13,24 @@
 
 .inspection-rounds input, .inspection-rounds select { width: 100%; min-width: 110px; min-height: 34px; }
 .inspection-rounds th[scope="row"] { white-space: nowrap; text-align: left; }
+/* NDT dialog: the label column and five rounds fit the wide dialog's body (804 px) without horizontal scrolling;
+   on a phone the table keeps a readable minimum and scrolls inside its own frame. */
+.ndt-rounds { table-layout: fixed; width: 100%; min-width: 600px; }
+.ndt-rounds th, .ndt-rounds td { padding: 6px 4px; }
+.ndt-rounds th[scope="row"] { width: 96px; white-space: normal; text-align: left; }
+.ndt-rounds input, .ndt-rounds select { width: 100%; min-width: 0; min-height: 34px; padding-left: 6px; padding-right: 6px; text-overflow: ellipsis; }
+.ndt-rounds input[readonly] { background: var(--surface); }
+.ndt-welders p { margin: 0 0 6px; }
+.ndt-welders .inspection-readonly { display: block; min-height: 0; margin-top: 2px; }
+.ndt-na-block { margin-top: 12px; }
+.ndt-tracer-toggle { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; min-height: 32px; }
+.ndt-tracer-body { margin-top: 8px; }
+/* One candidate per line, the text wraps: weld numbers stay readable at 1024 px and on a phone (scn-SA-D5). */
+.ndt-tracer-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; margin-top: 6px; }
+.ndt-tracer-candidate { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.ndt-tracer-candidate input { margin-top: 3px; flex: none; }
+.ndt-tracer-candidate > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.ndt-tracer-results { margin: 4px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 .inspection-tick { color: var(--inspection-ok); }
 .inspection-readonly { margin: 6px 0 0; min-height: 34px; color: var(--ink); }
 .field-label { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }

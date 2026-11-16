@@ -9,6 +9,7 @@ import { basename, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Store, AppError } from './store.ts';
 import { runAction } from './workflows.ts';
+import { inspectionRules } from './inspections.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import { RELATIONS,relationFields } from '../shared/welding.ts';
@@ -242,6 +243,14 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id), true));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
+  });
+  // Tracer proposal of the NDT dialog (reference ajax-weld-dashboard-tracers.php action=list); saving goes through the tracers action.
+  app.get('/api/tracer-proposal', (req, res) => {
+    if (!ACTIONS.tracers || (availability && !availability.actions.tracers)) throw new AppError(404, 'This resource could not be found.');
+    checkResourcePermission(req, 'welds'); checkResourcePermission(req, 'inspection_results');
+    const query = { weldId: typeof req.query.weldId === 'string' ? req.query.weldId.slice(0, 80) : '', welderId: typeof req.query.welderId === 'string' ? req.query.welderId.slice(0, 80) : '', pending: req.query.pending === '1' };
+    checkResourcePermission(req, 'welds', 'show', access.record('welds', query.weldId));
+    res.json({ proposal: inspectionRules(store, actorOf(req)).proposal(query) });
   });
   app.post('/api/actions/:key', (req, res) => {
     const action = ACTIONS[String(req.params.key)]; if (!action || (availability && !availability.actions[action.key])) throw new AppError(404, 'This action does not exist.');
