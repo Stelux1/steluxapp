@@ -13,6 +13,8 @@ import { WeldsPanel } from './weld-entry.tsx';
 import { wdiProgress } from '../shared/wdi.ts';
 import { WdiProgress } from './wdi-progress.tsx';
 import { WeldDashboard } from './itp-dashboard.tsx';
+import { headerDate } from '../shared/weld-dashboard.ts';
+import { siteNumber } from '../shared/mto-logistics.ts';
 import { MtoDashboard } from './mto-dashboard.tsx';
 import { IsometricHeader, IsoStartedTag } from './iso-header.tsx';
 import { PdfReportsMenu } from './pdf-reports.tsx';
@@ -69,7 +71,7 @@ function SiteScopeEmpty({ pilotTitle }: { pilotTitle?: string }) {
 }
 
 export function ProjectOverview() {
-  const { rows, siteId, canRecord, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
+  const { rows, allRows, siteId, canRecord, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
   const [editor, setEditor] = useState(false);
   const site = rows.sites?.find(row => row.id === siteId), hosted = Boolean(pilot);
   const projects = activeRows(rows, 'projects'), isos = activeRows(rows, 'isometrics'), welds = activeRows(rows, 'welds');
@@ -82,7 +84,7 @@ export function ProjectOverview() {
     return { week: start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }), welds: welds.filter(weld => weld.date && new Date(String(weld.date)) >= start && new Date(String(weld.date)) <= end).length };
   });
   return <div className="page workflow-page project-overview">
-    <div className="page-heading"><div><div className="eyebrow">MAIN PROJECT · DASHBOARD</div><h1>{String(site?.name || 'Project overview')}</h1><p>Execution and traceability across this project's subprojects.</p></div><div className="heading-actions"><Link className="btn" to="/workspace/main-projects"><ArrowLeft size={16}/>All main projects</Link>{canRecord('projects', 'insert') && <button className="btn primary" onClick={() => setEditor(true)}><Plus size={16}/>Add subproject</button>}</div></div>
+    <div className="page-heading"><div>{pilot?.pilot.key === 'weld' ? <><h1>{String(site?.name || 'Project overview')}</h1><p>{headerDate()}</p>{siteId && <p className="muted">Site ID #{siteNumber(allRows.sites || [], siteId)}</p>}</> : <><div className="eyebrow">MAIN PROJECT · DASHBOARD</div><h1>{String(site?.name || 'Project overview')}</h1><p>Execution and traceability across this project's subprojects.</p></>}</div><div className="heading-actions"><Link className="btn" to="/workspace/main-projects"><ArrowLeft size={16}/>All main projects</Link>{canRecord('projects', 'insert') && <button className="btn primary" onClick={() => setEditor(true)}><Plus size={16}/>Add subproject</button>}</div></div>
     {pilot?.pilot.key === 'mto' ? <MtoDashboard/> : <>
     {!hosted && <div className="workflow-stats">{[
       ['Subprojects', projects.length, `${isos.length} isometrics`, FolderKanban], ['Registered welds', welds.length, `${welded} welded`, ScanLine], ['WDI total', formatNumber(wdi), 'Diameter inches · all registered welds', FileStack], ['NDT required', ndt, 'Welds marked for examination', ScanLine],

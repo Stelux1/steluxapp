@@ -6,6 +6,7 @@ import {
   processField, repairDue, roundErrors, roundLockedError, roundsHaveNa, naBlockErrors, tracerError, tracersOf, tracerProposal, weldWelderIds, type RoundInput, type TracerContext,
   VT_DOCUMENT, VT_ITPS, VT_MODES, VT_NO_WELDS, VT_TICK_ONE, nextVtSeq, vtGenerateError, vtMarks, vtMissingMessage, vtNumber, vtOpenWeldIds, vtWeldIds,
 } from '../shared/inspections.ts';
+import { groupTracerProposal } from '../shared/weld-dashboard.ts';
 
 /**
  * Server side of NDT per weld, mass requests and uploads, visual inspection, Pre-HT / PWHT and tracers. Runs inside the
@@ -192,11 +193,11 @@ export function inspectionRules(store: Store, actor: Actor) {
     }
     throw new AppError(422, 'This visual report operation is not available.');
   }
-  const tracerContext = (): TracerContext => ({ requests: store.list('inspection_requests'), isometrics: store.list('isometrics'), itps: store.list('itps') });
+  const tracerContext = (): TracerContext => ({ requests: store.list('inspection_requests'), isometrics: store.list('isometrics'), itps: store.list('itps'), weldTypes: store.list('weld_types') });
   /** Links exactly `wanted` as the tracers of `source` (reference rules in `tracerError`); linking sets NDT Req. on the tracer. */
-  function linkTracers(source: Row, wanted: string[], options: { pending?: boolean } = {}): Row[] {
+  function linkTracers(source: Row, wanted: string[], options: { pending?: boolean; welderId?: string } = {}): Row[] {
     const all = welds();
-    const error = tracerError(source, wanted, all, results(), { ...tracerContext(), pending: options.pending });
+    const error = tracerError(source, wanted, all, results(), { ...tracerContext(), pending: options.pending, welderId: options.welderId });
     if (error) throw new AppError(422, error, { tracerIds: error });
     for (const tracer of tracersOf(source, all)) if (!wanted.includes(tracer.id)) patch('welds', tracer, { tracer: false, tracerOfId: '' });
     // A tracer weld is examined: linking sets NDT Req. on it (INFERRED, see PARITY.md).
@@ -213,12 +214,24 @@ export function inspectionRules(store: Store, actor: Actor) {
     ensureRepair,
     /** The tracer proposal of the NDT dialog for a weld (GET /api/tracer-proposal). */
     proposal(query: Input) {
+      // The dashboard's Tracer proposal: one welder / WPS / ITP-KNR group of the compliance (welds the request may read).
+      if (query.group === true) {
+        const welderId = str(query.welderId); store.get('welders', welderId);
+        const list = (key: string) => scopeRows(key, store.list(key));
+        // The group of the dashboard's main project (`siteId`, only narrowing what the request may read); tracers may sit elsewhere.
+        const siteId = str(query.siteId), projects = new Set(list('projects').filter(project => !siteId || project.siteId === siteId).map(project => project.id));
+        const isoIds = new Set(list('isometrics').filter(iso => projects.has(String(iso.projectId))).map(iso => iso.id));
+        const rows = { welds: list('welds').filter(weld => isoIds.has(String(weld.isoId))), tracerWelds: list('welds'), isometrics: list('isometrics'), projects: list('projects'), weldTypes: list('weld_types'), welders: list('welders'), wps: list('wps'), itps: list('itps'), ndtProcesses: list('ndt_processes'), requests: list('inspection_requests'), results: list('inspection_results') };
+        const proposal = groupTracerProposal(rows, { welderId, wpsId: str(query.wpsId), itpId: str(query.itpId) }, { requests: rows.requests, isometrics: rows.isometrics, itps: rows.itps, weldTypes: rows.weldTypes });
+        if (!proposal) throw new AppError(404, 'This welder / WPS / ITP-KNR group has no welds.');
+        return proposal;
+      }
       const weld = store.get('welds', str(query.weldId));
       const welderId = str(query.welderId);
       if (welderId && !weldWelderIds(weld).includes(welderId)) throw new AppError(422, 'Welder for error must be one of the welders of this weld.');
       // Only welds the request may read: of its main project and of projects switched on for the pilot (sec1-004).
       const context = tracerContext();
-      const scoped: TracerContext = { requests: scopeRows('inspection_requests', context.requests || []), isometrics: scopeRows('isometrics', context.isometrics || []), itps: scopeRows('itps', context.itps || []) };
+      const scoped: TracerContext = { requests: scopeRows('inspection_requests', context.requests || []), isometrics: scopeRows('isometrics', context.isometrics || []), itps: scopeRows('itps', context.itps || []), weldTypes: context.weldTypes };
       return tracerProposal(weld, scopeRows('welds', welds()), scopeRows('inspection_results', results()), scoped, { welderId, pending: query.pending === '1' || query.pending === true });
     },
     run(key: string, data: Input): { resource: string; record?: Row; records?: Row[] } {
@@ -376,7 +389,10 @@ export function inspectionRules(store: Store, actor: Actor) {
         if (!assignments.length || assignments.some(([id]) => !id)) throw new AppError(422, 'Choose the rejected weld.');
         const chosen = assignments.flatMap(([, list]) => list);
         if (new Set(chosen).size !== chosen.length) throw new AppError(422, 'A weld can be the tracer of one rejected weld only.');
-        const linked = assignments.flatMap(([id, list]) => linkTracers(store.get('welds', id), list));
+        // From the dashboard: the group's welder (one of each rejected weld's welders) decides the tracer group.
+        const welderId = short(data.welderId, 'Welder');
+        if (welderId) for (const [id] of assignments) if (!weldWelderIds(store.get('welds', id)).includes(welderId)) throw new AppError(422, 'The welder must be one of the welders of each rejected weld.');
+        const linked = assignments.flatMap(([id, list]) => linkTracers(store.get('welds', id), list, { welderId: welderId || undefined }));
         return { resource: 'welds', records: linked };
       }
       throw new AppError(404, 'This action is not available.');

@@ -1,4 +1,5 @@
 import type { ActionDefinition, ActionField, Availability, Field, Row } from './types.ts';
+import { weldItpId } from './itp-dashboard.ts';
 
 /**
  * NDT, NDT Pre, visual inspection and Pre-HT / PWHT of welds (Weld Pilot). Pure functions over plain rows, shared by
@@ -248,11 +249,19 @@ export function tracerSummary(weld: Row, welds: Row[], results: Row[] | null | u
   return { source, tracers, required: TRACERS_REQUIRED, needed: Boolean(source) && tracers.length < TRACERS_REQUIRED, text: `${tracers.length} linked of ${TRACERS_REQUIRED} required` };
 }
 /** Rows the tracer group rule needs besides the welds and results. */
-export interface TracerContext { requests?: Row[] | null; isometrics?: Row[] | null; itps?: Row[] | null; }
-/** The weld's ITP / KNR: the number of the isometric's linked register entry, else its free-text ITP number. */
+export interface TracerContext { requests?: Row[] | null; isometrics?: Row[] | null; itps?: Row[] | null; weldTypes?: Row[] | null; }
+/**
+ * The weld's ITP / KNR. With `weldTypes` (the server passes them): the register entry the dashboard counts the weld under
+ * (`weldItpId`: a Field weld takes ITP No 2), '' when none is linked — the reference proposes tracers per dashboard group
+ * (itpCode "Unassigned"). Without them (older callers): the slot-1 entry, else its free-text ITP number.
+ */
 export function weldItpCode(weld: Row, context: TracerContext): string {
   const iso = live(context.isometrics).find(row => row.id === weld.isoId);
   if (!iso) return '';
+  if (context.weldTypes) {
+    const id = weldItpId(iso, live(context.weldTypes).find(row => row.id === weld.typeId)?.location, live(context.itps));
+    return id ? textOf(live(context.itps).find(row => row.id === id)?.number) || id : '';
+  }
   const linked = textOf(iso.itpId) ? live(context.itps).find(row => row.id === iso.itpId) : undefined;
   return textOf(linked?.number) || textOf(iso.itpNo);
 }
@@ -695,7 +704,7 @@ const VT_ACTION_FIELDS: ActionField[] = [field('op', 'Operation', { type: 'selec
 /** Actions of this flow; their dialogs live in `client/inspections.tsx`. Array inputs (`rounds`) are hidden here. */
 export const INSPECTION_ACTIONS: ActionDefinition[] = [
   { key: 'ndt-weld', title: 'Create/Update NDT Request', module: 'welding', submit: 'Save', description: 'NDT location, the five examination rounds and the NA block of one weld.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('requestNo', 'Request number'), field('rounds', 'Rounds', { hidden: true }), field('welderId', 'Welder', { type: 'ref', ref: 'welders' }), field('naLength', 'NA length', { hidden: true }), field('defectType', 'Defect type', { hidden: true }), field('welderForErrorId', 'Welder for error', { type: 'ref', ref: 'welders', hidden: true }), field('reweld', 'ReWeld?', { type: 'checkbox', hidden: true }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true, hidden: true })] },
-  { key: 'tracers', title: 'Save tracers', module: 'welding', submit: 'Save tracers', description: 'Link the tracer welds of the rejected welds of a welder / WPS / ITP-KNR group.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds' }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true }), field('assignments', 'Tracer assignments', { hidden: true })] },
+  { key: 'tracers', title: 'Save tracers', module: 'welding', submit: 'Save tracers', description: 'Link the tracer welds of the rejected welds of a welder / WPS / ITP-KNR group.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds' }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true }), field('assignments', 'Tracer assignments', { hidden: true }), field('welderId', 'Welder', { hidden: true })] },
   { key: 'mass-inspection-request', title: 'Generate mass request', module: 'welding', submit: 'Go', description: 'One request number for the selected welds and the open processes ticked. The request is created when its PDF is generated.', fields: [field('type', 'Inspection type', { type: 'select', options: ['NDT PRE', 'NDT', 'PRE-HT', 'PWHT'], required: true }), welds, field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true }), field('note', 'Note', { type: 'textarea' })] },
   { key: 'inspection-upload', title: 'Upload NDT on multiple welds', module: 'welding', submit: 'Save results', description: 'One report number and result per round for every selected weld.', fields: [field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), welds, field('rounds', 'Rounds', { hidden: true }), date] },
   { key: 'pwht-upload', title: 'Upload Pre-HT/PWHT on multiple welds', module: 'welding', submit: 'Upload', description: 'Pre-HT and PWHT report numbers for every selected weld.', fields: [welds, field('preReportNo', 'Pre-HT Rp/Nr.'), field('reportNo', 'PWHT Rp/Nr.'), field('checked', 'PWHT 100%', { type: 'checkbox' }), date] },
