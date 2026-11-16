@@ -329,3 +329,37 @@ test('an older hosted database gets the eight flange record tables from the prep
   assert.equal(count('flange_labels'), 1);
   assert.throws(() => store.create('flange_labels', { flangeId: label.flangeId, label_number: 'L-2', qr_token: 'QR-1' }), error => (error as { status?: number }).status === 409);
 });
+
+// ----- wave 3 integration (E7): the merged plan of wave 3 only adds -------------------------------------------------------
+const WAVE3_TABLES = ['weldercard_options', 'welder_card_lines', ...FLANGE_RECORD_TABLES];
+test('E7: the merged wave 3 plan adds ten tables, one reference column on an existing record type (welds.stampedBy) and two unique rules on new tables; no unique rule of an existing type changes', async () => {
+  const { planHostedSchema } = await import('../server/hosted-schema.ts');
+  const empty = () => ({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() });
+  const plan = planHostedSchema(empty()), before = planHostedSchema(empty(), RESOURCES.filter(resource => !WAVE3_TABLES.includes(resource.key)));
+  assert.deepEqual(plan.tables.filter(table => !before.tables.includes(table)).sort(), [...WAVE3_TABLES].sort(), 'the new tables');
+  assert.deepEqual(plan.indexes.filter(index => !before.indexes.some(other => other.name === index.name)).map(index => index.name).sort(), ['flange_labels_unique_0', 'weldercard_options_unique_0']);
+  assert.deepEqual(plan.indexes.filter(index => !WAVE3_TABLES.includes(index.table)), before.indexes, 'the unique rules of the existing record types are unchanged, expression for expression');
+  // The one new reference on an existing record type: Stamp (weld-iso-welds-039). It is a generated column, so no stored record changes.
+  assert.equal(RESOURCE_MAP.welds.fields.find(field => field.name === 'stampedBy')?.ref, 'qa_engineers');
+  assert.ok(plan.columns.some(column => column.table === 'welds' && column.field === 'stampedBy' && column.target === 'qa_engineers'));
+  // Data kept inside the record data needs no schema: flange note, attachment hash, pick list issue, order line requirementIds, the session's main project (a sessions row).
+  for (const [key, name] of [['flanges', 'note'], ['attachments', 'sha256'], ['attachments', 'recordId'], ['picklists', 'issued'], ['order_lines', 'requirementIds'], ['movements', 'reportNo']] as const) {
+    const field = RESOURCE_MAP[key].fields.find(item => item.name === name); assert.ok(field, `${key}.${name}`); assert.equal(field!.ref, undefined, `${key}.${name} is no reference column`);
+  }
+});
+
+test('E7: an older hosted database gets welds.stampedBy from the preparation step without changing a weld; a stamped weld then keeps its QA/QC person', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  const store = workspace();
+  db.exec('ALTER TABLE stelux."welds" DROP COLUMN "stampedBy"');
+  const records = rows();
+  assert.throws(() => verifyHostedSchema(db), /welds\.stampedBy/);
+  const result = prepareHostedSchema(db);
+  assert.ok(result.columns.includes('welds.stampedBy'));
+  verifyHostedSchema(db);
+  assert.deepEqual(rows(Object.keys(records)), records, 'existing records are unchanged');
+  assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
+  const weld = store.list('welds')[0], engineer = store.list('qa_engineers')[0];
+  store.update('welds', weld.id, { stampedBy: engineer.id }, weld._version, { id: 'test', name: 'test' });
+  assert.equal(db.prepare('SELECT "stampedBy" AS value FROM stelux."welds" WHERE id=?').get(weld.id)!.value, engineer.id);
+});

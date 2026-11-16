@@ -171,3 +171,18 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   assert.deepEqual(runHostedPreparation(parts, true).projectHoldings, { holdings: 0, quantity: 0 });
   assert.deepEqual(snapshot(), settled);
 });
+
+test('E7: the data steps after wave 3 are the three insert-only steps; the standard defect codes are the 98 of the reference (58 added in wave 3), inserted only when missing', () => {
+  const store = new Store(':memory:'); seed(store);
+  try {
+    assert.deepEqual(hostedDataSteps(() => store).map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings'], 'a new data step needs its own insert-only review');
+    assert.equal(STANDARD_DEFECT_CODES.length, 98);
+    const norms = STANDARD_DEFECT_CODES.reduce<Record<string, number>>((counts, code) => ({ ...counts, [code[4]]: (counts[code[4]] || 0) + 1 }), {});
+    assert.deepEqual(norms, { 'ISO 6520-1': 63, 'ASME B31.3': 9, 'API 1104': 15, 'Current list': 11 });
+    // A seeded workspace holds them all: the step adds nothing and changes nothing.
+    const before = JSON.stringify(store.list('ndt_defect_codes', true));
+    for (const step of hostedDataSteps(() => store)) assert.ok(Object.values(step.run({ dryRun: true })).every(value => typeof value !== 'number' || value === 0), step.name);
+    hostedDataSteps(() => store)[0].run({ dryRun: false });
+    assert.equal(JSON.stringify(store.list('ndt_defect_codes', true)), before);
+  } finally { store.close(); }
+});
