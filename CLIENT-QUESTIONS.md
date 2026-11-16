@@ -1,6 +1,6 @@
 # Pitanja za klijenta / Questions for the client
 
-Stanje: 16.11.2026, kod `df5617a` (nije pušten); dopunjeno posle drugog prolaza kroz scenarije i bezbednosnih pregleda 2 i 3. Dokument ima četiri dela:
+Stanje: 16.11.2026, kod `df5617a`, pušten na živi sajt istog dana (main `858a0e3`); dopunjeno posle drugog prolaza kroz scenarije i bezbednosnih pregleda 2–4. Dokument ima četiri dela:
 
 1. Pitanja za klijenta, srpski (latinica) — 38 pitanja i tabela sitnih stavki.
 2. Isti tekst na engleskom, spreman za slanje.
