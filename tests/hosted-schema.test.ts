@@ -12,6 +12,8 @@ import { backupPostgres } from '../server/postgres-backup.ts';
 import { inspectHostedSchema, prepareHostedSchema, verifyHostedSchema } from '../server/hosted-schema.ts';
 import { prepareWeldingTraceability, verifyWeldingTraceability } from '../server/welding-schema.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
+import { CATALOG_SITES, enabledOnSite } from '../shared/weld-catalogs.ts';
+import { siteOfRecord } from '../server/weld-catalogs.ts';
 import type { Field, Resource } from '../shared/types.ts';
 
 // Uses its own disposable database so it can run in parallel with tests/postgres.test.ts.
@@ -48,6 +50,10 @@ const hasColumn = (table: string, column: string) => Boolean(db.prepare("SELECT 
 
 /** An older hosted database: tables, references, foreign keys, indexes and security that a later release added. */
 function makeOlder() {
+  // The sample data records the ISO revision history; a release without the revisions table had none, and no other
+  // record may point at those rows (else dropping the table would hide a reference the preparation has to restore).
+  assert.equal(Number(db.prepare('SELECT count(*) AS n FROM stelux."material_quantity_changes" WHERE "revisionId" IS NOT NULL').get()!.n), 0);
+  db.exec('DELETE FROM stelux."revisions"');
   for (const table of ['calculation_norms', 'cut_list', 'revisions']) { assert.equal(count(table), 0, table); db.exec(`DROP TABLE stelux."${table}" CASCADE`); }
   for (const [table, column] of [['users', 'companyId'], ['users', 'weldProfileId'], ['signatures', 'userId'], ['welds', 'material1Id'], ['welds', 'certificate2Id']]) db.exec(`ALTER TABLE stelux."${table}" DROP COLUMN "${column}"`);
   db.exec('DROP INDEX stelux.sites_unique_0; DROP INDEX stelux.stock_identity; ALTER TABLE stelux.companies DISABLE ROW LEVEL SECURITY');
@@ -359,7 +365,10 @@ test('E7: an older hosted database gets welds.stampedBy from the preparation ste
   verifyHostedSchema(db);
   assert.deepEqual(rows(Object.keys(records)), records, 'existing records are unchanged');
   assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
-  const weld = store.list('welds')[0], engineer = store.list('qa_engineers')[0];
+  // The sample data switches one QA / QC engineer off on one main project; the stamp takes one enabled on the weld's main project.
+  const weld = store.list('welds')[0], siteId = siteOfRecord(store, 'welds', weld);
+  const engineer = store.list('qa_engineers').find(row => enabledOnSite('qa_engineers', row, siteId, { [CATALOG_SITES]: store.list(CATALOG_SITES) }))!;
+  assert.ok(siteId && engineer);
   store.update('welds', weld.id, { stampedBy: engineer.id }, weld._version, { id: 'test', name: 'test' });
   assert.equal(db.prepare('SELECT "stampedBy" AS value FROM stelux."welds" WHERE id=?').get(weld.id)!.value, engineer.id);
 });

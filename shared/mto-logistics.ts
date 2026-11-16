@@ -2,7 +2,7 @@ import type { ActionDefinition, ActionField, Availability, PermissionVerb, Row }
 import { materialIdentity, materialRecord, pickClaims, pickIssued, requirementExecution } from './materials.ts';
 import { priorityLabel } from './priority.ts';
 import { materialStatusPercent, type CoverageLine } from './mto-materials.ts';
-import { claimSiteId, isoSiteId, picksFromSite, siteStock } from './mto-stock.ts';
+import { claimInventorySiteId, claimSiteId, countedSiteId, countedStock, isoSiteId } from './mto-stock.ts';
 
 /**
  * Isometric execution, pick lists and logistics (MTO Pilot).
@@ -145,11 +145,13 @@ export const poolKey = (siteId: string, identity: string) => `${siteId}|${identi
 const stockPools = (rows: Record<string, Row[]>) => {
   const pools = new Map<string, Pool>();
   const pool = (key: string) => { let value = pools.get(key); if (!value) pools.set(key, value = { stock: 0, reserved: 0, claimed: 0, free: 0 }); return value; };
-  // Only a project site's own Material inventory counts; storehouse lines are not reachable for an isometric.
-  for (const row of active(rows, 'stock').filter(row => row.locationKind === 'site' && row.siteId)) { const value = pool(poolKey(String(row.siteId), materialIdentity(row))); value.stock = round(value.stock + Number(row.quantity)); }
+  // Only a project site's own Material inventory counts (with the old-model storehouse rows derived to it,
+  // shared/mto-stock.ts `countedSiteId`); other storehouse lines are not reachable for an isometric.
+  for (const row of active(rows, 'stock')) { const site = countedSiteId(rows, row); if (!site) continue; const value = pool(poolKey(site, materialIdentity(row))); value.stock = round(value.stock + Number(row.quantity)); }
   for (const row of active(rows, 'reservations').filter(row => row.status === 'Reserved')) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.reserved = round(value.reserved + Number(row.quantity)); }
-  // Pick lists written before the site inventory existed take from a storehouse and claim nothing here.
-  for (const row of active(rows, 'picklists').filter(row => pickClaims(row) && picksFromSite(row))) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.claimed = round(value.claimed + Number(row.quantity)); }
+  // Pick lists written before the site inventory existed take from a storehouse line: they claim here only when that
+  // line is an old-model row counted for a main project (claimInventorySiteId).
+  for (const row of active(rows, 'picklists').filter(pickClaims)) { const site = claimInventorySiteId(rows, row); if (!site) continue; const value = pool(poolKey(site, materialIdentity(row))); value.claimed = round(value.claimed + Number(row.quantity)); }
   for (const value of pools.values()) value.free = round(value.stock - value.reserved - value.claimed);
   return pools;
 };
@@ -226,8 +228,8 @@ export function planStart(rows: Record<string, Row[]>, isoId: string) {
  * requirement (the inventory is kept per Material No); the charges are drawn in charge order when it is taken.
  */
 export function allocateStock(rows: Record<string, Row[]>, siteId: string, identity: string, quantity: number) {
-  const onHand = siteStock(rows, siteId, identity).reduce((sum, row) => sum + Number(row.quantity), 0);
-  const claimed = active(rows, 'picklists').filter(line => pickClaims(line) && picksFromSite(line) && materialIdentity(line) === identity && claimSiteId(rows, line) === siteId).reduce((sum, line) => sum + Number(line.quantity), 0);
+  const onHand = countedStock(rows, siteId, identity).reduce((sum, entry) => sum + Number(entry.row.quantity), 0);
+  const claimed = active(rows, 'picklists').filter(line => pickClaims(line) && materialIdentity(line) === identity && claimInventorySiteId(rows, line) === siteId).reduce((sum, line) => sum + Number(line.quantity), 0);
   const room = Math.max(0, round(onHand - claimed));
   const take = round(Math.min(room, quantity));
   return { quantity: take, shortfall: round(quantity - take) };

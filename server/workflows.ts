@@ -13,7 +13,7 @@ import { assignFieldPackage, completePhase, releaseIsometrics, reopenRelease } f
 import { runPunchAction } from './punch.ts';
 import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
 import { correctReceipt, orderCheckedMaterials, receiveMaterials, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
-import { isMtoStockAction } from '../shared/mto-stock.ts';
+import { hasLocationKind, isMtoStockAction } from '../shared/mto-stock.ts';
 import { changeSiteStock, receivingSiteId, runMtoStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
 import { moveMaterialsToInventory, runMtoLogisticsAction } from './mto-logistics.ts';
@@ -72,7 +72,10 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       const existing = store.list(resource).find(r => r[itemKey] === itemId && r.warehouseId === warehouseId && (tool || (r.chargeNo || '') === chargeNo));
       const next = qty(Number(existing?.quantity || 0) + delta);
       if (next < 0) throw new AppError(409, `Insufficient stock. Available: ${Number(existing?.quantity || 0)}.`);
-      return existing ? patch(resource, existing, { quantity: next }) : add(resource, { [itemKey]: itemId, warehouseId, chargeNo, quantity: next });
+      // Stock written here is a storehouse line; a quantity booked into an old-model row (no location kind) ends its
+      // derivation as a main project's inventory (shared/mto-stock.ts, stock of the old model).
+      const settled = !tool && delta > 0 && existing && !hasLocationKind(existing) ? { locationKind: 'storehouse' } : {};
+      return existing ? patch(resource, existing, { quantity: next, ...settled }) : add(resource, { [itemKey]: itemId, warehouseId, chargeNo, quantity: next, ...(tool ? {} : { locationKind: 'storehouse' }) });
     };
     const movement = (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra: Input = {},custom=false) => add(tool ? 'tool_movements' : 'movements', { number: store.next(tool ? 'TM' : 'MM'), [tool ? 'articleId' : custom?'customMaterialId':'materialId']: itemId, warehouseId, quantity: qty(amount), type, date, note, ...extra });
     if (MTO_ACTION_KEYS.includes(key)) return runMtoLogisticsAction(key, { store, actor, data, date, note, ensure, add, patch, balance, movement });
@@ -94,7 +97,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
       let items:Input[]=[];let projectId=str(data.projectId);
       if(key==='order-requirements'){
-        const selected=ids(data.requirementIds,'material requirement');const rows=Object.fromEntries(['isometrics','iso_materials','orders','order_lines','picklists','stock','materials','custom_materials','material_quantity_changes'].map(k=>[k,store.list(k)]));const execution=requirementExecution(rows);
+        const selected=ids(data.requirementIds,'material requirement');const rows=Object.fromEntries(['isometrics','iso_materials','orders','order_lines','picklists','stock','warehouses','materials','custom_materials','material_quantity_changes'].map(k=>[k,store.list(k)]));const execution=requirementExecution(rows);
         const requirements=selected.map(id=>{const entry=execution.find(e=>e.requirement.id===id);if(!entry)throw new AppError(404,'A selected material requirement is unavailable.');if(!entry.toOrder)throw new AppError(409,'A selected requirement is already fully ordered.');return entry;});
         const projects=[...new Set(requirements.map(r=>String(r.iso.projectId)))];projectId=projects.length===1?projects[0]:'';
         items=requirements.map(r=>({materialId:r.requirement.materialId||'',customMaterialId:r.requirement.customMaterialId||'',requirementId:r.requirement.id,isoId:r.iso.id,quantity:r.toOrder}));
@@ -160,9 +163,9 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       if (!data.warehouseId) {
         // Without a storehouse the isometric's project site inventory gives the material (charge by charge).
         const siteId = siteOfIso(store, iso.id); if (!siteId) throw new AppError(422, 'Choose the storehouse to issue from.');
-        const parts = takeFromSite(store, actor, siteId, material.refs, amount, String(material.record.materialNo || 'material'));
+        const parts = takeFromSite(store, actor, siteId, material.refs, amount, String(material.record.materialNo || 'material'), true);
         const pick = add('picklists', { number: store.next('PICK'), isoId: iso.id,...material.refs,requirementId:data.requirementId||'', warehouseId: '', siteId, quantity: amount, date, chargeNo });
-        for (const part of parts) add('movements', { number: store.next('MM'), ...material.refs, warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), isoId: iso.id, requirementId: data.requirementId || '', note: `${pick.number}${note ? ' · ' + note : ''}` });
+        for (const part of parts) add('movements', { number: store.next('MM'), ...material.refs, warehouseId: part.warehouseId, siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), isoId: iso.id, requirementId: data.requirementId || '', note: `${pick.number}${note ? ' · ' + note : ''}` });
         return { resource: 'picklists', record: pick };
       }
       const wh = warehouse(data.warehouseId, false);

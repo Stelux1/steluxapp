@@ -132,6 +132,18 @@ export class Store {
     if (message.includes('FOREIGN KEY constraint failed')) return conflict('A related record is missing or still in use.');
     return error;
   }
+  /**
+   * One write of a record whose unique-key violation is answered by `duplicate`. On PostgreSQL a failed statement aborts the
+   * whole transaction, so the write runs inside a savepoint that is rolled back first; `duplicate` then reads the clashing
+   * record in a usable transaction (SQLite keeps its transaction usable after a failed statement).
+   */
+  private guardedWrite(key: string, data: Record<string, unknown>, id: string, write: () => unknown) {
+    const savepoint = this.db.dialect === 'postgres';
+    if (savepoint) this.db.exec('SAVEPOINT record_write');
+    try { write(); }
+    catch (error) { if (savepoint) this.db.exec('ROLLBACK TO record_write; RELEASE record_write'); throw this.duplicate(key, data, id, error); }
+    if (savepoint) this.db.exec('RELEASE record_write');
+  }
   /** A unique-key violation of a write becomes a sentence naming the field and the value the user typed; anything else is returned as it was. */
   duplicate(key: string, data: Record<string, unknown>, id: string, error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -295,7 +307,7 @@ export class Store {
     return this.transaction(() => {
       const data = this.validate(key, input,undefined,actor);
       const now = new Date().toISOString();
-      try { this.db.prepare(`INSERT INTO ${table(key)}(id,data,created_at,updated_at) VALUES (?,?,?,?)`).run(id, JSON.stringify(data), now, now); } catch (error) { throw this.duplicate(key, data, id, error); }
+      this.guardedWrite(key, data, id, () => this.db.prepare(`INSERT INTO ${table(key)}(id,data,created_at,updated_at) VALUES (?,?,?,?)`).run(id, JSON.stringify(data), now, now));
       const result = this.get(key, id);
       this.audit(key, id, 'created', `Created ${this.resource(key).singular} ${this.display(key, result)}`, actor);
       this.syncRelations(key,id,input,actor);
@@ -309,7 +321,7 @@ export class Store {
       if (existing._version !== expectedVersion) throw conflict('This record changed since you opened it. Refresh and try again.');
       this.guardStandardCode(key, existing, actor, Object.keys(input).some(name => name !== '_version' && !ENABLEMENT_INPUT.includes(name)));
       const data = this.validate(key, input, existing,actor);
-      try { this.db.prepare(`UPDATE ${table(key)} SET data=?,version=version+1,updated_at=? WHERE id=? AND version=?`).run(JSON.stringify(data), new Date().toISOString(), id, expectedVersion); } catch (error) { throw this.duplicate(key, data, id, error); }
+      this.guardedWrite(key, data, id, () => this.db.prepare(`UPDATE ${table(key)} SET data=?,version=version+1,updated_at=? WHERE id=? AND version=?`).run(JSON.stringify(data), new Date().toISOString(), id, expectedVersion));
       if(key==='iso_materials'&&Number(existing.quantity)!==Number(data.quantity)){
         const sequence=this.list('material_quantity_changes',true).filter(r=>r.requirementId===id).reduce((max,r)=>Math.max(max,Number(r.sequence)||0),0)+1;
         this.create('material_quantity_changes',{requirementId:id,sequence,type:quantityChange?'Revision removal':'Edit',revisionId:quantityChange?.revisionId||'',previousQuantity:existing.quantity,quantity:qty(Number(data.quantity)-Number(existing.quantity)),newQuantity:data.quantity,date:quantityChange?.date||today(),note:quantityChange?.note||''},actor);
@@ -348,7 +360,7 @@ export class Store {
           if (dependent) throw conflict(`This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
         }
       }
-      try { this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id); } catch (error) { throw this.duplicate(key, row, id, error); }
+      this.guardedWrite(key, row, id, () => this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id));
       if(row._archived&&this.hostedRules&&key==='welders')restoreWelderQualifications(this,id,actor);
       if(row._archived)for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource,true).filter(l=>l[relation.ownerKey]===id&&l._archived&&l.ownerArchived)){this.get(relation.target,link[relation.targetKey]);const restored=this.archive(relation.resource,link.id,link._version,actor);this.update(relation.resource,restored.id,{ownerArchived:false},restored._version,actor);}
       this.audit(key, id, row._archived ? 'restored' : 'archived', `${row._archived ? 'Restored' : 'Archived'} ${this.resource(key).singular} ${this.display(key, row)}`, actor);
