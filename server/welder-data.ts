@@ -6,6 +6,7 @@
 import type { Row } from '../shared/types.ts';
 import { CUSTOM_RANGES, FLAG_BULK_FIELDS, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
 import type { Actor, Store } from './store.ts';
+import { qaEngineerCompany } from '../shared/weld-catalogs.ts';
 
 export interface Prepared { input: Record<string, unknown>; errors: Record<string, string>; }
 const blank = (value: unknown) => value === undefined || value === null || String(value).trim() === '';
@@ -115,6 +116,8 @@ export function restoreWelderQualifications(store: Store, welderId: string, acto
 export function withLegacyValues(store: Store, key: string, row: Row): Row {
   if (!store.hostedRules) return row;
   if (key === 'material_parts' && typeof row.custom === 'boolean') return { ...row, custom: row.custom ? 'Yes' : '' };
+  // An older QA/QC engineer saved with a company record and no Company text shows that company's name (nothing is written).
+  if (key === 'qa_engineers' && blank(row.company) && row.companyId) return { ...row, company: qaEngineerCompany(row, id => { try { return String(store.get('companies', id, true).name ?? ''); } catch { return undefined; } }) };
   if (key === 'welding_wires' && blank(row.typeMaterial) && row.materialTypeId) {
     try { return { ...row, typeMaterial: String(store.get('material_types', row.materialTypeId, true).name ?? '') }; } catch { return row; }
   }

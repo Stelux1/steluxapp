@@ -18,6 +18,7 @@ import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
 import { ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
+import { isStandardDefectCode } from '../shared/defect-codes.ts';
 import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 import { HOSTED_OPTIONAL, hostedFreeValue } from '../shared/welder-data.ts';
@@ -136,11 +137,11 @@ export class Store {
     return row;
   }
   /**
-   * Standard defect codes (shipped with the product, `system`) cannot be edited or deleted by a user in the hosted profile;
+   * Standard defect codes (shipped with the product, `system`, or an older code with the same code + norm: isStandardDefectCode) cannot be edited or deleted by a user in the hosted profile;
    * switching them on or off per main project stays possible. The flag itself is never taken from a request.
    */
   private guardStandardCode(key: string, row: Row, actor: Actor, changes: boolean) {
-    if (this.hostedRules && key === 'ndt_defect_codes' && row.system === true && actor.id !== SYSTEM.id && changes) throw new AppError(403, 'This defect code cannot be changed.');
+    if (this.hostedRules && key === 'ndt_defect_codes' && isStandardDefectCode(row) && actor.id !== SYSTEM.id && changes) throw new AppError(403, 'This defect code cannot be changed.');
   }
   /** Depth of `keepingReferences` calls: while above zero, the "Enabled on this site" rule does not refuse references. */
   private keptReferences = 0;

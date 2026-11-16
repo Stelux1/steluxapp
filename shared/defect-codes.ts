@@ -55,3 +55,11 @@ export const standardDefectCodeId = (code: string, norm: string) => `std-defect-
 /** The data of one standard code as it is stored. */
 export const standardDefectCodeData = ([code, english, dutch, group, norm, isoRef]: StandardDefectCode) => ({ code, english, dutch, group, norm, isoRef, system: true });
 export const STANDARD_DEFECT_NORMS = DEFECT_NORMS.slice(1);
+const STANDARD_KEYS = new Set(STANDARD_DEFECT_CODES.map(([code, , , , norm]) => `${norm}\n${code}`));
+/**
+ * Whether a defect code counts as a standard code (locked in the list, edit and delete refused, switchable per main project):
+ * its stored flag `system`, or a code + norm equal to a standard code. The second covers a workspace that held a code of
+ * its own with the same code and norm before the standard codes shipped: the hosted upgrade only adds, so that record
+ * keeps its own texts and stored flag, and counts as the standard code when read.
+ */
+export const isStandardDefectCode = (row: { readonly [name: string]: unknown }) => row.system === true || STANDARD_KEYS.has(`${row.norm}\n${row.code}`);

@@ -1,4 +1,5 @@
 import { DEFECT_NORMS, defectNorm } from './site-settings.ts';
+import { isStandardDefectCode } from './defect-codes.ts';
 import type { Field, Resource, Row } from './types.ts';
 
 /**
@@ -58,6 +59,12 @@ export const WELD_CATALOG_COLUMNS: Record<string, string[]> = {
  * Fields the reference marks as required that the hosted profile enforces (client and server). The shared
  * resource keeps them optional so the other release profiles and the CSV / prototype imports behave as before.
  */
+/**
+ * The Company of a QA/QC engineer as the hosted profile shows it (list, form, exports): the stored Company text, else the
+ * name of the company record an older engineer is linked to. Derived when read; nothing is written back.
+ */
+export const qaEngineerCompany = (engineer: { readonly [name: string]: unknown }, companyName: (id: string) => string | undefined) =>
+  String(engineer.company ?? '').trim() || (engineer.companyId ? companyName(String(engineer.companyId)) ?? '' : '');
 export const HOSTED_REQUIRED: Record<string, string[]> = {
   weld_types: ['location', 'abbreviation'],
   coatings: ['abbreviation'],
@@ -75,7 +82,8 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
 export function missingRequired(key: string, input: Record<string, unknown>, existing?: Row): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const name of HOSTED_REQUIRED[key] || []) {
-    const value = Object.hasOwn(input, name) ? input[name] : existing?.[name];
+    // An older QA/QC engineer without Company text shows its linked company (qaEngineerCompany): that counts as filled.
+    const value = Object.hasOwn(input, name) ? input[name] : key === 'qa_engineers' && name === 'company' && existing && !String(existing.company ?? '').trim() ? existing.companyId : existing?.[name];
     if (value === undefined || value === null || String(value).trim() === '') errors[name] = `${FIELD_LABELS[key]?.[name] || name} is required.`;
   }
   return errors;
@@ -209,8 +217,8 @@ export function pageSizes(key: string, hosted: boolean): { sizes: number[]; init
   return ['welding_wires', 'certifications'].includes(key) ? { sizes: LONG_CATALOG_PAGE_SIZES, initial: 25 } : { sizes: CATALOG_PAGE_SIZES, initial: 20 };
 }
 
-/** A standard defect code is locked: shown with a lock and never edited or deleted (availability per site stays possible). */
-export const isLockedRecord = (key: string, row: Pick<Row, 'id'> & { system?: unknown }, hosted: boolean) => hosted && key === 'ndt_defect_codes' && row.system === true;
+/** A standard defect code (shared/defect-codes.ts) is locked: shown with a lock and never edited or deleted (availability per site stays possible). */
+export const isLockedRecord = (key: string, row: Pick<Row, 'id'> & { system?: unknown; code?: unknown; norm?: unknown }, hosted: boolean) => hosted && key === 'ndt_defect_codes' && isStandardDefectCode(row);
 export const LOCKED_TIP = 'This defect code cannot be changed.';
 /** The norm bar of the Defect codes page: its norms and the codes a norm switches on for a site. */
 export const NORM_BAR_NORMS = DEFECT_NORMS.slice(1);

@@ -27,7 +27,7 @@ try {
     schemaUpToDate: () => inspectHostedSchema(db).upToDate,
     prepareSchema: options => prepareHostedSchema(db, options),
     dataSteps: [
-      // The data this release ships: standard defect codes, QA/QC engineer companies (server/catalog-upgrade.ts).
+      // The data this release ships: the missing standard defect codes, added only (server/catalog-upgrade.ts).
       { name: 'catalogData', run: options => upgradeWeldCatalogs(store(), options) },
       // The reference diameter catalog: adds the diameters the workspace does not hold and never changes one that exists.
       { name: 'diameterCatalog', run: ({ dryRun: counting }) => ({ added: counting ? missingDiameterCatalog(store()).length : loadDiameterCatalog(store()) }) },
