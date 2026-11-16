@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CertificationIndexButton } from './pdf-certification-button.tsx';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Plus, Download, Upload, SlidersHorizontal, ChevronDown, ChevronLeft, ChevronRight, ArrowUpDown, MoreHorizontal, Pencil, Archive, ExternalLink, FileText, Clock3, Paperclip, Check, ArrowRight, X, Loader2, Printer } from 'lucide-react';
 import { RESOURCE_MAP, RESOURCES } from './catalog.ts';
@@ -108,6 +109,7 @@ export function TablePage({ resourceKey, scopeProjectId = '' }: {resourceKey: st
   const updateFilter = (key: string, value: unknown) => { if (scopeProjectId && key === '_projectId') return; setFilters(f => ({ ...f, [key]: value })); setPage(0); setSelected([]); };
   if(!canRecord(resourceKey))return <EmptyState title="This area is restricted" description="Your profile does not include these records."/>;
   return <div className="page records-page"><div className="page-heading"><div><div className="eyebrow">{def.module === 'general' ? 'PROJECT WORKSPACE' : def.module.toUpperCase()}</div><h1>{def.title}<span className="heading-count">{activeRows(rows, resourceKey).filter(row => !scopeProjectId || row.projectId === scopeProjectId).length}</span></h1><p>{def.description}</p></div><div className="heading-actions">
+    {resourceKey === 'certifications' && <CertificationIndexButton projectId={String(filters._projectId || scopeProjectId || '')}/>}
     {headingActions.length > 0 && <Dropdown trigger={<span className="btn">Actions<ChevronDown size={15}/></span>}>{headingActions.map(key => <button key={key} onClick={e => { closeMenu(e); setAction(key); }}>{ACTIONS[key].title}<ArrowRight size={14}/></button>)}</Dropdown>}
     {creatable && <button className="btn primary" onClick={() => def.createAction ? setAction(def.createAction) : setEditor('new')}><Plus size={17}/>{def.createAction ? ACTIONS[def.createAction].title : `Add ${def.singular}`}</button>}
     {def.readonly && visibleActions.length > 0 && <button className="btn primary" onClick={() => setAction(visibleActions[0])}><Plus size={17}/>{ACTIONS[visibleActions[0]].title}</button>}

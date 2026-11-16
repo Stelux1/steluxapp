@@ -3,6 +3,10 @@ import { AppError } from '../store.ts';
 import type { documentStorage } from '../documents.ts';
 import { currentSignature } from '../signatures.ts';
 import { companyForDocuments } from './company.ts';
+import { weldCardsDocument } from './weld-cards.ts';
+import { weldLabelsDocument } from './weld-labels.ts';
+import { mtoReportDocument } from './mto-report.ts';
+import { certificationIndexDocument } from './certification-index.ts';
 import { lislPdf, type LislVariant } from './lisl.ts';
 import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
 import type { Row, User } from '../../shared/types.ts';
@@ -15,6 +19,15 @@ export interface PdfRequest {
   store: Store; documents: ReturnType<typeof documentStorage>;
   user: User; iso: Row; rows: Record<string, Row[]>;
   query: Record<string, string>; now: Date;
+  /** The configured public origin (`STELUX_PUBLIC_URL`), when there is one; QR codes use it to make absolute links. */
+  publicOrigin?: string;
+}
+/** Request of a document that is not about one isometric but about a project (or all of the main project). */
+export interface PdfProjectRequest extends Omit<PdfRequest, 'iso'> {
+  /** The chosen project, or null for all projects. */
+  project: Row | null;
+  /** The main project (site) of the chosen project, or the one given; null when none. Read without account permissions (settings only). */
+  site: Row | null;
 }
 export interface PdfResult { bytes: Uint8Array; /** Without extension. */ fileName: string }
 /**
@@ -23,6 +36,7 @@ export interface PdfResult { bytes: Uint8Array; /** Without extension. */ fileNa
  */
 export interface PdfDocumentDefinition {
   key: string; title: string; report: string;
+  scope?: 'isometric';
   build(request: PdfRequest): Promise<PdfResult>;
 }
 
@@ -49,8 +63,18 @@ const lisl = (key: string, title: string, variant: LislVariant, suffix: string):
   },
 });
 
-export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
+/**
+ * A downloadable document of a project: `GET /api/pdf/<key>?projectId=…&siteId=…` (both optional). `resource` is the
+ * resource whose read permission gives access, inside the pilot of the request.
+ */
+export interface PdfProjectDocumentDefinition {
+  key: string; title: string; scope: 'project'; resource: string;
+  build(request: PdfProjectRequest): Promise<PdfResult>;
+}
+
+export const PDF_DOCUMENTS: (PdfDocumentDefinition | PdfProjectDocumentDefinition)[] = [
   lisl('lisl', 'LISL Report', 'a4', ''),
   lisl('lisl-a3', 'LISL Report (A3)', 'a3', '-A3'),
   lisl('lisl-blank', 'Blank LISL template', 'blank', '-template'),
+  weldCardsDocument, weldLabelsDocument, mtoReportDocument, certificationIndexDocument,
 ];

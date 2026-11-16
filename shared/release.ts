@@ -102,6 +102,7 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions['add-iso-material'] = fields('isoId source materialId phaseId quantity materialNo description materialGroup articleNo legacyNo dia lbs uom price chargeNo addToDB');
     Object.assign(availability.reports, {
       mto: fields('project iso revision group article material dia lbs description quantity uom phase charge'),
+      'weld-cards': fields('project iso revision weld type spool wps diameter'),
       calculation: fields('project iso name material quantity uom norm hoursPerUnit hours status'),
       'cut-list': fields('project iso name material spool quantity lengthMm totalMm'),
     });
