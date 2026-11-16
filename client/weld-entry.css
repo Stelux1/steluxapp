@@ -59,3 +59,12 @@
 @media print { .weld-actions, .weld-sort-cell, .weld-sort-head, .weld-table .select-cell, .weld-table .weld-options { display: none; } }
 /* Mass edit welds: heading of the NDT & PWHT inputs. */
 .weld-form-section { margin: 20px 0 10px; font-size: 14px; font-weight: 600; color: var(--muted, inherit); }
+/* Search over the weld table, the Options menu divider, the stamped icon and the two columns of Mass edit welds. */
+.weld-search { padding: 4px 20px 12px; }
+.weld-search .search-field { max-width: 360px; }
+.weld-no-match { padding: 12px 20px; margin: 0; }
+.dropdown-divider { height: 1px; margin: 4px 0; background: var(--line); }
+.dropdown-menu .count-pill { margin-inline-start: 8px; }
+.weld-table .weld-stamp-set { color: #0b6b47; }
+.weld-mass-columns > div { min-width: 0; }
+@media (max-width: 560px) { .weld-search { padding-inline: 16px; } }

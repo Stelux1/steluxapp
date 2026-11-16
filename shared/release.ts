@@ -198,11 +198,13 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Certificates and welding wires carry the main project they belong to (shared/welder-data.ts → SITE_OWNED).
     for (const key of Object.keys(SITE_OWNED)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), 'siteId'])];
     // Weld table and weld entry on the isometric: the entry fields of a weld and the actions behind the form.
-    deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer'));
+    deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer stampedBy stampedAt'));
     availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS];
     availability.actions['add-welds'] = fields('isoId start end diameterId');
     availability.actions['mass-edit-welds'] = fields('weldIds changes versions');
     availability.actions['reorder-welds'] = fields('isoId weldIds');
+    availability.actions['toggle-weld-sorting'] = fields('isoId enabled');
+    availability.actions['stamp-weld'] = fields('weldId stampedBy expectedVersion');
     // MTO records that several flows read and write, delivered once with every field: stock is the Material
     // inventory page, picklists the Pick List archive page; orders, order lines (the procurement pages are reached by
     // path) and movements (the inventory log) have no table page. Ord.? / Inv. / Picked read all five.

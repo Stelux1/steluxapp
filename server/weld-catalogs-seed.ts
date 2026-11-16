@@ -7,13 +7,15 @@ import { STANDARD_DEFECT_CODES, standardDefectCodeData, standardDefectCodeId } f
  * (shared/defect-codes.ts), QA/QC engineers and attachment names, with a few records switched off on one main project.
  * Called from the sample seed inside its transaction; companies, sites and the diameters are created before.
  */
-/** [weld type, joint type, groove type]: the reference's values (Weld data -> Weld type); the abbreviation is the Shop / Field code (WS / FW). */
+/** [weld type, joint type, groove type]: the reference's values (Weld data -> Weld type); the abbreviation is the Shop / Field code (WS / FW), see ABBREVIATIONS. */
 const TYPES: [string, string, string][] = [
   ['Butt Weld', 'BW', '-'], ['Branch welds', 'BR', '-'], ['Socket welds', 'SW', '-'], ['Fillet Weld', 'FL', '-'], ['Longitudinal Welds', 'LG', '-'],
   ['Victaulic Joint', 'VJ', '-'], ['Reinforcement Pad GW', 'RP-GW', '-'], ['Reinforcement Pad FW', 'RP', '-'],
 ];
 /** Groove types the reference lists for single types, by weld type name. */
 const GROOVES: Record<string, string> = { 'Butt Weld - Shop': 'L', 'Butt Weld - Field': 'V', 'Branch welds - Field': '1' };
+/** Abbreviations of the reference's Weld type page (Shop / Field column and Abbreviation column): a Shop type reads WS and a Field type FW, with these exceptions. */
+const ABBREVIATIONS: Record<string, string> = { 'HOOK-UP': 'YTI', 'Longitudinal Welds - Field': 'WS' };
 /** Same order and ids as before the catalogs were extended: weld-type-0 … weld-type-16. */
 const WELD_TYPES = ['Butt Weld - Field', 'Butt Weld - Shop', 'Branch welds - Field', 'Branch welds - Shop', 'Socket welds - Shop', 'Socket welds - Field', 'Fillet Weld - Shop', 'Fillet Weld - Field', 'Longitudinal Welds - Shop', 'Longitudinal Welds - Field', 'HOOK-UP', 'Victaulic Joint - Shop', 'Victaulic Joint - Field', 'Reinforcement Pad GW - Shop', 'Reinforcement Pad GW - Field', 'Reinforcement Pad FW - Shop', 'Reinforcement Pad FW - Field'];
 const NDT_GROUPS: [string, string, string][] = [
@@ -36,7 +38,7 @@ export function seedWeldCatalogs(store: Store) {
   WELD_TYPES.forEach((name, i) => {
     const base = name.replace(/ - (Shop|Field)$/, ''); const row = TYPES.find(type => type[0] === base) || ['HOOK-UP', 'BW', '-'];
     const location = name === 'HOOK-UP' || name.includes('Field') ? 'Field' : 'Shop';
-    add('weld_types', `weld-type-${i}`, { name, location, abbreviation: name === 'HOOK-UP' ? 'YTI' : location === 'Shop' ? 'WS' : 'FW', jointType: row[1], grooveType: GROOVES[name] ?? row[2], sort: i + 1 });
+    add('weld_types', `weld-type-${i}`, { name, location, abbreviation: ABBREVIATIONS[name] ?? (location === 'Shop' ? 'WS' : 'FW'), jointType: row[1], grooveType: GROOVES[name] ?? row[2], sort: i + 1 });
   });
   [['coating-none', 'UNCOATED', 'UC'], ['coating-zinc', 'Zinc silicate primer', 'ZSP'], ['coating-epoxy', 'Epoxy primer', 'EP'], ['coating-pu', 'Polyurethane finish', 'PU'], ['coating-hdg', 'Hot-dip galvanized', 'HDG']].forEach(([id, name, abbreviation]) => add('coatings', id, { name, abbreviation }));
   NDT_GROUPS.forEach(([id, name, description]) => add('ndt_groups', `ndt-group-${id}`, { name, description }));

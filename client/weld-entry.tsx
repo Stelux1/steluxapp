@@ -1,19 +1,23 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, GripVertical, ListPlus, Loader2, Lock, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
 import { useWorkspace, activeRows } from './context.tsx';
-import { Dropdown, EmptyState, Modal, TableScroll, revealInvalidField } from './components.tsx';
+import { Dropdown, EmptyState, Modal, SearchInput, TableScroll, revealInvalidField } from './components.tsx';
 import { availableWps } from './catalog.ts';
-import { ApiError, post, formatDate } from './api.ts';
+import { ApiError, post } from './api.ts';
 import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
 import { AttachmentCountBadge } from './iso-dialogs.tsx';
 import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
+import { IsoPunchDialog } from './punch.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
-import { INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS } from '../shared/inspections.ts';
+import { NDT_ROUNDS } from '../shared/inspections.ts';
 import {
   WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
-  planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
+  planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
+  MASS_EDIT_CLEAR_LABEL, MASS_EDIT_COLUMNS, MASS_EDIT_DATES, MASS_EDIT_DATE_HINT, MASS_EDIT_DIAMETER, MASS_EDIT_FLAGS_LABELS, MASS_EDIT_SECTIONS, MASS_EDIT_SELECT_NOTHING,
+  NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, WELD_ORDER_MESSAGES, WELD_SORTING_MESSAGES, orderFailureMessage, sideCellTexts, stampOptionLabel,
+  MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldMatchesSearch, weldSortingDisabled, weldSortingMenu, welderStamps, type MassEditItem,
 } from '../shared/weld-entry.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -31,16 +35,16 @@ function useWeldData(iso: Row) {
   const { rows, allRows } = useWorkspace();
   return useMemo(() => {
     const all = (rows.welds || []).filter(weld => weld.isoId === iso.id);
-    const welds = orderedWelds(all.filter(weld => !weld._archived));
+    const welds = orderedWelds(all.filter(weld => !weld._archived), weldSortingDisabled(iso));
     const project = rows.projects?.find(row => row.id === iso.projectId);
     const site = rows.sites?.find(row => row.id === project?.siteId) ?? allRows.sites?.find(row => row.id === project?.siteId);
     const byId = (key: string) => new Map((rows[key] || []).map(row => [row.id, row]));
     const certificates = rows.certifications || [];
     const offered = project && projectCertificates(site) ? certificatesForProject(certificates, project.id, { links: rows.certificate_projects || [] }) : activeRows(rows, 'certifications');
     return {
-      all, welds, deleted: all.filter(weld => weld._archived), project, site, certificates, offered,
+      all, welds, deleted: orderedWelds(all.filter(weld => weld._archived), true), project, site, certificates, offered,
       lock: lockContext(rows.weld_types, rows.releases, rows.isometrics),
-      types: byId('weld_types'), welders: byId('welders'), wps: byId('wps'), diameters: byId('diameters'), spools: byId('spools'), certs: byId('certifications'), materials: byId('materials'), materialTypes: byId('material_types'), materialParts: byId('material_parts'),
+      types: byId('weld_types'), stampers: byId('qa_engineers'), welders: byId('welders'), wps: byId('wps'), diameters: byId('diameters'), spools: byId('spools'), certs: byId('certifications'), materials: byId('materials'), materialTypes: byId('material_types'), materialParts: byId('material_parts'),
     };
   }, [rows, allRows, iso]);
 }
@@ -48,16 +52,16 @@ type WeldData = ReturnType<typeof useWeldData>;
 
 // --------------------------------------------------------------------------------------------------- small controls
 
-function Labelled({ label, error, hint, children, className = '', htmlFor }: { label: string; error?: string; hint?: string; children: ReactNode; className?: string; htmlFor: string }) {
-  return <div className={`field ${className}`}><label htmlFor={htmlFor}>{label}</label>{children}{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${htmlFor}-error`} className="field-error">{error}</small>}</div>;
+function Labelled({ label, error, hint, children, className = '', htmlFor, extra }: { label: string; error?: string; hint?: string; children: ReactNode; className?: string; htmlFor: string; extra?: string }) {
+  return <div className={`field ${className}`}><label htmlFor={htmlFor}>{label}{extra && <span className="sr-only"> ({extra})</span>}</label>{children}{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${htmlFor}-error`} className="field-error">{error}</small>}</div>;
 }
 function TextField({ label, value, onChange, error, type = 'text', required, readOnly, hint, min, max }: { label: string; value: unknown; onChange?: (value: string) => void; error?: string; type?: 'text' | 'date' | 'number'; required?: boolean; readOnly?: boolean; hint?: string; min?: number; max?: number }) {
   const id = `weld-${useId().replaceAll(':', '')}`;
   return <Labelled label={required ? `${label} *` : label} error={error} hint={hint} htmlFor={id}><input id={id} type={type} value={str(value)} required={required} readOnly={readOnly} min={min} max={max} step={type === 'number' ? 'any' : undefined} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} autoComplete="off" onChange={event => onChange?.(event.target.value)}/></Labelled>;
 }
-function SelectField({ label, value, onChange, error, options, placeholder = 'Select', disabled, hint, className }: { label: string; value: unknown; onChange: (value: string) => void; error?: string; options: { value: string; label: string }[]; placeholder?: string; disabled?: boolean; hint?: string; className?: string }) {
+function SelectField({ label, value, onChange, error, options, placeholder = 'Select', disabled, hint, className, extra }: { label: string; value: unknown; onChange: (value: string) => void; error?: string; options: { value: string; label: string }[]; placeholder?: string; disabled?: boolean; hint?: string; className?: string; extra?: string }) {
   const id = `weld-${useId().replaceAll(':', '')}`;
-  return <Labelled label={label} error={error} hint={hint} htmlFor={id} className={className}><div className="select-wrap"><select id={id} value={str(value)} disabled={disabled} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div></Labelled>;
+  return <Labelled label={label} error={error} hint={hint} htmlFor={id} className={className} extra={extra}><div className="select-wrap"><select id={id} value={str(value)} disabled={disabled} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div></Labelled>;
 }
 function CheckField({ label, checked, onChange, disabled, hint, error }: { label: string; checked: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; hint?: string; error?: string }) {
   const id = `weld-${useId().replaceAll(':', '')}`;
@@ -250,18 +254,28 @@ function RangeDialog({ iso, data, onClose, onBack }: { iso: Row; data: WeldData;
 type Touch = Values;
 function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; data: WeldData; selected: Row[]; onClose: () => void; onDone: () => void }) {
   const { rows, refresh, notify } = useWorkspace();
-  const [changes, setChanges] = useState<Touch>({}), [clear, setClear] = useState({ datefit: false, date: false });
+  const [changes, setChanges] = useState<Touch>({}), [clear, setClear] = useState({ datefit: false, date: false }), [lengthMode, setLengthMode] = useState(false);
   const [error, setError] = useState(''), [fields, setFields] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
   const set = (name: string) => (value: unknown) => setChanges(current => { const next = { ...current }; if (value === '' || value === undefined) delete next[name]; else next[name] = value; return next; });
   // Mass edit sets new values only, so catalog records switched off on the active main project are not offered.
   const options = (key: string, label: (row: Row) => string = row => str(row.name)) => sortByName(enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows), 'name').map(row => ({ value: row.id, label: label(row) }));
   const diameters = useDiameterOptions();
+  const wpsOptions = activeRows(rows, 'wps').filter(row => row.active !== false && data.project && availableWps(rows, row, data.project.id)).map(row => ({ value: row.id, label: str(row.name) }));
   const flag = (name: string, label: string) => <SelectField key={name} label={label} value={changes[name] === undefined ? '' : changes[name] ? 'yes' : 'no'} placeholder="Keep current" options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} onChange={value => set(name)(value === '' ? '' : value === 'yes')}/>;
-  const chargeField = (side: 1 | 2) => <SelectField label={`Charge number ${side}`} value={chargeValue(changes, side)} placeholder="Keep current" options={chargeOptions(data, str(changes[`certificate${side}Id`]))} error={fields[`chargeNo${side}`] || fields[`certificate${side}Id`]} onChange={value => setChanges(current => { const next = { ...current }; for (const name of [`chargeNo${side}`, `certificate${side}Id`, `material${side}Id`]) delete next[name]; return value ? { ...next, ...chargeSelection(value, side, data.certificates) } : next; })}/>;
+  const chargeField = (entry: MassEditItem) => { const side = entry.side!; return <SelectField key={entry.name} label={entry.label} value={chargeValue(changes, side)} placeholder="Keep current" options={chargeOptions(data, str(changes[`certificate${side}Id`]))} error={fields[`chargeNo${side}`] || fields[`certificate${side}Id`]} onChange={value => setChanges(current => { const next = { ...current }; for (const name of [`chargeNo${side}`, `certificate${side}Id`, `material${side}Id`]) delete next[name]; return value ? { ...next, ...chargeSelection(value, side, data.certificates) } : next; })}/>; };
+  const control = (entry: MassEditItem, extra?: string) => {
+    if (entry.control === 'text') return <TextField key={entry.name} label={entry.label} value={changes[entry.name]} onChange={set(entry.name)}/>;
+    if (entry.control === 'charge') return chargeField(entry);
+    const list = entry.control === 'welder' ? welderOptions(rows.welders || [], []) : entry.control === 'wps' ? wpsOptions : options(entry.catalog!);
+    return <SelectField key={entry.name} label={entry.label} extra={extra} value={changes[entry.name]} error={fields[entry.name]} placeholder="Keep current" options={list} onChange={set(entry.name)}/>;
+  };
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setFields({});
     const body = { ...changes, ...(clear.datefit ? { clearDatefit: true } : {}), ...(clear.date ? { clearDate: true } : {}) };
-    if (!Object.keys(body).length) { setError('Change at least one field.'); return; }
+    if (lengthMode && changes.dialen === undefined) { setError('Length in mm must be a number above zero.'); setFields({ dialen: 'Length in mm must be a number above zero.' }); return; }
+    const read = readMassEdit(body);
+    if (Object.keys(read.errors).length) { setError(read.errors._ || Object.values(read.errors)[0]); setFields(read.errors); return; }
+    if (selected.some(weld => massEditMissingFields(data.site, weld, read.changes).length)) { setError(MASS_EDIT_MANDATORY_MESSAGE); return; }
     setBusy(true);
     try { await post('/actions/mass-edit-welds', { weldIds: selected.map(row => row.id), versions: Object.fromEntries(selected.map(row => [row.id, row._version])), changes: body }); await refresh(); notify(`${selected.length} ${selected.length === 1 ? 'weld' : 'welds'} updated.`); onDone(); onClose(); }
     catch (failure) { setError(errorMessage(failure)); setFields((failure as ApiError).fields || {}); } finally { setBusy(false); }
@@ -271,51 +285,40 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
     <form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)} noValidate><div className="modal-body weld-form">
       <Failure message={error}/>
       <p className="muted">Only the fields you change are written. Fields left on “Keep current” stay as they are on every checked weld.</p>
+      <div className="form-grid weld-mass-columns">{MASS_EDIT_COLUMNS.map((column, index) => <div key={index}>{column.map(entry => control(entry))}</div>)}</div>
       <div className="form-grid">
-        <SelectField label="Weld type" value={changes.typeId} error={e.typeId} placeholder="Keep current" options={options('weld_types')} onChange={set('typeId')}/>
-        <SelectField label="WPS number" value={changes.wpsId} error={e.wpsId} placeholder="Keep current" options={activeRows(rows, 'wps').filter(row => row.active !== false && data.project && availableWps(rows, row, data.project.id)).map(row => ({ value: row.id, label: str(row.name) }))} onChange={set('wpsId')}/>
-        <SelectField label="Weld process" value={changes.processId} error={e.processId} placeholder="Keep current" options={options('weld_processes')} onChange={set('processId')}/>
-        {[1, 2, 3, 4].map(index => <SelectField key={index} label={`Welder ${index}`} value={changes[`welder${index}Id`]} error={e[`welder${index}Id`]} placeholder="Keep current" options={welderOptions(rows.welders || [], [])} onChange={set(`welder${index}Id`)}/>)}
-        <SelectField label="Coating 1" value={changes.coating1Id} placeholder="Keep current" options={options('coatings')} onChange={set('coating1Id')}/><SelectField label="Coating 2" value={changes.coating2Id} placeholder="Keep current" options={options('coatings')} onChange={set('coating2Id')}/>
-        <SelectField label="Welding wire 1" value={changes.wire1Id} placeholder="Keep current" options={options('welding_wires')} onChange={set('wire1Id')}/><TextField label="Pos 1" value={changes.pos1} onChange={set('pos1')}/>
-        <SelectField label="Welding wire 2" value={changes.wire2Id} placeholder="Keep current" options={options('welding_wires')} onChange={set('wire2Id')}/><TextField label="Pos 2" value={changes.pos2} onChange={set('pos2')}/>
-        {chargeField(1)}{chargeField(2)}
-        <div className="weld-clearable"><TextField label="Fitup date" type="date" value={clear.datefit ? '' : changes.datefit} error={e.datefit} onChange={value => { setClear(current => ({ ...current, datefit: false })); set('datefit')(value); }}/><CheckField label="Clear date" checked={clear.datefit} onChange={checked => { setClear(current => ({ ...current, datefit: checked })); if (checked) set('datefit')(''); }}/></div>
-        <div className="weld-clearable"><TextField label="Weld date" type="date" value={clear.date ? '' : changes.date} error={e.date} onChange={value => { setClear(current => ({ ...current, date: false })); set('date')(value); }}/><CheckField label="Clear date" checked={clear.date} onChange={checked => { setClear(current => ({ ...current, date: checked })); if (checked) set('date')(''); }}/></div>
-        <SelectField label="Dia." value={changes.diameterId} error={e.diameterId} placeholder="Keep current" options={diameters} onChange={value => { set('diameterId')(value); if (value) set('dialen')(''); }}/>
-        <TextField label="Length in mm" type="number" min={0} value={changes.dialen} error={e.dialen} onChange={value => { set('dialen')(value === '' ? '' : Number(value)); if (value !== '') set('diameterId')(''); }}/>
-        {FLAGS.map(name => flag(name, FLAG_LABELS[name]))}{flag('tracer', 'Tracer')}
+        {MASS_EDIT_DATES.map(date => <div key={date.name} className="weld-clearable"><TextField label={date.label} type="date" hint={MASS_EDIT_DATE_HINT} value={clear[date.name] ? '' : changes[date.name]} error={e[date.name]} onChange={value => { setClear(current => ({ ...current, [date.name]: false })); set(date.name)(value); }}/><CheckField label={MASS_EDIT_CLEAR_LABEL} checked={clear[date.name]} onChange={checked => { setClear(current => ({ ...current, [date.name]: checked })); if (checked) set(date.name)(''); }}/></div>)}
+        <SelectField label={MASS_EDIT_DIAMETER.label} value={lengthMode ? '__length' : changes.diameterId} error={e.diameterId} placeholder="Keep current" options={[{ value: '__length', label: MASS_EDIT_DIAMETER.lengthOption }, ...diameters]} onChange={value => { setLengthMode(value === '__length'); if (value === '__length') set('diameterId')(''); else { set('dialen')(''); set('diameterId')(value); } }}/>
+        {lengthMode && <TextField label={MASS_EDIT_DIAMETER.lengthLabel} type="number" min={0} value={changes.dialen} error={e.dialen} onChange={value => set('dialen')(value === '' ? '' : Number(value))}/>}
       </div>
-      <h3 className="weld-form-section">NDT &amp; PWHT</h3>
-      <div className="form-grid">
-        {INSPECTION_WELD_FIELDS.filter(field => INSPECTION_MASS_EDIT_FIELDS.includes(field.name)).map(field => <SelectField key={field.name} label={field.label} value={changes[field.name]} error={e[field.name]} placeholder="Keep current" options={options(String(field.ref))} onChange={set(field.name)}/>)}
-      </div>
-    </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Update {selected.length} {selected.length === 1 ? 'weld' : 'welds'}</button></div></form>
+      <div className="form-grid">{MASS_EDIT_FLAGS_LABELS.map(([name, label]) => flag(name, label))}</div>
+      {MASS_EDIT_SECTIONS.map(section => <div key={section.title}><h3 className="weld-form-section">{section.title}</h3>
+        <div className="form-grid">{section.items.map((entry, index) => control(entry, entry.label === 'NDT process' && section.title !== 'Pre-HT / PWHT' ? NDT_ROUNDS[index - 1]?.label : undefined))}</div></div>)}
+    </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Update</button></div></form>
   </Modal>;
 }
 
-// --------------------------------------------------------------------------------------------------- stamp, delete, deleted welds
+// --------------------------------------------------------------------------------------------------- stamp, delete, bring back
 
+/** The reference's Stamp dialog: one select with the QA/QC person who stamped the weld (stored on the weld). */
 function StampDialog({ weld, data, onClose }: { weld: Row; data: WeldData; onClose: () => void }) {
   const { rows, refresh, notify } = useWorkspace();
-  const [values, setValues] = useState<Values>(() => ({ ...Object.fromEntries(WELDERS.map(name => [name, weld[name] ?? ''])), date: weld.date ?? '' }));
-  const [error, setError] = useState(''), [fields, setFields] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
+  const [value, setValue] = useState(str(weld.stampedBy));
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const people = sortByName(enabledOptions('qa_engineers', activeRows(rows, 'qa_engineers'), str(data.site?.id), rows, weld.stampedBy), 'name').map(row => ({ value: row.id, label: stampOptionLabel(row) }));
   async function submit(event: FormEvent) {
-    event.preventDefault(); setError(''); setFields({});
-    const payload = Object.fromEntries([...WELDERS, 'date'].filter(name => str(values[name]) !== str(weld[name])).map(name => [name, values[name]]));
-    if (!Object.keys(payload).length) { onClose(); return; }
-    const found = missingMandatoryFields(data.site, { ...weld, ...payload }); if (Object.keys(found).length) { setError(Object.values(found)[0]); setFields(found); return; }
+    event.preventDefault(); setError('');
+    if (value === str(weld.stampedBy)) { onClose(); return; }
     setBusy(true);
-    try { await post('/actions/save-weld', { weldId: weld.id, expectedVersion: weld._version, ...payload }); await refresh(); notify(`Stamp of weld ${str(weld.weldNo)} saved.`); onClose(); }
-    catch (failure) { setError(errorMessage(failure)); setFields((failure as ApiError).fields || {}); } finally { setBusy(false); }
+    try { await post('/actions/stamp-weld', { weldId: weld.id, expectedVersion: weld._version, stampedBy: value }); await refresh(); notify(`Stamp of weld ${str(weld.weldNo)} saved.`); onClose(); }
+    catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
-  return <Modal title="Stamp weld" subtitle={`Weld ${str(weld.weldNo)}`} onClose={onClose}><form onSubmit={event => void submit(event)} noValidate><div className="modal-body"><Failure message={error}/><div className="form-grid">
-    {WELDERS.map((name, index) => <SelectField key={name} label={index ? `Welder ${index + 1}` : 'Welder'} value={values[name]} error={fields[name]} options={welderOptions(rows.welders || [], [weld[name]])} onChange={value => setValues(current => ({ ...current, [name]: value }))}/>)}
-    <TextField label="Weld Date" type="date" value={values.date} error={fields.date} onChange={value => setValues(current => ({ ...current, date: value }))}/>
-  </div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Save stamp</button></div></form></Modal>;
+  return <Modal title="Stamp" subtitle={`Weld ${str(weld.weldNo)}`} onClose={onClose}><form onSubmit={event => void submit(event)} noValidate><div className="modal-body"><Failure message={error}/>
+    <SelectField label="Stamp" value={value} placeholder={STAMP_NONE} options={people} onChange={setValue}/>
+  </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Update</button></div></form></Modal>;
 }
 
-/** Delete one or several checked welds: a confirmation first, then each weld on its own; a weld in use stays and says why. */
+/** Delete one or several checked welds: "Are you sure?" first, then each weld on its own (a locked weld stays and says why). */
 function DeleteDialog({ welds, onClose, onDone }: { welds: Row[]; onClose: () => void; onDone: () => void }) {
   const { refresh, notify } = useWorkspace(); const [items] = useState(welds);
   const [busy, setBusy] = useState(false), [failed, setFailed] = useState<{ id: string; weldNo: string; message: string }[]>([]), [deleted, setDeleted] = useState(0);
@@ -327,46 +330,63 @@ function DeleteDialog({ welds, onClose, onDone }: { welds: Row[]; onClose: () =>
     if (!problems.length) { notify(`${done} ${done === 1 ? 'weld' : 'welds'} deleted.`); onDone(); onClose(); } else if (done) onDone();
   }
   const finished = failed.length > 0;
-  return <Modal title={`Delete ${items.length === 1 ? `weld ${str(items[0].weldNo)}` : `${items.length} welds`}?`} subtitle="Deleted welds can be brought back with Show deleted welds." onClose={onClose}>
-    <div className="modal-body">{finished ? <div className="alert error" role="alert"><AlertCircle size={18}/><div><strong>{deleted} deleted, {failed.length} could not be deleted.</strong><ul>{failed.map(item => <li key={item.id}>Weld {item.weldNo}: {item.message}</li>)}</ul></div></div> : <><p>{items.length === 1 ? 'This weld leaves the table.' : 'These welds leave the table.'} A weld with active inspection requests stays and is reported afterwards.</p><ul className="weld-delete-list">{items.map(weld => <li key={weld.id}>{str(weld.weldNo)}</li>)}</ul></>}</div>
-    <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{finished ? 'Close' : 'Cancel'}</button>{!finished && <button className="btn primary danger" disabled={busy} onClick={() => void submit()}>{busy && <Loader2 size={15} className="spin"/>}Delete {items.length === 1 ? 'weld' : `${items.length} welds`}</button>}</div>
+  return <Modal title={items.length === 1 ? WELD_DELETE_WORDING.one : WELD_DELETE_WORDING.many} onClose={onClose}>
+    <div className="modal-body">{finished ? <div className="alert error" role="alert"><AlertCircle size={18}/><div><strong>{deleted} deleted, {failed.length} could not be deleted.</strong><ul>{failed.map(item => <li key={item.id}>Weld {item.weldNo}: {item.message}</li>)}</ul></div></div> : <p>{WELD_DELETE_WORDING.text}</p>}</div>
+    <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{finished ? 'Close' : WELD_DELETE_WORDING.cancel}</button>{!finished && <button className="btn primary danger" disabled={busy} onClick={() => void submit()}>{busy && <Loader2 size={15} className="spin"/>}{WELD_DELETE_WORDING.button}</button>}</div>
   </Modal>;
 }
 
-function DeletedDialog({ iso, data, onClose }: { iso: Row; data: WeldData; onClose: () => void }) {
-  const { canRecord, refresh, notify } = useWorkspace(); const [busy, setBusy] = useState(''), [error, setError] = useState('');
-  async function bring(weld: Row) {
-    setBusy(weld.id); setError('');
-    try { await post(`/records/welds/${weld.id}/archive`, { _version: weld._version }); await refresh(); notify(`Weld ${str(weld.weldNo)} is back in the table.`); } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(''); }
+/** The undo icon of a deleted weld: "Bring weld back", "Are you sure?", Bring back / Cancel. */
+function BringBackDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace(); const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function bring() {
+    setBusy(true); setError('');
+    try { await post(`/records/welds/${weld.id}/archive`, { _version: weld._version }); await refresh(); notify(`Weld ${str(weld.weldNo)} is back in the table.`); onClose(); } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
-  return <Modal title="Deleted welds" subtitle={str(iso.isoNo)} onClose={onClose}><div className="modal-body"><Failure message={error}/>
-    {data.deleted.length ? <TableScroll><table className="data-table"><thead><tr><th>WN</th><th>Type</th><th>Deleted</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{sortByName(data.deleted, 'weldNo').map(weld => { const lock = weldLock(weld, data.lock); return <tr key={weld.id}><td>{str(weld.weldNo)}</td><td>{typeAbbreviation(data.types.get(str(weld.typeId))) || '—'}</td><td>{formatDate(weld._updatedAt)}</td><td>{lock.locked ? <span className="weld-lock" title={lock.reason}><Lock size={15}/><span className="sr-only">{lock.reason}</span></span> : canRecord('welds', 'delete', weld) && <button type="button" className="btn small" disabled={Boolean(busy)} onClick={() => void bring(weld)}>{busy === weld.id ? <Loader2 size={14} className="spin"/> : <RotateCcw size={14}/>}Bring back</button>}</td></tr>; })}</tbody></table></TableScroll> : <EmptyState title="No deleted welds" description="Welds you delete from this isometric are listed here until you bring them back."/>}
-  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button></div></Modal>;
+  return <Modal title={WELD_BRING_BACK_WORDING.title} onClose={onClose}><div className="modal-body"><Failure message={error}/><p>{WELD_BRING_BACK_WORDING.text}</p></div>
+    <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{WELD_BRING_BACK_WORDING.cancel}</button><button type="button" className="btn primary" disabled={busy} onClick={() => void bring()}>{busy && <Loader2 size={15} className="spin"/>}{WELD_BRING_BACK_WORDING.button}</button></div></Modal>;
 }
 
 // --------------------------------------------------------------------------------------------------- the table
 
 const COLUMNS = ['Sort', 'WN', 'Type', 'Wdr', 'VI', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT', 'Idx', 'Chg.No.', 'Material ①', 'Idx', 'Chg.No.', 'Material ②', 'WPS', 'D', 'S', 'Options'];
-const SORTING_KEY = 'blitzkrieg-welds-sorting-disabled';
-const readSorting = () => { try { return localStorage.getItem(SORTING_KEY) === '1'; } catch { return false; } };
 
 function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, canAttachments, switcher }: { iso: Row; onAttachments: () => void; onAuditTrail: () => void; onSetPhase: () => void; canSetPhase: boolean; canAttachments: boolean; switcher: ReactNode }) {
   const { canRecord, canRun, refresh, notify } = useWorkspace(); const data = useWeldData(iso);
-  const [selected, setSelected] = useState<string[]>([]), [sortingOff, setSortingOff] = useState(readSorting);
-  const [dialog, setDialog] = useState<'add' | 'mass' | 'delete' | 'deleted' | null>(null), [editing, setEditing] = useState<Row | null>(null), [stamping, setStamping] = useState<Row | null>(null), [removing, setRemoving] = useState<Row[]>([]);
+  const [selected, setSelected] = useState<string[]>([]), [query, setQuery] = useState(''), [showDeleted, setShowDeleted] = useState(false);
+  const [dialog, setDialog] = useState<'add' | 'mass' | 'delete' | 'punch' | null>(null), [editing, setEditing] = useState<Row | null>(null), [stamping, setStamping] = useState<Row | null>(null), [removing, setRemoving] = useState<Row[]>([]), [restoring, setRestoring] = useState<Row | null>(null);
   const [dragging, setDragging] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [announce, setAnnounce] = useState('');
   // NDT / visual inspection / PWHT entries of the inspections flow (already filtered by permission and the 'inspections' feature).
   const inspectionMenu = useInspectionMenu(str(iso.id)), [inspection, setInspection] = useState<InspectionMenuItem | null>(null);
   const { welds } = data, order = welds.map(weld => weld.id);
-  const locks = new Map(welds.map(weld => [weld.id, weldLock(weld, data.lock)]));
-  const checked = welds.filter(weld => selected.includes(weld.id) && !locks.get(weld.id)!.locked);
-  const unlocked = welds.filter(weld => !locks.get(weld.id)!.locked);
-  const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canMass = canRun('mass-edit-welds'), canSort = canRun('reorder-welds') && !sortingOff, canDelete = canRecord('welds', 'delete');
-  function toggleSorting() { const next = !sortingOff; setSortingOff(next); try { localStorage.setItem(SORTING_KEY, next ? '1' : '0'); } catch { /* the choice just is not remembered */ } }
+  const sortingOff = weldSortingDisabled(iso), sorting = weldSortingMenu(sortingOff);
+  const locks = new Map([...welds, ...data.deleted].map(weld => [weld.id, weldLock(weld, data.lock)]));
+  const sideOf = (weld: Row, side: 1 | 2) => {
+    const certificate = data.certs.get(str(weld[`certificate${side}Id`])), material = data.materials.get(str(weld[`material${side}Id`] || certificate?.materialId));
+    return sideSummary(weld, side, { certificate, material, materialType: str(data.materialTypes.get(str(material?.typeId))?.name), materialPart: str(data.materialParts.get(str(material?.partId))?.name) });
+  };
+  const weldersOf = (weld: Row) => WELDERS.map(name => data.welders.get(str(weld[name]))).filter((row): row is Row => Boolean(row));
+  /** The text the Search box looks through: what the row prints (and the tooltips behind it). */
+  const rowText = (weld: Row) => {
+    const type = data.types.get(str(weld.typeId)), cells = [1, 2].map(side => { const text = sideCellTexts(sideOf(weld, side as 1 | 2)); return `${text.index} ${text.charge} ${text.material}`; });
+    return [weld.weldNo, typeAbbreviation(type), type?.name, ...weldersOf(weld).flatMap(row => [row.welderCode || row.number, row.name]), ...cells, data.wps.get(str(weld.wpsId))?.name, weldDiameterText(weld, data.diameters.get(str(weld.diameterId))), data.spools.get(str(weld.spoolId))?.name].map(str).join(' ');
+  };
+  const listed = showDeleted ? data.deleted : welds;
+  const visible = listed.filter(weld => weldMatchesSearch(rowText(weld), query));
+  const checked = showDeleted ? [] : visible.filter(weld => selected.includes(weld.id) && !locks.get(weld.id)!.locked);
+  const unlocked = showDeleted ? [] : visible.filter(weld => !locks.get(weld.id)!.locked);
+  const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canMass = canRun('mass-edit-welds'), canDelete = canRecord('welds', 'delete');
+  const showSort = !sortingOff && !showDeleted, canSort = canRun('reorder-welds') && showSort;
+  const columns = showSort ? COLUMNS : COLUMNS.slice(1);
+  async function toggleSorting() {
+    try { await post('/actions/toggle-weld-sorting', { isoId: iso.id, enabled: sortingOff }); await refresh(); notify(sortingOff ? WELD_SORTING_MESSAGES.enabled : WELD_SORTING_MESSAGES.disabled); }
+    catch { setError(WELD_SORTING_MESSAGES.failed); }
+  }
+  async function toggleDeleted() { setShowDeleted(value => !value); setSelected([]); setQuery(''); try { await refresh(); } catch { /* the workspace shows its own connection error */ } }
   async function reorder(next: string[] | null, moved?: Row, direction?: 'up' | 'down') {
     if (!next || busy) return; setBusy(true); setError('');
-    try { await post('/actions/reorder-welds', { isoId: iso.id, weldIds: next }); await refresh(); if (moved) setAnnounce(`Weld ${str(moved.weldNo)} moved to place ${next.indexOf(moved.id) + 1} of ${next.length}.`); }
-    catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); setDragging(''); }
+    try { await post('/actions/reorder-welds', { isoId: iso.id, weldIds: next }); await refresh(); notify(WELD_ORDER_MESSAGES.saved); if (moved) setAnnounce(`Weld ${str(moved.weldNo)} moved to place ${next.indexOf(moved.id) + 1} of ${next.length}.`); }
+    catch (failure) { setError(orderFailureMessage(failure)); try { await refresh(); } catch { /* the saved order could not be reloaded either */ } } finally { setBusy(false); setDragging(''); }
     // The arrow buttons are disabled while saving, which drops keyboard focus: give it back to the moved weld (the other arrow once it reached an end).
     if (moved && direction) requestAnimationFrame(() => {
       const button = (dir: 'up' | 'down') => document.querySelector<HTMLButtonElement>(`button[aria-label="${CSS.escape(`Move weld ${str(moved.weldNo)} ${dir}`)}"]`);
@@ -375,59 +395,73 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     });
   }
   const sideCells = (weld: Row, side: 1 | 2) => {
-    const certificate = data.certs.get(str(weld[`certificate${side}Id`])), material = data.materials.get(str(weld[`material${side}Id`] || certificate?.materialId));
-    const summary = sideSummary(weld, side, { certificate, material, materialType: str(data.materialTypes.get(str(material?.typeId))?.name), materialPart: str(data.materialParts.get(str(material?.partId))?.name) });
-    return <><td className="tabular">{summary.index || <span className="muted">—</span>}</td><td className="tabular">{summary.charge || <span className="muted">—</span>}</td><td className={`weld-material ${summary.kind}`}>{summary.material || <span className="muted">—</span>}</td></>;
+    const summary = sideOf(weld, side), text = sideCellTexts(summary);
+    return <><td className="tabular">{text.index}</td><td className="tabular">{text.charge}</td><td className={`weld-material ${summary.kind}`}>{text.material}</td></>;
   };
   if (!canRecord('welds')) return <EmptyState title="Weld register restricted" description="Your permission profile does not include the weld register."/>;
+  const inspectionItem = (key: string) => inspectionMenu.find(item => item.key === key);
+  const menuItem = (key: string, label: string): ReactNode => {
+    switch (key) {
+      case 'attachments': return <button type="button" disabled={!canAttachments} onClick={onAttachments}>{label}<AttachmentCountBadge isoId={iso.id}/></button>;
+      case 'punch-list': return canRecord('punchlists') ? <button type="button" onClick={() => setDialog('punch')}>{label}</button> : null;
+      case 'audit-trail': return <button type="button" onClick={onAuditTrail}>{label}</button>;
+      case 'set-phase': return <button type="button" disabled={!canSetPhase} onClick={onSetPhase}>{label}</button>;
+      case 'show-deleted': return <button type="button" onClick={() => void toggleDeleted()}>{showDeleted ? WELD_BRING_BACK_WORDING.showActive : label}</button>;
+      case 'delete-selected': return <button type="button" disabled={!canDelete || !checked.length} onClick={() => { setRemoving(checked); setDialog('delete'); }}>{label}</button>;
+      case 'sorting': return <button type="button" role="menuitemcheckbox" aria-checked={sorting.checked} onClick={() => void toggleSorting()}>{sorting.checked ? '☑' : '☐'} {sorting.label}</button>;
+      default: {
+        const item = inspectionItem(key); if (!item) return null;
+        const count = key === 'visual-inspection' ? /\s\((\d+)\)$/.exec(item.label)?.[1] : undefined;
+        return <button type="button" onClick={() => setInspection(item)}>{label}{count !== undefined && <span className="count-pill">{count}</span>}</button>;
+      }
+    }
+  };
   return <section className="panel weld-panel" aria-label="Welds">
-    <div className="panel-heading weld-panel-heading"><div><h2>Welds</h2><span className="muted">{welds.length} on this isometric</span></div>{switcher}
+    <div className="panel-heading weld-panel-heading"><div><h2>Welds</h2><span className="muted">{showDeleted ? `${data.deleted.length} deleted on this isometric` : `${welds.length} on this isometric`}</span></div>{switcher}
       <div className="heading-actions weld-actions">
         <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>
-          <button type="button" disabled={!canAttachments} onClick={onAttachments}>Attachments<AttachmentCountBadge isoId={iso.id}/></button>
-          <button type="button" onClick={onAuditTrail}>Audit trail</button>
-          <button type="button" disabled={!canSetPhase} onClick={onSetPhase}>Set phase</button>
-          {inspectionMenu.map(item => <button key={item.key} type="button" onClick={() => setInspection(item)}>{item.label}</button>)}
-          <button type="button" onClick={() => setDialog('deleted')}>Show deleted welds{data.deleted.length ? ` (${data.deleted.length})` : ''}</button>
-          <button type="button" disabled={!canDelete || !checked.length} onClick={() => { setRemoving(checked); setDialog('delete'); }}>Delete selected{checked.length ? ` (${checked.length})` : ''}</button>
-          <button type="button" role="menuitemcheckbox" aria-checked={sortingOff} onClick={toggleSorting}>{sortingOff ? '☑' : '☐'} Disable welds sorting</button>
+          {WELD_OPTIONS_MENU.map(entry => { const node = menuItem(entry.key, entry.label); return node ? <Fragment key={entry.key}>{entry.dividerBefore && <div role="separator" className="dropdown-divider"/>}{node}</Fragment> : null; })}
         </Dropdown>
-        <button type="button" className="btn" disabled={!canMass || !checked.length} title={checked.length ? undefined : 'Check welds in the table first'} onClick={() => setDialog('mass')}>Mass edit welds{checked.length ? ` (${checked.length})` : ''}</button>
-        <button type="button" className="btn primary" disabled={!canAdd} onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button>
+        <button type="button" className="btn" disabled={!canMass || showDeleted} onClick={() => { if (checked.length) setDialog('mass'); else notify(MASS_EDIT_SELECT_NOTHING); }}>Mass edit welds</button>
+        <button type="button" className="btn primary" disabled={!canAdd || showDeleted} onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button>
       </div></div>
     <Failure message={error}/>
     <p className="sr-only" role="status" aria-live="polite">{announce}</p>
-    {welds.length ? <TableScroll><table className="data-table weld-table" aria-label={`Welds of ${str(iso.isoNo)}`} aria-busy={busy}>
-      <thead><tr>{COLUMNS.map((name, index) => <th key={`${name}${index}`} scope="col" className={name === 'Sort' ? 'weld-sort-head' : undefined}>{name === 'Sort' ? <span className="sr-only">Sort</span> : name}</th>)}<th scope="col" className="select-cell"><input type="checkbox" aria-label="Check all unlocked welds" checked={unlocked.length > 0 && unlocked.every(weld => selected.includes(weld.id))} ref={input => { if (input) input.indeterminate = unlocked.some(weld => selected.includes(weld.id)) && !unlocked.every(weld => selected.includes(weld.id)); }} onChange={event => setSelected(event.target.checked ? unlocked.map(weld => weld.id) : [])}/></th></tr></thead>
-      <tbody>{welds.map(weld => {
-        const lock = locks.get(weld.id)!, type = data.types.get(str(weld.typeId)), welders = WELDERS.map(name => data.welders.get(str(weld[name]))).filter((row): row is Row => Boolean(row));
-        const abbreviation = typeAbbreviation(type), tooltip = locationTooltip(weldLocation(type));
+    {listed.length > 0 && <div className="weld-search"><SearchInput value={query} onChange={setQuery} placeholder="Search"/></div>}
+    {listed.length ? <TableScroll><table className="data-table weld-table" aria-label={`${showDeleted ? 'Deleted welds' : 'Welds'} of ${str(iso.isoNo)}`} aria-busy={busy}>
+      <thead><tr>{columns.map((name, index) => <th key={`${name}${index}`} scope="col" className={name === 'Sort' ? 'weld-sort-head' : undefined}>{name === 'Sort' ? <span className="sr-only">Sort</span> : name}</th>)}<th scope="col" className="select-cell"><input type="checkbox" aria-label="Check all unlocked welds" disabled={showDeleted} checked={unlocked.length > 0 && unlocked.every(weld => selected.includes(weld.id))} ref={input => { if (input) input.indeterminate = unlocked.some(weld => selected.includes(weld.id)) && !unlocked.every(weld => selected.includes(weld.id)); }} onChange={event => setSelected(current => event.target.checked ? [...new Set([...current, ...unlocked.map(weld => weld.id)])] : current.filter(id => !unlocked.some(weld => weld.id === id)))}/></th></tr></thead>
+      <tbody>{visible.map(weld => {
+        const lock = locks.get(weld.id)!, type = data.types.get(str(weld.typeId)), stamps = welderStamps(weldersOf(weld)), stamper = data.stampers.get(str(weld.stampedBy));
+        const abbreviation = typeAbbreviation(type), tooltip = locationTooltip(type);
         return <tr key={weld.id} className={`${lock.locked ? 'weld-row-locked' : ''} ${dragging === weld.id ? 'weld-row-dragging' : ''}`} onDragOver={event => { if (dragging && dragging !== weld.id) event.preventDefault(); }} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, weld.id), welds.find(row => row.id === dragging)); }}>
-          <td className="weld-sort-cell">{canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld, 'up')}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld, 'down')}><ArrowDown size={14}/></button></> : <span className="muted">—</span>}</td>
-          <td className="weld-no">{canEdit && !lock.locked ? <button type="button" className="record-link" onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
-          <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}${type?.name ? ` (${str(type.name)})` : ''}`}>{abbreviation}</span> : <span className="muted">—</span>}</td>
-          <td>{welders.length ? <span title={welders.map(row => str(row.name || row.number)).join(', ')}>{welders.map(row => str(row.welderCode || row.number)).join(', ')}</span> : <span className="muted">—</span>}</td>
+          {showSort && <td className="weld-sort-cell">{canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld, 'up')}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld, 'down')}><ArrowDown size={14}/></button></> : <span className="muted">-</span>}</td>}
+          <td className="weld-no">{canEdit && !lock.locked && !showDeleted ? <button type="button" className="record-link" onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
+          <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}`}>{abbreviation}</span> : <span className="muted">-</span>}</td>
+          <td>{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{NO_WELDER_TEXT}</span>}</td>
           <td><InspectionCell weld={weld} kind="VI"/></td><td><InspectionCell weld={weld} kind="NDT PRE"/></td><td><InspectionCell weld={weld} kind="NDT"/></td><td><InspectionCell weld={weld} kind="PWHT"/></td>
           {sideCells(weld, 1)}{sideCells(weld, 2)}
           <td>{str(data.wps.get(str(weld.wpsId))?.name) || <span className="muted">—</span>}</td>
           <td className="tabular">{weldDiameterText(weld, data.diameters.get(str(weld.diameterId))) || <span className="muted">—</span>}</td>
           <td>{str(data.spools.get(str(weld.spoolId))?.name) || <span className="muted">—</span>}</td>
-          <td className="weld-options">{lock.locked ? <span className="weld-lock" role="img" aria-label={`Locked. ${lock.reason}`} title={lock.reason}><Lock size={16}/></span> : <>
+          <td className="weld-options">{lock.locked ? <span className="weld-lock" role="img" aria-label={`Locked. ${lock.reason}`} title={lock.reason}><Lock size={16}/></span> : showDeleted ? (canDelete && <button type="button" className="icon-btn" aria-label={`${WELD_BRING_BACK_WORDING.icon} ${str(weld.weldNo)}`} title={WELD_BRING_BACK_WORDING.icon} onClick={() => setRestoring(weld)}><RotateCcw size={16}/></button>) : <>
             {canEdit && <button type="button" className="icon-btn" aria-label={`Edit weld ${str(weld.weldNo)}`} onClick={() => setEditing(weld)}><Pencil size={16}/></button>}
             {canDelete && <button type="button" className="icon-btn" aria-label={`Delete weld ${str(weld.weldNo)}`} onClick={() => { setRemoving([weld]); setDialog('delete'); }}><Trash2 size={16}/></button>}
-            {canEdit && <button type="button" className="icon-btn" aria-label={`Stamp weld ${str(weld.weldNo)}`} onClick={() => setStamping(weld)}><Stamp size={16}/></button>}</>}</td>
-          <td className="select-cell"><input type="checkbox" aria-label={`Check weld ${str(weld.weldNo)}`} disabled={lock.locked} title={lock.locked ? lock.reason : undefined} checked={!lock.locked && selected.includes(weld.id)} onChange={event => setSelected(current => event.target.checked ? [...current, weld.id] : current.filter(id => id !== weld.id))}/></td>
+            {canEdit && <button type="button" className={`icon-btn ${weld.stampedBy ? 'weld-stamp-set' : ''}`} aria-label={`Stamp weld ${str(weld.weldNo)}${stamper ? `, stamped by ${str(stamper.name)}` : ''}`} title={stamper ? stampOptionLabel(stamper) : 'Stamp'} onClick={() => setStamping(weld)}><Stamp size={16}/></button>}</>}</td>
+          <td className="select-cell"><input type="checkbox" aria-label={`Check weld ${str(weld.weldNo)}`} disabled={lock.locked || showDeleted} title={lock.locked ? lock.reason : undefined} checked={!lock.locked && !showDeleted && selected.includes(weld.id)} onChange={event => setSelected(current => event.target.checked ? [...current, weld.id] : current.filter(id => id !== weld.id))}/></td>
         </tr>;
       })}</tbody>
-      {canSort && dragging && <tfoot><tr className="weld-drop-end" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, null), welds.find(row => row.id === dragging)); }}><td colSpan={COLUMNS.length + 1}>Drop here to move the weld to the end</td></tr></tfoot>}
-    </table></TableScroll> : <EmptyState title="No welds on this isometric" description="Add the first weld, or add a range of weld numbers at once." action={canAdd ? <button type="button" className="btn primary" onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : undefined}/>}
-    {welds.length > 0 && <p className="muted weld-legend"><Lock size={13}/> A padlock marks a weld of a completed phase: field welds after the Field release, shop welds after the Prefab release. Reopen the release to change them.</p>}
+      {canSort && dragging && <tfoot><tr className="weld-drop-end" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, null), welds.find(row => row.id === dragging)); }}><td colSpan={columns.length + 1}>Drop here to move the weld to the end</td></tr></tfoot>}
+    </table>{visible.length === 0 && <p className="muted weld-no-match" role="status">No weld matches “{query.trim()}”.</p>}</TableScroll>
+      : showDeleted ? <EmptyState title={WELD_BRING_BACK_WORDING.emptyTitle} description={WELD_BRING_BACK_WORDING.emptyText}/>
+      : <EmptyState title="No welds on this isometric" description="Add the first weld, or add a range of weld numbers at once." action={canAdd ? <button type="button" className="btn primary" onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : undefined}/>}
+    {welds.length > 0 && !showDeleted && <p className="muted weld-legend"><Lock size={13}/> A padlock marks a weld of a completed phase: field welds after the Field release, shop welds after the Prefab release. Reopen the release to change them.</p>}
     {dialog === 'add' && <WeldDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
     {editing && <WeldDialog iso={iso} weld={editing} data={data} onClose={() => setEditing(null)}/>}
     {stamping && <StampDialog weld={stamping} data={data} onClose={() => setStamping(null)}/>}
     {dialog === 'mass' && <MassEditDialog iso={iso} data={data} selected={checked} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
     {dialog === 'delete' && <DeleteDialog welds={removing} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
-    {dialog === 'deleted' && <DeletedDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
+    {dialog === 'punch' && <IsoPunchDialog iso={iso} onClose={() => setDialog(null)}/>}
+    {restoring && <BringBackDialog weld={restoring} onClose={() => setRestoring(null)}/>}
     {inspection && <inspection.Dialog isoId={str(iso.id)} weldIds={checked.map(weld => weld.id)} onClose={() => setInspection(null)}/>}
   </section>;
 }
