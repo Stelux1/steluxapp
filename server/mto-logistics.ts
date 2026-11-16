@@ -122,14 +122,19 @@ export function seedMtoLogistics(store: Store, actor: Actor) {
     if (report) run('take-picklist', { reportNo: report, date: '2026-10-24' });
     run('start-iso', { isoId: 'iso-5', date: '2026-10-26' });
     // Treatments shown by the service request page, and requests in different states.
-    const spool = (id: string, data: Input) => { const row = store.list('spools').find(item => item.id === id); if (row) store.update('spools', id, data, row._version, actor); };
+    // The treatments belong to the isometric (the service request page reads them there); the spool keeps its copy.
+    const spool = (id: string, data: Input) => {
+      const row = store.list('spools').find(item => item.id === id); if (!row) return;
+      store.update('spools', id, data, row._version, actor);
+      const iso = store.list('isometrics').find(item => item.id === row.isoId); if (iso) store.update('isometrics', iso.id, data, iso._version, actor);
+    };
     spool('spool-1', { chemicalClean: 'Acid pickling', pwht: false });
     spool('spool-2', { chemicalClean: 'Acid pickling', pwht: true, paintSpec: 'PS-04 epoxy 2 × 120 µm' });
     spool('spool-3', { chemicalClean: 'Degreasing', paintSpec: 'PS-02 zinc primer' });
     spool('spool-5', { chemicalClean: 'Passivation', pwht: false });
     run('service', { spoolIds: ['spool-2'], companyId: 'service-pwht', name: 'Stress relief batch 1', includeDrawings: true, date: '2026-10-21', note: 'Heat treatment per the procedure on the drawing.' });
     const blast = run('service', { spoolIds: ['spool-3'], companyId: 'service-blast', name: 'Blast and prime, week 43', date: '2026-10-17' });
-    if ('records' in blast && blast.records?.[0]) run('complete-service', { requestIds: [blast.records[0].id], laydownId: 'laydown-c', date: '2026-10-22', note: 'Received, coating inspected.' });
+    if ('records' in blast && blast.records?.[0]) run('move-spools', { spoolIds: ['spool-3'], laydownId: 'laydown-c', date: '2026-10-22', note: 'Received, coating inspected.' });
     run('move-materials', { requirementIds: ['requirement-field-1'], laydownId: 'mlaydown-valves', date: '2026-10-22' });
     run('service-materials', { requirementIds: ['requirement-field-1'], companyId: 'service-blast', name: 'Valve body coating', date: '2026-10-25' });
     store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_mto_logistics_v1','1')").run();

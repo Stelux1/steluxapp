@@ -1,11 +1,13 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { AlertCircle, CheckCircle2, Download, Loader2, MapPin, PackageCheck, Printer, RefreshCw, Send, X } from 'lucide-react';
+import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { AlertCircle, Check, CheckCircle2, Download, Loader2, MapPin, PackageCheck, Printer, RefreshCw, Send, SlidersHorizontal, X } from 'lucide-react';
 import { materialRecord } from '../shared/materials.ts';
 import { materialLocations } from '../shared/material-logistics.ts';
 import { PRIORITY_OPTIONS, priorityLabel } from '../shared/priority.ts';
-import { PERCENT_BANDS, isTaken, isoStatuses, percentBand, pickListReports, requestArchive, spoolRows, startedReports, type IsoStatus, type PickListReport } from '../shared/mto-logistics.ts';
+import { PERCENT_BANDS, archiveDefaultRange, isTaken, isoStatuses, laydownContent, laydownHistory, percentBand, pickListReports, requestArchive, spoolHistory, spoolNames, spoolRequestNumbers, spoolRows, startedReports, type ArchiveRequest, type IsoStatus, type PickListReport, type SpoolFilters, type SpoolRow } from '../shared/mto-logistics.ts';
+import type { Row } from '../shared/types.ts';
 import { useWorkspace, activeRows } from './context.tsx';
-import { formatDate, formatNumber, post, type ApiError } from './api.ts';
+import { apiUrl, formatDate, formatNumber, post, type ApiError } from './api.ts';
 import { Badge, EmptyState, FieldInput, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { PickListPdfButton } from './pdf-documents.tsx';
@@ -144,38 +146,129 @@ export function PickListArchive() {
 
 export function ServiceRequestSpools() {
   const { rows, label, canRecord, canRun, openRecord } = useWorkspace();
-  const [projectId, setProject] = useState(''); const [isoId, setIso] = useState(''); const [location, setLocation] = useState(''); const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<string[]>([]); const [action, setAction] = useState<{ key: string; defaults: Record<string, unknown> } | null>(null);
+  const [applied, setApplied] = useState<SpoolFilters>({}); const [draft, setDraft] = useState<SpoolFilters>({}); const [panel, setPanel] = useState(false); const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<string[]>([]); const [dialog, setDialog] = useState<'service' | 'move' | null>(null); const [history, setHistory] = useState<SpoolRow | null>(null);
   if (!canRecord('spools') || !canRecord('service_requests')) return <Restricted what="spool service requests"/>;
-  const all = spoolRows(rows, { projectId, isoId });
-  const list = all.filter(entry => (!location || `${entry.location.type}:${entry.location.id}` === location) && includes([entry.spool.name, entry.iso.isoNo, entry.spool.paintSpec, entry.spool.chemicalClean, label('projects', entry.projectId), entry.location.id ? label(entry.location.type === 'Service' ? 'service_companies' : 'laydowns', entry.location.id) : 'Transport'], query));
+  const all = spoolRows(rows, applied);
+  const list = all.filter(entry => includes([entry.spool.name, entry.iso.isoNo, entry.paintSpec, entry.chemicalClean, entry.spool.diameter, label('projects', entry.projectId), entry.location.id ? label(entry.location.type === 'Service' ? 'service_companies' : 'laydowns', entry.location.id) : ''], query));
   const checked = list.filter(entry => selected.includes(entry.spool.id));
-  const canRequest = checked.length > 0 && checked.every(entry => !entry.openRequest && entry.location.type !== 'Service');
-  const canMove = checked.length > 0 && checked.every(entry => !entry.openRequest && entry.location.type !== 'Service');
-  const where = (entry: (typeof list)[number]) => entry.location.type === 'Transport' ? <Badge color="amber">Transport</Badge> : <span className={`location-label ${entry.location.type === 'Service' ? 'service' : ''}`}><MapPin size={13}/>{label(entry.location.type === 'Service' ? 'service_companies' : 'laydowns', entry.location.id)}</span>;
-  const exportCsv = () => downloadCsv('service-request-spools.csv', ['Project', 'ISO', 'Spool', 'Diameter', 'Paint spec.', 'PWHT', 'Chemical clean', 'Currently on', 'Last request'], list.map(entry => [label('projects', entry.projectId), entry.iso.isoNo, entry.spool.name, entry.spool.diameter, entry.spool.paintSpec, entry.spool.pwht ? 'Yes' : 'No', entry.spool.chemicalClean, entry.location.type === 'Transport' ? 'Transport' : label(entry.location.type === 'Service' ? 'service_companies' : 'laydowns', entry.location.id), entry.lastRequest ? `${entry.lastRequest.number} ${entry.lastRequest.date}` : '']));
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Service request"><button className="btn" onClick={exportCsv} disabled={!list.length}><Download size={15}/>Export</button><button className="btn subtle" onClick={() => window.print()}><Printer size={15}/>Print</button></Heading>
+  const where = (entry: (typeof list)[number]) => entry.location.id ? <span className={`location-label ${entry.location.type === 'Service' ? 'service' : ''}`}><MapPin size={13}/>{label(entry.location.type === 'Service' ? 'service_companies' : 'laydowns', entry.location.id)}</span> : <span className="muted">—</span>;
+  const exportUrl = apiUrl(`/export-spools?${new URLSearchParams(Object.entries(applied).filter(([, value]) => value) as [string, string][])}`);
+  const choose = (name: keyof SpoolFilters, value: string) => setDraft(old => ({ ...old, [name]: value }));
+  const select = (name: keyof SpoolFilters, title: string, options: [string, string][]) => <div className="field"><label htmlFor={`spool-filter-${name}`}>{title}</label><div className="select-wrap"><select id={`spool-filter-${name}`} value={String(draft[name] ?? '')} onChange={event => choose(name, event.target.value)}>{options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></div></div>;
+  const text = (name: keyof SpoolFilters, title: string) => <div className="field"><label htmlFor={`spool-filter-${name}`}>{title}</label><input id={`spool-filter-${name}`} type="text" placeholder="..." value={String(draft[name] ?? '')} onChange={event => choose(name, event.target.value)}/></div>;
+  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Service request">
+      <button className="btn" aria-expanded={panel} aria-controls="spool-filter-panel" onClick={() => setPanel(open => !open)}><SlidersHorizontal size={15}/>Filter</button>
+      <a className="btn" href={exportUrl} download><Download size={15}/>Export</a></Heading>
     <section className="panel execution-panel">
-      <div className="execution-scope"><FieldInput field={{ name: 'projectId', label: 'Project', type: 'ref', ref: 'projects' }} value={projectId} onChange={value => { setProject(String(value)); setIso(''); setSelected([]); }}/>
-        <FieldInput field={{ name: 'isoId', label: 'Isometric', type: 'ref', ref: 'isometrics' }} values={{ projectId }} value={isoId} onChange={value => { setIso(String(value)); setSelected([]); }}/>
-        <div className="field"><label htmlFor="spool-location">Currently on</label><div className="select-wrap"><select id="spool-location" value={location} onChange={event => { setLocation(event.target.value); setSelected([]); }}><option value="">All locations</option><option value="Transport:">Transport</option>
-          <optgroup label="Laydown areas">{activeRows(rows, 'laydowns').map(row => <option key={row.id} value={`Laydown:${row.id}`}>{String(row.name)}</option>)}</optgroup><optgroup label="Service companies">{activeRows(rows, 'service_companies').map(row => <option key={row.id} value={`Service:${row.id}`}>{String(row.name)}</option>)}</optgroup></select></div></div>
-        <button className="text-link" onClick={() => { setProject(''); setIso(''); setLocation(''); setQuery(''); setSelected([]); }}>Clear filters</button></div>
-      <div className="table-toolbar"><SearchInput value={query} onChange={value => { setQuery(value); setSelected([]); }} placeholder="Search spool, isometric, treatment, or location…"/></div>
+      {panel && <form id="spool-filter-panel" className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied({ ...draft }); setSelected([]); }}>
+        {select('projectId', 'Project', [['', 'All'], ...activeRows(rows, 'projects').map(row => [row.id, label('projects', row.id)] as [string, string])])}
+        {select('spoolName', 'Spool', [['', 'All'], ...spoolNames(rows).map(name => [name, name] as [string, string])])}
+        {select('show', 'Show', [['all', 'All'], ['hideFinished', 'Hide finished']])}
+        {text('paintSpec', 'Paint spec.')}{text('diameter', 'Diameter')}{text('chemicalClean', 'Chemical clean')}
+        {select('currently', 'Currently on', [['', '------'], ...activeRows(rows, 'laydowns').map(row => [`Laydown:${row.id}`, `Laydown: ${row.name}`] as [string, string]), ...activeRows(rows, 'service_companies').map(row => [`Service:${row.id}`, `Service: ${row.name}`] as [string, string])])}
+        {select('lastReport', 'Request', [['', '------'], ...spoolRequestNumbers(rows).map(number => [number, number] as [string, string])])}
+        <button className="btn primary small" type="submit"><Check size={15}/>Filter</button>
+        <button className="btn small" type="button" onClick={() => { setDraft({}); setApplied({}); setSelected([]); }}><X size={15}/>Reset</button></form>}
+      <div className="table-toolbar"><SearchInput value={query} onChange={value => { setQuery(value); setSelected([]); }} placeholder="Search"/></div>
       {(canRun('service') || canRun('move-spools')) && <div className="logistics-actions">
-        {canRun('service') && <button className="btn primary small" disabled={!canRequest} onClick={() => setAction({ key: 'service', defaults: { spoolIds: checked.map(entry => entry.spool.id) } })}><Send size={15}/>Service request</button>}
-        {canRun('move-spools') && <button className="btn small" disabled={!canMove} onClick={() => setAction({ key: 'move-spools', defaults: { spoolIds: checked.map(entry => entry.spool.id) } })}><MapPin size={15}/>Move to laydown</button>}
+        {canRun('service') && <button className="btn primary small" disabled={!checked.length} onClick={() => setDialog('service')}><Send size={15}/>Service request</button>}
+        {canRun('move-spools') && <button className="btn small" disabled={!checked.length} onClick={() => setDialog('move')}><MapPin size={15}/>Move to laydown</button>}
         <span>{checked.length ? `${checked.length} checked` : 'Check spools to choose their next step.'}</span></div>}
       <TableScroll><table className="data-table execution-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Check all spools in this view" checked={list.length > 0 && list.every(entry => selected.includes(entry.spool.id))} disabled={!list.length} onChange={event => setSelected(event.target.checked ? list.map(entry => entry.spool.id) : [])}/></th>
         <th>Project</th><th>ISO</th><th>Spool</th><th>Diameter</th><th>Paint spec.</th><th>PWHT</th><th>Chemical clean</th><th>Currently on</th><th>Last request</th></tr></thead>
         <tbody>{list.map(entry => <tr key={entry.spool.id}><td className="select-cell"><input type="checkbox" aria-label={`Check spool ${entry.spool.name} of ${entry.iso.isoNo}`} checked={selected.includes(entry.spool.id)} onChange={event => setSelected(old => event.target.checked ? [...new Set([...old, entry.spool.id])] : old.filter(id => id !== entry.spool.id))}/></td>
-          <td>{label('projects', entry.projectId)}</td><td><button className="record-link" onClick={() => openRecord('isometrics', entry.iso.id)}>{String(entry.iso.isoNo)}</button></td><td>{String(entry.spool.name)}</td><td>{String(entry.spool.diameter || '—')}</td><td>{String(entry.spool.paintSpec || '—')}</td>
-          <td><span aria-label={entry.spool.pwht ? 'PWHT required' : 'No PWHT'}>{entry.spool.pwht ? '✓' : '✗'}</span></td><td>{String(entry.spool.chemicalClean || '—')}</td><td>{where(entry)}</td>
-          <td>{entry.lastRequest ? <button className="record-link" onClick={() => openRecord('service_requests', entry.lastRequest!.id)}>{String(entry.lastRequest.number)}<small className="execution-subvalue">{formatDate(entry.lastRequest.date)} · {String(entry.lastRequest.status)}</small></button> : '—'}</td></tr>)}</tbody></table></TableScroll>
+          <td>{label('projects', entry.projectId)}</td><td><button className="record-link" onClick={() => openRecord('isometrics', entry.iso.id)}>{String(entry.iso.isoNo)}</button></td><td>{String(entry.spool.name)}</td><td>{String(entry.spool.diameter || '—')}</td><td>{entry.paintSpec || '—'}</td>
+          <td><span aria-label={entry.pwht ? 'PWHT required' : 'No PWHT'}>{entry.pwht ? '✓' : '✗'}</span></td><td>{entry.chemicalClean || '—'}</td>
+          <td><button className="record-link" aria-label={`Spool history of ${entry.spool.name} of ${entry.iso.isoNo}`} onClick={() => setHistory(entry)}>{where(entry)}</button></td>
+          <td>{entry.lastRequest ? <button className="record-link" onClick={() => openRecord('service_requests', entry.lastRequest!.id)}>{String(entry.lastRequest.number)}</button> : '—'}</td></tr>)}</tbody></table></TableScroll>
       {!list.length && <EmptyState title="No spools found" description="Choose another project or location, or add spools to an isometric."/>}
-      <div className="table-footer"><span>{list.length} spools</span><span>A spool with an open request must be completed in the Request archive before it moves.</span></div>
+      <div className="table-footer"><span>{list.length} spools</span></div>
     </section>
-    {action && <WorkflowDialog actionKey={action.key} defaults={action.defaults} onClose={() => { setAction(null); setSelected([]); }}/>}</div>;
+    {dialog === 'service' && <ServiceRequestDialog entries={checked} onClose={() => { setDialog(null); setSelected([]); }}/>}
+    {dialog === 'move' && <MoveToLaydownDialog entries={checked} onClose={() => { setDialog(null); setSelected([]); }}/>}
+    {history && <SpoolHistoryDialog spool={history.spool} title={`${label('projects', history.projectId)} | ${history.iso.isoNo} | ${history.spool.name}`} onClose={() => setHistory(null)}/>}</div>;
+}
+
+/** "28.06.2024. 09:16" as the reference writes it; an entry that carries only a day shows the day. */
+export function formatStamp(value: unknown) {
+  const raw = String(value ?? ''); if (!raw) return '—';
+  if (!raw.includes('T') || /T00:00:00(\.000)?Z$/.test(raw)) return formatDate(raw);
+  const date = new Date(raw); if (Number.isNaN(date.getTime())) return raw;
+  const two = (number: number) => String(number).padStart(2, '0');
+  return `${two(date.getDate())}.${two(date.getMonth() + 1)}.${date.getFullYear()}. ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+/** Service request: Company, Name (the signed-in user, set by the server), Note, Include isometric drawings in PDF and the selected spools. Confirm / Cancel. */
+function ServiceRequestDialog({ entries, onClose }: { entries: SpoolRow[]; onClose: () => void }) {
+  const { user, label, refresh, notify } = useWorkspace();
+  const [companyId, setCompany] = useState(''); const [note, setNote] = useState(''); const [drawings, setDrawings] = useState(false);
+  const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
+  const noteId = useId(); const drawingsId = useId(); const nameId = useId();
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setFields({});
+    try { await post('/actions/service', { spoolIds: entries.map(entry => entry.spool.id), companyId, note, includeDrawings: drawings }); await refresh(); notify('Service request saved.'); onClose(); }
+    catch (cause) { setError(failure(cause)); setFields((cause as ApiError).fields || {}); } finally { setBusy(false); }
+  }
+  return <Modal title="Service request" onClose={onClose}><form onSubmit={event => void submit(event)}><div className="modal-body">
+    {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+    <div className="form-grid">
+      <FieldInput field={{ name: 'companyId', label: 'Company', type: 'ref', ref: 'service_companies', required: true }} value={companyId} error={fields.companyId} onChange={value => setCompany(String(value))}/>
+      <div className="field"><label htmlFor={nameId}>Name</label><input id={nameId} type="text" readOnly value={user.name}/></div>
+      <div className="field full-width"><label htmlFor={noteId}>Note</label><textarea id={noteId} value={note} onChange={event => setNote(event.target.value)}/></div>
+      <div className="field full-width"><label className="check-label" htmlFor={drawingsId}><input id={drawingsId} type="checkbox" checked={drawings} onChange={event => setDrawings(event.target.checked)}/> Include isometric drawings in PDF</label></div>
+      <div className="field full-width"><span className="field-label" id={`${nameId}-spools`}>Selected spools:</span>
+        <div role="list" aria-labelledby={`${nameId}-spools`}>{entries.map((entry, index) => <div role="listitem" key={entry.spool.id}>{index + 1}. {label('projects', entry.projectId)} | {String(entry.iso.isoNo)} | {String(entry.spool.name)}</div>)}</div></div>
+    </div></div>
+    <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !entries.length}>{busy && <Loader2 size={15} className="spin"/>}Confirm</button></div></form></Modal>;
+}
+
+/** Move to laydown: one field, Laydown. A spool that was at a service company comes back this way. */
+function MoveToLaydownDialog({ entries, onClose }: { entries: SpoolRow[]; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace();
+  const [laydownId, setLaydown] = useState(''); const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setFields({});
+    try { await post('/actions/move-spools', { spoolIds: entries.map(entry => entry.spool.id), laydownId }); await refresh(); notify('Spools moved to the laydown.'); onClose(); }
+    catch (cause) { setError(failure(cause)); setFields((cause as ApiError).fields || {}); } finally { setBusy(false); }
+  }
+  return <Modal title="Move to laydown" onClose={onClose}><form onSubmit={event => void submit(event)}><div className="modal-body">
+    {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+    <div className="form-grid"><FieldInput field={{ name: 'laydownId', label: 'Laydown', type: 'ref', ref: 'laydowns', required: true }} value={laydownId} error={fields.laydownId} onChange={value => setLaydown(String(value))}/></div></div>
+    <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !entries.length}>{busy && <Loader2 size={15} className="spin"/>}Confirm</button></div></form></Modal>;
+}
+
+/** Spool history: Date / Type / Location of every laydown move and service request of one spool, newest first. */
+function SpoolHistoryDialog({ spool, title, onClose }: { spool: Row; title: string; onClose: () => void }) {
+  const { rows } = useWorkspace(); const entries = spoolHistory(rows, spool.id);
+  return <Modal title="Spool history" subtitle={title} onClose={onClose}><div className="modal-body">
+    <TableScroll><table className="data-table"><thead><tr><th>Date</th><th>Type</th><th>Location</th></tr></thead>
+      <tbody>{entries.map(entry => <tr key={entry.id}><td>{formatStamp(entry.date)}</td><td>{entry.type}</td><td>{entry.location || '—'}</td></tr>)}</tbody></table></TableScroll>
+    {!entries.length && <EmptyState title="No history yet" description="Moves to a laydown and service requests of this spool are listed here."/>}</div>
+    <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button></div></Modal>;
+}
+
+/** The page of one laydown: the spools on it now (Project, ISO, Spool, PWHT, Chemical clean, No of services) and its History (every spool that was moved onto it). */
+export function LaydownContent() {
+  const { id = '' } = useParams(); const [params, setParams] = useSearchParams();
+  const { rows, label, canRecord, openRecord } = useWorkspace(); const [history, setHistory] = useState<Row | null>(null); const [query, setQuery] = useState('');
+  if (!canRecord('laydowns') || !canRecord('spools')) return <Restricted what="laydown areas"/>;
+  const laydown = rows.laydowns?.find(row => row.id === id);
+  if (!laydown) return <div className="page mto-page"><EmptyState title="Laydown not found" description="Choose a laydown area from the list." action={<Link className="btn" to="/materials/laydowns">Laydown areas</Link>}/></div>;
+  const past = params.get('type') === 'history';
+  const lines = (past ? laydownHistory(rows, id) : laydownContent(rows, id)).filter(line => includes([label('projects', line.projectId), line.iso.isoNo, line.spool.name, line.treatments.chemicalClean], query));
+  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title={String(laydown.name)}>
+      <Link className="btn subtle" to="/materials/laydowns">Laydown areas</Link>
+      <button className="btn" aria-pressed={past} onClick={() => setParams(past ? {} : { type: 'history' })}>{past ? 'Content' : 'History'}</button></Heading>
+    <section className="panel execution-panel">
+      <div className="table-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search"/></div>
+      <TableScroll><table className="data-table execution-table"><thead><tr>{past && <th>Date</th>}<th>Project</th><th>ISO</th><th>Spool</th><th>PWHT</th><th>Chemical clean</th><th>No of services</th></tr></thead>
+        <tbody>{lines.map(line => <tr key={line.key}>{past && <td>{formatStamp(line.date)}</td>}<td>{label('projects', line.projectId)}</td><td><button className="record-link" onClick={() => openRecord('isometrics', line.iso.id)}>{String(line.iso.isoNo)}</button></td><td>{String(line.spool.name)}</td>
+          <td>{line.treatments.pwht ? 'Yes' : 'No'}</td><td>{line.treatments.chemicalClean || '-'}</td>
+          <td>{line.services > 0 ? <button className="record-link" onClick={() => setHistory(line.spool)}>{line.services}</button> : 0}</td></tr>)}</tbody></table></TableScroll>
+      {!lines.length && <EmptyState title="No data available in table" description={past ? 'No spool has been moved to this laydown yet.' : 'No spool is on this laydown now.'}/>}
+      <div className="table-footer"><span>{lines.length} {lines.length === 1 ? 'entry' : 'entries'}</span></div></section>
+    {history && <SpoolHistoryDialog spool={history} title={`${String(history.name)}`} onClose={() => setHistory(null)}/>}</div>;
 }
 
 // ---- Service req. - Materials ----------------------------------------------------------------------------------------
@@ -187,10 +280,9 @@ export function ServiceMaterials() {
   if (!canRecord('iso_materials') || !canRecord('material_locations')) return <Restricted what="material logistics"/>;
   const list = materialLocations(rows, { projectId, isoId, location }).filter(entry => includes([entry.material.materialNo, entry.material.description, entry.material.dia, entry.iso.isoNo, entry.iso.paintSpec, entry.iso.chemicalClean, label('projects', entry.iso.projectId), entry.locationId ? label(entry.locationType === 'Service' ? 'service_companies' : 'material_laydowns', entry.locationId) : ''], query));
   const checked = list.filter(entry => selected.includes(entry.requirement.id));
-  const canMove = checked.length > 0 && checked.every(entry => !entry.openRequest && entry.locationType !== 'Service');
+  const canMove = checked.length > 0;
   const canService = checked.length > 0 && checked.every(entry => !entry.openRequest && entry.locationType === 'Laydown');
-  const canComplete = checked.length > 0 && checked.every(entry => entry.openRequest);
-  const run = (key: string) => setAction({ key, defaults: key === 'complete-material-service' ? { requestIds: checked.map(entry => entry.openRequest!.id) } : { requirementIds: checked.map(entry => entry.requirement.id) } });
+  const run = (key: string) => setAction({ key, defaults: { requirementIds: checked.map(entry => entry.requirement.id) } });
   const place = (entry: (typeof list)[number]) => entry.locationId ? <span className={`location-label ${entry.locationType === 'Service' ? 'service' : ''}`}><MapPin size={13}/>{label(entry.locationType === 'Service' ? 'service_companies' : 'material_laydowns', entry.locationId)}</span> : <span className="muted">Unassigned</span>;
   return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Service req. - Materials"><button className="btn subtle" onClick={() => window.print()}><Printer size={15}/>Print</button></Heading>
     <section className="panel execution-panel">
@@ -200,10 +292,9 @@ export function ServiceMaterials() {
           <optgroup label="Laydown materials">{activeRows(rows, 'material_laydowns').map(row => <option key={row.id} value={`Laydown:${row.id}`}>{String(row.name)}</option>)}</optgroup><optgroup label="Service companies">{activeRows(rows, 'service_companies').map(row => <option key={row.id} value={`Service:${row.id}`}>{String(row.name)}</option>)}</optgroup></select></div></div>
         <button className="text-link" onClick={() => { setProject(''); setIso(''); setLocation(''); setQuery(''); setSelected([]); }}>Clear filters</button></div>
       <div className="table-toolbar"><SearchInput value={query} onChange={value => { setQuery(value); setSelected([]); }} placeholder="Search material, isometric, treatment, or location…"/></div>
-      {(canRun('move-materials') || canRun('service-materials') || canRun('complete-material-service')) && <div className="logistics-actions">
+      {(canRun('move-materials') || canRun('service-materials')) && <div className="logistics-actions">
         {canRun('move-materials') && <button className="btn small" disabled={!canMove} onClick={() => run('move-materials')}><MapPin size={15}/>Move to laydown</button>}
         {canRun('service-materials') && <button className="btn primary small" disabled={!canService} onClick={() => run('service-materials')}><Send size={15}/>Request service</button>}
-        {canRun('complete-material-service') && <button className="btn small" disabled={!canComplete} onClick={() => run('complete-material-service')}><CheckCircle2 size={15}/>Complete service</button>}
         <span>{checked.length ? `${checked.length} checked` : 'Check materials to choose their next step.'}</span></div>}
       <TableScroll><table className="data-table execution-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Check all materials in this view" checked={list.length > 0 && list.every(entry => selected.includes(entry.requirement.id))} disabled={!list.length} onChange={event => setSelected(event.target.checked ? list.map(entry => entry.requirement.id) : [])}/></th>
         <th>Project</th><th>ISO</th><th>Material</th><th>Dia</th><th>P.Spec.</th><th>Ch.clean</th><th>Qty.</th><th>Currently on</th></tr></thead>
@@ -219,25 +310,34 @@ export function ServiceMaterials() {
 
 // ---- Request archive -------------------------------------------------------------------------------------------------
 
+export const ARCHIVE_TYPES: { value: 'Spool' | 'Material'; label: string }[] = [{ value: 'Spool', label: 'Service request' }, { value: 'Material', label: 'Service request - Materials' }];
+/**
+ * The Options of an archive row. Kept in one place: the documents of a request (print, sign online, upload) join the download
+ * of the files attached to it here.
+ */
+function RequestOptions({ request }: { request: ArchiveRequest }) {
+  return <>{request.documents.map(document => <a key={document.id} className="btn small" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
+}
+
 export function RequestArchive() {
-  const { rows, label, canRecord, canRun } = useWorkspace();
-  const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [query, setQuery] = useState('');
-  const [action, setAction] = useState<{ key: string; defaults: Record<string, unknown> } | null>(null);
+  const { rows, label, canRecord } = useWorkspace();
+  const range = useMemo(() => archiveDefaultRange(today()), []);
+  const first = { kind: 'Spool' as 'Spool' | 'Material', from: range.from, to: range.to, sort: 'desc' as 'desc' | 'asc' };
+  const [draft, setDraft] = useState(first); const [applied, setApplied] = useState(first);
   if (!canRecord('service_requests')) return <Restricted what="the request archive"/>;
-  const list = requestArchive(rows, { from, to }).filter(request => includes([request.number, request.name, request.items.join(' '), label('service_companies', request.companyId)], query));
-  const exportCsv = () => downloadCsv('request-archive.csv', ['Date', 'Request', 'Name', 'Company', 'Type', 'Items', 'Status', 'Completed'], list.map(request => [request.date, request.number, request.name, label('service_companies', request.companyId), request.kind, request.items.join('; '), request.status, request.completedAt]));
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Request archive"><button className="btn" onClick={exportCsv} disabled={!list.length}><Download size={15}/>Export</button><button className="btn subtle" onClick={() => window.print()}><Printer size={15}/>Print</button></Heading>
+  const list = requestArchive(rows, applied);
+  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Request archive"/>
     <section className="panel execution-panel">
-      <div className="execution-scope"><div className="field"><label htmlFor="archive-from">From date</label><input id="archive-from" type="date" value={from} max={to || undefined} onChange={event => setFrom(event.target.value)}/></div>
-        <div className="field"><label htmlFor="archive-to">To date</label><input id="archive-to" type="date" value={to} min={from || undefined} onChange={event => setTo(event.target.value)}/></div>
-        <button className="text-link" onClick={() => { setFrom(''); setTo(''); setQuery(''); }}>Clear filters</button></div>
-      <div className="table-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search request, company, or item…"/></div>
-      <TableScroll><table className="data-table execution-table"><thead><tr><th>Date</th><th>Request</th><th>Name</th><th>Company</th><th>Type</th><th>Items</th><th>Status</th><th>Completed</th><th className="actions-cell">Options</th></tr></thead>
-        <tbody>{list.map(request => <tr key={request.number}><td>{formatDate(request.date)}</td><td>{request.number}{request.includeDrawings && <small className="execution-subvalue">With drawings</small>}</td><td>{request.name || '—'}</td><td>{label('service_companies', request.companyId)}</td><td>{request.kind}</td>
-          <td className="description-cell">{request.items.slice(0, 4).join(', ')}{request.items.length > 4 ? ` +${request.items.length - 4}` : ''}</td><td><Badge>{request.status}</Badge></td><td>{formatDate(request.completedAt)}</td>
-          <td className="actions-cell">{request.openIds.length > 0 && canRun(request.kind === 'Spool' ? 'complete-service' : 'complete-material-service') && <button className="btn small" onClick={() => setAction({ key: request.kind === 'Spool' ? 'complete-service' : 'complete-material-service', defaults: { requestIds: request.openIds } })}><CheckCircle2 size={14}/>Complete</button>}</td></tr>)}</tbody></table></TableScroll>
+      <form className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied(draft); }}>
+        <div className="field"><label htmlFor="archive-order">Order</label><div className="select-wrap"><select id="archive-order" value={draft.sort} onChange={event => { const sort = event.target.value as 'desc' | 'asc'; setDraft(old => ({ ...old, sort })); setApplied(old => ({ ...old, sort })); }}><option value="desc">Order by date desc.</option><option value="asc">Order by date asc.</option></select></div></div>
+        <div className="field"><label htmlFor="archive-type">Type</label><div className="select-wrap"><select id="archive-type" value={draft.kind} onChange={event => setDraft(old => ({ ...old, kind: event.target.value as 'Spool' | 'Material' }))}>{ARCHIVE_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></div></div>
+        <div className="field"><label htmlFor="archive-from">From Date</label><input id="archive-from" type="date" value={draft.from} max={draft.to || undefined} onChange={event => setDraft(old => ({ ...old, from: event.target.value }))}/></div>
+        <div className="field"><label htmlFor="archive-to">To Date</label><input id="archive-to" type="date" value={draft.to} min={draft.from || undefined} onChange={event => setDraft(old => ({ ...old, to: event.target.value }))}/></div>
+        <button className="btn primary small" type="submit"><Check size={15}/>Filter</button></form>
+      <TableScroll><table className="data-table execution-table"><thead><tr><th>Date</th><th>Report No.</th><th>Company</th><th>Added by</th><th className="actions-cell">Options</th></tr></thead>
+        <tbody>{list.map(request => <tr key={request.number}><td>{formatStamp(request.dateTime || request.date)}</td><td>{request.number}</td><td>{label('service_companies', request.companyId)}</td><td>{request.addedBy || '—'}</td>
+          <td className="actions-cell"><RequestOptions request={request}/></td></tr>)}</tbody></table></TableScroll>
       {!list.length && <EmptyState title="No requests found" description="Service requests appear here once spools or materials are sent to a service company."/>}
-      <div className="table-footer"><span>{list.length} request{list.length === 1 ? '' : 's'}</span><span>Newest first.</span></div>
-    </section>
-    {action && <WorkflowDialog actionKey={action.key} defaults={action.defaults} onClose={() => setAction(null)}/>}</div>;
+      <div className="table-footer"><span>{list.length} request{list.length === 1 ? '' : 's'}</span></div>
+    </section></div>;
 }

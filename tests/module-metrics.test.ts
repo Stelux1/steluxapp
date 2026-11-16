@@ -12,12 +12,12 @@ function fixture(t:{after:(fn:()=>void)=>void}){const s=new Store(':memory:');se
 
 test('spool overview follows service and laydown movements in project scope',t=>{
   const s=fixture(t); const spool=s.get('spools','spool-1');const iso=s.get('isometrics',spool.isoId);
-  const request=runAction(s,'service',{spoolIds:[spool.id],companyId:'service-coating',services:'Coating',laydownId:'laydown-b'},actor);
+  const request=runAction(s,'service',{spoolIds:[spool.id],companyId:'service-coating',services:'Coating'},actor);
   let location=spoolLocations(allRows(s),String(iso.projectId)).find(x=>x.spool.id===spool.id)!;
   assert.equal(location.locationType,'Service');assert.equal(location.locationId,'service-coating');assert.equal(location.lastRequest?.spoolId,spool.id);
   assert.ok(spoolLocations(allRows(s),String(iso.projectId)).every(x=>x.projectId===iso.projectId));
   assert.ok('records' in request && request.records);
-  runAction(s,'complete-service',{requestIds:request.records!.map(r=>r.id)},actor);
+  runAction(s,'move-spools',{spoolIds:[spool.id],laydownId:'laydown-b'},actor);
   location=spoolLocations(allRows(s)).find(x=>x.spool.id===spool.id)!;
   assert.equal(location.locationType,'Laydown');assert.equal(location.locationId,'laydown-b');
 });

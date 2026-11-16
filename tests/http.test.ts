@@ -87,16 +87,16 @@ test('material logistics API preserves scoped links, exposes history, and reject
  const requirement=f.s.list('iso_materials')[0];
  assert.equal((await f.request('/actions/move-materials','POST',{requirementIds:[requirement.id],laydownId:laydown.id})).status,201);
  const response=await f.request('/actions/service-materials','POST',{requirementIds:[requirement.id],companyId:'service-coating',name:'HTTP sample batch'});assert.equal(response.status,201);const request=(await response.json()).records[0];
- assert.equal((await f.request('/actions/complete-material-service','POST',{requestIds:[request.id]})).status,201);
+ assert.equal((await f.request('/actions/move-materials','POST',{requirementIds:[requirement.id],laydownId:laydown.id})).status,201);
  const data=await (await f.request('/bootstrap')).json();assert.equal(data.rows.material_locations.length,1);assert.equal(data.rows.material_location_events.length,3);assert.equal(data.rows.material_locations[0].laydownId,laydown.id);
  assert.equal(f.s.get('service_requests',request.id).status,'Completed');
- assert.match(await (await f.request('/export/material_location_events?format=csv')).text(),/Service completed/);
+ assert.match(await (await f.request('/export/material_location_events?format=csv')).text(),/Service request/);
  await f.request('/records/users','POST',{name:'Logistics Viewer',email:'logistics-viewer@example.test',password:'Logistics-Viewer-Only',profileId:'profile-viewer',active:true});
  assert.equal((await f.request('/auth/login','POST',{email:'logistics-viewer@example.test',password:'Logistics-Viewer-Only'})).status,200);
  assert.equal((await f.request('/records/material_location_events')).status,200);
  assert.equal((await f.request('/actions/move-materials','POST',{requirementIds:[requirement.id],laydownId:laydown.id})).status,403);
  assert.equal((await f.request('/actions/service-materials','POST',{})).status,403);
- assert.equal((await f.request('/actions/complete-material-service','POST',{})).status,403);
+ assert.equal((await f.request('/actions/complete-material-service','POST',{})).status,404);
 });
 test('stale HTTP edits and bulk update conflicts leave records consistent', async t => {
   const f = await fixture(t); await f.setup(); const a = f.s.get('projects', 'project-cooling'); const b = f.s.get('projects', 'project-steam');

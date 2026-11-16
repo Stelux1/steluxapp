@@ -17,6 +17,7 @@ import { isMtoStockAction } from '../shared/mto-stock.ts';
 import { runMtoStock } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
 import { runMtoLogisticsAction } from './mto-logistics.ts';
+import { createSpoolServiceRequest, moveSpoolsToLaydown, nextNumber } from './spool-logistics.ts';
 import { duplicateSite } from './site-duplicate.ts';
 import { reorderAttachmentNames } from './attachment-names.ts';
 
@@ -31,7 +32,7 @@ export function weldLength(store: Store, weld: Row) {
   return weld.diameterId ? Number(store.get('diameters', weld.diameterId, true).outline) || 0 : 0;
 }
 /** `inspectionRules`: the profile delivers the inspections flow (hosted), so a not-accepted NDT result also creates its repair weld. */
-export function runAction(store: Store, key: string, data: Input, actor: Actor, options: { inspectionRules?: boolean } = {}) {
+export function runAction(store: Store, key: string, data: Input, actor: Actor, options: { inspectionRules?: boolean; hosted?: boolean } = {}) {
   if (!ACTIONS[key]) throw new AppError(404, 'This action does not exist.');
   if (key.startsWith('hydrotest-')) return runHydrotestAction(store, key, data, actor);
   if (WELD_ENTRY_ACTIONS.has(key)) return runWeldEntryAction(store, key, data, actor);
@@ -147,7 +148,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       movement(true, 'Return', String(rental.articleId), String(rental.warehouseId), amount, { rentalId: rental.id });
       return { resource: 'rentals', record: patch('rentals', rental, { returned, status: returned === Number(rental.quantity) ? 'Returned' : 'Partially returned' }) };
     }
-    if(key==='move-materials'||key==='service-materials'||key==='complete-material-service'){
+    if(key==='move-materials'||key==='service-materials'){
       const updateLocation=(requirement:Row,input:Input)=>{
         const current=store.list('material_locations').find(r=>r.requirementId===requirement.id);
         const fields={...input,date};
@@ -157,68 +158,27 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
         add('material_location_events',{number:store.next('MLOC'),requirementId:requirement.id,type,date,note,...input});
         store.audit('iso_materials',requirement.id,'moved',`${type} · ${date}${note?' · '+note:''}`,actor);
       };
-      if(key==='complete-material-service'){
-        if(data.materialLaydownId)ensure('material_laydowns',data.materialLaydownId);
-        for(const id of ids(data.requestIds,'material service request')){
-          const request=ensure('service_requests',id);
-          if(!request.requirementId||request.spoolId)throw new AppError(422,'Choose material service requests.');
-          if(request.status==='Completed')throw new AppError(409,'This service request is already completed.');
-          if(date<String(request.date))throw new AppError(422,'Completion date cannot be before the request date.');
-          const requirement=ensure('iso_materials',request.requirementId);
-          const laydownId=data.materialLaydownId||request.materialLaydownId;
-          if(!laydownId)throw new AppError(422,'Choose a destination material laydown.');
-          ensure('material_laydowns',laydownId);
-          patch('service_requests',request,{status:'Completed',completedAt:date,note:[request.note,note].filter(Boolean).join(' · ')});
-          updateLocation(requirement,{laydownId,companyId:''});
-          event(requirement,'Service completed',{laydownId,companyId:request.companyId,requestId:request.id});
-        }
-        return {resource:'service_requests'};
-      }
       const requirements=ids(data.requirementIds,'material requirement').map(id=>ensure('iso_materials',id));
       const laydown=key==='move-materials'?ensure('material_laydowns',data.laydownId):data.materialLaydownId?ensure('material_laydowns',data.materialLaydownId):undefined;
       const company=key==='service-materials'?ensure('service_companies',data.companyId):undefined;
-      const number=company?store.next('SR'):'';const created=[];
+      const number=company?nextNumber(store):'';const created=[];
       for(const requirement of requirements){
         ensure('isometrics',requirement.isoId);
         const current=store.list('material_locations').find(r=>r.requirementId===requirement.id);
-        if(current?.companyId||store.list('service_requests').some(r=>r.requirementId===requirement.id&&r.status!=='Completed'))throw new AppError(409,'Complete the material’s open service request before moving it.');
+        const open=store.list('service_requests').filter(r=>r.requirementId===requirement.id&&r.status!=='Completed');
+        // Moving a material that is at a service company is its return: the open request closes with the move date.
+        if(company&&(current?.companyId||open.length))throw new AppError(409,'This material already has an open service request.');
+        if(!company)for(const request of open){if(date<String(request.date))throw new AppError(422,'The move date cannot be before the request date.');patch('service_requests',request,{status:'Completed',completedAt:date});}
         if(company){
           if(!current?.laydownId)throw new AppError(409,'Move the material to a laydown before requesting service.');
-          const request=add('service_requests',{number,name:str(data.name),requirementId:requirement.id,companyId:company.id,materialLaydownId:laydown?.id||current.laydownId,date,status:'Requested',note});
+          const request=add('service_requests',{number,name:str(data.name),requirementId:requirement.id,companyId:company.id,materialLaydownId:laydown?.id||current.laydownId,date,requestedAt:new Date().toISOString(),addedBy:actor.name,status:'Requested',note});
           created.push(request);updateLocation(requirement,{laydownId:'',companyId:company.id});event(requirement,'Service request',{companyId:company.id,requestId:request.id});
         }else{updateLocation(requirement,{laydownId:laydown!.id,companyId:''});event(requirement,'Move to laydown',{laydownId:laydown!.id});}
       }
       return company?{resource:'service_requests',records:created}:{resource:'material_locations'};
     }
-    if (key === 'service') {
-      const company = ensure('service_companies', data.companyId); const services = str(data.services);
-      if (data.laydownId) ensure('laydowns', data.laydownId);
-      const number = store.next('SR'); const created = [];
-      for (const id of ids(data.spoolIds, 'spool')) {
-        const spool = ensure('spools', id);
-        if (store.list('service_requests').some(r => r.spoolId === id && r.status !== 'Completed')) throw new AppError(409, `Spool ${spool.name} already has an open service request.`);
-        created.push(add('service_requests', { number,name:str(data.name), spoolId: id, companyId: company.id, laydownId: data.laydownId || '', services, includeDrawings: data.includeDrawings === true, date, status: 'Requested', note }));
-        patch('spools', spool, { serviceCompanyId: company.id, laydownId: '' });
-      }
-      return { resource: 'service_requests', records: created };
-    }
-    if (key === 'complete-service') {
-      if (data.laydownId) ensure('laydowns', data.laydownId);
-      for (const id of ids(data.requestIds, 'service request')) {
-        const request = ensure('service_requests', id); if (request.status === 'Completed') throw new AppError(409, 'This service request is already completed.');
-        if(!request.spoolId||request.requirementId)throw new AppError(422,'Choose spool service requests.');
-        if(date<String(request.date))throw new AppError(422,'Completion date cannot be before the request date.');
-        const spool = ensure('spools', request.spoolId);
-        patch('service_requests', request, { status: 'Completed',completedAt:date, note: [request.note, note].filter(Boolean).join(' · ') });
-        patch('spools', spool, { serviceCompanyId: '', laydownId: data.laydownId || request.laydownId || '' });
-      }
-      return { resource: 'service_requests' };
-    }
-    if (key === 'move-spools') {
-      const laydown = ensure('laydowns', data.laydownId);
-      for (const id of ids(data.spoolIds, 'spool')) { const spool = ensure('spools', id); if (spool.serviceCompanyId) throw new AppError(409, 'Complete the spool’s open service request before moving it to laydown.'); patch('spools', spool, { laydownId: laydown.id }); store.audit('spools', id, 'moved', `Moved ${spool.name} to ${laydown.name} · ${date}${note ? ' · ' + note : ''}`, actor); }
-      return { resource: 'spools' };
-    }
+    if (key === 'service') return createSpoolServiceRequest(store, actor, data, { hosted: options.hosted, date: data.date ? date : undefined, note });
+    if (key === 'move-spools') return moveSpoolsToLaydown(store, actor, data, { hosted: options.hosted, date: data.date ? date : undefined, note });
     if (key === 'inspection-request') {
       const type = str(data.type); if (!['NDT', 'NDT PRE', 'VI', 'PWHT', 'PRE-HT'].includes(type)) throw new AppError(422, 'Select an inspection type.');
       for (const [field, resource] of [['processId', 'ndt_processes'], ['locationId', 'ndt_locations'], ['pwhtProcessId', 'pwht_processes'], ['pwhtLocationId', 'pwht_locations']]) if (data[field]) ensure(resource, data[field]);

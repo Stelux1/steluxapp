@@ -13,7 +13,7 @@ import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
-import { ATTACHMENT_POSITIONS, CATALOG_SITES, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, FORM_ENABLEMENT, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, qaEngineerCompany, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { ATTACHMENT_POSITIONS, CATALOG_SITES, enablementKey, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, FORM_ENABLEMENT, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, qaEngineerCompany, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { STANDARD_DEFECT_CODES, isStandardDefectCode, standardDefectCodeId } from '../shared/defect-codes.ts';
 import { upgradeWeldCatalogs } from '../server/catalog-upgrade.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
@@ -32,7 +32,7 @@ test('a record without enablement information is enabled everywhere; a link swit
   assert.equal(enabledOnSite('weld_types', row('a'), '', rows), true, 'without an active site nothing is hidden');
   assert.equal(enabledOnSite('weld_types', row('a'), 'north', {}), true, 'a workspace that cannot read the links hides nothing');
   assert.equal(enabledOnSite('welds', row('a'), 'north', { catalog_sites: [link('welds', 'a', 'north', false)] }), true, 'resources without enablement are never hidden');
-  assert.deepEqual(SITE_ENABLED_RESOURCES.sort(), ['coatings', 'laydowns', 'ndt_defect_codes', 'ndt_locations', 'ndt_processes', 'pwht_locations', 'pwht_processes', 'qa_engineers', 'service_companies', 'suppliers', 'weld_types'].sort());
+  assert.deepEqual(SITE_ENABLED_RESOURCES.sort(), ['coatings', 'laydowns', 'material_laydowns', 'ndt_defect_codes', 'ndt_locations', 'ndt_processes', 'pwht_locations', 'pwht_processes', 'qa_engineers', 'service_companies', 'suppliers', 'weld_types'].sort());
 });
 
 test('a ref select offers the enabled records plus the value already stored', () => {
@@ -299,6 +299,21 @@ test('the NDT sample records only defect codes the weld\'s main project may sele
   store.close();
 });
 
+test('mto-logistics-016 / -017 / -018: service companies, laydown areas and laydown materials have the reference headings, no enablement box in the form, and Activate / Deactivate in Options', async t => {
+  for (const key of ['service_companies', 'laydowns', 'material_laydowns']) { assert.ok(enablementKey(key), key); assert.equal(Object.hasOwn(FORM_ENABLEMENT, key), false, `${key}: no Enable box in the Add / Edit form`); }
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  assert.deepEqual([...hosted.resources.service_companies].sort(), ['address', 'email', 'name', 'phone']);
+  assert.deepEqual(hosted.resources.laydowns, ['name']); assert.deepEqual(hosted.resources.material_laydowns, ['name']);
+  const f = await hostedFixture(t); await f.setup(); f.usePilot('mto');
+  const material = (await body(await f.request('/api/records/material_laydowns', 'POST', { name: 'Plava Hala' }))).record!;
+  for (const [enabled, expected] of [[false, false], [true, true]] as const) {
+    const response = await f.request('/api/bulk/material_laydowns', 'POST', { ids: [material.id], versions: { [material.id]: material._version }, changes: { enabledOnSite: enabled, enabledSiteId: 'site-north' } });
+    assert.equal(response.status, 200, 'Activate / Deactivate selected works on laydown materials');
+    assert.equal(enabledOnSite('material_laydowns', material, 'site-north', { catalog_sites: await f.rows('catalog_sites') }), expected);
+    const fresh = (await f.rows('material_laydowns')).find(row => row.id === material.id)!; material._version = fresh._version;
+  }
+});
+
 test('hosted: suppliers, service companies and laydowns (delivered by the MTO flows) get "Enabled on this site" end to end', async t => {
   const f = await hostedFixture(t); await f.setup();
   f.usePilot('mto');
@@ -350,6 +365,10 @@ test('catalog pages carry the reference titles, add buttons and dialog headings 
     pwht_locations: ['PWHT locations', 'Add PWHT location', 'Edit PWHT location', 'Delete PWHT location'],
     qa_engineers: ['QA/QC engineers', 'Add QA/QC engineer', 'Edit QA/QC engineer', 'Delete QA/QC engineer'],
     roles: ['Roles', 'Add Role', 'Edit role', 'Delete role'],
+    // MTO Pilot -> Logistic (mto-logistics-016, -017, -018, -022).
+    service_companies: ['Service companies', 'Add company', 'Edit company', 'Delete company'],
+    laydowns: ['Laydown areas', 'Add laydown', 'Edit laydown', 'Delete laydown'],
+    material_laydowns: ['Laydown areas - Materials', 'Add laydown', 'Edit laydown material', 'Delete laydown'],
   };
   for (const [key, [title, add, edit, remove]] of Object.entries(expected)) {
     const resource = catalog(key);

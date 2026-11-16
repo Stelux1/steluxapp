@@ -72,6 +72,7 @@ export const SITE_RULES: Record<string, SiteRule> = {
   material_locations: via(REQUIREMENT), material_location_events: via(REQUIREMENT),
   reservations: via(ISO, REQUIREMENT),
   service_requests: via(['spoolId', 'spools'], REQUIREMENT),
+  spool_moves: via(['spoolId', 'spools']),
   // Procurement and inventory: an order without a project and a storehouse without a main project are shared.
   orders: shared(PROJECT),
   order_lines: shared(ISO, ['orderId', 'orders']),
