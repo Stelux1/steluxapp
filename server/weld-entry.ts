@@ -5,7 +5,7 @@ import { inOwnerSite } from '../shared/welder-data.ts';
 import {
   MASS_EDIT_FIELDS, MASS_EDIT_MANDATORY_MESSAGE, WELD_ENTRY_FIELDS, WELD_SORTING_MESSAGES, certificateErrors, hasWelder, lockContext, massEditMissingFields, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent,
   orderedWelds, planWeldRange, readMassEdit, weldLock, weldSortingDisabled, welderWpsErrors, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_TRACER_HINT, WELDERS, WELD_MANDATORY_MESSAGE, certificateSelectionErrors,
-  diameterErrors, duplicateWelderErrors, editReason, specialWeldCleared,
+  diameterErrors, duplicateWelderErrors, editReason, specialWeldCleared, CERTIFICATE_NOT_SELECTABLE,
 } from '../shared/weld-entry.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
 import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
@@ -118,6 +118,8 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row, mod
     for (const [name, message] of Object.entries(diameterErrors(merged, { certificates: new Map(store.list('certifications', true).map(row => [row.id, row])), diameters: new Map(store.list('diameters', true).map(row => [row.id, row])) }))) errors[name] ??= message;
   }
   if (!Object.keys(errors).length) return;
+  // Mass edit answers a certificate that is not both Controlled and Accepted with the form's sentence (the mass edit route names the weld).
+  if (mode === 'mass' && Object.values(errors).includes(CERTIFICATE_NOT_SELECTABLE)) throw new AppError(422, CERTIFICATE_NOT_SELECTABLE, errors);
   // The form answers missing mandatory fields with the reference's one sentence; the fields are marked.
   if (mode === 'form' && Object.keys(missing).length) throw new AppError(422, WELD_MANDATORY_MESSAGE, errors);
   throw fail(errors);

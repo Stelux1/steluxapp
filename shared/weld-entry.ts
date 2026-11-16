@@ -104,7 +104,7 @@ export interface SideContext {
   materialType?: string;
   materialPart?: string;
 }
-export interface SideSummary { kind: 'none' | 'certificate' | 'existing' | 'connected' | 'charge'; index: string; charge: string; material: string; }
+export interface SideSummary { kind: 'none' | 'certificate' | 'existing' | 'connected' | 'placeholder' | 'charge'; index: string; charge: string; material: string; }
 /**
  * Material ① / ②: `dia/schedule/wall/type of material/part` from the certificate. All five slots are always written;
  * an empty one reads "-". The type of material falls back to the certificate's material code, the part to the material group.
@@ -119,6 +119,8 @@ export function sideSummary(weld: Values, side: 1 | 2, context: SideContext = {}
   const charge = text(weld[`chargeNo${side}`]);
   if (charge === 'EXISTING') return { kind: 'existing', index: '', charge: '', material: 'EXISTING' };
   if (charge === 'CONN ISO') return { kind: 'connected', index: '', charge: '', material: 'CONN ISO' };
+  // The 13 fixed part placeholders ("4 / Flange" …) are stored like EXISTING: the table prints their text as the Material, "-" in Idx and Chg.No.
+  if ((CHARGE_PLACEHOLDERS as readonly string[]).includes(charge)) return { kind: 'placeholder', index: '', charge: '', material: charge };
   if (context.certificate) return { kind: 'certificate', index: text(context.certificate.indexNo), charge: charge || text(context.certificate.chargeNo), material: certificateMaterialText(context) };
   return charge ? { kind: 'charge', index: '', charge, material: '' } : { kind: 'none', index: '', charge: '', material: '' };
 }

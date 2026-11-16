@@ -19,7 +19,7 @@ import {
   MASS_EDIT_CLEAR_LABEL, MASS_EDIT_COLUMNS, MASS_EDIT_DATES, MASS_EDIT_DATE_HINT, MASS_EDIT_DIAMETER, MASS_EDIT_FLAGS_LABELS, MASS_EDIT_SECTIONS, MASS_EDIT_SELECT_NOTHING,
   NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, WELD_ORDER_MESSAGES, WELD_SORTING_MESSAGES, orderFailureMessage, sideCellTexts, stampOptionLabel,
   MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldMatchesSearch, weldSortingDisabled, weldSortingMenu, welderStamps, type MassEditItem,
-  DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
+  CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
   chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
 } from '../shared/weld-entry.ts';
 import type { Row } from '../shared/types.ts';
@@ -308,7 +308,8 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
   // Mass edit sets new values only, so catalog records switched off on the active main project are not offered.
   const options = (key: string, label: (row: Row) => string = row => str(row.name)) => sortByName(enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows), 'name').map(row => ({ value: row.id, label: label(row) }));
   const diameters = useDiameterOptions();
-  const wpsOptions = activeRows(rows, 'wps').filter(row => row.active !== false && data.project && availableWps(rows, row, data.project.id)).map(row => ({ value: row.id, label: str(row.name) }));
+  // Mass edit shows the WPS as "process | number (designation)" (reference, wpsLabel 'mass').
+  const wpsOptions = activeRows(rows, 'wps').filter(row => row.active !== false && data.project && availableWps(rows, row, data.project.id)).map(row => ({ value: row.id, label: wpsLabel(row, 'mass') }));
   const flag = (name: string, label: string) => <SelectField key={name} label={label} value={changes[name] === undefined ? '' : changes[name] ? 'yes' : 'no'} placeholder="Keep current" options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} onChange={value => set(name)(value === '' ? '' : value === 'yes')}/>;
   const chargeField = (entry: MassEditItem) => { const side = entry.side!; return <SelectField key={entry.name} label={entry.label} value={chargeValue(changes, side)} placeholder="Keep current" options={chargeOptions(data, str(changes[`certificate${side}Id`]))} error={fields[`chargeNo${side}`] || fields[`certificate${side}Id`]} onChange={value => setChanges(current => { const next = { ...current }; for (const name of [`chargeNo${side}`, `certificate${side}Id`, `material${side}Id`]) delete next[name]; return value ? { ...next, ...chargeSelection(value, side, data.certificates) } : next; })}/>; };
   const control = (entry: MassEditItem, extra?: string) => {
@@ -324,6 +325,8 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
     const read = readMassEdit(body);
     if (Object.keys(read.errors).length) { setError(read.errors._ || Object.values(read.errors)[0]); setFields(read.errors); return; }
     if (selected.some(weld => massEditMissingFields(data.site, weld, read.changes).length)) { setError(MASS_EDIT_MANDATORY_MESSAGE); return; }
+    const unselectable = certificateSelectionErrors(read.changes, [1, 2], data.certificates);
+    if (Object.keys(unselectable).length) { setError(CERTIFICATE_NOT_SELECTABLE); setFields(Object.fromEntries(Object.keys(unselectable).map(name => [name.replace('certificate', 'chargeNo').replace('Id', ''), CERTIFICATE_NOT_SELECTABLE]))); return; }
     setBusy(true);
     try { await post('/actions/mass-edit-welds', { weldIds: selected.map(row => row.id), versions: Object.fromEntries(selected.map(row => [row.id, row._version])), changes: body }); await refresh(); notify(`${selected.length} ${selected.length === 1 ? 'weld' : 'welds'} updated.`); onDone(); onClose(); }
     catch (failure) { setError(errorMessage(failure)); setFields((failure as ApiError).fields || {}); } finally { setBusy(false); }

@@ -776,3 +776,22 @@ test('the weld history route is not offered where the profile has no weld entry'
   const f = await fixture(t, 'access-prototype');
   assert.equal((await f.request('/api/weld-history/weld-1')).status, 404);
 });
+
+// ----- wave 3 integration (E9): what the weld form stores, as the weld table and Mass edit show it -------------------------
+test('E9: a fixed part placeholder shows as Material with "-" in Idx / Chg.No.; Mass edit shows the WPS as process | number and refuses an unaccepted certificate with the form\'s sentence', async t => {
+  for (const placeholder of ['4 / Flange', '13 / Female Flange']) {
+    assert.deepEqual(sideSummary({ chargeNo1: placeholder, certificate1Id: '' }, 1), { kind: 'placeholder', index: '', charge: '', material: placeholder });
+    assert.deepEqual(sideCellTexts(sideSummary({ chargeNo2: placeholder }, 2)), { index: '-', charge: '-', material: placeholder });
+  }
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'H-77' }, 1)), { index: '-', charge: 'H-77', material: '-' }, 'a plain charge number keeps its cell');
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync('client/weld-entry.tsx', 'utf8'), mass = source.slice(source.indexOf('function MassEditDialog'), source.indexOf('async function submit', source.indexOf('function MassEditDialog')));
+  assert.match(mass, /label: wpsLabel\(row, 'mass'\)/);
+  assert.match(source, /certificateSelectionErrors\(read\.changes, \[1, 2\], data\.certificates\)[\s\S]{0,120}setError\(CERTIFICATE_NOT_SELECTABLE\)/, 'refused in the dialog before sending');
+  const f = await fixture(t);
+  assert.equal(f.store.get('certifications', 'certificate-3').accepted, false);
+  const before = f.store.get('welds', 'weld-1');
+  const result = await f.act('mass-edit-welds', { weldIds: ['weld-1'], changes: { chargeNo1: 'H-5120', certificate1Id: 'certificate-3' } });
+  assert.equal(result.status, 422); assert.match(String(result.body.error), new RegExp(`${CERTIFICATE_NOT_SELECTABLE.replace(/[.:]/g, '\\$&')}$`));
+  assert.equal(f.store.get('welds', 'weld-1')._version, before._version, 'nothing stored');
+});
