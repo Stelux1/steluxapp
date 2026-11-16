@@ -36,6 +36,8 @@ function moveIsometrics(store: Store, data: Input, actor: Actor): Result {
  */
 function recordResult(store: Store, data: Input, actor: Actor): Result {
   const request = store.get('hydrotest_requests', data.requestId);
+  // The result completes every isometric of the test system; the store refuses it when one of them lies outside the
+  // request's project site access (Store.guardTestSystem).
   const result = str(data.result);
   if (!HYDROTEST_RESULTS.includes(result)) throw new AppError(422, 'Choose Passed or Failed.', { result: 'Choose a result.' });
   const actualPressure = str(data.actualPressure);

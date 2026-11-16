@@ -41,7 +41,13 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
   const type = str(data.type);
   if (!['Prefab', 'Field', 'Hydrotest'].includes(type)) throw new AppError(422, 'Choose a release type.');
   const reportNo = str(data.reportNo); if (!reportNo) throw new AppError(422, 'Enter a report number.');
-  if (data.engineerId) store.get('qa_engineers', data.engineerId); if (data.signatureId) store.get('signatures', data.signatureId);
+  if (data.engineerId) store.get('qa_engineers', data.engineerId);
+  if (data.signatureId) {
+    const signature = store.get('signatures', data.signatureId);
+    // Hosted rule: a signature belongs to its account (shared/permissions.ts), and the release document prints its
+    // image, so a release may only carry the releasing account's own signature.
+    if (store.hostedRules && actor.id !== SYSTEM.id && signature.userId !== actor.id) throw new AppError(403, 'You can only sign a release with your own signature.', { signatureId: 'Choose one of your own signatures.' });
+  }
   const isometrics = ids(data.isoIds, 'isometric').map(id => store.get('isometrics', id));
   if (type !== 'Hydrotest' && actor.id !== SYSTEM.id) {
     const phase = type as ReleasePhase;

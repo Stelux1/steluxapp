@@ -138,6 +138,23 @@ export function assertSiteAccessEdit(store: Store, actorId: string, input: Recor
 }
 
 /**
+ * An administrator limited to specific project sites in a pilot may only create, change or archive accounts whose
+ * reach in that pilot stays within its own: an account enabled there must be limited to a subset of the
+ * administrator's main projects. Otherwise a limited administrator could create an account that reaches every main
+ * project, or set the password of one that does, and so widen its own access. Checked on the account as it is before
+ * a change and, inside the write's transaction, as it is after it (so every field combination is judged as saved).
+ */
+export function assertAccountReach(store: Store, actorId: string, account: Row) {
+  const actor = store.get('users', actorId);
+  for (const pilot of SCOPE_PILOTS) {
+    const mine = allowedSites(store, actor, pilot);
+    if (mine === 'all' || account[`${pilot}Enabled`] === false) continue;
+    const theirs = allowedSites(store, account, pilot);
+    if (theirs === 'all' || [...theirs].some(id => !mine.has(id))) throw new AppError(403, 'This account reaches main projects outside your project site access. Ask an administrator with access to all project sites.');
+  }
+}
+
+/**
  * Copy isometrics carries welds (Weld Pilot) and materials / calculations (MTO Pilot) from either pilot
  * (`copyParts` in server/release-access.ts). Each ticked part must also be within the account's project site
  * access of the pilot that owns it; the current pilot's scope is enforced by the record guard.

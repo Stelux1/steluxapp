@@ -50,6 +50,18 @@ export class Store {
   /** Access per project site (server/site-scope.ts): called with every record read through `get`, so a record of a main project the request may not reach is refused (written records are read back, so writes are covered too). */
   recordGuard?: (key: string, row: Row) => void;
   private guardAllows(key: string, row: Row) { try { this.recordGuard?.(key, row); return true; } catch { return false; } }
+  /**
+   * A test system and its hydrotest requests decide the hydrotest of every isometric in the system (shared/hydrotest.ts).
+   * A test system without a project is shared, so it may hold isometrics of several main projects: under access per
+   * project site each of them is read, so a write that would change the hydrotest of an isometric the request cannot
+   * reach is refused (server/site-scope.ts).
+   */
+  private guardTestSystem(key: string, row: Partial<Row>) {
+    if (!this.recordGuard || (key !== 'test_systems' && key !== 'hydrotest_requests')) return;
+    const systemId = key === 'test_systems' ? row.id : row.testSystemId;
+    if (typeof systemId !== 'string' || !systemId) return;
+    for (const iso of this.list('isometrics').filter(item => item.testSystemId === systemId)) this.get('isometrics', iso.id);
+  }
   constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = database || new DatabaseSync(filename);
@@ -160,6 +172,7 @@ export class Store {
     if (key === 'flanges') for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
+    this.guardTestSystem(key, { ...existing, ...data } as Row); if (existing) this.guardTestSystem(key, existing);
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
     if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
@@ -245,6 +258,7 @@ export class Store {
     return this.transaction(() => {
       const row = this.get(key, id, true);
       if (row._version !== version) throw new AppError(409, 'This record changed. Refresh and try again.');
+      this.guardTestSystem(key, row);
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       if (!row._archived) {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');
