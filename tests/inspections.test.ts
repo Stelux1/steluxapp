@@ -754,3 +754,19 @@ test('HTTP: the request archive needs its area (NDT request archive 66) and rest
   // A mass request needs the print right of its area (50), not the archive.
   assert.equal((await without.request('/actions/mass-inspection-request', 'POST', 'weld', { type: 'NDT', weldIds: ['weld-23'], processIds: ['ndt-0'] })).status, 422, 'weld-23 is already on the request: the reference message');
 });
+
+// ----- wave 3 integration (E8): Restart NDT process in the weld's NDT dialog ------------------------------------------------
+test('E8: the NDT dialog offers Restart NDT process under its documents, not on a locked weld, and the server refuses a restart on a locked weld', async t => {
+  const source = readFileSync('client/inspections.tsx', 'utf8');
+  const dialog = source.slice(source.indexOf('export function NdtWeldDialog'), source.indexOf('export function NdtRestartBox'));
+  assert.match(dialog, /const lock = weldLock\(weld, lockContext\(rows\.weld_types, rows\.releases, rows\.isometrics\)\)/);
+  assert.ok(dialog.indexOf('{!lock.locked && <NdtRestartBox weld={weld} type={type}/>}') > dialog.indexOf('<h3>NDT documents</h3>'), 'mounted after the NDT documents');
+  assert.match(source, /if \(!canRun\('ndt-restart', \{ type \}\)\) return null;/, 'with the right of the action (the Add right of NDT / NDT Pre)');
+  const f = await hostedFixture(t);
+  // weld-3 is a shop weld of iso-3, whose Prefab is complete: it is locked, and the sample has it on an NDT request.
+  assert.ok(f.store.list('inspection_requests').some(row => row.weldId === 'weld-3' && row.type === 'NDT'));
+  const before = f.store.list('inspection_requests').filter(row => row.weldId === 'weld-3').map(row => [row.id, row._version]);
+  const refused = await f.admin.request('/actions/ndt-restart', 'POST', 'weld', { weldId: 'weld-3', type: 'NDT', processIds: ['ndt-0'] });
+  assert.equal(refused.status, 423);
+  assert.deepEqual(f.store.list('inspection_requests').filter(row => row.weldId === 'weld-3').map(row => [row.id, row._version]), before, 'nothing changed');
+});

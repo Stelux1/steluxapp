@@ -11,6 +11,7 @@ import {
   TRACER_DETAIL_TEXTS, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_NO_CANDIDATES, TRACER_PANEL_NOTE, TRACER_REMOVABLE_HINT, TRACER_SELECT_TEXT, autoReweld, naBlockErrors,
   roundLockedError, roundOpen, roundsHaveNa, tracerDetail, weldWelderIds, type TracerDetail, type TracerDetailWeld, type TracerProposal, type TracerProposalWeld,
 } from '../shared/inspections.ts';
+import { lockContext, weldLock } from '../shared/weld-entry.ts';
 import { api, apiBlob, post, ApiError, apiUrl, formatDate } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions, selectableDefectCodes } from '../shared/weld-catalogs.ts';
@@ -102,6 +103,8 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
   const { rows, allRows, canRun, canRecord } = useWorkspace();
   const pre = type === 'NDT PRE', context = weldContext(rows, weld);
   const editable = canRun('ndt-weld', { type });
+  // A weld of a completed phase is locked: its NDT cannot be restarted (the server refuses it too, 423).
+  const lock = weldLock(weld, lockContext(rows.weld_types, rows.releases, rows.isometrics));
   const request = currentRequest(rows.inspection_requests, weld.id, type);
   const results = (rows.inspection_results || []).filter(row => !row._archived && row.requestId === request?.id && row.type === type);
   const naResult = results.find(row => row.result === 'Rejected');
@@ -179,6 +182,8 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
       </div>
       {!pre && hasNa && editable && canRun('tracers') && <NdtTracerPanel weld={weld} welderId={na.welderForErrorId} onPendingChange={setTracerIds}/>}
       <section className="inspection-section"><h3>NDT documents</h3><FileLinks files={documents}/><WeldRequestPdfButtons weld={weld} types={[type]}/>{editable && canRecord('inspection_requests', 'import') && <FilePicker id="ndt-documents" label="NDT documents (several files; only PDFs are allowed)" files={files} onChange={setFiles} pdf/>}</section>
+      {/* Reference: "Restart NDT process" under the NDT documents of the NDT / NDT Pre dialog (I1-weld-isometric, ndt-001 / ndt-pre-003). */}
+      {!lock.locked && <NdtRestartBox weld={weld} type={type}/>}
     </div><Footer busy={busy} onClose={onClose} submit={editable ? 'Save' : undefined}/></form>
   </Modal>;
 }
