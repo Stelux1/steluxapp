@@ -36,6 +36,8 @@ const unpackAudit=(r:Record<string,unknown>):AuditEvent=>({id:String(r.id),entit
 export class Store {
   db: Database;
   depth = 0;
+  /** The pilots profile requires a material group on every catalog material it saves; other profiles and system code do not. */
+  requireMaterialGroup = false;
   constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = database || new DatabaseSync(filename);
@@ -132,6 +134,7 @@ export class Store {
       data[field.name] = value as Value;
     }
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
+    if (key === 'materials' && this.requireMaterialGroup && !String(data.materialGroup ?? '').trim()) errors.materialGroup = 'Material group is required.';
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
@@ -141,7 +144,7 @@ export class Store {
     if (key === 'iso_materials' && !data.materialId && (!data.customMaterial || !data.materialNo || !data.description || !data.uom)) throw new AppError(422, 'Choose a catalog material or provide the custom material number, description, and unit.');
     if(key==='iso_materials'&&!existing&&Number(data.quantity)<=0)throw new AppError(422,'A new material requirement needs a positive quantity.');
     if(['iso_materials','order_lines','stock','movements','picklists'].includes(key)&&data.materialId&&data.customMaterialId)throw new AppError(422,'Choose either a catalog material or a custom material.');
-    if(key==='iso_materials'&&data.customMaterial&&!data.materialId){const identity=data.customMaterialId?this.get('custom_materials',data.customMaterialId):null;if(!identity||MATERIAL_FIELDS.some(k=>String(identity[k]??'')!==String(data[k]??''))){const snapshot=Object.fromEntries(MATERIAL_FIELDS.map(k=>[k,data[k]??'']));data.customMaterialId=this.create('custom_materials',snapshot,actor).id;}}
+    if(key==='iso_materials'&&data.customMaterial&&!data.materialId){const identity=data.customMaterialId?this.get('custom_materials',data.customMaterialId):null;if(!identity||MATERIAL_FIELDS.some(k=>String(identity[k]??'')!==String(data[k]??''))){const snapshot={...Object.fromEntries(MATERIAL_FIELDS.map(k=>[k,data[k]??''])),componentCode:data.componentCode??'',progressClass:data.progressClass??''};data.customMaterialId=this.create('custom_materials',snapshot,actor).id;}}
     if(['order_lines','stock','picklists'].includes(key)&&!data.materialId&&!data.customMaterialId)throw new AppError(422,'A catalog or custom material is required.');
     if(['order_lines','picklists'].includes(key)&&data.requirementId&&(!existing||['requirementId','isoId','materialId','customMaterialId'].some(k=>String(existing[k]||'')!==String(data[k]||'')))){const req=this.get('iso_materials',data.requirementId);if(req.isoId!==data.isoId||req.materialId!==data.materialId||String(req.customMaterialId||'')!==String(data.customMaterialId||''))throw new AppError(422,'The material requirement must match the isometric and material.');}
     if (key === 'certifications' && existing) for (const weld of this.list('welds')) for (const side of [1, 2]) {

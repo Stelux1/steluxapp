@@ -5,6 +5,7 @@ import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { Store, AppError, positive, qty, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
+import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -39,17 +40,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       return existing ? patch(resource, existing, { quantity: next }) : add(resource, { [itemKey]: itemId, warehouseId, chargeNo, quantity: next });
     };
     const movement = (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra: Input = {},custom=false) => add(tool ? 'tool_movements' : 'movements', { number: store.next(tool ? 'TM' : 'MM'), [tool ? 'articleId' : custom?'customMaterialId':'materialId']: itemId, warehouseId, quantity: qty(amount), type, date, note, ...extra });
-    if (key === 'add-iso-material') {
-      ensure('isometrics', data.isoId); if (data.phaseId) ensure('operation_phases', data.phaseId);
-      const amount = positive(data.quantity);
-      if (data.source === 'Catalog') { const material = ensure('materials', data.materialId); return { resource:'iso_materials',record:add('iso_materials',{isoId:data.isoId,materialId:material.id,quantity:amount,phaseId:data.phaseId||'',chargeNo:str(data.chargeNo),customMaterial:false}) }; }
-      if (data.source !== 'Custom') throw new AppError(422,'Choose a material source.');
-      for (const name of ['materialNo','description','uom']) if (!str(data[name])) throw new AppError(422,'Enter the custom material number, description, and unit of measure.');
-      const custom = Object.fromEntries(['materialNo','description','materialGroup','articleNo','legacyNo','dia','lbs','uom','price'].map(k=>[k,data[k]??'']));
-      if (data.addToDB !== undefined && typeof data.addToDB !== 'boolean') throw new AppError(422,'Choose whether to add this material to the catalog.');
-      const material = data.addToDB ? add('materials',custom) : null;
-      return {resource:'iso_materials',record:add('iso_materials',{...custom,isoId:data.isoId,quantity:amount,phaseId:data.phaseId||'',chargeNo:str(data.chargeNo),customMaterial:!material,materialId:material?.id||''})};
-    }
+    if (MTO_MATERIAL_ACTIONS.includes(key)) { const mto = runMtoMaterialAction(store, key, data, actor)!; return mto.records ? { resource: mto.resource, records: mto.records } : { resource: mto.resource, record: mto.record! }; }
     if (key === 'order'||key==='order-requirements') {
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
       let items:Input[]=[];let projectId=str(data.projectId);

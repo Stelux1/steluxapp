@@ -145,8 +145,9 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['weld']);
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
-  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
-  for (const key of ['orders', 'stock', 'movements', 'material_parts', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
+  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'uoms', 'orders', 'order_lines', 'stock', 'movements', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
+  // Material part, type of material and supplier are shared catalogs of both pilots.
+  for (const key of ['material_parts', 'material_types', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   assert.equal((await f.request('/api/reports/mto')).status, 403);
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'DENIED', quantity: 1 })).status, 403);
   const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001' }); assert.equal(created.status, 201);
