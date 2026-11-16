@@ -29,7 +29,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'Calculations', 'System']);
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);
   // Reference items without a page in this application are not listed.
-  for (const missing of ['ITPs', 'ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Defect codes', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
+  for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Defect codes', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
 
 test('every menu item resolves to a real page and resource items use resourcePath()', () => {

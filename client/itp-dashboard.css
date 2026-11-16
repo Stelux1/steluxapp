@@ -1,0 +1,61 @@
+/* Weld Pilot dashboard (KPI cards, filters, Inspection compliance) and the Link ITP dialog. */
+.wd-dashboard { display: grid; gap: 22px; min-width: 0; }
+.wd-state { padding: 20px; }
+.wd-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.wd-kpi { display: flex; flex-direction: column; gap: 6px; padding: 18px 20px; min-width: 0; border-top: 3px solid var(--module-color, var(--primary)); }
+.wd-kpi > small { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.wd-kpi > strong { font-size: 30px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.wd-kpi > span { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.wd-kpi.above { border-top-color: #c0392b; }
+.wd-kpi.above > strong { color: #a82a1d; }
+.wd-kpi .badge { align-self: flex-start; }
+.wd-ok { display: inline-flex; align-items: center; gap: 5px; color: #1a7f4b !important; }
+.wd-filters { padding-bottom: 18px; }
+.wd-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 16px; padding: 4px 22px 0; }
+.wd-field { margin: 0; min-width: 0; }
+.wd-field select, .wd-field input { width: 100%; min-width: 0; }
+.wd-filter-actions { display: flex; align-items: center; gap: 12px; padding: 18px 22px 0; flex-wrap: wrap; }
+.wd-filter-actions > span { margin-left: auto; font-size: 13px; color: var(--muted); }
+.wd-compliance { padding-bottom: 8px; min-width: 0; }
+.wd-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.wd-note { display: flex; gap: 8px; align-items: center; margin: 0 22px 12px; padding: 9px 12px; background: #fff7e0; border: 1px solid #d9a21e; border-radius: 8px; color: #7a4f00; font-size: 13px; }
+.wd-compliance-tools { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 4px 22px 14px; flex-wrap: wrap; }
+.wd-compliance-tools .search-field { flex: 1 1 240px; max-width: 360px; }
+.wd-modes { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: #fff; }
+.wd-modes button { border: 0; background: none; padding: 8px 14px; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; min-height: 38px; display: inline-flex; gap: 7px; align-items: center; }
+.wd-modes button + button { border-left: 1px solid var(--line); }
+.wd-modes button.selected { background: var(--surface-accent); color: var(--ink); font-weight: 600; }
+.wd-modes button span { font-size: 11px; background: var(--surface-blue); border-radius: 999px; padding: 1px 7px; font-variant-numeric: tabular-nums; }
+.wd-table td, .wd-table th { vertical-align: top; }
+.wd-table td:nth-child(n+4):nth-child(-n+8), .wd-table th:nth-child(n+4):nth-child(-n+8) { text-align: right; font-variant-numeric: tabular-nums; }
+.wd-sub { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.wd-bar { display: flex; width: 150px; max-width: 100%; height: 10px; border-radius: 999px; overflow: hidden; background: #e6edf7; border: 1px solid var(--line); }
+.wd-bar .tested { background: #1a9a5c; }
+.wd-bar .selected { background: #e8ad41; }
+.wd-bar .remaining { background: #c9d6ea; }
+.wd-defects { display: grid; grid-template-columns: repeat(2, minmax(0, auto)); gap: 4px 16px; margin: 0; font-size: 12px; }
+.wd-defects dt { color: var(--muted); }
+.wd-defects dd { margin: 0; font-variant-numeric: tabular-nums; }
+.wd-pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 22px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.wd-pager > span:first-child { margin-right: auto; }
+.wd-itp-list { display: grid; gap: 8px; margin-top: 14px; max-height: 340px; overflow: auto; }
+.wd-itp-list label { display: flex; gap: 12px; align-items: flex-start; padding: 11px 13px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+.wd-itp-list label.on { border-color: var(--primary); background: var(--surface-blue); }
+.wd-itp-list label:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.wd-itp-list strong { display: block; }
+.wd-itp-list small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+@media (max-width: 1100px) { .wd-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .wd-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .wd-kpis { gap: 10px; }
+  .wd-kpi { padding: 14px; }
+  .wd-kpi > strong { font-size: 24px; }
+  .wd-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 16px; }
+  .wd-filter-actions, .wd-compliance-tools, .wd-pager { padding-inline: 16px; }
+  .wd-filter-actions > span { margin-left: 0; flex-basis: 100%; }
+  .wd-note { margin-inline: 16px; }
+  .wd-compliance-tools .search-field { max-width: none; flex-basis: 100%; }
+  .wd-modes { width: 100%; }
+  .wd-modes button { flex: 1; justify-content: center; padding-inline: 6px; }
+}
+@media (max-width: 460px) { .wd-filter-grid { grid-template-columns: 1fr; } }
+@media print { .wd-filters, .wd-compliance-tools, .wd-pager { display: none; } }

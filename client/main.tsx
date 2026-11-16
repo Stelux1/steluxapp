@@ -15,5 +15,6 @@ import './pilots.css';
 import './signatures.css';
 import './hydrotest.css';
 import './flanges.css';
+import './itp-dashboard.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

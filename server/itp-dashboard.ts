@@ -1,0 +1,49 @@
+import { AppError, SYSTEM, type Store } from './store.ts';
+import { canResource } from '../shared/permissions.ts';
+import type { Row, User } from '../shared/types.ts';
+
+/**
+ * Local sample data of the ITP / KNR register and the Weld dashboard (called from `seed()` only, never for a
+ * connected database): the register, links of the sample isometrics, abbreviations on the weld types, a second
+ * WPS and welders spread over both, and two tracer welds, so the compliance table shows compliant and not
+ * compliant groups.
+ */
+export function seedItpSamples(store: Store) {
+  const add = (key: string, id: string, data: Record<string, unknown>) => store.create(key, data, SYSTEM, id);
+  // Realistic plans: the number is the plan, NDT % the share of welds to examine.
+  add('itps', 'itp-01', { number: 'ITP-01', description: 'Carbon steel process piping, ASME B31.3 normal fluid service', ndtPercent: 10, revision: '2', projectIds: ['project-cooling'] });
+  add('itps', 'itp-02', { number: 'ITP-02', description: 'Stainless steel steam piping, 316L, category II', ndtPercent: 20, revision: '1', projectIds: ['project-steam'] });
+  add('itps', 'itp-03', { number: 'ITP-03', description: 'Skid piping, 316L, shop fabrication', ndtPercent: 5, revision: '0', projectIds: ['project-skid'] });
+  add('itps', 'itp-ndt-01', { number: 'ITP-NDT-01', description: 'Supplementary radiography plan for lines with PWHT', ndtPercent: 30, revision: '0' });
+  const link = (isoId: string, data: Record<string, unknown>) => { const iso = store.get('isometrics', isoId); store.update('isometrics', isoId, data, iso._version, SYSTEM); };
+  // iso-1..3 follow ITP-01 (iso-1 also has the supplementary plan in slot 2), iso-4..6 ITP-02; iso-7..9 and iso-10 stay free text.
+  for (const id of ['iso-1', 'iso-2', 'iso-3']) link(id, { itpId: 'itp-01' });
+  link('iso-1', { itp2Id: 'itp-ndt-01' });
+  for (const id of ['iso-4', 'iso-5', 'iso-6']) link(id, { itpId: 'itp-02' });
+  // Weld type abbreviations used by the Total welds card.
+  const abbreviations: [string, string][] = [['Butt', 'BW'], ['Branch', 'BR'], ['Socket', 'SW'], ['Fillet', 'FW'], ['Longitudinal', 'LW'], ['HOOK-UP', 'HU'], ['Victaulic', 'VJ'], ['Reinforcement Pad GW', 'RPG'], ['Reinforcement Pad FW', 'RPF']];
+  for (const type of store.list('weld_types')) {
+    const abbreviation = abbreviations.find(([prefix]) => String(type.name).startsWith(prefix))?.[1];
+    if (abbreviation) store.update('weld_types', type.id, { abbreviation }, type._version, SYSTEM);
+  }
+  // A second procedure: the upper half of the welds were made under it.
+  add('wps', 'wps-2', { name: 'STX-WPS-135-01', method: '135', definition: 'Sample procedure — see the attached specification', jointType: 'BW', allProjects: true, siteIds: ['site-north', 'site-river'], processId: 'process-2', pqrId: 'pqr-1', standard: 'ISO 15609-1' });
+  for (const weld of store.list('welds')) {
+    const number = Number(String(weld.weldNo).slice(1));
+    const changes: Record<string, unknown> = {};
+    if (number > 15 && number <= 30) changes.wpsId = 'wps-2';
+    if (number === 7 || number === 23) changes.tracer = true;
+    if (Object.keys(changes).length) store.update('welds', weld.id, changes, weld._version, SYSTEM);
+  }
+}
+
+/**
+ * Linking an isometric to the ITP / KNR register needs read access to the register (Weld Pilot): the server copies
+ * the entry's number and revision into the isometric, so an account that cannot read the register must not name
+ * entries. Unchanged links and clearing a link are not judged; free-text ITP numbers stay open to every editor.
+ */
+export function checkItpLinkAccess(user: User, key: string, input: Record<string, unknown>, existing?: Row) {
+  if (key !== 'isometrics') return;
+  const changed = ['itpId', 'itp2Id'].some(name => input[name] !== undefined && String(input[name] ?? '') !== '' && String(input[name]) !== String(existing?.[name] ?? ''));
+  if (changed && !canResource(user, 'itps', 'show')) throw new AppError(403, 'Your profile does not open the ITP / KNR register in this application.');
+}

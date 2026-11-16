@@ -6,6 +6,7 @@ import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
+import { ItpLinkControl } from './itp-dashboard.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
@@ -68,6 +69,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
           {historyAvailable ? <button className="text-link" onClick={() => setHistory(true)} aria-label={`${kind} revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}
           {!file && ' · no file'}</span></div></div>
       <div className="iso-slot-actions">
+        {pilot?.pilot.key === 'weld' && kind !== 'ISO' && <ItpLinkControl iso={iso} slot={kind === 'ITP' ? 1 : 2}/>}
         {canImport && <button className="icon-btn" aria-label={`Upload ${kind} document`} title={`Upload ${kind} document`} onClick={() => onUpload(kind)}><Upload size={16}/></button>}
         {canRevise && <button className="icon-btn" aria-label={`Add ${kind} revision`} title={`Add ${kind} revision`} onClick={() => setRevision(kind)}><Plus size={17}/></button>}
       </div>
