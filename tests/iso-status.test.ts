@@ -183,6 +183,11 @@ test('blockers: Repair lists one item per rejection and names the next repair nu
   const w002 = weld('d', { weldNo: '002', ndoReq: true });
   assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial' }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', reweld: true })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
   assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04'), result('d', 'Accepted', '2026-10-05')]), [], 'a later accepted result without ReWeld? is no rejection');
+  // The NDT dialog writes ReWeld? on the NA round: ticked there, a later Accepted round of the same request is still a rejection (shared/inspections.ts notAccepted).
+  assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial', requestId: 'rq-d', reweld: true }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', requestId: 'rq-d' })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
+  // A repair whose only accepted round carries ReWeld? does not close the rejection.
+  const r002 = weld('g', { weldNo: '002R1', repairOfId: 'd', ndoReq: true });
+  assert.equal(repair([w002, r002], [result('d', 'Rejected', '2026-10-04'), result('g', 'Accepted', '2026-10-06', { reweld: true })]).length, 2);
   // A letter suffix is not a repair link: 005A does not close 005.
   assert.deepEqual(repair([weld('e', { weldNo: '005', ndoReq: true }), weld('f', { weldNo: '005A', ndoReq: true })], [result('e', 'Rejected', '2026-10-04'), result('f', 'Accepted', '2026-10-05')]).map(item => item.message), ['Rejection on weld 005, repair 005R1 is still open']);
 });

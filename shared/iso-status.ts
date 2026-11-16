@@ -2,7 +2,7 @@ import type { Row } from './types.ts';
 import { hydrotestState } from './hydrotest.ts';
 import { hasPunchProgress, punchBlocking, punchProgress } from './punch.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
-import { nextRepairNumber, repairChain, weldResults } from './inspections.ts';
+import { ndtAccepted, nextRepairNumber, notAccepted, repairChain } from './inspections.ts';
 import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 
 /**
@@ -156,10 +156,12 @@ function missingWeldFields(weld: Row): string[] {
   return missing;
 }
 
-/** NDT / NDT PRE: the latest outcome of a type is NA (stored "Rejected") or has "ReWeld?" ticked. */
-const rejection = (weld: Row, results: Row[]) => NDT_TYPES.some(type => { const latest = weldResults(results, weld.id, [type])[0]; return latest?.result === 'Rejected' || latest?.reweld === true; });
-/** Accepted: an accepted latest NDT / NDT PRE outcome and no rejection. */
-const acceptedWeld = (weld: Row, results: Row[]) => !rejection(weld, results) && NDT_TYPES.some(type => weldResults(results, weld.id, [type])[0]?.result === 'Accepted');
+/**
+ * The repair rules of the inspections flow (shared/inspections.ts): a rejection is a latest NDT / NDT PRE outcome NA, or
+ * ReWeld? ticked on the request of that outcome (also on its NA round); accepted is an accepted outcome without either.
+ */
+const rejection = (weld: Row, results: Row[]) => notAccepted(weld, results);
+const acceptedWeld = (weld: Row, results: Row[]) => ndtAccepted(weld, results);
 /** Order of creation, as the reference lists blockers (a repair 010R1 follows weld 012); equal times by weld number. */
 const byCreation = (a: Row, b: Row) => text(a._createdAt).localeCompare(text(b._createdAt)) || text(a.weldNo).localeCompare(text(b.weldNo), 'en', { numeric: true });
 

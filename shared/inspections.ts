@@ -96,7 +96,8 @@ const rewelded = (results: Row[] | null | undefined, latest: Row) => live(result
  * request (reference weld 002: Initial NA, Remaining Accepted, ReWeld? ticked counts as rejected and expects a repair).
  */
 export const notAccepted = (weld: Row, results: Row[] | null | undefined) => NDT_TYPES.some(type => { const latest = latestResult(results, weld.id, type); return Boolean(latest) && (latest!.result === 'Rejected' || rewelded(results, latest!)); });
-const accepted = (weld: Row, results: Row[] | null | undefined) => NDT_TYPES.some(type => latestResult(results, weld.id, type)?.result === 'Accepted') && !notAccepted(weld, results);
+/** The weld's latest NDT or NDT Pre outcome is Accepted and nothing makes it not accepted (`notAccepted`). */
+export const ndtAccepted = (weld: Row, results: Row[] | null | undefined) => NDT_TYPES.some(type => latestResult(results, weld.id, type)?.result === 'Accepted') && !notAccepted(weld, results);
 
 // ----- requirement and cell state ------------------------------------------------------------------------------
 
@@ -226,7 +227,7 @@ export function repairState(weld: Row, welds: Row[], results: Row[] | null | und
   const parent = repairParent(weld, welds);
   if (parent && notAccepted(parent, results)) return null;
   const chain = repairChain(weld, welds);
-  return { open: !chain.some(row => accepted(row, results)), original: weld, repair: chain.at(-1) };
+  return { open: !chain.some(row => ndtAccepted(row, results)), original: weld, repair: chain.at(-1) };
 }
 
 // ----- tracers -------------------------------------------------------------------------------------------------
