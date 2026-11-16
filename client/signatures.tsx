@@ -112,3 +112,28 @@ function SignatureCard({ kind, ownerId, ownerName, editable }: { kind: Kind; own
     </div>}
   </section>;
 }
+
+/**
+ * A drawing area for one signature, used where a document is signed on screen (punch sign-off). Same canvas and
+ * stroke handling as a user's own signature above; the parent receives a reader for the PNG once something is drawn
+ * (null while the area is empty). Keyboard users sign with an uploaded file instead.
+ */
+export function SignaturePad({ width = 800, height = 200, label, disabled = false, onChange }: { width?: number; height?: number; label: string; disabled?: boolean; onChange: (read: (() => Promise<Blob>) | null) => void }) {
+  const [strokes, setStrokes] = useState<Point[][]>([]);
+  const canvas = useRef<HTMLCanvasElement>(null), drawing = useRef(false), notify = useRef(onChange); notify.current = onChange;
+  useEffect(() => {
+    const context = canvas.current?.getContext('2d'); if (!context) return;
+    context.clearRect(0, 0, width, height);
+    context.strokeStyle = INK; context.lineWidth = 3; context.lineCap = 'round'; context.lineJoin = 'round';
+    for (const stroke of strokes) { context.beginPath(); stroke.forEach((point, i) => i ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y)); if (stroke.length === 1) context.lineTo(stroke[0].x + 0.1, stroke[0].y + 0.1); context.stroke(); }
+    notify.current(strokes.length ? () => new Promise<Blob>((resolve, reject) => canvas.current!.toBlob(result => result ? resolve(result) : reject(new Error('The drawing could not be saved.')), 'image/png')) : null);
+  }, [strokes, width, height]);
+  const point = (event: ReactPointerEvent<HTMLCanvasElement>): Point => { const box = event.currentTarget.getBoundingClientRect(); return { x: (event.clientX - box.left) * width / box.width, y: (event.clientY - box.top) * height / box.height }; };
+  function start(event: ReactPointerEvent<HTMLCanvasElement>) { if (disabled || (event.button !== 0 && event.pointerType === 'mouse')) return; event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); drawing.current = true; const first = point(event); setStrokes(old => [...old, [first]]); }
+  function move(event: ReactPointerEvent<HTMLCanvasElement>) { if (!drawing.current) return; const next = point(event); setStrokes(old => old.length ? [...old.slice(0, -1), [...old[old.length - 1], next]] : old); }
+  const aspect = { aspectRatio: `${width} / ${height}`, maxWidth: width } as React.CSSProperties;
+  return <div className="signature-pad">
+    <canvas ref={canvas} className="signature-canvas" style={aspect} width={width} height={height} role="img" aria-label={`${label}. Draw with a mouse, pen or finger. Keyboard users can choose the signed PDF instead.`} onPointerDown={start} onPointerMove={move} onPointerUp={() => { drawing.current = false; }} onPointerCancel={() => { drawing.current = false; }}/>
+    <div className="heading-actions signature-tools"><button type="button" className="btn" onClick={() => setStrokes([])} disabled={!strokes.length || disabled}><Eraser size={14}/>Clear</button><button type="button" className="btn" onClick={() => setStrokes(old => old.slice(0, -1))} disabled={!strokes.length || disabled}><Undo2 size={14}/>Undo</button></div>
+  </div>;
+}

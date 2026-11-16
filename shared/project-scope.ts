@@ -10,7 +10,9 @@ function narrowToProjects(rows: Record<string, Row[]>, projectRows: Row[], sites
   const projects = new Set(projectRows.map(row => row.id));
   scoped.isometrics = (rows.isometrics || []).filter(row => projects.has(String(row.projectId)));
   const isos = new Set(scoped.isometrics.map(row => row.id));
-  for (const key of ['welds', 'spools', 'revisions', 'iso_materials', 'calculation_lines', 'cut_list', 'releases', 'punchlists', 'flanges']) scoped[key] = (rows[key] || []).filter(row => isos.has(String(row.isoId)));
+  for (const key of ['welds', 'spools', 'revisions', 'iso_materials', 'calculation_lines', 'cut_list', 'releases', 'flanges']) scoped[key] = (rows[key] || []).filter(row => isos.has(String(row.isoId)));
+  // A punch item belongs to an isometric of the projects, or to one of the projects itself.
+  scoped.punchlists = (rows.punchlists || []).filter(row => row.isoId ? isos.has(String(row.isoId)) : projects.has(String(row.projectId)));
   const welds = new Set(scoped.welds.map(row => row.id));
   for (const key of ['inspection_requests', 'inspection_results', 'repairs']) scoped[key] = (rows[key] || []).filter(row => welds.has(String(row.weldId)));
   scoped.test_systems = (rows.test_systems || []).filter(row => !row.projectId || projects.has(String(row.projectId)));

@@ -19,6 +19,7 @@ import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkA
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
 import { assertSignatureImage } from './signatures.ts';
+import { assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
 import { ISO_LIST_COLUMNS, flagText } from '../shared/iso-list.ts';
 import { isoSummariesFor } from './iso-summary.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
@@ -275,10 +276,12 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       res.status(201).json(result);
     }catch(error){documents.discard(req.file);throw error;}
   });
+  if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);
       if (!req.file) throw new AppError(422, 'Choose a file.');
+      if (pilots && key === 'punchlists') assertPunchFileAllowed(store, target, req.body.documentType);
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);

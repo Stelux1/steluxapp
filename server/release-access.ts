@@ -3,6 +3,7 @@ import { actionScope, areaPilots, canResource, canScope, COPY_SCOPES, pilotBound
 import { actionAvailable, fieldAvailable, PILOT_KEYS, projectRow, resourceAvailable, rowAvailable, type PilotKey } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
+import { punchWriteError } from '../shared/punch.ts';
 import type { Availability, AuditEvent, Module, Row, User } from '../shared/types.ts';
 import { Store, AppError } from './store.ts';
 import { effectiveProfileId, publicUser } from './auth.ts';
@@ -56,6 +57,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (!names || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !names.includes(name) && !(name === '_version' && !action) && !(!action && enablementKey(key) && ENABLEMENT_INPUT.includes(name)))) throw notFound();
     if (action && !actionAvailable(availability, key, value.type)) throw notFound();
     if (!action && ['inspection_requests', 'inspection_results'].includes(key) && value.type !== undefined && !availability.inspectionTypes.includes(String(value.type))) throw notFound();
+    if (!action && key === 'punchlists') { const refusal = punchWriteError(value, existing); if (refusal) throw new AppError(422, refusal); }
     if (!action && key === 'welds' && (!existing || value.isoId !== undefined || value.wpsId !== undefined)) {
       const wpsId = value.wpsId ?? existing?.wpsId;
       if (wpsId) {
@@ -86,7 +88,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
     } catch { return null; }
     if (availability) {
-      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'released', 'reopened'].includes(event.action)) return null;
+      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'released', 'reopened', 'finished', 'passed', 'removed'].includes(event.action)) return null;
       if (event.action === 'inspected' && !availability.inspectionTypes.some(type => ['accepted', 'rejected'].some(result => event.summary.startsWith(`${type} ${result} · `)))) return null;
     }
     // Release and Reopen keep their sentences: they carry the report number and the reason the user typed.

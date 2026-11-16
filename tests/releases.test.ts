@@ -12,6 +12,7 @@ import { passwordHash } from '../server/auth.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { isoBlockers } from '../shared/iso-status.ts';
+import { punchBlocking, punchCounts, punchKind } from '../shared/punch.ts';
 import { isoListContext, prefabFlag, fieldFlag } from '../shared/iso-list.ts';
 import { canAction } from '../shared/permissions.ts';
 import { ACTIONS } from '../shared/actions.ts';
@@ -71,13 +72,25 @@ test('Prefab check: the shop welds must be welded, complete, with accepted NDT, 
   assert.match(reasons({ welds: [] })[0].message, /no shop welds/);
   assert.equal(reasons({ welds: [weld('s1', { _archived: true })] }).length, 1, 'a deleted weld does not count');
   // Reasons carry the weld so the page can open it, and come in the order of the blockers list.
-  const many = reasons({ welds: [weld('s1', { welder1Id: '', ndoReq: true }), weld('s2', { date: '', ndoReq: true })], results: [], punch: [row('p1', { isoId: 'iso', category: 'A', status: 'Open' })] });
+  const many = reasons({ welds: [weld('s1', { welder1Id: '', ndoReq: true }), weld('s2', { date: '', ndoReq: true })], results: [], punch: [row('p1', { isoId: 'iso', category: 'A', status: 'Open', punchType: 'Pre-punch' })] });
   assert.deepEqual(many.map(reason => reason.group), ['welds', 'welds', 'ndt', 'ndt', 'punch']);
   assert.equal(many[0].weldId, 's1');
 });
 
-test('pre-punch: open A and B items block, C, closed and other isometrics do not; items without a type count as pre-punch', () => {
-  const item = (data: Record<string, unknown>) => row('p', { isoId: 'iso', category: 'A', status: 'Open', ...data });
+test('the release rule agrees with the punch flow and the isometric Punch blocker on every status, category and type', () => {
+  const items: Row[] = [];
+  for (const status of ['Open', 'In progress', 'Finished', 'Completed', 'Passed', 'Removed']) for (const category of ['A — Immediate fix (blocking)', 'B', '', 'C — Fix (non-blocking)', 'D']) for (const punchType of ['Pre-punch', 'Punch', '']) items.push(row(`p${items.length}`, { isoId: 'iso', status, category, punchType }));
+  for (const item of items) assert.equal(punchBlocksRelease(item), punchKind(item) === 'Pre-punch' && punchBlocking([item]).length === 1, JSON.stringify(item));
+  const releaseBlocking = items.filter(punchBlocksRelease).length;
+  assert.equal(releaseBlocking, punchCounts(items.filter(item => punchKind(item) === 'Pre-punch')).blocking, 'the open blocking pre-punch items the punch flow counts');
+  const blocker = isoBlockers({ iso, welds: [], weldTypes, diameters: [], results: [], releases: [], punch: items }).groups.find(group => group.key === 'punch');
+  assert.equal(blocker?.count, punchBlocking(items).length, 'the isometric blocker counts the open A/B items of both types');
+  assert.ok(blocker!.count >= releaseBlocking);
+  assert.deepEqual(releaseCheck('Prefab', input({ punch: items })).reasons.filter(reason => reason.group === 'punch').map(reason => reason.message), [`${releaseBlocking} open pre-punch items of category A or B need to be finished.`]);
+});
+
+test('pre-punch: open A and B items block, C, closed and other isometrics do not; items without a type are punch items (punch flow rules)', () => {
+  const item = (data: Record<string, unknown>) => row('p', { isoId: 'iso', category: 'A', status: 'Open', punchType: 'Pre-punch', ...data });
   assert.equal(punchBlocksRelease(item({})), true);
   assert.equal(punchBlocksRelease(item({ category: 'B', status: 'In progress' })), true);
   assert.equal(punchBlocksRelease(item({ category: 'C' })), false);
@@ -85,10 +98,11 @@ test('pre-punch: open A and B items block, C, closed and other isometrics do not
   assert.equal(punchBlocksRelease(item({ status: 'Finished' })), false);
   assert.equal(punchBlocksRelease(item({ status: 'Passed' })), false);
   assert.equal(punchBlocksRelease(item({ status: 'Removed' })), false);
-  assert.equal(punchBlocksRelease(item({ punchType: 'Pre-punch' })), true);
+  assert.equal(punchBlocksRelease(item({ punchType: '' })), false, 'items saved before the type existed are Punch items (shared/punch.ts punchKind)');
+  assert.equal(punchBlocksRelease(item({ category: '' })), true, 'a missing category reads as B');
   assert.equal(punchBlocksRelease(item({ punchType: 'Punch' })), false, 'a punch item (after the field work) is not a pre-punch item');
   assert.equal(punchBlocksRelease(item({ _archived: true })), false);
-  const check = releaseCheck('Prefab', input({ punch: [item({}), item({ category: 'B' }), row('other', { isoId: 'x', category: 'A', status: 'Open' })] }));
+  const check = releaseCheck('Prefab', input({ punch: [item({}), item({ category: 'B' }), row('other', { isoId: 'x', category: 'A', status: 'Open', punchType: 'Pre-punch' })] }));
   assert.deepEqual(check.reasons.map(reason => reason.message), ['2 open pre-punch items of category A or B need to be finished.']);
   assert.equal(releaseCheck('Prefab', input({ punch: null })).ready, true, 'unreadable punch items produce no reason (the server decides)');
 });
@@ -109,7 +123,7 @@ test('Field check: field welds as for prefab, plus the Prefab release when the i
   const open = releaseCheck('Field', input({ welds: [weld('f1', { typeId: 'wt-field', ndoReq: true }), weld('s1', { welder1Id: '' })], results: [], releases: [prefab] }));
   assert.deepEqual(open.reasons.map(reason => reason.group), ['ndt']);
   assert.match(releaseCheck('Field', input({ welds: [weld('s1')], releases: [prefab] })).reasons[0].message, /no field welds/);
-  assert.deepEqual(releaseCheck('Field', input({ welds: [weld('s1'), field], results: [], releases: [prefab], punch: [row('p', { isoId: 'iso', category: 'B', status: 'Open' })] })).reasons.map(reason => reason.group), ['punch']);
+  assert.deepEqual(releaseCheck('Field', input({ welds: [weld('s1'), field], results: [], releases: [prefab], punch: [row('p', { isoId: 'iso', category: 'B', status: 'Open', punchType: 'Pre-punch' })] })).reasons.map(reason => reason.group), ['punch']);
 });
 
 test('phaseState names the status card wording', () => {
@@ -301,7 +315,7 @@ test('releasing is refused while anything blocks the phase, and a blocked isomet
   assert.equal(store.list('releases').filter(row => row.reportNo === 'PFR-900').length, 0, 'the ready isometric of the batch was not released either');
   // A required NDT without result, a rejection, an open pre-punch of category A.
   store.update('welds', shop.id, { welder1Id: 'welder-1' }, store.get('welds', shop.id)._version, SYSTEM);
-  store.create('punchlists', { name: 'Support missing', isoId: id, category: 'A', status: 'Open' }, SYSTEM, 'punch-block');
+  store.create('punchlists', { name: 'Support missing', description: 'Pipe support PS-12 missing at the shop spool', punchType: 'Pre-punch', isoId: id, category: 'A', status: 'Open' }, SYSTEM, 'punch-block');
   error = refusal(() => runAction(store, 'release', releaseData([id]), actor));
   assert.match(error.message, /1 open pre-punch item of category A or B needs to be finished/);
   store.update('punchlists', 'punch-block', { status: 'Completed' }, 1, SYSTEM);
@@ -324,6 +338,23 @@ test('a rejected weld blocks until its repair has an accepted result', t => {
   assert.match(refusal(() => runAction(store, 'release', releaseData([id]), actor)).message, /Weld W901 was rejected/);
   const again = runAction(store, 'inspection-request', { weldIds: [shop.id], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-25' }, SYSTEM).records![0];
   runAction(store, 'inspection-result', { requestId: again.id, reportNo: 'RT-902', result: 'Accepted', date: '2026-10-26' }, SYSTEM);
+  assert.equal(runAction(store, 'release', releaseData([id]), actor).records!.length, 1);
+});
+
+test('hosted repair model: a rejected weld with its repair weld R1 blocks the release until R1 is welded and accepted', t => {
+  const store = fixture(t); const { id, shop } = readyIso(store); const hosted = { inspectionRules: true };
+  const request = runAction(store, 'inspection-request', { weldIds: [shop.id], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-23' }, SYSTEM, hosted).records![0];
+  runAction(store, 'inspection-result', { requestId: request.id, reportNo: 'RT-901', result: 'Rejected', date: '2026-10-24' }, SYSTEM, hosted);
+  const repair = store.list('welds').find(weld => weld.repairOfId === shop.id)!;
+  assert.equal(repair.weldNo, 'W901R1');
+  assert.equal(refusal(() => runAction(store, 'release', releaseData([id]), actor)).status, 422);
+  const check = () => releaseCheck('Prefab', { iso: store.get('isometrics', id), welds: store.list('welds'), weldTypes: store.list('weld_types'), results: store.list('inspection_results'), releases: store.list('releases'), punch: store.list('punchlists') });
+  assert.ok(check().reasons.some(reason => reason.group === 'repair' && /Weld W901 was rejected; repair weld W901R1 has no accepted result yet/.test(reason.message)), 'the repair chain of the inspections flow blocks');
+  assert.ok(check().reasons.some(reason => reason.group === 'welds' && /W901R1 has not been welded/.test(reason.message)), 'the repair weld itself must be welded');
+  store.update('welds', repair.id, { welder1Id: 'welder-1', date: '2026-10-25', datefit: '2026-10-25' }, repair._version, SYSTEM);
+  const again = runAction(store, 'inspection-request', { weldIds: [repair.id], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-25' }, SYSTEM, hosted).records![0];
+  runAction(store, 'inspection-result', { requestId: again.id, reportNo: 'RT-902', result: 'Accepted', date: '2026-10-26' }, SYSTEM, hosted);
+  assert.equal(isoBlockers({ iso: store.get('isometrics', id), welds: store.list('welds'), weldTypes: store.list('weld_types'), diameters: store.list('diameters'), results: store.list('inspection_results'), releases: [], punch: [] }).groups.some(group => group.key === 'repair'), false, 'the isometric blocker agrees');
   assert.equal(runAction(store, 'release', releaseData([id]), actor).records!.length, 1);
 });
 

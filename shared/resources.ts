@@ -5,6 +5,7 @@ import { ISO_FINISH_STATES } from './iso-status.ts';
 import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, DEFECT_GROUPS, WELD_LOCATIONS } from './weld-catalogs.ts';
 import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELDS, INSPECTION_WELD_FIELDS } from './inspections.ts';
 import { RELEASE_EXTRA_FIELDS } from './releases.ts';
+import { LEGACY_PUNCH_CATEGORIES, LEGACY_PUNCH_STATUSES, PUNCH_CATEGORIES, PUNCH_PROGRESS_OPTIONS, PUNCH_STATUSES, PUNCH_TYPES, SIGNER_TYPES, SIGN_METHODS } from './punch.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { ASME_GROUP_NUMBERS, ASME_P_NUMBERS, CERT_TYPES, ISO_15608_GROUPS, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS } from './welder-data.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
@@ -114,7 +115,19 @@ add('inspection_results', 'Inspection results', 'inspection result', 'welding', 
 catalog('field_packages', 'Field work packages', 'field work package', 'welding', 'Releases', [r('projectId', 'Project', 'projects'), t('number', 'Package number')]);
 catalog('test_systems', 'Test systems', 'test system', 'welding', 'Releases', [r('projectId', 'Project', 'projects'), t('medium', 'Test medium'), t('pressure', 'Test pressure')]);
 add('releases', 'Releases', 'release', 'welding', 'Releases', 'Prefab, field, and hydrotest release records and signed documents.', [t('number', 'Release number'), r('isoId', 'Isometric', 'isometrics'), s('type', 'Release type', ['Prefab', 'Field', 'Hydrotest']), t('reportNo', 'Report number'), d('date', 'Release date'), r('engineerId', 'QA / QC engineer', 'qa_engineers'), r('signatureId', 'Signature', 'signatures'), note('note', 'Notes')], ['number', 'isoId', 'type', 'reportNo', 'date'], { readonly: true, actions: ['release'] });
-add('punchlists', 'Punch lists', 'punch item', 'welding', 'Releases', 'Track outstanding items through completion.', [t('name', 'Punch item', { required: true }), r('isoId', 'Isometric', 'isometrics', { required: true }), s('category', 'Category', ['A', 'B', 'C'], { default: 'B' }), status(['Open', 'In progress', 'Completed']), t('assignedTo', 'Assigned to'), d('dueDate', 'Due date'), d('completedAt', 'Completed date'), note()], ['name', 'isoId', 'category', 'status', 'assignedTo', 'dueDate']);
+add('punchlists', 'Punch lists', 'punch item', 'welding', 'Releases', 'Track pre-punch and punch items from the report to the sign-off.', [
+  t('number', '#', { hidden: true }), s('punchType', 'Punch type', [...PUNCH_TYPES], { default: 'Punch' }),
+  s('category', 'Category', PUNCH_CATEGORIES, { default: PUNCH_CATEGORIES[1], legacy: LEGACY_PUNCH_CATEGORIES }),
+  r('projectId', 'Project', 'projects', { hint: 'Needed for an item that belongs to the whole project; taken from the isometric otherwise.' }), r('isoId', 'Isometric', 'isometrics', { hint: 'Leave empty for a project-related item.' }),
+  t('name', 'Short title', { hint: 'Filled from the description when left empty.' }), t('description', 'Description', { type: 'textarea', required: true }),
+  d('dueDate', 'Due date'), r('contractorId', 'Contractor', 'companies'), d('reportedDate', 'Reported date'), t('reportedBy', 'Reported by'),
+  s('status', 'Status', [...PUNCH_STATUSES], { default: 'Open', legacy: LEGACY_PUNCH_STATUSES }),
+  t('assignedTo', 'Assigned to', { hidden: true }), d('completedAt', 'Completed date', { hidden: true }),
+  // Written only by Mark as finished, Report passed and Mark as removed (see shared/punch.ts).
+  d('finishedAt', 'Finished on', { hidden: true }), t('finishedBy', 'Finished by', { hidden: true }), s('signerType', 'Signed by', SIGNER_TYPES, { hidden: true }), t('signName', 'Client name', { hidden: true }), t('signCompany', 'Company', { hidden: true }), t('signFunction', 'Function', { hidden: true }), t('signInspector', 'Inspector', { hidden: true }), t('signRemarks', 'Sign-off remarks', { type: 'textarea', hidden: true }), s('signMethod', 'Sign-off', SIGN_METHODS, { hidden: true }), t('signAttachmentId', 'Sign-off document', { hidden: true }),
+  d('passedAt', 'Passed on', { hidden: true }), t('passedBy', 'Passed by', { hidden: true }), t('passRemarks', 'Remarks', { type: 'textarea', hidden: true }),
+  d('removedAt', 'Removed on', { hidden: true }), t('removedBy', 'Removed by', { hidden: true }), t('removeReason', 'Reason for removal', { type: 'textarea', hidden: true }),
+], ['number', 'projectId', 'isoId', 'category', 'description', 'dueDate', 'contractorId', 'punchType', 'status'], { display: 'name' });
 add('flanges', 'Flanges', 'flange', 'welding', 'Releases', 'Bolted connection, tightening, and inspection records.', [t('flange_id', 'Flange ID', { required: true }), r('isoId', 'Isometric', 'isometrics', { required: true }), ...['from_equipment', 'to_equipment', 'irnno', 'eq_con', 'criticality', 'pid', 'line_number', 'fluid_code', 'area_unit', 'pipe_class', 'location', 'report_nr', 'operator', 'cqi', 'rejection_type', 'insp_result', 'torque_wrench_type', 'torque_wrench_id', 'first_pass_nm', 'second_pass_nm', 'target_moment_nm', 'target_stress', 'max_dev', 'lubricant_used', 'flange_rate_size', 'flange_type', 'studbolt_afmeting', 'stud_dia', 'aantal_studbolts', 'matl_studbolts', 'materiaal_moer', 'gasket_type', 'gasket_material', 'flange_size', 'flange_rating', 'operatingPressure', 'operatingTemp'].map(k => t(k, k.replaceAll('_', ' ').replace(/([a-z])([A-Z])/g, '$1 $2'), { section: 'Connection details' })), d('tightning_date', 'Tightening date'), d('commisioning_date', 'Commissioning date'), b('finished', 'Finished')], ['flange_id', 'isoId', 'line_number', 'operator', 'tightning_date', 'finished'], { unique: [['isoId', 'flange_id']] });
 add('daily_reports', 'Daily reporting', 'daily report', 'welding', 'Welding execution', 'Daily production notes and completed work.', [t('name', 'Report title', { required: true }), r('projectId', 'Project', 'projects', { required: true }), r('welderId', 'Welder', 'welders'), d('date', 'Date', { required: true }), n('hours', 'Hours'), note('description', 'Work completed')]);
 add('articles', 'Tool & article inventory', 'article', 'tools', 'Articles', 'Returnable tools and consumables, ready when your team needs them.', [t('barcode', 'Barcode', { required: true }), t('title', 'Title', { required: true }), n('minimal', 'Minimum stock', { default: 0 }), b('returnable', 'Returnable article', { default: true }), note()], ['barcode', 'title', 'returnable', 'minimal'], { display: 'title', unique: [['barcode']], actions: ['rent', 'adjust-tool', 'transfer-tool'] });
@@ -134,6 +147,8 @@ function extend(key: string, fields: Field[]) {
   resource.fields.push(...fields);
 }
 extend('isometrics', [t('area', 'Area'), n('ndtPercentage', 'NDT %', { max: 100 }), t('pressureTestPlan', 'Pressure test plan')]);
+// Punch progress of the isometric (0 / 25 / 50 / 75 / 100 %), entered in the isometric header; empty until entered.
+extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true })]);
 extend('wps', [b('active', 'Active', { default: true })]);
 extend('materials', [t('wallThickness', 'Wall thickness')]);
 extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Material code'), t('diameter', 'Diameter (inch)'), t('materialDescription', 'Description of material'), t('wallThickness', 'Wall thickness'), t('schedule', 'Schedule')]);

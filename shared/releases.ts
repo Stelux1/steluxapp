@@ -1,6 +1,7 @@
 import type { Field, Row } from './types.ts';
 import { isoBlockers, newest, type BlockerKey } from './iso-status.ts';
 import { RELEASE_DOC_DRAWINGS } from './site-settings.ts';
+import { punchBlocking, punchKind } from './punch.ts';
 
 /**
  * Prefab and Field release, Reopen, release documents and field work packages.
@@ -91,13 +92,13 @@ export interface ReleaseCheckInput {
 }
 export interface ReleaseCheck { type: ReleasePhase; reasons: ReleaseReason[]; ready: boolean; /** Live welds of the phase. */ welds: number; }
 
-/** Punch states that no longer hold a release (the reference's Finished / Passed / Removed, and the existing Completed). */
-export const PUNCH_CLOSED_STATES = ['Completed', 'Finished', 'Passed', 'Removed'];
 /**
  * INFERRED: an open pre-punch item of category A or B blocks the release (the reference warns "Pre-punch: 1 A/B still
- * need Finished + approval"). Items stored before pre-punch / punch were told apart have no type and count as pre-punch.
+ * need Finished + approval"). Status, category and type are read by the punch flow's rules (shared/punch.ts), so the
+ * release agrees with the isometric's Punch blocker: only Open items block (legacy In progress reads as Open, Completed
+ * as Finished), a missing category reads as B, and items saved before the type existed are Punch items.
  */
-export const punchBlocksRelease = (item: Row) => !item._archived && !PUNCH_CLOSED_STATES.includes(text(item.status)) && ['A', 'B'].includes(text(item.category)) && (!text(item.punchType) || text(item.punchType) === 'Pre-punch');
+export const punchBlocksRelease = (item: Row) => !item._archived && punchKind(item) === 'Pre-punch' && punchBlocking([item]).length > 0;
 
 const ORDER: BlockerKey[] = ['release', 'welds', 'ndt', 'repair', 'punch'];
 const TITLES: Record<BlockerKey, string> = { release: 'Release', welds: 'Welds', ndt: 'NDT', repair: 'Repair', punch: 'Punch' };

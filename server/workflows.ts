@@ -9,6 +9,7 @@ import { WELD_ENTRY_ACTIONS, runWeldEntryAction } from './weld-entry.ts';
 import { INSPECTION_ACTION_KEYS } from '../shared/inspections.ts';
 import { inspectionRules } from './inspections.ts';
 import { assignFieldPackage, releaseIsometrics, reopenRelease } from './releases.ts';
+import { runPunchAction } from './punch.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -31,6 +32,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
     const ensure = (resource: string, id: unknown) => store.get(resource, id);
     const add = (resource: string, input: Input) => store.create(resource, input, actor);
     const patch = (resource: string, row: Row, input: Input) => store.update(resource, row.id, input, row._version, actor);
+    if (key.startsWith('punch-')) return { resource: 'punchlists', record: runPunchAction(store, key, data, actor).record };
     const warehouse = (id: unknown, tool: boolean) => {
       const row = ensure('warehouses', id);
       if (row.use === (tool ? 'Materials' : 'Tools')) throw new AppError(422, `Choose a warehouse that holds ${tool ? 'tools' : 'materials'}.`);

@@ -43,6 +43,10 @@ add('add-welds', 'Add welds', 'welding', 'Create the missing weld numbers betwee
 add('mass-edit-welds', 'Mass edit welds', 'welding', 'Change the same fields on every checked weld. Only the fields you change are written.', [ref('weldIds', 'Welds', 'welds', { multiple: true })], 'Update welds');
 add('reorder-welds', 'Reorder welds', 'welding', 'Store a new table order for the welds of an isometric.', [ref('isoId', 'Isometric', 'isometrics'), ref('weldIds', 'Welds', 'welds', { multiple: true })], 'Save order');
 defs.push(...INSPECTION_ACTIONS);
+// Punch lists (hosted workspace): the status changes of a punch item; the sign-off file is attached by POST /api/punch/:id/finish.
+add('punch-finish', 'Mark as finished', 'welding', 'Sign off the finished punch item: the client or your own inspector signs, drawn on screen or as a signed PDF.', [ref('punchId', 'Punch item', 'punchlists'), text('signerType', 'Signed by', { type: 'select', options: ['Client', 'Own inspector'], default: 'Client', required: true }), text('clientName', 'Client name'), text('company', 'Company'), text('function', 'Function'), text('inspector', 'Inspector'), date, text('note', 'Remarks', { type: 'textarea' }), text('signMethod', 'Sign-off', { type: 'select', options: ['Drawn', 'Uploaded PDF'], default: 'Drawn', required: true }), text('attachmentId', 'Sign-off document', { hidden: true })], 'Mark as finished');
+add('punch-pass', 'Report passed', 'welding', 'Record that the finished punch item was inspected and approved. A passed item cannot be changed any more.', [ref('punchId', 'Punch item', 'punchlists'), date, note], 'Report passed');
+add('punch-remove', 'Mark as removed', 'welding', 'Take the punch item off the list. It stays in the records as removed.', [ref('punchId', 'Punch item', 'punchlists'), date, text('note', 'Reason', { type: 'textarea' })], 'Mark as removed');
 export const ACTIONS = Object.fromEntries(defs.map(d => [d.key, d]));
 export const ACTION_LIST = defs;
 export function actionPermission(key: string): Module { return ACTIONS[key].module; }

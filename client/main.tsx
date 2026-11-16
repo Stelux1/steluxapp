@@ -17,5 +17,6 @@ import './weld-catalogs.css';
 import './welder-data.css';
 import './weld-entry.css';
 import './releases.css';
+import './punch.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
