@@ -8,6 +8,7 @@ import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpLinkControl } from './itp-dashboard.tsx';
 import { materialStatus } from '../shared/mto-materials.ts';
+import { hydrotestState } from '../shared/hydrotest.ts';
 import { ReleaseStatus } from './releases.tsx';
 import { PunchStatus } from './punch.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
@@ -111,7 +112,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       <PhaseFlags iso={iso}/>
       <ReleaseStatus iso={iso}/>
       <PunchStatus iso={iso} items={rows.punchlists ?? null}/>
-      {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent}/>}
+      {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
     </Card>
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>
       <div className="modal-body iso-blockers">{status.blockers.groups.map(group => <section key={group.key} aria-label={group.title}>
@@ -127,9 +128,10 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
 }
 
 /** Material status % (MTO Pilot): covered ÷ required over the isometric's material lines (shared/mto-materials.ts). */
-function MaterialStatusSlot({ percent }: { percent: number | null }) {
+function MaterialStatusSlot({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
   return <div className="iso-material-slot" data-slot="material-status">
-    <dl className="iso-facts"><Fact label="Material status">{percent === null ? <span title="The isometric requires no material yet.">—</span> : `${formatNumber(percent)} %`}</Fact></dl>
+    <dl className="iso-facts"><Fact label="Material status">{percent === null ? <span title="The isometric requires no material yet.">—</span> : `${formatNumber(percent)} %`}</Fact>
+      <Fact label="Hydrotest completed">{hydrotest.inScope ? hydrotest.completed ? 'Yes' : 'No' : <span title="No test system, or testing not applicable.">—</span>}</Fact></dl>
     {percent !== null && <Progress value={percent}/>}
   </div>;
 }

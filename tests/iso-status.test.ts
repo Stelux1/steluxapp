@@ -240,8 +240,14 @@ test('ISO numbers: letters, digits . _ - only, checked when created or changed, 
 test('the server rejects progress quantities without a budget and keeps old records saveable', () => {
   const store = new Store(':memory:'); seed(store);
   try {
-    const iso = store.list('isometrics')[0];
+    // The server reads the isometric's own MTO budget (Store.validate passes the material rows to isoBudgets).
+    const budgetRows = { iso_materials: store.list('iso_materials'), materials: store.list('materials'), custom_materials: store.list('custom_materials'), operation_phases: store.list('operation_phases') };
+    const iso = store.list('isometrics').find(row => !isoBudgets(row, budgetRows)?.shop?.materialPipe)!;
     assert.throws(() => store.update('isometrics', iso.id, { shopPipeM: 5 }, iso._version), (error: unknown) => error instanceof AppError && error.status === 422 && Boolean(error.fields?.shopPipeM));
+    const budgeted = store.get('isometrics', 'iso-1'), shopPipe = Number(isoBudgets(budgeted, budgetRows)?.shop?.materialPipe);
+    assert.ok(shopPipe > 0, 'the sample gives iso-1 a shop pipe budget');
+    assert.throws(() => store.update('isometrics', budgeted.id, { shopPipeM: shopPipe + 1 }, budgeted._version), (error: unknown) => error instanceof AppError && /above the MTO budget/.test(error.fields?.shopPipeM || ''));
+    assert.equal(store.update('isometrics', budgeted.id, { shopPipeM: shopPipe }, budgeted._version).shopPipeM, shopPipe);
     const saved = store.update('isometrics', iso.id, { paintState: 'Done', tracingState: 'N/A', shopPipeM: 0 }, iso._version);
     assert.equal(saved.paintState, 'Done'); assert.equal(saved.tracingState, 'N/A');
     assert.throws(() => store.update('isometrics', iso.id, { paintState: 'Finished' }, saved._version), (error: unknown) => error instanceof AppError && Boolean(error.fields?.paintState));
