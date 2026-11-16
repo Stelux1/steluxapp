@@ -17,6 +17,10 @@ Each of the three tests fails without its fix (checked by taking the fixes out a
 
 - **Menu collapsed to icons** (`client/App.tsx`, `client/pilot.tsx`, `client/nav-collapse.css`, group icons in `shared/pilots.ts`). Client only; no request, permission or data changes. Checked in the browser on the local sample workspace at 1440 × 900, 1280 × 620 and 375 × 812: collapse and expand, the choice kept after a reload, group panels in both pilots (the last group stays on screen), Escape and outside click, the "Iso overview" and "Change password" entries from a panel, and the narrow-screen drawer (always full, no toggle).
 
+### Found after the first deploy of this change, fixed
+
+- **The collapsed menu shipped without its styles.** The hosting wrapper (`pages/_app.tsx`) keeps its own list of stylesheets and the new `client/nav-collapse.css` was only in the local entry (`client/main.tsx`), so the hosted build had the toggle button and no rules for it. No build or test failed, and the browser check ran on the local entry. Found by reading the deployed stylesheet right after the deploy; fixed by adding the import. `tests/hosting-styles.test.ts` now fails when the two lists differ. The wrong build was live for about 20 minutes.
+
 ### Review of this change
 
 An independent read-only review of the server diff before the deploy: pass with notes, nothing blocking. Its one finding (a deleted isometric let a test system change project, and a later restore brought the mismatch back) is closed above. Its two notes are intended behaviour: moving an isometric to another project asks the user to clear or change the test system first (the field is named), and bulk project edit fails the whole batch the same way.
@@ -26,7 +30,7 @@ An independent read-only review of the server diff before the deploy: pass with 
 - CSV import (closed in the hosted profile) does not ask for view access to linked records; the rule of finding 2 applies to the create, update and bulk routes.
 - The collapsed menu was not checked in Safari or Firefox.
 
-Verify (`npm run typecheck && npm test && npm run build:local && STELUX_RELEASE_PROFILE=welding-workspace npx vite build`, then `npm run build:server` and `npm run build`) passed before the commit: 522 tests, 514 pass, 0 fail, 8 skipped (PostgreSQL).
+Verify (`npm run typecheck && npm test && npm run build:local && STELUX_RELEASE_PROFILE=welding-workspace npx vite build`, then `npm run build:server` and `npm run build`) passed before each commit: 523 tests, 515 pass, 0 fail, 8 skipped (PostgreSQL).
 
 
 ## 2026-11-16 — Review of the follow-up fixes and rollout check (after the release review)
