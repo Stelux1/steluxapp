@@ -32,6 +32,7 @@
     "db:prepare:welding": "node --import tsx server/prepare-welding.ts",
     "db:prepare:hosted": "node --import tsx server/prepare-welding.ts",
     "db:verify:hosted": "node --import tsx server/verify-hosted.ts",
+    "db:demo:hosted": "node --import tsx server/demo-project.ts",
     "rehearse:hosted": "node --import tsx scripts/rehearse-hosted-upgrade.mjs"
   },
   "dependencies": {

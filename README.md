@@ -163,6 +163,13 @@ STELUX_REHEARSAL_DATABASE_PASSWORD=… npm run rehearse:hosted -- --backup backu
 
 The rehearsal ignores the shell's `DATABASE_URL` and does not load `.env`; its children receive only the rehearsal database. With `--backup`, the rehearsal database then holds a copy of that data: drop it afterwards.
 
+**Demo main project.** After the schema is prepared, `STELUX_CLOUD_DATABASE=workspace npm run db:demo:hosted` adds the QA-verified local sample (the hosted sample chain of `server/index.ts`, without accounts or company data) to the existing workspace as two new main projects, "Demo – North fabrication yard" and "Demo – Riverside installation", with their projects, isometrics, welds, inspections, releases, punch, flanges, hydrotest, MTO, orders, stock, reservations, pick lists, transfer orders and service requests. It is insert-only, in one transaction, through the application's own create validation: every new record has a `demo-` id, existing rows are never updated, archived or deleted, and users, profiles, credentials and sessions are not touched. Catalog records the workspace already has (weld types, diameters, welders, WPS, suppliers, …) are referenced instead of copied; storehouses, stock and the catalog materials the sample stocks are demo-only (marked `DEMO-` where the number exists), because Inv. counts a material in every storehouse and sharing them would change the numbers of the existing isometrics. The default is a dry run that rolls everything back and prints per resource how many records would be inserted, matched or skipped, plus a check that the demo isometrics show the sample's numbers; `--apply` commits and writes the metadata marker `demo_project_v1`. A second run does nothing. It refuses SQLite, an evaluation database and an unprepared schema, and prints no connection settings.
+
+```sh
+STELUX_CLOUD_DATABASE=workspace npm run db:demo:hosted              # dry run
+STELUX_CLOUD_DATABASE=workspace npm run db:demo:hosted -- --apply   # commit
+```
+
 ## Current implementation
 
 - Shared project sites, projects, isometrics, spools, companies, warehouses, drawings, and revision history.
