@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Link2, Loader2, Unlink } from 'lucide-react';
 import { useWorkspace, activeRows } from './context.tsx';
 import { ApiError, api, formatNumber } from './api.ts';
+import { post } from './api.ts';
 import { Badge, EmptyState, Modal, SearchInput, TableScroll } from './components.tsx';
 import { resourcePath } from './records.tsx';
 import { COMPLIANCE_PAGE_SIZE, GROUP_FILTERS, NO_DASHBOARD_FILTERS, dashboardFilterCount, filterGroups, pageOf, weldDashboard, type ComplianceGroup, type DashboardFilters, type GroupFilter } from '../shared/weld-dashboard.ts';
 import { DEFAULT_NDT_PERCENT, ITP_SLOTS, itpNdtPercent, itpsForProject } from '../shared/itp-dashboard.ts';
+import { allowedScopes, itpLatest, itpPickerOptions, itpScope, type LinkSlot } from '../shared/itps.ts';
 import type { Row } from '../shared/types.ts';
 
 const show = (value: unknown) => String(value ?? '').trim();
@@ -116,43 +118,49 @@ export function WeldDashboard() {
 
 // ----- Link ITP on the isometric header ------------------------------------------------------------------------------------
 
-/** Link ITP / Unlink for one ITP slot of an isometric (Weld Pilot header). Renders nothing without the rights. */
+/**
+ * Link ITP / Unlink for one ITP slot of an isometric (Weld Pilot header). The picker offers the ITPs the slot rule allows
+ * (shared/itps.ts); the chosen ITP's scope decides the slot on the server. Renders nothing without the rights.
+ */
 export function ItpLinkControl({ iso, slot: slotNumber }: { iso: Row; slot: 1 | 2 }) {
   const { rows, canRecord, refresh, notify } = useWorkspace();
-  const slot = ITP_SLOTS[slotNumber - 1];
+  const slot = ITP_SLOTS[slotNumber - 1], side: LinkSlot = slotNumber === 1 ? 'primary' : 'secondary';
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   if (!canRecord('itps') || !canRecord('isometrics', 'edit', iso)) return null;
-  const linked = rows.itps?.find(row => row.id === iso[slot.link] && !row._archived);
-  async function save(itpId: string) {
+  const itps = rows.itps || [];
+  const linked = itps.find(row => row.id === iso[slot.link] && !row._archived);
+  async function send(path: string, body: Record<string, unknown>, done: string) {
     setBusy(true); setError('');
-    try { await api(`/records/isometrics/${iso.id}`, { method: 'PUT', body: JSON.stringify({ [slot.link]: itpId, _version: iso._version }) }); await refresh(); notify(itpId ? `${slot.kind} linked to the register.` : `${slot.kind} unlinked. The number stays as free text.`); setOpen(false); }
+    try { await post(path, body); await refresh(); notify(done); setOpen(false); }
     catch (failure) { setError(((failure as ApiError).fields && Object.values((failure as ApiError).fields!)[0]) || (failure as Error).message || 'Saving failed.'); }
     finally { setBusy(false); }
   }
+  if (linked) return <button className="icon-btn" aria-label={`Unlink ITP ${show(linked.number)} from ${slot.label}`} title="Unlink ITP" disabled={busy} onClick={() => void send('/itps/unlink', { isoId: iso.id, slot: slotNumber }, 'ITP unlinked. The number stays as free text.')}>{busy ? <Loader2 size={16} className="spin"/> : <Unlink size={16}/>}</button>;
+  if (!allowedScopes(iso, itps, side).length) return null;
   return <>
-    {linked
-      ? <button className="icon-btn" aria-label={`Unlink ${slot.kind} ${show(linked.number)} from the register`} title="Unlink ITP" disabled={busy} onClick={() => void save('')}>{busy ? <Loader2 size={16} className="spin"/> : <Unlink size={16}/>}</button>
-      : <button className="icon-btn" aria-label={`Link ${slot.kind} to the register`} title="Link ITP" onClick={() => { setError(''); setOpen(true); }}><Link2 size={16}/></button>}
-    {open && <LinkItpDialog iso={iso} slot={slot} busy={busy} error={error} onClose={() => setOpen(false)} onPick={id => void save(id)}/>}
+    <button className="icon-btn" aria-label={`Link ITP to ${slot.label}`} title="Link ITP" onClick={() => { setError(''); setOpen(true); }}><Link2 size={16}/></button>
+    {open && <LinkItpDialog iso={iso} slot={side} busy={busy} error={error} onClose={() => setOpen(false)} onPick={id => void send('/itps/link', { isoId: iso.id, itpId: id, slot: side, _version: iso._version }, 'ITP linked.')}/>}
   </>;
 }
 
-function LinkItpDialog({ iso, slot, busy, error, onClose, onPick }: { iso: Row; slot: typeof ITP_SLOTS[number]; busy: boolean; error: string; onClose: () => void; onPick: (id: string) => void }) {
+function LinkItpDialog({ iso, slot, busy, error, onClose, onPick }: { iso: Row; slot: LinkSlot; busy: boolean; error: string; onClose: () => void; onPick: (id: string) => void }) {
   const { rows } = useWorkspace();
   const [query, setQuery] = useState(''), [chosen, setChosen] = useState('');
-  const otherSlot = ITP_SLOTS.find(item => item !== slot)!;
-  const options = itpsForProject(rows.itps || [], rows.itp_projects || [], iso.projectId).filter(itp => itp.id !== iso[otherSlot.link])
-    .filter(itp => !query.trim() || [itp.number, itp.description].some(value => show(value).toLowerCase().includes(query.trim().toLowerCase())))
-    .sort((a, b) => show(a.number).localeCompare(show(b.number), 'en', { numeric: true }));
-  return <Modal title="Link ITP" subtitle={`${show(iso.isoNo)} · ${slot.label}`} onClose={onClose}>
+  const term = query.trim().toLowerCase();
+  const options = itpPickerOptions(iso, rows.itps || [], rows.itp_projects || [], slot)
+    .filter(itp => !term || [itp.number, itp.title, itp.description].some(value => show(value).toLowerCase().includes(term)));
+  const scopes = allowedScopes(iso, rows.itps || [], slot);
+  return <Modal title="Link ITP" subtitle={`${show(iso.isoNo)} · ${scopes.join(' / ')}`} onClose={onClose}>
     <div className="modal-body">
       {error && <div className="alert error" role="alert">{error}</div>}
-      <p className="wd-hint">Choose an entry of the ITP/KNR register. Its number and revision replace the free text in this slot.</p>
-      <SearchInput value={query} onChange={setQuery} placeholder="Search the register…"/>
-      {options.length ? <div className="wd-itp-list" role="radiogroup" aria-label="ITP / KNR register">{options.map(itp => <label key={itp.id} className={chosen === itp.id ? 'on' : ''}>
-        <input type="radio" name="link-itp" value={itp.id} checked={chosen === itp.id} onChange={() => setChosen(itp.id)}/>
-        <span><strong>{show(itp.number)}</strong><small>{show(itp.description) || 'No description'} · Rev {show(itp.revision) || '0'} · {itpNdtPercent(itp) === null ? 'NDT % not set' : `NDT ${formatNumber(itpNdtPercent(itp)!)} %`}</small></span></label>)}</div>
-        : <EmptyState title="No ITP/KNR to link" description={query ? 'No register entry matches this search.' : "The register has no entry open to this isometric's project. Add one under Welding data → ITPs."}/>}
+      <p className="wd-hint">A Shop ITP fills ITP No, a Field ITP fills ITP No 2, a Shop+Field ITP fills ITP No and hides ITP No 2. X Ray % follows the ITP.</p>
+      <SearchInput value={query} onChange={setQuery} placeholder="Search ITP…"/>
+      {options.length ? <div className="wd-itp-list" role="radiogroup" aria-label="Choose ITP">{options.map(itp => {
+        const rev = itpLatest(itp, rows.attachments).revNo || '0', percent = itpNdtPercent(itp);
+        return <label key={itp.id} className={chosen === itp.id ? 'on' : ''}>
+          <input type="radio" name="link-itp" value={itp.id} checked={chosen === itp.id} onChange={() => setChosen(itp.id)}/>
+          <span><strong>{show(itp.number)}{show(itp.title) ? ` — ${show(itp.title)}` : ''}</strong><small>Scope {itpScope(itp)} · Latest Rev {rev} · {percent === null ? 'X-Ray % not set' : `X-Ray ${formatNumber(percent)} %`}</small></span></label>; })}</div>
+        : <EmptyState title="No ITP to link" description={query ? 'No ITP matches this search.' : `No active ${scopes.join(' or ')} ITP is open to this isometric's project. Add one under Welding data → ITPs.`}/>}
     </div>
     <div className="modal-footer"><button className="btn" type="button" onClick={onClose}>Cancel</button><button className="btn primary" type="button" disabled={!chosen || busy} onClick={() => onPick(chosen)}>{busy && <Loader2 size={14} className="spin"/>}Link ITP</button></div>
   </Modal>;

@@ -1,6 +1,7 @@
 import { AppError, SYSTEM, type Store } from './store.ts';
 import { canResource } from '../shared/permissions.ts';
 import type { Row, User } from '../shared/types.ts';
+import { isoXRay } from '../shared/itps.ts';
 
 /**
  * Local sample data of the ITP / KNR register and the Weld dashboard (called from `seed()` only, never for a
@@ -11,11 +12,12 @@ import type { Row, User } from '../shared/types.ts';
 export function seedItpSamples(store: Store) {
   const add = (key: string, id: string, data: Record<string, unknown>) => store.create(key, data, SYSTEM, id);
   // Realistic plans: the number is the plan, NDT % the share of welds to examine.
-  add('itps', 'itp-01', { number: 'ITP-01', description: 'Carbon steel process piping, ASME B31.3 normal fluid service', ndtPercent: 10, revision: '2', projectIds: ['project-cooling'] });
-  add('itps', 'itp-02', { number: 'ITP-02', description: 'Stainless steel steam piping, 316L, category II', ndtPercent: 20, revision: '1', projectIds: ['project-steam'] });
-  add('itps', 'itp-03', { number: 'ITP-03', description: 'Skid piping, 316L, shop fabrication', ndtPercent: 5, revision: '0', projectIds: ['project-skid'] });
-  add('itps', 'itp-ndt-01', { number: 'ITP-NDT-01', description: 'Supplementary radiography plan for lines with PWHT', ndtPercent: 30, revision: '0' });
-  const link = (isoId: string, data: Record<string, unknown>) => { const iso = store.get('isometrics', isoId); store.update('isometrics', isoId, data, iso._version, SYSTEM); };
+  add('itps', 'itp-01', { number: 'ITP-01', title: 'CS process piping', scope: 'Shop', description: 'Carbon steel process piping, ASME B31.3 normal fluid service', ndtPercent: 10, revision: '2', projectIds: ['project-cooling'] });
+  add('itps', 'itp-02', { number: 'ITP-02', title: 'SS steam piping', scope: 'Shop+Field', description: 'Stainless steel steam piping, 316L, category II', ndtPercent: 20, revision: '1', projectIds: ['project-steam'] });
+  add('itps', 'itp-03', { number: 'ITP-03', title: 'Skid shop fabrication', scope: 'Shop', description: 'Skid piping, 316L, shop fabrication', ndtPercent: 5, revision: '0', projectIds: ['project-skid'] });
+  add('itps', 'itp-ndt-01', { number: 'ITP-NDT-01', title: 'Supplementary RT', scope: 'Field', description: 'Supplementary radiography plan for lines with PWHT', ndtPercent: 30, revision: '0' });
+  // A linked isometric takes its X Ray % from the ITP (shared/itps.ts), as Link ITP does.
+  const link = (isoId: string, data: Record<string, unknown>) => { const iso = store.get('isometrics', isoId); const xRay = isoXRay({ ...iso, ...data }, store.list('itps')); store.update('isometrics', isoId, { ...data, ...(xRay === null ? {} : { xRay }) }, iso._version, SYSTEM); };
   // iso-1..3 follow ITP-01 (iso-1 also has the supplementary plan in slot 2), iso-4..6 ITP-02; iso-7..9 and iso-10 stay free text.
   for (const id of ['iso-1', 'iso-2', 'iso-3']) link(id, { itpId: 'itp-01' });
   link('iso-1', { itp2Id: 'itp-ndt-01' });

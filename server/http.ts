@@ -1,4 +1,5 @@
 import { checkItpLinkAccess } from './itp-dashboard.ts';
+import { assertItpDeletable, checkIsoWrite, registerItpRoutes, syncItpXRay } from './itps.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
@@ -216,6 +217,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
+    if (pilots) checkIsoWrite(store, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
@@ -225,10 +227,12 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
+    if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); }
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
+      if (pilots && resource.key === 'itps') syncItpXRay(store, row, actorOf(req));
       if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, row);
       if (resource.key === 'users' && req.body.password) { store.db.prepare('INSERT INTO credentials VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash').run(row.id, passwordHash(req.body.password)); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.id); }
       if (resource.key === 'users' || resource.key === 'profiles') ensureAdmin();
@@ -239,6 +243,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'delete',access.record(resource.key,String(req.params.id),true));
     if (resource.readonly) throw new AppError(405, 'Transaction history cannot be archived.');
     access.archive(resource.key, access.record(resource.key,String(req.params.id),true));
+    if (pilots) assertItpDeletable(store, resource.key, String(req.params.id));
     if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id), true));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
@@ -264,6 +269,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     access.input(resource.key, req.body.changes);
+    if (pilots && resource.key === 'isometrics' && ['xRay', 'itpId', 'itp2Id'].some(name => Object.hasOwn(req.body.changes, name))) throw new AppError(422, 'X Ray % and the ITP links cannot be bulk edited. Use Link ITP on the isometric.');
     // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
@@ -350,6 +356,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     }catch(error){documents.discard(req.file);throw error;}
   });
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
+  // ITPs page: Add ITP with its PDF, Upload revision, Link ITP / Unlink, Import from isometrics (server/itps.ts).
+  if (pilots) registerItpRoutes(app, { store, documents, access, upload: disk });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
   if (pilots) registerWpsRoutes(app, { store, access });
   app.post('/api/files', disk.single('file'), (req, res) => {

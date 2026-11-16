@@ -7,6 +7,7 @@ import { Modal, Progress } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpLinkControl } from './itp-dashboard.tsx';
+import { itpSlots } from '../shared/itps.ts';
 import { materialStatus } from '../shared/mto-materials.ts';
 import { hydrotestState } from '../shared/hydrotest.ts';
 import { ReleaseStatus } from './releases.tsx';
@@ -65,6 +66,8 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);
   const fileOf = (kind: string) => documents.find(row => row.documentType === `${kind} revision ${currentRevision(rows, iso.id, kind)}` || row.documentType === kind);
   const itps = [['ITP', iso.itpNo], ['ITP 2', iso.itpNo2]] as const;
+  // Counter of linked ITPs (0/2, 1/1 …) and the second slot, hidden next to a Shop+Field ITP (shared/itps.ts).
+  const itpCard = itpSlots(iso, rows.itps || []);
 
   const slot = (kind: string, number: unknown, label: string) => {
     const file = fileOf(kind), text = show(number), rev = currentRevision(rows, iso.id, kind);
@@ -87,8 +90,8 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       {slot('ISO', iso.isoNo, 'ISO No')}
       <dl className="iso-facts"><Fact label="Asset tag">{show(iso.assetTag)}</Fact><Fact label="Drawing no.">{show(iso.drawingNo)}</Fact></dl>
     </Card>
-    <Card title="ITPs" aside={<span className="iso-count">{itps.filter(([, number]) => String(number || '').trim()).length}/2</span>}>
-      {itps.map(([kind, number]) => slot(kind, number, kind === 'ITP' ? 'ITP No' : 'ITP No 2'))}
+    <Card title="ITPs" aside={<span className="iso-count" aria-label={`${itpCard.count} of ${itpCard.max} ITP slots linked`}>{itpCard.counter}</span>}>
+      {itps.filter(([kind]) => kind === 'ITP' || itpCard.showSecond).map(([kind, number]) => slot(kind, number, kind === 'ITP' ? 'ITP No' : 'ITP No 2'))}
     </Card>
     <Card title="Compliance">
       <dl className="iso-facts"><Fact label="NoBo">{iso.noBo ? 'Yes' : 'No'}</Fact><Fact label="NoBo Reg. no. / serial">{show(iso.noBoReg)} / {show(iso.noBoSerial)}</Fact><Fact label="PED Cat.-Mod">{show(iso.ped)}</Fact><Fact label="X Ray %">{show(iso.xRay)}</Fact></dl>
