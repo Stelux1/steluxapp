@@ -183,7 +183,7 @@ function TakeInOrder({ orderId, supplierId, onDone }: { orderId: string; supplie
     const items = receiptItems(quantities);
     if (!items.length) return setError('Enter a Today rec. quantity for at least one line.');
     setBusy(true);
-    try { await post('/actions/receive', { orderId, supplierId, items }); await refresh(); notify('Materials taken in.'); onDone(); }
+    try { await post('/actions/receive', { orderId, supplierId, items }); setQuantities({}); await refresh(); notify('Materials taken in.'); onDone(); }
     catch (problem) { setError((problem as Error).message); } finally { setBusy(false); }
   }
   return <div className="page mto-procurement-page"><Heading title={`Material take in / ${String(order.number)}`} description={`Supplier: ${supplierId ? label('suppliers', supplierId) : '—'}. Enter what arrived today; a negative value corrects an earlier receipt. All lines are saved together.`}>{back}</Heading>

@@ -462,7 +462,9 @@ export function movementAction(rows: Record<string, Row[]>, move: Row): { action
   }
   if (type === 'Issue') {
     const iso = named('isometrics', move.isoId, 'isoNo');
-    return { action: iso ? `Isometric execution ${iso}` : 'Issued', reference: first ? `Pick List ${first}` : '-' };
+    // The Pick List No. of the issue: stored with it, else read from its note ("Isometric execution <ISO> | Pick List <no>"), never the whole note (SC2 N-D).
+    const pick = String(move.pickListNo || '').trim() || /\bPick List (\S+)/.exec(String(move.note || ''))?.[1] || first;
+    return { action: iso ? `Isometric execution ${iso}` : 'Issued', reference: pick ? `Pick List ${pick}` : '-' };
   }
   if (type === 'Removal') return { action: site ? 'Removed from inventory' : 'Removed from storehouse', reference: String(move.reasonText || move.note || '-') };
   if (type === 'Correction') return { action: 'Correction', reference: String(move.reasonText || move.note || '-') };
