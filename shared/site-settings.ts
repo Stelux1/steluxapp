@@ -10,6 +10,8 @@ export const MATERIAL_DISPLAYS = ['Materials added to isometrics', 'Pick-list st
 export const DEFECT_NORMS = ['No norm selected', 'ISO 6520-1', 'ASME B31.3', 'API 1104'];
 export const NDT_MEASUREMENTS = ['Inch-weighted', 'Per weld'];
 export const RELEASE_DOC_DRAWINGS = ['Drawing no + iso', 'Prefix + iso'];
+/** The NDT standards a LISL [ISS] sheet can tick. */
+export const ISS_NDT_STANDARDS = ['ASME', 'EN ISO'];
 /** Used by the weld dashboard KPI when a site leaves the repair performance limit empty. */
 export const DEFAULT_REPAIR_PERFORMANCE_LIMIT = 5;
 

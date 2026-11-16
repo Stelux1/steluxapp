@@ -2,7 +2,7 @@ import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
-import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
+import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS, ISS_NDT_STANDARDS } from './site-settings.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
 const d = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'date', ...extra });
@@ -39,6 +39,10 @@ const siteSettings: Field[] = [
   t('vtType2No', 'VT type 2 no', { section: DOCUMENTS }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS }), d('vtType2Date', 'VT type 2 date', { section: DOCUMENTS }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS }),
   ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL [GU] Field ${i}`, { section: DOCUMENTS })),
   t('lislDocNo', 'LISL Doc.No. & Rev.No.', { section: DOCUMENTS }), t('lislProcedureNo', 'LISL Procedure No.', { section: DOCUMENTS }),
+  t('ownerName', 'Owner name (owner-specific LISL forms)', { section: DOCUMENTS, hint: 'Printed on LISL [ISS] and [WQ]; left out when empty.' }), t('ownerStandard', 'Owner standard line [WQ]', { section: DOCUMENTS, hint: 'The line above the title of LISL [WQ]; left out when empty.' }),
+  t('wqDocNo', 'LISL [WQ] Doc. no.', { section: DOCUMENTS }), t('wqVersion', 'LISL [WQ] Version', { section: DOCUMENTS }), d('wqDate', 'LISL [WQ] Date', { section: DOCUMENTS }),
+  t('issDocTemplate', 'LISL [ISS] Document template', { section: DOCUMENTS }), t('issSupplier', 'LISL [ISS] Supplier', { section: DOCUMENTS, hint: 'Leave empty to use the company name of the Company data.' }), t('issTrain', 'LISL [ISS] Train', { section: DOCUMENTS }), t('issFluidService', 'LISL [ISS] Fluid service category', { section: DOCUMENTS, hint: 'Printed with the isometric’s PED category.' }),
+  s('issNdtStandard', 'LISL [ISS] NDT standard', ISS_NDT_STANDARDS, { section: DOCUMENTS, hint: 'Ticks ASME or EN ISO; empty uses the isometric’s NDT norm.' }),
   ...PROGRESS_PHASES.map(phase => n(phase.field, `${phase.label} phase (%)`, { section: PROGRESS, max: 100, step: 1 })),
   ...PROGRESS_PHASES.flatMap(phase => phase.activities.map(activity => n(activity.field, `${phase.label} · ${activity.label} (%)`, { section: PROGRESS, max: 100, step: 1 }))),
 ];
