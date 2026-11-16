@@ -43,6 +43,29 @@
 .weld-range-preview { margin: 14px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-blue); border: 1px solid var(--line); overflow-wrap: anywhere; }
 .weld-clearable { display: flex; flex-direction: column; gap: 4px; }
 .weld-clearable .checkbox-field { margin: 0; }
+/* Add weld / Edit weld: one flat form in three columns (5 / 5 / 2 of the reference grid), one column on a phone. */
+.weld-form-columns { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 5fr) minmax(0, 3fr); gap: 0 20px; }
+.weld-form-column { min-width: 0; }
+.weld-form-column-3 .checkbox-field { min-height: 30px; padding-top: 4px; }
+.weld-charge { margin-bottom: 4px; }
+.weld-charge .checkbox-field { min-height: 0; padding-top: 0; margin: -8px 0 10px; }
+.weld-charge-details { width: 100%; border-collapse: collapse; margin: -6px 0 16px; font-size: 12px; }
+.weld-charge-details th, .weld-charge-details td { padding: 5px 8px; border: 1px solid var(--line); text-align: left; overflow-wrap: anywhere; }
+.weld-charge-details th { width: 42%; font-weight: 500; color: var(--muted); background: var(--surface); }
+.weld-default-diameter { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.weld-default-diameter legend { padding: 0 4px; font-size: 12px; color: var(--muted); }
+.weld-default-diameter label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.weld-default-diameter .field-error { flex-basis: 100%; margin: 0; }
+.weld-blocked { margin: 4px 0 0; font-size: 12px; }
+.alert.weld-warning { background: #fff4e2; border: 1px solid #ddc69a; color: #7a5a1e; }
+.weld-reason { margin-bottom: 8px; }
+.weld-history { margin-bottom: 14px; }
+.weld-history-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
+.weld-history-toggle:hover, .weld-history-toggle:focus-visible { background: var(--surface-blue); }
+.weld-history-count { margin-left: auto; min-width: 22px; padding: 1px 8px; border-radius: 999px; background: var(--surface-blue); border: 1px solid var(--line); font-size: 12px; text-align: center; }
+.weld-history-panel { max-height: 240px; overflow: auto; margin-top: 8px; }
+.weld-history-note { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 12px; }
+@media (max-width: 760px) { .weld-form-columns { grid-template-columns: minmax(0, 1fr); } }
 .weld-delete-list { columns: 3; margin: 8px 0 0; padding-inline-start: 20px; max-height: 220px; overflow: auto; }
 .btn.primary.danger { background: #b4232f; border-color: #b4232f; }
 .btn.primary.danger:hover:not(:disabled) { background: #8f1b25; border-color: #8f1b25; }

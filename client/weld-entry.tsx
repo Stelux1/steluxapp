@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, GripVertical, ListPlus, Loader2, Lock, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, ListPlus, Loader2, Lock, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Dropdown, EmptyState, Modal, SearchInput, TableScroll, revealInvalidField } from './components.tsx';
 import { availableWps } from './catalog.ts';
-import { ApiError, post } from './api.ts';
+import { ApiError, api, post, formatDate } from './api.ts';
 import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
 import { AttachmentCountBadge } from './iso-dialogs.tsx';
@@ -11,13 +11,16 @@ import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
 import { PunchDialog } from './punch.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
-import { NDT_ROUNDS } from '../shared/inspections.ts';
+import { NDT_ROUNDS, INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS, ndtOrPwhtInProgress } from '../shared/inspections.ts';
+import { nonWeldCode } from '../shared/weld-codes.ts';
 import {
   WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
-  planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
+  planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
   MASS_EDIT_CLEAR_LABEL, MASS_EDIT_COLUMNS, MASS_EDIT_DATES, MASS_EDIT_DATE_HINT, MASS_EDIT_DIAMETER, MASS_EDIT_FLAGS_LABELS, MASS_EDIT_SECTIONS, MASS_EDIT_SELECT_NOTHING,
   NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, WELD_ORDER_MESSAGES, WELD_SORTING_MESSAGES, orderFailureMessage, sideCellTexts, stampOptionLabel,
   MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldMatchesSearch, weldSortingDisabled, weldSortingMenu, welderStamps, type MassEditItem,
+  DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
+  chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
 } from '../shared/weld-entry.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -41,8 +44,9 @@ function useWeldData(iso: Row) {
     const byId = (key: string) => new Map((rows[key] || []).map(row => [row.id, row]));
     const certificates = rows.certifications || [];
     const offered = project && projectCertificates(site) ? certificatesForProject(certificates, project.id, { links: rows.certificate_projects || [] }) : activeRows(rows, 'certifications');
+    const lookups = { diameters: byId('diameters'), materialTypes: byId('material_types'), materialParts: byId('material_parts'), materials: byId('materials') };
     return {
-      all, welds, deleted: orderedWelds(all.filter(weld => weld._archived), true), project, site, certificates, offered,
+      all, welds, deleted: orderedWelds(all.filter(weld => weld._archived), true), project, site, certificates, offered, lookups, requests: rows.inspection_requests || [],
       lock: lockContext(rows.weld_types, rows.releases, rows.isometrics),
       types: byId('weld_types'), stampers: byId('qa_engineers'), welders: byId('welders'), wps: byId('wps'), diameters: byId('diameters'), spools: byId('spools'), certs: byId('certifications'), materials: byId('materials'), materialTypes: byId('material_types'), materialParts: byId('material_parts'),
     };
@@ -55,13 +59,13 @@ type WeldData = ReturnType<typeof useWeldData>;
 function Labelled({ label, error, hint, children, className = '', htmlFor, extra }: { label: string; error?: string; hint?: string; children: ReactNode; className?: string; htmlFor: string; extra?: string }) {
   return <div className={`field ${className}`}><label htmlFor={htmlFor}>{label}{extra && <span className="sr-only"> ({extra})</span>}</label>{children}{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${htmlFor}-error`} className="field-error">{error}</small>}</div>;
 }
-function TextField({ label, value, onChange, error, type = 'text', required, readOnly, hint, min, max }: { label: string; value: unknown; onChange?: (value: string) => void; error?: string; type?: 'text' | 'date' | 'number'; required?: boolean; readOnly?: boolean; hint?: string; min?: number; max?: number }) {
+function TextField({ label, value, onChange, error, type = 'text', required, readOnly, hint, min, max, invalid }: { label: string; value: unknown; onChange?: (value: string) => void; error?: string; type?: 'text' | 'date' | 'number'; required?: boolean; readOnly?: boolean; hint?: string; min?: number; max?: number; invalid?: boolean }) {
   const id = `weld-${useId().replaceAll(':', '')}`;
-  return <Labelled label={required ? `${label} *` : label} error={error} hint={hint} htmlFor={id}><input id={id} type={type} value={str(value)} required={required} readOnly={readOnly} min={min} max={max} step={type === 'number' ? 'any' : undefined} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} autoComplete="off" onChange={event => onChange?.(event.target.value)}/></Labelled>;
+  return <Labelled label={required ? `${label} *` : label} error={error} hint={hint} htmlFor={id}><input id={id} type={type} value={str(value)} required={required} readOnly={readOnly} min={min} max={max} step={type === 'number' ? 'any' : undefined} aria-invalid={Boolean(error) || invalid} aria-describedby={error ? `${id}-error` : undefined} autoComplete="off" onChange={event => onChange?.(event.target.value)}/></Labelled>;
 }
-function SelectField({ label, value, onChange, error, options, placeholder = 'Select', disabled, hint, className, extra }: { label: string; value: unknown; onChange: (value: string) => void; error?: string; options: { value: string; label: string }[]; placeholder?: string; disabled?: boolean; hint?: string; className?: string; extra?: string }) {
+function SelectField({ label, value, onChange, error, options, placeholder = 'Select', disabled, hint, className, extra, invalid }: { label: string; value: unknown; onChange: (value: string) => void; error?: string; options: { value: string; label: string; disabled?: boolean }[]; placeholder?: string; disabled?: boolean; hint?: string; className?: string; extra?: string; invalid?: boolean }) {
   const id = `weld-${useId().replaceAll(':', '')}`;
-  return <Labelled label={label} error={error} hint={hint} htmlFor={id} className={className} extra={extra}><div className="select-wrap"><select id={id} value={str(value)} disabled={disabled} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div></Labelled>;
+  return <Labelled label={label} error={error} hint={hint} htmlFor={id} className={className} extra={extra}><div className="select-wrap"><select id={id} value={str(value)} disabled={disabled} aria-invalid={Boolean(error) || invalid} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</select><ChevronDown size={14}/></div></Labelled>;
 }
 function CheckField({ label, checked, onChange, disabled, hint, error }: { label: string; checked: boolean; onChange?: (checked: boolean) => void; disabled?: boolean; hint?: string; error?: string }) {
   const id = `weld-${useId().replaceAll(':', '')}`;
@@ -78,20 +82,25 @@ function Failure({ message }: { message: string }) {
   return message ? <div ref={banner} className="alert error" role="alert"><AlertCircle size={18}/><span>{message}</span></div> : null;
 }
 
-/** The options a charge number offers: nothing new, EXISTING, CONN ISO, then the project's certificates. */
-function chargeOptions(data: WeldData, selected: string) {
+/**
+ * The options a charge number offers. Add weld and Mass edit: the project's certificates, then CONN ISO, EXISTING and the
+ * 13 part placeholders; Edit weld: the fixed values first. Certificates that are not Controlled + Accepted are disabled.
+ */
+function chargeOptions(data: WeldData, selected: string, mode: 'add' | 'edit' = 'add') {
   const list = [...data.offered];
   const current = data.certs.get(selected); if (current && !list.some(row => row.id === current.id)) list.push(current);
-  return [...SIDE_VALUES.map(value => ({ value: value as string, label: value as string })), ...list.map(row => ({ value: row.id, label: [str(row.chargeNo || row.name), row.indexNo ? `index ${str(row.indexNo)}` : '', str(row.materialDescription || '')].filter(Boolean).join(' · ') }))];
+  return chargeOptionList(list, mode, data.lookups).map(option => option.value === selected ? { ...option, disabled: false } : option);
 }
 const welderOptions = (welders: Row[], keep: unknown[]) => sortByName(welders.filter(row => !row._archived && (row.status !== 'Inactive' || keep.includes(row.id))), 'number').map(row => ({ value: row.id, label: welderLabel(row) }));
 
 // --------------------------------------------------------------------------------------------------- add / edit weld
 
+const todayText = () => { const now = new Date(), two = (value: number) => String(value).padStart(2, '0'); return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`; };
 const ENTRY_FLAGS: Values = Object.fromEntries(FLAGS.map(name => [name, false]));
 function initialValues(weld: Row | undefined, isoId: string): Values {
-  const values: Values = { lengthMode: 'Diameter', ...ENTRY_FLAGS };
+  const values: Values = { lengthMode: 'Diameter', ...ENTRY_FLAGS, tracer: Boolean(weld?.tracer) };
   if (weld) for (const name of WELD_ENTRY_FIELDS) values[name] = (FLAGS as readonly string[]).includes(name) ? Boolean(weld[name]) : weld[name] || (name === 'lengthMode' ? 'Diameter' : weld[name] ?? '');
+  else Object.assign(values, newWeldDefaults(todayText()));
   return { ...values, isoId };
 }
 const normalised = (name: string, value: unknown) => (FLAGS as readonly string[]).includes(name) ? Boolean(value) : value === undefined || value === null ? '' : value;
@@ -105,6 +114,25 @@ function weldPayload(values: Values, weld?: Row): Values {
   return payload;
 }
 const errorMessage = (error: unknown) => (error as Error).message || 'The weld could not be saved.';
+const sizeText = (size: string) => `${size}"`;
+
+/** Previous edits at the top of Edit weld: collapsed, with the reasons entered for earlier edits (Date | Comment | User). */
+function PreviousEdits({ weldId }: { weldId: string }) {
+  const [edits, setEdits] = useState<{ date: string; comment: string; user: string }[] | null>(null), [failed, setFailed] = useState(false), [open, setOpen] = useState(false);
+  const panel = `weld-previous-edits-${useId().replaceAll(':', '')}`;
+  useEffect(() => {
+    let live = true;
+    api<{ edits: { date: string; comment: string; user: string }[] }>(`/weld-history/${encodeURIComponent(weldId)}`).then(result => { if (live) setEdits(result.edits || []); }).catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, [weldId]);
+  if (failed) return <p className="muted weld-history-note">Previous edits could not be loaded.</p>;
+  if (!edits) return <p className="muted weld-history-note" role="status"><Loader2 size={13} className="spin"/>Loading previous edits…</p>;
+  if (!edits.length) return null;
+  return <div className="weld-history">
+    <button type="button" className="weld-history-toggle" aria-expanded={open} aria-controls={panel} onClick={() => setOpen(current => !current)}>{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}Previous edits<span className="weld-history-count">{edits.length}</span></button>
+    <div id={panel} className="weld-history-panel" hidden={!open}><TableScroll><table className="data-table"><thead><tr><th scope="col">Date</th><th scope="col">Comment</th><th scope="col">User</th></tr></thead><tbody>{edits.map((edit, index) => <tr key={`${edit.date}-${index}`}><td className="tabular">{editHistoryDate(edit.date)}</td><td>{edit.comment}</td><td>{edit.user}</td></tr>)}</tbody></table></TableScroll></div>
+  </div>;
+}
 
 /** Edit weld from the blockers list of the isometric page: read-only with the lock banner while the weld is locked. */
 export function EditWeldDialog({ iso, weld, onClose }: { iso: Row; weld: Row; onClose: () => void }) {
@@ -114,106 +142,126 @@ export function EditWeldDialog({ iso, weld, onClose }: { iso: Row; weld: Row; on
 
 export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Row; weld?: Row; data: WeldData; onClose: () => void; lockedReason?: string }) {
   const { rows, refresh, notify } = useWorkspace();
+  const mode = weld ? 'edit' : 'add';
   const [values, setValues] = useState<Values>(() => initialValues(weld, iso.id));
-  const [multiple, setMultiple] = useState(() => Boolean(weld && WELDERS.slice(1).some(name => weld[name])));
   const [updatePrev, setUpdatePrev] = useState(false), [updateNext, setUpdateNext] = useState(false);
+  const [note, setNote] = useState(''), [defaultDiameter, setDefaultDiameter] = useState('');
   const [error, setError] = useState(''), [fields, setFields] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
   const [range, setRange] = useState(false);
   const order = data.welds.map(row => row.id);
-  const hasPrev = weld ? Boolean(neighbourOf(order, weld.id, 'prev')) : order.length > 0, hasNext = weld ? Boolean(neighbourOf(order, weld.id, 'next')) : false;
+  const hasPrev = weld ? Boolean(neighbourOf(order, weld.id, 'prev')) : false, hasNext = weld ? Boolean(neighbourOf(order, weld.id, 'next')) : false;
   const set = (patch: Values) => setValues(current => ({ ...current, ...patch })); const set1 = (name: string) => (value: unknown) => set({ [name]: value });
   const explicit = values.lengthMode === 'Length in mm';
-  const wpsOptions = activeRows(rows, 'wps').filter(row => row.id === values.wpsId || (row.active !== false && data.project && availableWps(rows, row, data.project.id))).map(row => ({ value: row.id, label: str(row.name) }));
+  const wpsOptions = activeRows(rows, 'wps').filter(row => row.id === values.wpsId || (row.active !== false && data.project && availableWps(rows, row, data.project.id))).map(row => ({ value: row.id, label: wpsLabel(row) }));
   const selectedCharge = (side: 1 | 2) => data.certs.get(str(values[`certificate${side}Id`]));
   // Catalog records switched off on the active main project are left out, except the value the weld already stores.
   const enabled = (key: string, keep?: unknown) => enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows, keep);
   const options = (key: string, label: (row: Row) => string, filter: (row: Row) => boolean = () => true, keep?: unknown) => sortByName(enabled(key, keep).filter(filter), 'name').map(row => ({ value: row.id, label: label(row) }));
   const nameOf = (row: Row) => str(row.name);
-  const diameters = useDiameterOptions();
+  const wireOf = (row: Row) => wireLabel(row, str(data.lookups.materialTypes.get(str(row.materialTypeId))?.name));
+  const diameters = diameterTextOrder(useDiameterOptions());
   const welders = rows.welders || [];
+  const code = nonWeldCode(values.weldNo), hidden = specialWeldHidden(code, mode);
+  const shown = (name: string) => !hidden.has(name);
+  // Live rules: missing mandatory fields are marked and block saving; Dia. is compared with the chosen certificates.
+  const missing = missingMandatoryFields(data.site, values), blocked = Object.keys(missing).length > 0;
+  const diameterCheck = weldDiameterCheck({ ...values, defaultDiameter }, { certificates: data.certs, diameters: data.diameters });
+  const reasonNeeded = Boolean(weld) && ndtOrPwhtInProgress(data.requests, str(weld?.id));
+  const reasonMissing = reasonNeeded && !editReason(note);
+  const addNew = weld ? addNewEnabled(values.weldNo, weld.weldNo, data.all.map(row => row.weldNo)) : false;
+  const disabledCertificates = projectCertificates(data.site) || data.offered.some(row => !certificateSelectable(row));
 
+  function chooseWelder(name: string, value: string) {
+    if (value && WELDERS.some(other => other !== name && str(values[other]) === value)) { set({ [name]: '' }); notify(DUPLICATE_WELDER); return; }
+    set({ [name]: value });
+  }
+  function chooseWeldNo(value: string) {
+    const next = nonWeldCode(value);
+    set({ weldNo: value, ...(next ? Object.fromEntries(specialWeldCleared(next).map(name => [name, ''])) : {}) });
+  }
   function precheck() {
     const found: Record<string, string> = {};
     if (!str(values.weldNo).trim()) found.weldNo = 'Weld no. is required.';
     if (explicit && values.dialen !== '' && !(Number(values.dialen) > 0)) found.dialen = 'Length in mm must be above zero.';
     if (explicit && values.ndoReq && values.ndtpercent !== '' && !(Number(values.ndtpercent) >= 0 && Number(values.ndtpercent) <= 100)) found.ndtpercent = 'NDT percent must be between 0 and 100.';
-    Object.assign(found, missingMandatoryFields(data.site, values));
-    for (const side of [1, 2]) if (!weld || str(weld[`certificate${side}Id`]) !== str(values[`certificate${side}Id`])) Object.assign(found, certificateErrors(data.site, values, str(values[`certificate${side}Id`]) ? [side] : [], data.certificates, str(data.project?.id), { links: rows.certificate_projects || [] }));
+    Object.assign(found, duplicateWelderErrors(values), diameterErrors({ ...values, defaultDiameter }, { certificates: data.certs, diameters: data.diameters }));
+    for (const side of [1, 2]) if (!weld || str(weld[`certificate${side}Id`]) !== str(values[`certificate${side}Id`])) {
+      const sides = str(values[`certificate${side}Id`]) ? [side] : [];
+      Object.assign(found, certificateSelectionErrors(values, sides, data.certificates), certificateErrors(data.site, values, sides, data.certificates, str(data.project?.id), { links: rows.certificate_projects || [] }));
+    }
     return found;
   }
   async function submit(event: FormEvent, asNew = false) {
     event.preventDefault(); setError(''); setFields({});
+    if (blocked) { setError(WELD_MANDATORY_MESSAGE); setFields(missing); return; }
     const found = precheck(); if (Object.keys(found).length) { setError(Object.values(found).length === 1 ? Object.values(found)[0] : 'Please check the highlighted fields.'); setFields(found); return; }
     const target = asNew ? undefined : weld, editing = Boolean(target);
-    const payload: Values = { ...weldPayload(values, target), isoId: iso.id, ...(target ? { weldId: target.id, expectedVersion: target._version } : {}), ...(updatePrev && hasPrev ? { updatePrev: true } : {}), ...(updateNext && hasNext && editing ? { updateNext: true } : {}) };
-    if (target && Object.keys(payload).length <= 3 && !payload.updatePrev && !payload.updateNext) { notify('Nothing changed.'); onClose(); return; }
+    const changes = weldPayload(values, target);
+    if (target && !Object.keys(changes).length && !updatePrev && !updateNext) { notify('Nothing changed.'); onClose(); return; }
+    const payload: Values = { ...changes, isoId: iso.id, ...(target ? { weldId: target.id, expectedVersion: target._version } : {}), ...(!weld && values.tracer ? { tracer: true } : {}), ...(updatePrev && hasPrev && editing ? { updatePrev: true } : {}), ...(updateNext && hasNext && editing ? { updateNext: true } : {}), ...(editing && editReason(note) ? { note: editReason(note) } : {}), ...(diameterCheck.needsRadio && defaultDiameter ? { defaultDiameter } : {}) };
     setBusy(true);
     try { await post('/actions/save-weld', payload); await refresh(); notify(`Weld ${str(values.weldNo)} ${editing ? 'updated' : 'added'}.`); onClose(); }
     catch (failure) { setError(errorMessage(failure)); setFields((failure as ApiError).fields || {}); } finally { setBusy(false); }
   }
-  const e = fields;
-  const section = (title: string, children: ReactNode, open = false) => <details className="form-section" open={open || Object.keys(e).length > 0}><summary>{title}</summary><div className="form-grid">{children}</div></details>;
+  const e = fields, red = (name: string) => Boolean(missing[name]);
+  const diameterError = e.diameterId || (!diameterCheck.ok && diameterCheck.reason !== 'pick' && (values.diameterId || diameterCheck.reason === 'mismatch') ? diameterErrors({ ...values, defaultDiameter }, { certificates: data.certs, diameters: data.diameters }).diameterId : undefined);
   function charge(side: 1 | 2) {
-    const certificate = selectedCharge(side), other = side === 1 ? 'prev' : 'next';
-    return <>
-      <SelectField label={`Charge number ${side}`} value={chargeValue(values, side)} options={chargeOptions(data, str(values[`certificate${side}Id`]))} error={e[`chargeNo${side}`] || e[`certificate${side}Id`]} placeholder="Select a charge" hint={projectCertificates(data.site) ? 'Only certificates linked to this project are offered.' : undefined} onChange={value => set(chargeSelection(value, side, data.certificates))}/>
-      <CheckField label={other === 'prev' ? 'Upd. prev. weld' : 'Upd. next weld'} checked={side === 1 ? updatePrev : updateNext} disabled={side === 1 ? !hasPrev : !hasNext || !weld} hint={`Copies this charge to the adjoining side of the ${other === 'prev' ? 'previous' : 'next'} weld in table order.`} onChange={side === 1 ? setUpdatePrev : setUpdateNext}/>
-      <TextField label="Index number" value={certificate?.indexNo} readOnly/><TextField label="Material" value={certificate?.materialCode} readOnly/><TextField label="Description" value={certificate?.materialDescription} readOnly/><TextField label="Diameter" value={certificate?.diameter} readOnly/>
-    </>;
+    const certificate = selectedCharge(side), details = chargeDetails(certificate, data.lookups);
+    return <div className="weld-charge">
+      <SelectField label={`Charge number ${side}`} value={chargeValue(values, side)} options={chargeOptions(data, str(values[`certificate${side}Id`]), mode)} error={e[`chargeNo${side}`] && !missing[`chargeNo${side}`] ? e[`chargeNo${side}`] : e[`certificate${side}Id`]} invalid={red(`chargeNo${side}`)} placeholder="-------" hint={disabledCertificates ? `Greyed certificates cannot be selected: both Controlled and Accepted must be enabled.${projectCertificates(data.site) ? ' Only certificates linked to this project are offered.' : ''}` : undefined} onChange={value => set(chargeSelection(value, side, data.certificates))}/>
+      {weld && <CheckField label={side === 1 ? 'Upd. prev. weld' : 'Upd. next weld'} checked={side === 1 ? updatePrev : updateNext} disabled={side === 1 ? !hasPrev : !hasNext} hint={`Copies this charge to the adjoining side of the ${side === 1 ? 'previous' : 'next'} weld in table order.`} onChange={side === 1 ? setUpdatePrev : setUpdateNext}/>}
+      {details.length > 0 && <table className="weld-charge-details" aria-label={`Material of charge number ${side}`}><tbody>{details.map(([label, value]) => <tr key={label}><th scope="row">{label}</th><td>{value || '—'}</td></tr>)}</tbody></table>}
+      {side === 1 && diameterCheck.needsRadio && <fieldset className="weld-default-diameter"><legend>Default diameter:</legend>{diameterCheck.choices.map(size => <label key={size}><input type="radio" name="defaultDiameter" value={size} checked={defaultDiameter === size} onChange={() => setDefaultDiameter(size)}/>{sizeText(size)}</label>)}{(e.defaultDiameter || !diameterCheck.ok && diameterCheck.reason === 'pick') && <small className="field-error">{e.defaultDiameter || DIAMETER_MESSAGES.pick}</small>}</fieldset>}
+    </div>;
   }
+  const welderField = (name: string, label: string) => shown(name) && <SelectField key={name} label={label} value={values[name]} error={e[name] && !missing[name] ? e[name] : undefined} placeholder="-----------------" options={welderOptions(welders, [values[name]])} onChange={value => chooseWelder(name, value)}/>;
+  const columns: Record<string, ReactNode> = {
+    weldNo: <TextField label="Weld no." required value={values.weldNo} error={e.weldNo} onChange={chooseWeldNo}/>,
+    typeId: <SelectField label="Weld type" value={values.typeId} error={e.typeId && !missing.typeId ? e.typeId : undefined} invalid={red('typeId')} placeholder="----------" options={enabled('weld_types', weld?.typeId).map(row => ({ value: row.id, label: str(row.name) }))} onChange={set1('typeId')}/>,
+    welder1Id: welderField('welder1Id', 'Welder'), welder2Id: welderField('welder2Id', 'Welder 2'), welder3Id: welderField('welder3Id', 'Welder 3'), welder4Id: welderField('welder4Id', 'Welder 4'),
+    coating1Id: <SelectField label="Coating 1" value={values.coating1Id} error={e.coating1Id} placeholder="------" options={options('coatings', nameOf, undefined, weld?.coating1Id)} onChange={set1('coating1Id')}/>,
+    coatingWeldId: <SelectField label="Coating weld" value={values.coatingWeldId} error={e.coatingWeldId} placeholder="------" options={options('coatings', nameOf, undefined, weld?.coatingWeldId)} onChange={set1('coatingWeldId')}/>,
+    coating2Id: <SelectField label="Coating 2" value={values.coating2Id} error={e.coating2Id} placeholder="------" options={options('coatings', nameOf, undefined, weld?.coating2Id)} onChange={set1('coating2Id')}/>,
+    kr: <TextField label="KR" value={values.kr} error={e.kr} onChange={set1('kr')}/>, fp: <TextField label="FP" value={values.fp} error={e.fp} onChange={set1('fp')}/>,
+    sleeve: <TextField label="Sleeve" value={values.sleeve} error={e.sleeve} onChange={set1('sleeve')}/>,
+    insLength: <TextField label="Ins. length 1" value={values.insLength} error={e.insLength} onChange={set1('insLength')}/>, insLength2: <TextField label="Ins. length 2" value={values.insLength2} error={e.insLength2} onChange={set1('insLength2')}/>,
+    wire1Id: <SelectField label="Welding wire 1" value={values.wire1Id} error={e.wire1Id} placeholder="------" options={options('welding_wires', wireOf)} onChange={set1('wire1Id')}/>,
+    wire2Id: <SelectField label="Welding wire 2" value={values.wire2Id} error={e.wire2Id} placeholder="------" options={options('welding_wires', wireOf)} onChange={set1('wire2Id')}/>,
+    pos1: <TextField label="Pos 1" value={values.pos1} error={e.pos1} onChange={set1('pos1')}/>, pos2: <TextField label="Pos 2" value={values.pos2} error={e.pos2} onChange={set1('pos2')}/>,
+    chargeNo1: charge(1), chargeNo2: charge(2),
+    wpsId: <SelectField label="WPS number" value={values.wpsId} error={e.wpsId && !missing.wpsId ? e.wpsId : undefined} invalid={red('wpsId')} placeholder="----------" options={wpsOptions} hint="Only procedures available to this project." onChange={set1('wpsId')}/>,
+    datefit: <TextField label={mode === 'add' ? 'Fitup date' : 'Fitup Date'} type="date" value={values.datefit} error={e.datefit} onChange={set1('datefit')}/>,
+    date: <TextField label="Weld Date" type="date" value={values.date} error={e.date && !missing.date ? e.date : undefined} invalid={red('date')} onChange={set1('date')}/>,
+    diameterId: <SelectField label="Dia." value={explicit ? '__length' : diameterOptionValue(diameters, values.diameterId)} error={diameterError} invalid={red('diameterId')} placeholder="----------" options={[{ value: '__length', label: '-- Length in mm --' }, ...diameters]} onChange={value => set(value === '__length' ? { lengthMode: 'Length in mm', diameterId: '' } : { lengthMode: 'Diameter', diameterId: value, dialen: '', ndtpercent: '' })}/>,
+    dialen: explicit && <TextField label="Length in mm" type="number" min={0} value={values.dialen} error={e.dialen && !missing.dialen ? e.dialen : undefined} invalid={red('dialen')} onChange={value => set({ dialen: value === '' ? '' : Number(value) })}/>,
+    spoolId: <SelectField label="Spool" value={values.spoolId} error={e.spoolId} placeholder="----------" options={options('spools', nameOf, row => row.isoId === iso.id)} onChange={set1('spoolId')}/>,
+    ndtpercent: explicit && Boolean(values.ndoReq) && <TextField label="NDT percent" type="number" min={0} max={100} value={values.ndtpercent} error={e.ndtpercent} hint="0 to 100." onChange={value => set({ ndtpercent: value === '' ? '' : Number(value) })}/>,
+    ...Object.fromEntries(FLAGS.map(name => [name, <CheckField key={name} label={FLAG_LABELS[name]} checked={Boolean(values[name])} onChange={set1(name)}/>])),
+    tracer: weld ? <CheckField label="Tracer" checked={Boolean(weld.tracer)} disabled hint={EDIT_TRACER_HINT}/> : <CheckField label="Tracer" checked={Boolean(values.tracer)} error={e.tracer} onChange={set1('tracer')}/>,
+  };
+  const layout = weldFormLayout(mode).map(column => column.filter(item => !['updatePrev', 'updateNext'].includes(item.name) && shown(item.name)));
   if (range) return <RangeDialog iso={iso} data={data} onClose={onClose} onBack={() => setRange(false)}/>;
+  const saveBlocked = busy || blocked || reasonMissing;
   return <Modal title={weld ? 'Edit weld' : 'Add weld'} subtitle={`${str(iso.isoNo)}${weld ? ` · ${str(weld.weldNo)}` : ''}`} wide onClose={onClose}>
     <form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)} noValidate>
       <div className="modal-body weld-form">
         {lockedReason && <div className="alert iso-lock-banner" role="status"><Lock size={16} aria-hidden="true"/><span><strong>{lockedReason}</strong> Weld {str(weld?.weldNo)} is read-only.</span></div>}
+        {weld && <PreviousEdits weldId={weld.id}/>}
+        {reasonNeeded && !lockedReason && <div className="weld-reason">
+          <div className="alert weld-warning" role="note"><AlertCircle size={18}/><span><strong>Warning</strong><br/>{EDIT_REASON_WARNING}</span></div>
+          <div className="field"><label htmlFor="weld-edit-reason">{EDIT_REASON_LABEL}</label><textarea id="weld-edit-reason" required maxLength={EDIT_REASON_MAX} rows={3} value={note} placeholder={EDIT_REASON_LABEL} aria-invalid={Boolean(e.note)} aria-describedby={e.note ? 'weld-edit-reason-error' : undefined} onChange={event => setNote(event.target.value)}/>{e.note && <small id="weld-edit-reason-error" className="field-error">{e.note}</small>}</div>
+        </div>}
         <Failure message={error}/>
         <fieldset className="weld-form-fields" disabled={Boolean(lockedReason)}>
         {!weld && <p className="weld-range-link muted">Need several welds at once? <button type="button" className="text-link" onClick={() => setRange(true)}><ListPlus size={14}/>Add welds (range)</button></p>}
-        {section('Weld', <>
-          <TextField label="Weld no." required value={values.weldNo} error={e.weldNo} onChange={set1('weldNo')}/>
-          <SelectField label="Weld type" value={values.typeId} error={e.typeId} options={sortByName(enabled('weld_types', weld?.typeId), 'sort').map(row => ({ value: row.id, label: str(row.name) }))} onChange={set1('typeId')}/>
-          <SelectField label="WPS number" value={values.wpsId} error={e.wpsId} options={wpsOptions} hint="Only procedures available to this project." onChange={set1('wpsId')}/>
-          <TextField label="Fitup Date" type="date" value={values.datefit} error={e.datefit} onChange={set1('datefit')}/>
-          <TextField label="Weld Date" type="date" value={values.date} error={e.date} onChange={set1('date')}/>
-        </>, true)}
-        {section('Welders', <>
-          <SelectField label="Welder" value={values.welder1Id} error={e.welder1Id} options={welderOptions(welders, [values.welder1Id])} onChange={set1('welder1Id')}/>
-          <CheckField label="Multiple welders?" checked={multiple} onChange={checked => { setMultiple(checked); if (!checked) set({ welder2Id: '', welder3Id: '', welder4Id: '' }); }}/>
-          {multiple && [2, 3, 4].map(index => <SelectField key={index} label={`Welder ${index}`} value={values[`welder${index}Id`]} error={e[`welder${index}Id`]} options={welderOptions(welders, [values[`welder${index}Id`]])} onChange={set1(`welder${index}Id`)}/>)}
-        </>, true)}
-        {section('Diameter and length', <>
-          <SelectField label="Dia." value={explicit ? '__length' : diameterOptionValue(diameters, values.diameterId)} error={e.diameterId} placeholder="Select diameter" options={[{ value: '__length', label: '-- Length in mm --' }, ...diameters]} onChange={value => set(value === '__length' ? { lengthMode: 'Length in mm', diameterId: '' } : { lengthMode: 'Diameter', diameterId: value, dialen: '', ndtpercent: '' })}/>
-          {explicit && <TextField label="Length in mm" type="number" min={0} value={values.dialen} error={e.dialen} onChange={value => set({ dialen: value === '' ? '' : Number(value) })}/>}
-          {explicit && Boolean(values.ndoReq) && <TextField label="NDT percent" type="number" min={0} max={100} value={values.ndtpercent} error={e.ndtpercent} hint="0 to 100. Only for an explicit length with NDT required." onChange={value => set({ ndtpercent: value === '' ? '' : Number(value) })}/>}
-        </>)}
-        {section('Coating, sleeve and spool', <>
-          <SelectField label="Coating 1" value={values.coating1Id} error={e.coating1Id} options={options('coatings', nameOf, undefined, weld?.coating1Id)} onChange={set1('coating1Id')}/>
-          <SelectField label="Coating weld" value={values.coatingWeldId} error={e.coatingWeldId} options={options('coatings', nameOf, undefined, weld?.coatingWeldId)} onChange={set1('coatingWeldId')}/>
-          <SelectField label="Coating 2" value={values.coating2Id} error={e.coating2Id} options={options('coatings', nameOf, undefined, weld?.coating2Id)} onChange={set1('coating2Id')}/>
-          <TextField label="Sleeve" value={values.sleeve} error={e.sleeve} onChange={set1('sleeve')}/>
-          <SelectField label="Spool" value={values.spoolId} error={e.spoolId} options={options('spools', nameOf, row => row.isoId === iso.id)} onChange={set1('spoolId')}/>
-        </>)}
-        {section('Details', <>
-          <TextField label="KR" value={values.kr} error={e.kr} onChange={set1('kr')}/><TextField label="FP" value={values.fp} error={e.fp} onChange={set1('fp')}/>
-          <TextField label="Ins. length 1" value={values.insLength} error={e.insLength} onChange={set1('insLength')}/><TextField label="Ins. length 2" value={values.insLength2} error={e.insLength2} onChange={set1('insLength2')}/>
-          <SelectField label="Weld process" value={values.processId} error={e.processId} options={options('weld_processes', nameOf, undefined, weld?.processId)} onChange={set1('processId')}/>
-        </>)}
-        {section('Welding wire', <>
-          <SelectField label="Welding wire 1" value={values.wire1Id} error={e.wire1Id} options={options('welding_wires', nameOf)} onChange={set1('wire1Id')}/><TextField label="Pos 1" value={values.pos1} error={e.pos1} onChange={set1('pos1')}/>
-          <SelectField label="Welding wire 2" value={values.wire2Id} error={e.wire2Id} options={options('welding_wires', nameOf)} onChange={set1('wire2Id')}/><TextField label="Pos 2" value={values.pos2} error={e.pos2} onChange={set1('pos2')}/>
-        </>)}
-        {section('Material side 1 · Charge number 1', charge(1))}
-        {section('Material side 2 · Charge number 2', charge(2))}
-        {section('Inspection requirements', <>
-          {FLAGS.map(name => <CheckField key={name} label={FLAG_LABELS[name]} checked={Boolean(values[name])} onChange={set1(name)}/>)}
-          <CheckField label="Tracer" checked={Boolean(weld?.tracer)} disabled hint="Set by the tracer workflow."/>
-        </>)}
+        <div className="weld-form-columns">{layout.map((column, index) => <div key={index} className={`weld-form-column weld-form-column-${index + 1}`}>{column.map(item => <Fragment key={item.name}>{columns[item.name]}</Fragment>)}</div>)}</div>
         </fieldset>
+        {blocked && <p className="weld-blocked muted" role="status">{WELD_MANDATORY_MESSAGE}</p>}
       </div>
       <div className="modal-footer">
         <button type="button" className="btn" disabled={busy} onClick={onClose}>{lockedReason ? 'Close' : 'Cancel'}</button>
-        {weld && !lockedReason && <button type="button" className="btn" disabled={busy} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
-        {!lockedReason && <button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add weld'}</button>}
+        {weld && !lockedReason && <button type="button" className="btn" disabled={saveBlocked || !addNew} title={addNew ? undefined : 'Change Weld no. to a number this isometric does not have yet.'} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
+        {!lockedReason && <button className="btn primary" disabled={saveBlocked}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add'}</button>}
       </div>
     </form>
   </Modal>;
