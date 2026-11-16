@@ -16,7 +16,7 @@ import { ACTIONS } from '../shared/actions.ts';
 import { refusalBody } from '../shared/refusal.ts';
 import { RELATIONS,relationFields } from '../shared/welding.ts';
 import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/reports.ts';
-import { canResource,canReport,REPORT_RESOURCES } from '../shared/permissions.ts';
+import { canResource,canReport,canScope,REPORT_RESOURCES } from '../shared/permissions.ts';
 import type { Row, Module } from '../shared/types.ts';
 import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, sessionCookie, type AuthRequest } from './auth.ts';
 
@@ -46,7 +46,7 @@ import { registerCertificationRoutes, requireOwnerSite } from './certifications.
 import { registerWpsRoutes } from './wps.ts';
 import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
-import { assertAccountReach, assertCopyInScope, assertSiteAccessEdit, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteScopeFor, type SiteScope } from './site-scope.ts';
+import { activeSite, assertAccountReach, assertCopyInScope, assertSiteAccessEdit, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -112,6 +112,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.use('/api', authMiddleware(store, cookieName));
   /** Requests that never need a pilot: sign-out and password change work from the selector and from any pilot. */
   const ACCOUNT_ROUTES = new Set(['POST /auth/logout', 'POST /auth/password']);
+  /** Requests a limited account may make in a pilot before it chose one of its main projects. */
+  const CHOICE_ROUTES = new Set(['GET /bootstrap', 'GET /notifications', 'GET /company-logo']);
   app.use('/api', (req, _res, next) => {
     let scope: SiteScope | undefined;
     if (pilots) {
@@ -126,7 +128,18 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
           // Selector requests see identity, the pilots and the main projects (bootstrap only); everything else needs a pilot.
           if (route !== 'GET /bootstrap' && route !== 'GET /company-logo') throw pilotRefused('Open Weld Pilot or MTO Pilot to continue.');
           (req as AuthRequest).user = access.present(id);
-        } else { (req as AuthRequest).user = access.pilotAccount(id, header ?? query); scope = siteScopeFor(store, store.get('users', id), (req as AuthRequest).user.pilot!); }
+        } else {
+          // The main project the request works in (server/site-scope.ts `activeSite`): a limited account works with that
+          // main project's profile and reaches that main project only.
+          const pilot = access.pilotOf(id, header ?? query);
+          const active = activeSite(store, req, store.get('users', id), pilot);
+          if (active.choose) {
+            // Several main projects and none chosen: only the choice (and the bell) may be loaded.
+            if (!CHOICE_ROUTES.has(route)) throw siteRefused('Choose a main project to continue.');
+            (req as AuthRequest).user = access.chooser(id, pilot);
+          } else (req as AuthRequest).user = access.pilotAccount(id, pilot, active.siteId);
+          scope = active.scope;
+        }
       } catch (error) { return next(error); }
     } else (req as AuthRequest).user = access.user((req as AuthRequest).user);
     const projectBulk = availability?.features.includes('project-bulk-edit') && /^\/bulk\/(?:projects|isometrics)$/.test(req.path);
@@ -153,11 +166,15 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.get('/api/bootstrap', (req, res) => {
     const user = (req as AuthRequest).user;
     if (pilots && !user.pilot) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: {}, activity: [], mainProjects: access.mainProjects(user.id) }); return; }
+    // A limited account with several main projects: the choice of its main projects (each read with its own profile).
+    const choice = pilots && user.pilot && user.siteLimited && (user.siteRequired || user.siteId) ? access.choiceRows(user.id, user.pilot) : undefined;
+    const siteRows = choice && (choice.sites || []).length > 1 ? { siteRows: choice } : {};
+    if (user.siteRequired) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: choice || {}, activity: [], ...siteRows }); return; }
     const rows = Object.fromEntries(RESOURCES.filter(r =>r.key==='attachments'||canResource(user,r.key)).map(r => [r.key, readableRows(req, r.key, true)]));
     const activity = visibleAudit(req, store.activity(100));
     // Pilots: one summary per visible isometric (the same numbers in both pilots) and what Copy isometrics may carry.
-    const extra = pilots && user.pilot ? { isoSummaries: rows.isometrics ? isoSummariesFor(store, availability, pilotIsometrics(rows.isometrics, user.pilot)) : {}, copyParts: access.copyParts(user.id) } : {};
-    res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra });
+    const extra = pilots && user.pilot ? { isoSummaries: rows.isometrics ? isoSummariesFor(store, availability, pilotIsometrics(rows.isometrics, user.pilot)) : {}, copyParts: access.copyParts(user.id, user.siteId) } : {};
+    res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra, ...siteRows });
   });
   // The company logo of Company data, for the application selector (any signed-in account: it is the workspace's own branding).
   app.get('/api/company-logo', (_req, res) => {
@@ -201,9 +218,13 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const before=req.query.before===undefined?Number.MAX_SAFE_INTEGER:Number(req.query.before);
     const history=store.history(resource.key,record.id,before);res.setHeader('Cache-Control','no-store');res.json({...history,events:visibleAudit(req,history.events)});
   });
+  /** Reports only the Export weld data page downloads (shared/pilots.ts); LISL is left out, Data LISL exports it too. */
+  const EXPORT_WELD_DATA_REPORTS = ['wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'];
   app.get('/api/reports/:key', async (req,res)=>{
     const definition=REPORTS.find(r=>r.key===req.params.key);if(!definition||(availability&&!Object.hasOwn(availability.reports,definition.key)))throw new AppError(404,'This report does not exist.');
     const user=(req as unknown as AuthRequest).user;if(!canReport(user,definition.key,'export'))throw new AppError(403,'Your permission profile does not allow this report export.');
+    // Weld Pilot → Export weld data: its downloads need Export on Export welds (81); LISL is also the Data LISL page's export.
+    if(pilots&&user.pilot==='weld'&&EXPORT_WELD_DATA_REPORTS.includes(definition.key)&&!canScope(user,'81','export'))throw new AppError(403,'Your permission profile does not allow this report export.');
     const primary=REPORT_RESOURCES[definition.key]||[];const rows=Object.fromEntries(RESOURCES.filter(r=>canResource(user,r.key)).map(r=>[r.key,readableRows(req,r.key,true).filter(row=>!primary.includes(r.key)||canResource(user,r.key,'export',row))]));
     const filters=Object.fromEntries(['siteId','ndtRequired','projectId','isoId','welderId','clientId','warehouseId','type','from','to'].map(k=>[k,typeof req.query[k]==='string'?String(req.query[k]).slice(0,150):''])) as ReportFilters;
     if(availability&&filters.type&&!availability.inspectionTypes.includes(filters.type))throw new AppError(404,'This resource could not be found.');
@@ -221,7 +242,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'punchlists') assertPunchAddAllowed(store, req.body, (req as unknown as AuthRequest).user);
-    if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
+    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body); assertSiteProfiles(store, req.body); }
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (pilots) checkIsoWrite(store, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
@@ -235,7 +256,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
-    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); }
+    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); }
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
       if (pilots && resource.key === 'itps') syncItpXRay(store, row, actorOf(req));

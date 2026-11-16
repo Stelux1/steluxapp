@@ -5,7 +5,7 @@ import { AppError } from '../store.ts';
 import type { documentStorage } from '../documents.ts';
 import type { AuthRequest } from '../auth.ts';
 import { checkResourcePermission } from '../auth.ts';
-import { scopeRows } from '../site-scope.ts';
+import { isSiteRefusal, scopeRows } from '../site-scope.ts';
 import type { releaseAccess } from '../release-access.ts';
 import { canDocument, PDF_DOCUMENTS } from './documents.ts';
 import { bookPlans, partState, type Rows } from './iso-book-parts.ts';
@@ -44,7 +44,8 @@ export function registerIsoBookRoutes({ app, store, documents, availability, acc
   function isometricsOf(req: Request, ids: string[]): Row[] {
     const user = (req as unknown as AuthRequest).user;
     const readable = user.pilot ? pilotIsometrics(readableRows(req, 'isometrics', false), user.pilot) : [];
-    return [...new Set(ids)].map(id => { const iso = readable.find(row => row.id === id && !row._archived); if (!iso) throw new AppError(404, 'This isometric could not be found.'); return iso; });
+    // An isometric of a main project out of reach is refused like on the record routes (403 `site`), not reported missing.
+    return [...new Set(ids)].map(id => { const iso = readable.find(row => row.id === id && !row._archived); if (!iso && typeof id === 'string' && id) { try { store.get('isometrics', id, true); } catch (error) { if (isSiteRefusal(error)) throw error; } } if (!iso) throw new AppError(404, 'This isometric could not be found.'); return iso; });
   }
 
   function environmentFor(req: Request, now: Date): BookEnvironment {

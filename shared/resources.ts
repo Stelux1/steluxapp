@@ -1,6 +1,6 @@
 import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
 import { WPS_EXTRA_FIELDS } from './wps.ts';
-import { SITE_SCOPE_ALL, SITE_SCOPE_OPTIONS, USER_SITES, siteScopeField, siteScopeLabel } from './site-scope.ts';
+import { SITE_SCOPE_ALL, SITE_SCOPE_OPTIONS, USER_SITES, siteProfilesField, siteScopeField, siteScopeLabel } from './site-scope.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
@@ -223,6 +223,8 @@ const pilotAccess = (key: 'weld' | 'mto', title: string): Field[] => [
   r(`${key}ProfileId`, `${title} profile`, 'profiles', { section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Leave empty to use the permission profile above.' }),
   // Access per project site (shared/site-scope.ts); the chosen sites are the user_sites links of this pilot.
   s(siteScopeField(key), siteScopeLabel(key), SITE_SCOPE_OPTIONS, { default: SITE_SCOPE_ALL, section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Specific project site(s): the account sees and changes only the main projects ticked below.' }),
+  // The profile per ticked project site, {siteId: profileId} as JSON text; edited in the per-site table of the user form (client/user-site-profiles.tsx).
+  t(siteProfilesField(key), `${title} profiles per project site`, { type: 'textarea', hidden: true }),
 ];
 extend('users', [t('title', 'Title', { hidden: true }), t('address', 'Address', { hidden: true }), t('phone', 'Phone', { hidden: true }), r('companyId', 'Company', 'companies', { hidden: true }), ...pilotAccess('weld', 'Weld Pilot'), ...pilotAccess('mto', 'MTO Pilot')]);
 // Project sites per pilot of an account limited to specific project sites (written through the user form, see RELATIONS.users).

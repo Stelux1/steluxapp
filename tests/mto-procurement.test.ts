@@ -177,6 +177,8 @@ const BASE_RULES = { '4': ['show'], '5': ['show'], '6': ['show'], '12': ['show']
 
 test('through the hosted API: order, take in, over-receipt, correction and the audit trail work in MTO Pilot only', async t => {
   const f = await hostedFixture(t); await f.setup();
+  // The sample STX-2403 (iso-7 … iso-10) is switched off for MTO Pilot, which then delivers and changes nothing of it (scn-SC-N9); this flow works on it, so switch it on.
+  const skid = f.store.get('projects', 'project-skid'); f.store.update('projects', skid.id, { mtoPilot: true }, skid._version);
   // Order checked materials -> one order with a running number.
   const ordered = await f.request('/api/actions/order-requirements', 'POST', { requirementIds: ['requirement-2', 'requirement-8'], date: '2026-10-29', note: 'Hosted order' });
   assert.equal(ordered.status, 201); const order = (await ordered.json()).record as Row; assert.match(String(order.number), /^PO-/);

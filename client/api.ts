@@ -10,11 +10,19 @@ let pilotRequests = false;
 export function configurePilotRequests(enabled: boolean) { pilotRequests = enabled; }
 /** The pilot of the current URL, if requests carry one. */
 export const currentPilot = () => pilotRequests ? splitPilotPath(window.location.pathname).pilot : undefined;
-/** An API URL for a plain link or image (downloads cannot send headers): carries the current pilot as `?pilot=`. */
-export function apiUrl(path: string) { const pilot = currentPilot(); return `/api${path}${pilot ? `${path.includes('?') ? '&' : '?'}pilot=${pilot}` : ''}`; }
+let activeSite = '';
+/**
+ * THE active main project of this tab, sent with every pilot request (`X-Stelux-Site`, `?site=` on plain links): an
+ * account limited to specific project sites works with that main project's profile (server/site-scope.ts `activeSite`).
+ * Set by the workspace (client/context.tsx) whenever the main project changes; '' while none is chosen.
+ */
+export function configureActiveSite(siteId: string) { activeSite = siteId; }
+export const currentSite = () => pilotRequests ? activeSite : '';
+/** An API URL for a plain link or image (downloads cannot send headers): carries the current pilot as `?pilot=` and the main project as `?site=`. */
+export function apiUrl(path: string) { const pilot = currentPilot(), site = pilot ? currentSite() : ''; const query = [pilot ? `pilot=${pilot}` : '', site ? `site=${encodeURIComponent(site)}` : ''].filter(Boolean).join('&'); return `/api${path}${query ? `${path.includes('?') ? '&' : '?'}${query}` : ''}`; }
 async function request(url: string, options: RequestInit = {}) {
-  const pilot = currentPilot();
-  try { return await fetch('/api' + url, { credentials: 'same-origin', ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), 'X-Stelux-Request': '1', ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...options.headers } }); }
+  const pilot = currentPilot(), site = pilot ? currentSite() : '';
+  try { return await fetch('/api' + url, { credentials: 'same-origin', ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), 'X-Stelux-Request': '1', ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...(site ? { 'X-Stelux-Site': site } : {}), ...options.headers } }); }
   catch { throw new ApiError(REFUSAL_TEXTS.unreachable, 0); }
 }
 /** The page listens for this to return to the sign-in form with one sentence. */

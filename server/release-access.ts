@@ -1,5 +1,5 @@
 import { RESOURCES } from '../shared/resources.ts';
-import { actionScope, areaPilots, canResource, canScope, COPY_SCOPES, pilotBoundary, RESOURCE_SCOPES, type CopyPart, type CopyParts } from '../shared/permissions.ts';
+import { actionScope, areaPilots, canResource, canScope, COPY_SCOPES, PAGE_SCOPES, pilotBoundary, RESOURCE_SCOPES, type CopyPart, type CopyParts } from '../shared/permissions.ts';
 import { actionAvailable, fieldAvailable, PILOT_KEYS, projectRow, resourceAvailable, rowAvailable, type PilotKey } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
@@ -12,7 +12,7 @@ import { WPS_COPY_FIELDS } from '../shared/wps.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
 import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 import { deleteRefusal, guardIrn, guardSiteIrn } from './iso-pages.ts';
-import { allowedSites, inSiteScope, isSiteRefusal, siteScopeFor } from './site-scope.ts';
+import { allowedSites, inSiteScope, isSiteRefusal, singleSiteScope, siteScopeFor, withSiteScope } from './site-scope.ts';
 import { STANDARD_DOCUMENT_MESSAGE, isStandardAttachmentName } from '../shared/weld-catalogs.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
@@ -25,8 +25,9 @@ export function releaseAccess(store: Store, availability?: Availability) {
   function user(original: User): User {
     if (!availability) return original;
     const modules = new Set(RESOURCES.filter(r => resourceAvailable(availability, r.key)).map(r => r.module));
-    // Areas of delivered actions count too: "Assign ISO to FWP" (91) is an action of its own, without a resource.
-    const scopes = new Set([...Object.entries(RESOURCE_SCOPES).filter(([key]) => resourceAvailable(availability, key)).flatMap(([, keys]) => keys), ...Object.keys(availability.actions).map(key => actionScope(key)[0]).filter(Boolean)]);
+    // Areas of delivered actions count too: "Assign ISO to FWP" (91) is an action of its own, without a resource; so do
+    // the page areas (Weld dashboard 35, Material list 78, …), which gate a page rather than a record type.
+    const scopes = new Set([...Object.entries(RESOURCE_SCOPES).filter(([key]) => resourceAvailable(availability, key)).flatMap(([, keys]) => keys), ...Object.keys(availability.actions).map(key => actionScope(key)[0]).filter(Boolean), ...(availability.features.includes('pilots') ? PAGE_SCOPES : [])]);
     return { ...original, availability,
       permissions: Object.fromEntries(Object.entries(original.permissions).map(([module, level]) => [module, modules.has(module as Module) ? level : 0])) as User['permissions'],
       ...(original.capabilities ? { capabilities: Object.fromEntries(Object.entries(original.capabilities).filter(([key]) => scopes.has(key))) } : {}),
@@ -137,28 +138,67 @@ export function releaseAccess(store: Store, availability?: Availability) {
   const project = (key: string, row: Row) => projectRow(availability, key, row);
   const pilots = Boolean(availability?.features.includes('pilots'));
   /**
-   * The account inside a pilot: that pilot's profile, projected to the delivered scope and bounded to the pilot.
-   * Null when the account is not enabled there, its profile is unavailable, or the profile does not open the
-   * pilot's module. An inactive account still fails with 401.
+   * The account inside a pilot: that pilot's profile (the profile of main project `siteId` for an account limited to
+   * specific project sites), projected to the delivered scope and bounded to the pilot. Null when the account is not
+   * enabled there or the profile is unavailable. Entering a pilot depends on the application being enabled only
+   * (reference: 'No permission' = the application right); what the account then sees and does is decided per area by
+   * every route, so a profile without rights in the pilot sees no-rights pages. An inactive account still fails with 401.
    */
-  function inPilot(id: string, pilot: PilotKey): User | null {
+  function inPilot(id: string, pilot: PilotKey, siteId?: string): User | null {
     const row = store.get('users', id);
     if (!row.active) throw new AppError(401, 'This account is inactive.');
-    const profileId = effectiveProfileId(row, pilot);
+    const profileId = effectiveProfileId(row, pilot, siteId);
     if (!profileId) return null;
     let base: User;
     try { base = publicUser(store, id, profileId); } catch { return null; }
-    const account = pilotBoundary(user(base), pilot);
-    return account.permissions[PILOT_MAP[pilot].module] > 0 ? account : null;
+    return pilotBoundary(user(base), pilot);
   }
-  const enterable = (id: string) => PILOT_KEYS.filter(pilot => inPilot(id, pilot));
-  /** The account for a request naming `value` as its pilot; refused unless the account may enter it. */
-  function pilotAccount(id: string, value: unknown): User {
-    if (typeof value !== 'string' || !(PILOT_KEYS as readonly string[]).includes(value)) throw pilotRefused();
-    const account = inPilot(id, value as PilotKey);
+  /** The accounts of a limited account in a pilot, one per main project (its pilot profile alone when it reaches every one). */
+  function siteAccounts(id: string, pilot: PilotKey): { siteId?: string; account: User }[] {
+    const allowed = allowedSites(store, store.get('users', id), pilot);
+    const sites = allowed === 'all' || !allowed.size ? [undefined] : [...allowed];
+    return sites.map(siteId => ({ siteId, account: inPilot(id, pilot, siteId) })).filter((entry): entry is { siteId: string | undefined; account: User } => Boolean(entry.account));
+  }
+  const enterable = (id: string) => PILOT_KEYS.filter(pilot => inPilot(id, pilot) || siteAccounts(id, pilot).length);
+  /** The pilot a request names, when the account may enter it; refused otherwise. */
+  function pilotOf(id: string, value: unknown): PilotKey {
+    if (typeof value !== 'string' || !(PILOT_KEYS as readonly string[]).includes(value) || !enterable(id).includes(value as PilotKey)) throw pilotRefused();
+    return value as PilotKey;
+  }
+  /**
+   * The account for a request in pilot `value` working in main project `siteId` (server/site-scope.ts `activeSite`
+   * resolves and checks it); refused unless the account may enter the pilot.
+   */
+  function pilotAccount(id: string, value: unknown, siteId?: string): User {
+    const pilot = pilotOf(id, value);
+    const account = inPilot(id, pilot, siteId);
     if (!account) throw pilotRefused();
-    const limited = allowedSites(store, store.get('users', id), value as PilotKey) !== 'all';
-    return { ...account, pilots: enterable(id), ...(limited ? { siteLimited: true } : {}) };
+    const limited = allowedSites(store, store.get('users', id), pilot) !== 'all';
+    return { ...account, pilots: enterable(id), ...(limited ? { siteLimited: true } : {}), ...(limited && siteId ? { siteId } : {}) };
+  }
+  /**
+   * A limited account with several main projects before it chose one: no rights at all (every route refuses it), only
+   * the main-project choice (`choiceRows`).
+   */
+  function chooser(id: string, value: unknown): User {
+    const pilot = pilotOf(id, value), base = publicUser(store, id);
+    return { id: base.id, name: base.name, email: base.email, profileId: base.profileId, availability, permissions: { ...NO_PERMISSIONS }, capabilities: {}, pilot, pilots: enterable(id), siteLimited: true, siteRequired: true };
+  }
+  /** What the main-project choice of a limited account shows: per main project, the records its own profile reads there. */
+  const CHOICE_RESOURCES = ['sites', 'projects', 'isometrics', 'welds', 'diameters'];
+  function choiceRows(id: string, pilot: PilotKey): Record<string, Row[]> {
+    const output: Record<string, Map<string, Row>> = {};
+    for (const { siteId, account } of siteAccounts(id, pilot)) {
+      if (!siteId) continue;
+      withSiteScope(singleSiteScope(store, pilot, siteId), () => {
+        for (const key of CHOICE_RESOURCES) {
+          if (!resourceAvailable(availability, key) || !canResource(account, key)) continue;
+          const map = output[key] ??= new Map();
+          for (const row of store.list(key, true)) if (!map.has(row.id) && visible(account, key, row)) map.set(row.id, project(key, row));
+        }
+      });
+    }
+    return Object.fromEntries(Object.entries(output).map(([key, map]) => [key, [...map.values()]]));
   }
   /** The account as sign-in, status, the selector, password and sign-out see it. With pilots: identity and the pilots it may enter, no permissions. */
   function present(id: string): User {
@@ -170,10 +210,13 @@ export function releaseAccess(store: Store, availability?: Availability) {
   function mainProjects(id: string) {
     const output = new Map<string, { id: string; name: string; pilots: PilotKey[] }>();
     for (const pilot of PILOT_KEYS) {
-      const account = inPilot(id, pilot);
-      if (!account || !canResource(account, 'sites')) continue;
+      if (!enterable(id).includes(pilot)) continue;
       const allowed = allowedSites(store, store.get('users', id), pilot);
-      for (const site of store.list('sites')) if (canResource(account, 'sites', 'show', site) && (allowed === 'all' || allowed.has(site.id))) {
+      for (const site of store.list('sites')) {
+        if (allowed !== 'all' && !allowed.has(site.id)) continue;
+        // A limited account reads each of its main projects with that main project's own profile.
+        const account = inPilot(id, pilot, allowed === 'all' ? undefined : site.id);
+        if (!account || !canResource(account, 'sites', 'show', site)) continue;
         const entry = output.get(site.id) || { id: site.id, name: String(site.name), pilots: [] };
         entry.pilots.push(pilot); output.set(site.id, entry);
       }
@@ -188,14 +231,17 @@ export function releaseAccess(store: Store, availability?: Availability) {
   function recipients(key: string, row: Row, pilot: PilotKey, except?: string): string[] {
     return store.list('users').filter(account => account.id !== except && account.active !== false).filter(account => {
       try {
-        const member = inPilot(account.id, pilot);
-        if (!member || !canResource(member, key, 'show', row)) return false;
-        return siteScopeFor(store, account, pilot)?.allows(key, row) ?? true;
+        const scope = siteScopeFor(store, account, pilot);
+        if (scope && !scope.allows(key, row)) return false;
+        // A limited account reads the record with the profile of the record's main project.
+        const site = scope?.siteOf(key, row);
+        const member = inPilot(account.id, pilot, site && scope!.allowsSite(site) ? site : undefined);
+        return Boolean(member && canResource(member, key, 'show', row));
       } catch { return false; }
     }).map(account => account.id);
   }
-  /** Accounts the last-administrator check evaluates: with pilots, the account in every pilot it may enter; otherwise its profile as before. */
-  const administrators = (id: string): User[] => pilots ? PILOT_KEYS.map(pilot => inPilot(id, pilot)).filter((account): account is User => Boolean(account)) : [publicUser(store, id)];
+  /** Accounts the last-administrator check evaluates: with pilots, the account in every pilot it may enter (per main project where limited); otherwise its profile as before. */
+  const administrators = (id: string): User[] => pilots ? PILOT_KEYS.flatMap(pilot => siteAccounts(id, pilot).map(entry => entry.account)) : [publicUser(store, id)];
   /** Pilots profile: a signature record always belongs to the account writing it; one record per signature type. */
   function owner(account: User, key: string, value: Record<string, unknown>, existing?: Row) {
     if (pilots && key === 'company_data' && !existing && store.list('company_data').length) throw new AppError(409, 'Company data already exists. Edit it instead.');
@@ -215,11 +261,13 @@ export function releaseAccess(store: Store, availability?: Availability) {
    * (`canAction` with no parts ticked). Default-deny: a part whose owning pilot cannot be told is refused.
    * The dialog shows this result and the server enforces it, so a forged request is refused.
    */
-  function copyParts(id: string): CopyParts {
+  function copyParts(id: string, siteId?: string): CopyParts {
     const output = {} as CopyParts;
     for (const [part, area] of COPY_SCOPES) {
       const owners = areaPilots(area), owner = owners.length === 1 ? owners[0] : undefined;
-      const account = owner ? inPilot(id, owner) : null;
+      // The owning pilot's profile for the request's main project (where that pilot limits the account to it).
+      const reach = owner ? allowedSites(store, store.get('users', id), owner) : 'all';
+      const account = !owner || !enterable(id).includes(owner) ? null : inPilot(id, owner, reach !== 'all' && siteId && reach.has(siteId) ? siteId : undefined);
       const title = owner ? PILOT_MAP[owner].title : 'its pilot';
       output[part] = !account ? { allowed: false, pilot: owner, reason: `You are not enabled in ${title}.` }
         : canScope(account, area, 'insert') ? { allowed: true, pilot: owner }
@@ -227,7 +275,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
     return output;
   }
-  return { user, resource, visible, record, input, complete, links, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts, recipients,
+  return { user, resource, visible, record, input, complete, links, weldRecord, archive, audit, project, present, pilotOf, pilotAccount, chooser, choiceRows, mainProjects, administrators, owner, copyParts, recipients,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

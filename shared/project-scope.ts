@@ -14,6 +14,8 @@ function narrowToProjects(rows: Record<string, Row[]>, projectRows: Row[], sites
   for (const key of ['welds', 'spools', 'revisions', 'iso_materials', 'calculation_lines', 'cut_list', 'releases', 'flanges', 'visual_reports']) scoped[key] = (rows[key] || []).filter(row => isos.has(String(row.isoId)));
   // A punch item belongs to an isometric of the projects, or to one of the projects itself.
   scoped.punchlists = (rows.punchlists || []).filter(row => row.isoId ? isos.has(String(row.isoId)) : projects.has(String(row.projectId)));
+  // Service requests (Request archive) follow their spool or material requirement (scn-SC-D6).
+  if (rows.service_requests) { const spools = new Set(scoped.spools.map(row => row.id)), requirements = new Set(scoped.iso_materials.map(row => row.id)); scoped.service_requests = rows.service_requests.filter(row => row.spoolId ? spools.has(String(row.spoolId)) : requirements.has(String(row.requirementId))); }
   const welds = new Set(scoped.welds.map(row => row.id));
   for (const key of ['inspection_requests', 'inspection_results', 'repairs']) scoped[key] = (rows[key] || []).filter(row => welds.has(String(row.weldId)));
   scoped.test_systems = (rows.test_systems || []).filter(row => !row.projectId || projects.has(String(row.projectId)));

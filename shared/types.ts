@@ -58,13 +58,19 @@ export interface User {
   pilots?: ('weld' | 'mto')[];
   /** Where the profile delivers pilots: the account is limited to chosen main projects in the current pilot (shared/site-scope.ts). */
   siteLimited?: boolean;
+  /** Where the profile delivers pilots: the main project these permissions were evaluated for (limited accounts, shared/site-scope.ts). */
+  siteId?: string;
+  /** Where the profile delivers pilots: a limited account with several main projects that has not chosen one yet; it has no rights until it does. */
+  siteRequired?: boolean;
 }
 export interface AuditEvent { id: string; entityType: string; entityId: string; action: string; summary: string; actorId: string; actorName: string; createdAt: string; }
 export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[];
   /** Pilots profile: the server summary of every visible isometric, by id (aggregates only; see shared/iso-summary.ts). */
   isoSummaries?: Record<string, import('./iso-summary.ts').IsoSummary>;
   /** Pilots profile: which parts Copy isometrics may carry for this account. */
-  copyParts?: import('./permissions.ts').CopyParts; }
+  copyParts?: import('./permissions.ts').CopyParts;
+  /** Pilots profile, limited account with several main projects: the main-project choice (each main project read with its own profile). */
+  siteRows?: Record<string, Row[]>; }
 export interface ActionField extends Field { multiple?: boolean; /** Checkbox field that the "ALL" option of this multi-select stands for. */ allField?: string; }
 export interface ActionDefinition { key: string; title: string; description: string; module: Module; fields: ActionField[]; submit: string; }
 export const labelOf = (row: Row | undefined, resource: Resource) => row ? String(row[resource.display] || row.name || row.id) : '—';

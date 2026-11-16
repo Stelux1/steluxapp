@@ -4,6 +4,7 @@ import { AppError, Store, type Actor } from './store.ts';
 import { permissionValue } from '../shared/resources.ts';
 import type { Module, User } from '../shared/types.ts';
 import { canResource,canAction,parsePermissionRules,moduleSummary } from '../shared/permissions.ts';
+import { scopeLimited, siteProfilesField, siteProfilesOf, siteScopeField } from '../shared/site-scope.ts';
 import type {PermissionVerb,Row} from '../shared/types.ts';
 export interface AuthRequest extends Request { user: User }
 export const hashToken = (v: string) => createHash('sha256').update(v).digest('hex');
@@ -22,13 +23,15 @@ export function passwordMatches(password: unknown, stored: string) {
 /**
  * The profile that applies to an account in a pilot, or null when the account is not enabled there. Without a
  * pilot (or for accounts saved before access per pilot) it is the account's permission profile.
- * Which main projects an account reaches is decided in server/site-scope.ts; `_siteId` stays the seam for a
- * profile per project site, which is deferred (one profile per pilot), so it is not evaluated.
+ * With 'Specific project site(s)' in the pilot, the main project `siteId` brings its own profile (shared/site-scope.ts
+ * `siteProfilesField`); a ticked site without one, and every request without a main project, uses the pilot's profile.
+ * Whether `siteId` is one of the account's main projects is decided by the caller (server/site-scope.ts `activeSite`).
  */
-export function effectiveProfileId(row: Row, pilot?: 'weld' | 'mto', _siteId?: string): string | null {
+export function effectiveProfileId(row: Row, pilot?: 'weld' | 'mto', siteId?: string): string | null {
   if (!pilot) return String(row.profileId);
   if (row[`${pilot}Enabled`] === false) return null;
-  return String(row[`${pilot}ProfileId`] || row.profileId);
+  const own = siteId && scopeLimited(row[siteScopeField(pilot)]) ? siteProfilesOf(row[siteProfilesField(pilot)])[siteId] : undefined;
+  return String(own || row[`${pilot}ProfileId`] || row.profileId);
 }
 /** The account's identity and permissions from its permission profile, or from `profileId` where given. */
 export function publicUser(store: Store, id: string, profileId?: string): User {

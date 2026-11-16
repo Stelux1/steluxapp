@@ -3,7 +3,7 @@ import type { Bootstrap, Module, Row, User } from '../shared/types.ts';
 import { RESOURCE_MAP, configureCatalog } from './catalog.ts';
 import { hasFeature } from '../shared/release.ts';
 import { Wordmark } from './brand.tsx';
-import { api } from './api.ts';
+import { api, configureActiveSite, currentSite } from './api.ts';
 import { canResource,canAction,canScope,canReport } from '../shared/permissions.ts';
 import { pilotScope, projectScope } from '../shared/project-scope.ts';
 import { pqrNumber } from '../shared/wps.ts';
@@ -21,17 +21,34 @@ const Context = createContext<WorkspaceContext | null>(null);
 export const useWorkspace = () => { const value = useContext(Context); if (!value) throw new Error('Workspace is unavailable.'); return value; };
 export function WorkspaceProvider({ user, onUnauthenticated, children }: { user: User; onUnauthenticated: (ended?: boolean) => void; children: ReactNode }) {
   const navigate = useNavigate(); const pilotKey = usePilot()?.pilot.key;
-  const [selectedSite, setSelectedSite] = useState(() => sessionStorage.getItem(`blitzkrieg-project-${user.id}`) || '');
+  // The active main project of this tab; every request carries it (client/api.ts `configureActiveSite`).
+  const [selectedSite, setSelectedSite] = useState(() => { const stored = sessionStorage.getItem(`blitzkrieg-project-${user.id}`) || ''; configureActiveSite(stored); return stored; });
   const [data, setData] = useState<Bootstrap>({ user, rows: {}, activity: [] });
   const [ready, setReady] = useState(false); const [error, setError] = useState('');
   const [toast, setToast] = useState(''); const [detail, setDetail] = useState<{resource: string; id: string} | null>(null);
-  const projectScopeEnabled = Boolean(data.user.availability?.features.includes('lisl') && canResource(data.user, 'sites') && canResource(data.user, 'projects'));
-  const siteId = projectScopeEnabled && data.rows.sites?.some(site => site.id === selectedSite && !site._archived) ? selectedSite : '';
+  // A limited account that has not chosen one of its main projects yet sees the choice only (it has no rights until then).
+  const choosing = Boolean(data.user.siteRequired);
+  const projectScopeEnabled = Boolean(data.user.availability?.features.includes('lisl') && (choosing || canResource(data.user, 'sites') && canResource(data.user, 'projects')));
+  // A limited account works in the main project the server evaluated its profile for; others choose freely.
+  const siteId = choosing ? '' : data.user.siteLimited && data.user.siteId ? data.user.siteId : projectScopeEnabled && data.rows.sites?.some(site => site.id === selectedSite && !site._archived) ? selectedSite : '';
   // Projects switched off for the current pilot are left out everywhere in the workspace (outside pilots: no change).
-  const pilotRows = useMemo(() => pilotScope(data.rows, pilotKey), [data.rows, pilotKey]);
-  const scopedRows = useMemo(() => projectScopeEnabled ? projectScope(pilotRows, siteId) : pilotRows, [pilotRows, siteId, projectScopeEnabled]);
-  const selectSite = (id: string) => { setSelectedSite(id); setDetail(null); sessionStorage.setItem(`blitzkrieg-project-${user.id}`, id); };
-  const refresh = useCallback(async () => { try { const next = await api<Bootstrap>('/bootstrap'); configureCatalog(next.user.availability); setData(next); setReady(true); setError(''); } catch (e) { const failure = e as { status: number; code?: string }; if (failure.status === 401 || failure.code === 'pilot') onUnauthenticated(failure.status === 401); else setError((e as Error).message); } }, [onUnauthenticated]);
+  // A limited account with several main projects also gets the choice of all of them (each read with its own profile).
+  const pilotRows = useMemo(() => { const rows = pilotScope(data.rows, pilotKey); return data.siteRows ? { ...rows, ...pilotScope(data.siteRows, pilotKey) } : rows; }, [data.rows, data.siteRows, pilotKey]);
+  const scopedRows = useMemo(() => projectScopeEnabled ? projectScope(data.siteRows ? pilotScope(data.rows, pilotKey) : pilotRows, siteId) : pilotRows, [data.rows, data.siteRows, pilotKey, pilotRows, siteId, projectScopeEnabled]);
+  const refresh = useCallback(async () => {
+    const load = () => api<Bootstrap>('/bootstrap');
+    try {
+      let next: Bootstrap;
+      try { next = await load(); } catch (e) {
+        // The stored main project is no longer one of this account's: start again without one.
+        if ((e as { code?: string }).code !== 'site' || !currentSite()) throw e;
+        configureActiveSite(''); setSelectedSite(''); sessionStorage.removeItem(`blitzkrieg-project-${user.id}`); next = await load();
+      }
+      configureCatalog(next.user.availability); setData(next); setReady(true); setError('');
+    } catch (e) { const failure = e as { status: number; code?: string }; if (failure.status === 401 || failure.code === 'pilot') onUnauthenticated(failure.status === 401); else setError((e as Error).message); }
+  }, [onUnauthenticated, user.id]);
+  // A limited account's profile depends on the main project, so choosing another one loads the workspace again.
+  const selectSite = (id: string) => { setSelectedSite(id); setDetail(null); configureActiveSite(id); sessionStorage.setItem(`blitzkrieg-project-${user.id}`, id); if (id && data.user.siteLimited && id !== data.user.siteId) void refresh(); };
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 4500); return () => clearTimeout(timer); }, [toast]);
   const label = (resource: string, id: unknown) => {
