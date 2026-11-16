@@ -18,6 +18,7 @@ import './hydrotest.css';
 import './flanges.css';
 import './itp-dashboard.css';
 import './weld-catalogs.css';
+import './wps.css';
 import './welder-data.css';
 import './weld-entry.css';
 import './releases.css';

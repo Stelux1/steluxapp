@@ -31,6 +31,8 @@ import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
+import { registerWpsRoutes } from './wps.ts';
+import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { assertAccountReach, assertCopyInScope, assertSiteAccessEdit, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteScopeFor, type SiteScope } from './site-scope.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
@@ -230,7 +232,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'export');
     const selected = typeof req.query.ids === 'string' ? new Set(req.query.ids.split(',')) : null;
     const rows = readableRows(req, resource.key, req.query.archived === 'true').filter(r => (!selected || selected.has(r.id))&&canResource((req as AuthRequest).user,resource.key,'export',r));
-    const fields = [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].filter(f => access.field(resource.key, f.name));
+    const fields = [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden&&!(pilots&&WELD_DATA_EXPORT_HIDDEN[resource.key]?.includes(f.name))),...relationFields(resource.key)].filter(f => access.field(resource.key, f.name));
     // The isometrics list of the hosted profile also exports its flag columns as Yes / No / n/a (n/a: not applicable).
     const flagExport = resource.key === 'isometrics' && availability?.features.includes('pilots') ? isoFlagExport(rows) : undefined;
     if (flagExport) fields.push(...flagExport.columns);
@@ -299,6 +301,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     }catch(error){documents.discard(req.file);throw error;}
   });
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
+  // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
+  if (pilots) registerWpsRoutes(app, { store, access });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);
@@ -307,6 +311,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);
+      if (pilots && key === 'wps' && !/\.pdf$/i.test(name)) throw new AppError(422, 'Choose a PDF file for the WPS document.');
       // A new signature image replaces the current one; earlier images stay as attachments (history).
       const signature = pilots && key === 'signatures';
       if (signature || pilots && key === 'company_data') assertSignatureImage(req.file);

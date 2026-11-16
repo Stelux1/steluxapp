@@ -1,0 +1,39 @@
+/* Weld data: WPS methods and PQR (client/wps.tsx, client/pqr.tsx). */
+.wps-view { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.wps-context { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 12px 20px 0; font-size: 10px; color: var(--muted); }
+.wps-context strong { font-weight: 500; color: var(--ink); }
+.wps-copy-of { display: block; margin-top: 4px; font-size: 9px; color: var(--muted); }
+.wps-document-link { color: var(--primary-hover); text-decoration: underline; }
+.wps-options-cell { width: 1%; }
+.wps-row-actions { display: inline-flex; gap: 2px; align-items: center; }
+.wps-copy-locked, .wps-copy-locked:disabled { color: #b65c55; opacity: .75; }
+.wps-danger-text { color: #b65c55; }
+.btn.primary.wps-danger { background: #b65c55; border-color: #b65c55; }
+.wps-confirm-list { margin: 12px 0 0; padding-left: 18px; font-size: 11px; max-height: 180px; overflow: auto; }
+.wps-group-hint { margin: 0 0 12px; }
+.wps-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 38px; background: #fff; }
+.wps-tags input[type=text] { flex: 1; min-width: 120px; border: 0 !important; min-height: 26px !important; padding: 4px !important; box-shadow: none !important; }
+.wps-tag { display: inline-flex; align-items: center; gap: 4px; background: var(--surface-blue); border-radius: 5px; padding: 3px 4px 3px 8px; font-size: 10px; color: var(--ink); }
+.wps-tag button { border: 0; background: none; padding: 2px; display: inline-flex; color: var(--muted); }
+.wps-choices { border: 0; padding: 0; margin: 0 0 16px; min-width: 0; }
+.wps-choices legend { padding: 0; margin-bottom: 7px; font-size: 10px; color: var(--muted); font-weight: 500; }
+.pqr-table .pqr-group-row th { text-align: center; border-bottom: 0; }
+.pqr-table .pqr-group-row th:empty { background: var(--surface); }
+.pqr-table .column-filters td { height: auto; padding: 8px 10px; }
+.pqr-table .column-filter-input { min-width: 90px; width: 100%; }
+.pqr-field-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.pqr-field-label label { font-size: 10px; color: var(--muted); font-weight: 500; }
+.pqr-field-label .icon-btn { width: 26px; height: 26px; }
+.pqr-import-card { padding: 20px; overflow: visible; }
+.pqr-import-steps { margin: 0 0 20px; padding-left: 18px; font-size: 11px; color: var(--muted); line-height: 1.8; }
+.pqr-import-steps strong { font-weight: 500; color: var(--ink); }
+.pqr-import-form { max-width: 640px; }
+.pqr-import-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.pqr-import-summary { font-size: 11px; color: var(--ink); margin: 0 0 12px; }
+.pqr-import-action select { min-width: 96px; padding: 6px 28px 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: #fff; font-size: 10px; }
+.pqr-import-action > svg { top: 9px; }
+.data-table tr.pqr-import-error td { background: #fcf0eb; }
+.data-table tr.pqr-import-skip td { color: var(--nav-muted); }
+.pqr-import-errors { white-space: normal; min-width: 220px; color: #b65c55; }
+@media (max-width: 640px) { .wps-context { padding: 12px 16px 0; } .pqr-import-card { padding: 16px; } .wps-tags input[type=text] { min-width: 80px; } }
+.wps-number { font-weight: 500; color: var(--ink); }
