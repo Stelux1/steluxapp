@@ -354,7 +354,7 @@ export function tracerDetail(weld: Row, welds: Row[], results: Row[] | null | un
 // ----- NDT/PWHT Manager ----------------------------------------------------------------------------------------
 
 export type ManagerTabKey = 'ndt-pre' | 'ndt' | 'ndt-pre-archive' | 'ndt-archive' | 'ndt-requests' | 'pwht' | 'pwht-archive' | 'pwht-requests';
-export interface ManagerTab { key: ManagerTabKey; label: string; /** Lists requests instead of welds. */ requests?: boolean; archive?: boolean; types: string[]; kind: InspectionKind; }
+export interface ManagerTab { key: ManagerTabKey; label: string; /** Lists requests (one row per request) instead of welds. */ requests?: boolean; /** Lists examined process results (one row per result). */ archive?: boolean; types: string[]; kind: InspectionKind; }
 export const MANAGER_TABS: ManagerTab[] = [
   { key: 'ndt-pre', label: 'NDT Pre', types: ['NDT PRE'], kind: 'NDT PRE' },
   { key: 'ndt', label: 'NDT', types: ['NDT'], kind: 'NDT' },
@@ -365,25 +365,200 @@ export const MANAGER_TABS: ManagerTab[] = [
   { key: 'pwht-archive', label: 'PWHT archive', archive: true, types: PWHT_TYPES, kind: 'PWHT' },
   { key: 'pwht-requests', label: 'PWHT request archive', requests: true, types: PWHT_TYPES, kind: 'PWHT' },
 ];
-/**
- * Welds of a Manager tab. A weld enters the open tab when its requirement flag is set (NDT Req. Pre, NDT Req.,
- * Pre-HT or PWHT Req.) and leaves it for the archive once a result is recorded for that requirement.
- */
-export function managerWelds(tab: ManagerTab, welds: Row[], results: Row[] | null | undefined): Row[] {
-  if (tab.requests) return [];
-  const open = (weld: Row) => requiredTypes(weld, tab.kind).some(type => tab.types.includes(type) && !latestResult(results, weld.id, type));
-  const recorded = (weld: Row) => tab.types.some(type => latestResult(results, weld.id, type));
-  return live(welds).filter(weld => tab.archive ? recorded(weld) : open(weld));
+/** Rows per page: the request managers (10 / 25 / 50 / 100, default 10) and the archives (10 / 20 / 50 / 100 / 500, default 20). */
+export const MANAGER_PAGE_SIZES = [10, 25, 50, 100];
+export const ARCHIVE_PAGE_SIZES = [10, 20, 50, 100, 500];
+/** Area that shows a request archive tab (NDT request archive 66, PWHT request archive 67). */
+export const requestArchiveArea = (tab: Pick<ManagerTab, 'kind'>) => tab.kind === 'PWHT' ? '67' : '66';
+
+// ----- request numbers ------------------------------------------------------------------------------------------
+
+/** Request numbers are generated, never typed: R + five digits ("R00029"), counted on from the highest one that exists. */
+export const REQUEST_PREFIX = 'R';
+const REQUEST_NUMBER = /^R(\d{5,})$/;
+/** The next request number after the highest R-number in `requests` (archived rows included, so a number is never reused). Older numbers such as R-2026-0001 do not take part. */
+export function nextRequestNumber(requests: Row[] | null | undefined): string {
+  let highest = 0;
+  for (const row of requests || []) { const match = REQUEST_NUMBER.exec(textOf(row.number)); if (match) highest = Math.max(highest, Number(match[1])); }
+  return `${REQUEST_PREFIX}${String(highest + 1).padStart(5, '0')}`;
 }
+/** A request number as the request archives show it: "R00029" reads "00029"; an older number is shown as stored. */
+export const requestNumberShown = (number: unknown) => REQUEST_NUMBER.test(textOf(number)) ? textOf(number).slice(1) : textOf(number);
+
+// ----- processes of a request ---------------------------------------------------------------------------------
+
+/** NDT process ids set on a weld (the five rounds), in round order. */
+export const weldProcessIds = (weld: Row, pre: boolean) => [...new Set(NDT_ROUNDS.map(round => textOf(weld[processField(pre, round.index)])).filter(Boolean))];
+const liveRequestsOf = (requests: Row[] | null | undefined, weldId: string, type: string) => weldRequests(requests, weldId, [type]).filter(row => row.status !== 'Cancelled');
+/** NDT processes a request line (one weld on a request) covers: named in its process list, its first process, and the processes of its results. */
+export function requestProcessIds(request: Row, results: Row[] | null | undefined, processes: Row[] | null | undefined): string[] {
+  const byName = new Map<string, string>();
+  for (const process of live(processes)) if (!byName.has(textOf(process.name))) byName.set(textOf(process.name), process.id);
+  const ids = new Set<string>();
+  for (const name of textOf(request.processes).split(',').map(textOf).filter(Boolean)) { const id = byName.get(name); if (id) ids.add(id); }
+  if (textOf(request.processId)) ids.add(textOf(request.processId));
+  for (const row of live(results)) if (row.requestId === request.id && textOf(row.processId)) ids.add(textOf(row.processId));
+  return [...ids];
+}
+/** The weld's NDT processes (of NDT or NDT Pre) that are on no request yet: the ones a new request can take. */
+export function openProcessIds(weld: Row, type: string, requests: Row[] | null | undefined, results: Row[] | null | undefined, processes: Row[] | null | undefined): string[] {
+  const taken = new Set(liveRequestsOf(requests, weld.id, type).flatMap(request => requestProcessIds(request, results, processes)));
+  return weldProcessIds(weld, type === 'NDT PRE').filter(id => !taken.has(id));
+}
+/** Whether a weld's row in the NDT / NDT Pre manager has a selection box: it has an NDT process that is on no request yet. The PWHT manager selects every row. */
+export const requestSelectable = (weld: Row, kind: InspectionKind, requests: Row[] | null | undefined, results: Row[] | null | undefined, processes: Row[] | null | undefined) => kind === 'PWHT' || openProcessIds(weld, kind, requests, results, processes).length > 0;
+
+export const MASS_REQUEST_TEXTS = {
+  alert: 'When you generate NDT Request you can not change request data. Please check that you entered correct data!',
+  selectWelds: 'Select one or more welds in the table first.',
+  noProcess: 'None of the selected welds has an open NDT process.',
+  selectProcess: 'Select at least one NDT process before generating the request.',
+  allDone: 'All NDT requests have already been created for the selected welds.',
+  noPwht: 'None of the selected welds needs a new Pre-HT/PWHT request.',
+  includeIsometrics: 'Include isometric drawing in PDF (request + iso)',
+};
+const REQUEST_FLAG: Record<string, string> = { 'NDT PRE': 'ndoReqPre', NDT: 'ndoReq', 'PRE-HT': 'pwhtReqPre', PWHT: 'pwhtReq' };
+/** The weld field that says a weld requires an inspection type. */
+export const requestFlag = (type: string) => REQUEST_FLAG[type];
+export interface MassRequestPlan {
+  /** Why no request can be generated for these welds ('' when one can). */
+  error: string;
+  /** The process checklist: open processes of the selected welds (NDT), in the order they are met. */
+  processIds: string[];
+  /** Per weld the processes it still has open (NDT); the welds that may be requested (PWHT). */
+  open: { weldId: string; processIds: string[] }[];
+}
+/**
+ * What "Generate Mass … request" offers for the ticked welds (reference pdfNdtRequestLanguageISO): NDT and NDT Pre list
+ * the open (unrequested) processes of the welds; Pre-HT / PWHT need a weld that requires it and has no open request of it.
+ */
+export function massRequestPlan(type: string, welds: Row[], requests: Row[] | null | undefined, results: Row[] | null | undefined, processes: Row[] | null | undefined): MassRequestPlan {
+  if (!welds.length) return { error: MASS_REQUEST_TEXTS.selectWelds, processIds: [], open: [] };
+  const flagged = welds.filter(weld => weld[REQUEST_FLAG[type]] === true);
+  if (!NDT_TYPES.includes(type)) {
+    const open = flagged.filter(weld => !liveRequestsOf(requests, weld.id, type).some(row => row.status === 'Open')).map(weld => ({ weldId: weld.id, processIds: [] as string[] }));
+    return { error: open.length ? '' : MASS_REQUEST_TEXTS.noPwht, processIds: [], open };
+  }
+  if (!flagged.some(weld => weldProcessIds(weld, type === 'NDT PRE').length)) return { error: MASS_REQUEST_TEXTS.noProcess, processIds: [], open: [] };
+  const open = flagged.map(weld => ({ weldId: weld.id, processIds: openProcessIds(weld, type, requests, results, processes) })).filter(line => line.processIds.length);
+  if (!open.length) return { error: MASS_REQUEST_TEXTS.allDone, processIds: [], open: [] };
+  return { error: '', processIds: [...new Set(open.flatMap(line => line.processIds))], open };
+}
+/** The welds ticked in a dialog that are still offered after the dialog's select changed (Treatment / Examination): they stay ticked. */
+export const keepEligible = (selected: string[], pool: string[]) => selected.filter(id => pool.includes(id));
+
+/** Welds of a Manager weld tab: NDT Pre / NDT welds with their requirement flag and no result yet; the PWHT manager lists every weld with Pre-HT or PWHT required (accepted ones too). Archive tabs: one row per examined process result (see `managerResults`). */
+export function managerWelds(tab: ManagerTab, welds: Row[], results: Row[] | null | undefined, options: ArchiveOptions = {}): Row[] {
+  if (tab.requests) return [];
+  if (tab.archive) return managerResults(tab, options.view ?? 'finished', welds, results, options.requests, options.processes, options);
+  if (tab.kind === 'PWHT') return live(welds).filter(weld => requiredTypes(weld, 'PWHT').length > 0);
+  return live(welds).filter(weld => requiredTypes(weld, tab.kind).some(type => tab.types.includes(type) && !latestResult(results, weld.id, type)));
+}
+
+// ----- archive tabs: one row per examined process result ------------------------------------------------------------
+
+export type ArchiveView = 'finished' | 'open-results' | 'open-welds';
+export const ARCHIVE_VIEWS: ArchiveView[] = ['finished', 'open-results', 'open-welds'];
+const ARCHIVE_VIEW_LABELS: Record<'NDT PRE' | 'NDT' | 'PWHT', Record<ArchiveView, string>> = {
+  'NDT PRE': { finished: 'Finished NDT Pre', 'open-results': 'Open NDT results Pre', 'open-welds': 'Open NDT welds Pre' },
+  NDT: { finished: 'Finished NDT', 'open-results': 'Open NDT results', 'open-welds': 'Open NDT welds' },
+  PWHT: { finished: 'Finished PWHT', 'open-results': 'Open PWHT results', 'open-welds': 'Open PWHT welds' },
+};
+export const archiveViewLabel = (tab: Pick<ManagerTab, 'kind'>, view: ArchiveView) => ARCHIVE_VIEW_LABELS[tab.kind as 'NDT'][view];
+export interface ArchiveFilter { project?: string; processId?: string; /** Stored result: Accepted or Rejected (shown NA). */ result?: string; }
+export interface ArchiveOptions { view?: ArchiveView; requests?: Row[] | null; processes?: Row[] | null; filter?: ArchiveFilter; projectOf?: (weld: Row) => string; }
+/** One examined process of a weld: a row of the archive tabs. */
+export interface ArchiveRow extends Row { weldId: string; /** Round of the process (1–5; PWHT: 1). */ roundIndex: number; processId: string; resultValue: string; resultDate: string; reportNo: string; requestNo: string; requestId: string; resultId: string; }
+const archiveRow = (weld: Row, key: string, extra: Partial<ArchiveRow>): ArchiveRow => ({ ...weld, id: key, weldId: weld.id, roundIndex: 1, processId: '', resultValue: '', resultDate: '', reportNo: '', requestNo: '', requestId: '', resultId: '', ...extra });
+const roundOfProcess = (weld: Row, pre: boolean, processId: string) => NDT_ROUNDS.find(round => textOf(weld[processField(pre, round.index)]) === processId)?.index ?? 1;
+const pwhtProcessOf = (weld: Row, type: unknown) => textOf(weld[type === 'PRE-HT' ? 'pwhtPreProcessId' : 'pwhtProcessId']);
+/**
+ * Rows of an archive tab (reference ajax-table-open-welds-ndt.php): "finished" lists each process result recorded, "open
+ * results" each process of a request that has no result yet, "open welds" each required process that is on no request.
+ */
+export function managerResults(tab: ManagerTab, view: ArchiveView, welds: Row[], results: Row[] | null | undefined, requests: Row[] | null | undefined, processes: Row[] | null | undefined, options: ArchiveOptions = {}): ArchiveRow[] {
+  const pwht = tab.kind === 'PWHT', pre = tab.kind === 'NDT PRE';
+  const weldRows = live(welds), byId = new Map(weldRows.map(weld => [weld.id, weld]));
+  const rows: ArchiveRow[] = [];
+  if (view === 'finished') {
+    for (const row of live(results).filter(item => tab.types.includes(textOf(item.type)) && textOf(item.result) !== '' && byId.has(textOf(item.weldId))).sort(newest)) {
+      const weld = byId.get(textOf(row.weldId))!, request = live(requests).find(item => item.id === row.requestId);
+      rows.push(archiveRow(weld, row.id, { roundIndex: NDT_ROUNDS.find(round => round.key === row.round)?.index ?? 1, processId: pwht ? pwhtProcessOf(weld, row.type) : textOf(row.processId), resultValue: textOf(row.result), resultDate: textOf(row.date), reportNo: textOf(row.reportNo), requestNo: textOf(request?.number), requestId: textOf(row.requestId), resultId: row.id }));
+    }
+  } else if (view === 'open-results') {
+    for (const request of live(requests).filter(item => tab.types.includes(textOf(item.type)) && item.status !== 'Cancelled' && byId.has(textOf(item.weldId))).sort(newest)) {
+      const weld = byId.get(textOf(request.weldId))!;
+      const recorded = live(results).filter(row => row.requestId === request.id && textOf(row.result) !== '');
+      if (pwht) { if (!recorded.length) rows.push(archiveRow(weld, request.id, { processId: pwhtProcessOf(weld, request.type), resultDate: textOf(request.date), requestNo: textOf(request.number), requestId: request.id })); continue; }
+      const ids = requestProcessIds(request, results, processes);
+      for (const processId of ids.length ? ids : ['']) {
+        if (recorded.some(row => textOf(row.processId) === processId)) continue;
+        rows.push(archiveRow(weld, `${request.id}:${processId}`, { roundIndex: roundOfProcess(weld, pre, processId), processId, resultDate: textOf(request.date), requestNo: textOf(request.number), requestId: request.id }));
+      }
+    }
+  } else {
+    for (const weld of weldRows) {
+      for (const type of requiredTypes(weld, tab.kind).filter(item => tab.types.includes(item))) {
+        if (pwht) { if (!liveRequestsOf(requests, weld.id, type).length && !latestResult(results, weld.id, type)) rows.push(archiveRow(weld, `${weld.id}:${type}`, { processId: pwhtProcessOf(weld, type), resultDate: textOf(weld.date) })); continue; }
+        const open = openProcessIds(weld, type, requests, results, processes);
+        if (open.length) for (const processId of open) rows.push(archiveRow(weld, `${weld.id}:${type}:${processId}`, { roundIndex: roundOfProcess(weld, pre, processId), processId, resultDate: textOf(weld.date) }));
+        else if (!weldProcessIds(weld, pre).length && !liveRequestsOf(requests, weld.id, type).length && !latestResult(results, weld.id, type)) rows.push(archiveRow(weld, `${weld.id}:${type}`, { resultDate: textOf(weld.date) }));
+      }
+    }
+  }
+  const filter = options.filter || {};
+  return rows.filter(row => (!filter.project || options.projectOf?.(row) === filter.project) && (!filter.processId || row.processId === filter.processId) && (!filter.result || row.resultValue === filter.result));
+}
+
+// ----- request archives: one row per request ------------------------------------------------------------------------
+
+export interface RequestFilter { project?: string; /** NDT request archive: show NDT Pre requests instead of NDT. */ pre?: boolean; from?: string; to?: string; }
+/** The first and last day of the month of `day` (YYYY-MM-DD): the date range the archive tab opens with. */
+export function monthRange(day: string): { from: string; to: string } {
+  const [year, month] = day.split('-').map(Number);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(new Date(Date.UTC(year, month, 0)).getUTCDate())}` };
+}
+export interface RequestGroup { key: string; number: string; shown: string; type: string; date: string; /** Distinct welds on the request. */ welds: number; lines: Row[]; }
+/** Request lines (one per weld) of an archive tab, newest first. */
 export const managerRequests = (tab: ManagerTab, requests: Row[] | null | undefined) => tab.requests ? live(requests).filter(row => tab.types.includes(textOf(row.type))).sort(newest) : [];
-/** Columns of the Manager's weld tabs, in the reference order and wording ("NDT Pre (or NDT)" follows the tab). */
-export const managerColumns = (tab: ManagerTab) => ['Project', 'ISO', 'Weld no.', 'Type', 'Welder', tab.kind === 'NDT PRE' ? 'NDT Pre' : tab.kind === 'PWHT' ? 'Pre-HT/PWHT' : 'NDT', 'NDT R/Nr.', 'Idx. No.', 'Chg.No.', 'Material ①', 'Ind.No.', 'Chg.No.', 'Material ②', 'Proces', 'WPS'];
+/** One row per request (type and number), with the filters of the archive tab; `projectOf` gives the project of a weld. */
+export function groupRequests(tab: ManagerTab, requests: Row[] | null | undefined, filter: RequestFilter = {}, projectOf: (weldId: string) => string = () => ''): RequestGroup[] {
+  const lines = managerRequests(tab, requests).filter(row => (tab.kind === 'PWHT' || (row.type === 'NDT PRE') === Boolean(filter.pre)) && (!filter.project || projectOf(textOf(row.weldId)) === filter.project) && (!filter.from || textOf(row.date) >= filter.from) && (!filter.to || textOf(row.date) <= filter.to));
+  const groups = new Map<string, RequestGroup>();
+  for (const line of lines) {
+    const key = `${textOf(line.type)}|${textOf(line.number)}`, group = groups.get(key);
+    if (group) { group.lines.push(line); group.welds = new Set(group.lines.map(item => item.weldId)).size; if (textOf(line.date) > group.date) group.date = textOf(line.date); }
+    else groups.set(key, { key, number: textOf(line.number), shown: requestNumberShown(line.number), type: textOf(line.type), date: textOf(line.date), welds: 1, lines: [line] });
+  }
+  return [...groups.values()].sort((a, b) => b.date.localeCompare(a.date) || b.number.localeCompare(a.number));
+}
+/** A row of a request's detail page: one process of one weld on the request (PWHT lines have no process). */
+export interface RequestDetailLine { weldId: string; request: Row; processId: string; /** The process has a result, which an undo removes. */ hasResult: boolean; /** The weld's only process on this request: undoing it removes the weld from the request. */ last: boolean; }
+export function requestDetail(lines: Row[], results: Row[] | null | undefined, processes: Row[] | null | undefined): RequestDetailLine[] {
+  return lines.flatMap(request => {
+    const ids = requestProcessIds(request, results, processes);
+    return (ids.length ? ids : ['']).map(processId => ({ weldId: textOf(request.weldId), request, processId, hasResult: live(results).some(row => row.requestId === request.id && textOf(row.result) !== '' && (!processId || textOf(row.processId) === processId)), last: ids.length <= 1 }));
+  });
+}
+/** Filter of the request manager tabs (Project, Welder, Type). */
+export interface ManagerFilter { project?: string; welder?: string; weldType?: string; }
+export const filterManagerWelds = (welds: Row[], filter: ManagerFilter, projectOf: (weld: Row) => string) => welds.filter(weld => (!filter.project || projectOf(weld) === filter.project) && (!filter.welder || [1, 2, 3, 4].some(side => weld[`welder${side}Id`] === filter.welder)) && (!filter.weldType || weld.typeId === filter.weldType));
+
+/**
+ * Columns of a Manager tab in the reference order and wording. Weld tabs: "NDT Pre (or NDT)" follows the tab; the PWHT
+ * request manager has no NDT R/Nr. and names the isometric "Isometric". Archive tabs: one examined process per row;
+ * request archives: one request per row.
+ */
+export function managerColumns(tab: ManagerTab): string[] {
+  if (tab.archive) return ['Project', 'ISO No', 'WN', 'Type', 'Welder', 'Dia.(inch)', 'Date', tab.kind === 'PWHT' ? 'PWHT process' : 'NDT process', 'Result', 'Idx 1', 'Chg.No. 1', 'Material 1', 'Idx 2', 'Chg.No. 2', 'Material 2', 'WPS', 'Doc.', 'Rep. No', ''];
+  if (tab.requests) return ['Date', 'Request number', 'Welds', 'Options'];
+  if (tab.kind === 'PWHT') return ['Project', 'Isometric', 'Weld no.', 'Type', 'Welder', 'PWHT', 'Ind.No.', 'Chg.No.', 'Material ①', 'Ind.No.', 'Chg.No.', 'Material ②', 'Proces', 'WPS'];
+  return ['Project', 'ISO', 'Weld no.', 'Type', 'Welder', tab.kind === 'NDT PRE' ? 'NDT Pre' : 'NDT', 'NDT R/Nr.', 'Idx. No.', 'Chg.No.', 'Material ①', 'Ind.No.', 'Chg.No.', 'Material ②', 'Proces', 'WPS'];
+}
 
 // ----- validation shared by the dialogs and the server -----------------------------------------------------------
 
-export const REQUEST_PREFIX = 'R';
-/** "Request number" carries the prefix R; empty means "generate one". */
-export const requestNumberError = (value: unknown) => { const number = textOf(value); return !number || (number.startsWith(REQUEST_PREFIX) && number.length <= 40) ? '' : 'Request numbers start with R and have at most 40 characters.'; };
 export interface RoundInput { round: string; processId?: string; filmNo?: string; reportNo?: string; date?: string; result?: string; naLength?: number | string | null; defectType?: string; reweld?: boolean; }
 /**
  * Problems of one round (column) of the NDT dialog by field. NA length, Defect type, Welder for error and ReWeld? are
@@ -433,8 +608,10 @@ export function autoReweld(weld: Row, diameters: Row[] | null | undefined): bool
   const inches = Number(live(diameters).find(row => row.id === weld.diameterId)?.sizeinch);
   return Number.isFinite(inches) && inches > 0 && inches <= 3;
 }
-/** PDF only for NDT documents. */
-export const inspectionFileError = (documentType: unknown, name: string) => documentType === NDT_DOCUMENT && !/\.pdf$/i.test(name) ? 'NDT documents must be PDF files.' : '';
+/** The document of an Upload Pre-HT/PWHT report (one PDF). */
+export const PWHT_DOCUMENT = 'Heat treatment report';
+/** PDF only for NDT documents and heat treatment reports. */
+export const inspectionFileError = (documentType: unknown, name: string) => documentType === NDT_DOCUMENT && !/\.pdf$/i.test(name) ? 'NDT documents must be PDF files.' : documentType === PWHT_DOCUMENT && !/\.pdf$/i.test(name) ? 'Only PDFs are allowed.' : '';
 /** Distinct defect types already recorded, for the Initial round's suggestions (no site defect-code list exists yet). */
 /** Option text of a defect code in the NDT dialog: the defect's English name only (reference), the code when it has no name. */
 export const defectOptionLabel = (code: Row | { code?: unknown; english?: unknown }) => textOf(code.english) || textOf(code.code);
@@ -517,17 +694,21 @@ const VT_ACTION_FIELDS: ActionField[] = [field('op', 'Operation', { type: 'selec
 export const INSPECTION_ACTIONS: ActionDefinition[] = [
   { key: 'ndt-weld', title: 'Create/Update NDT Request', module: 'welding', submit: 'Save', description: 'NDT location, the five examination rounds and the NA block of one weld.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('requestNo', 'Request number'), field('rounds', 'Rounds', { hidden: true }), field('welderId', 'Welder', { type: 'ref', ref: 'welders' }), field('naLength', 'NA length', { hidden: true }), field('defectType', 'Defect type', { hidden: true }), field('welderForErrorId', 'Welder for error', { type: 'ref', ref: 'welders', hidden: true }), field('reweld', 'ReWeld?', { type: 'checkbox', hidden: true }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true, hidden: true })] },
   { key: 'tracers', title: 'Save tracers', module: 'welding', submit: 'Save tracers', description: 'Link the tracer welds of the rejected welds of a welder / WPS / ITP-KNR group.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds' }), field('tracerIds', 'Tracer welds', { type: 'ref', ref: 'welds', multiple: true }), field('assignments', 'Tracer assignments', { hidden: true })] },
-  { key: 'mass-inspection-request', title: 'Generate mass request', module: 'welding', submit: 'Create request', description: 'One request number for the selected welds, with the processes to include and a note.', fields: [field('type', 'Inspection type', { type: 'select', options: ['NDT PRE', 'NDT', 'PRE-HT', 'PWHT'], required: true }), welds, field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('pwhtProcessId', 'PWHT process', { type: 'ref', ref: 'pwht_processes' }), field('pwhtLocationId', 'PWHT location', { type: 'ref', ref: 'pwht_locations' }), date, field('note', 'Note', { type: 'textarea' })] },
+  { key: 'mass-inspection-request', title: 'Generate mass request', module: 'welding', submit: 'Go', description: 'One request number for the selected welds and the open processes ticked. The request is created when its PDF is generated.', fields: [field('type', 'Inspection type', { type: 'select', options: ['NDT PRE', 'NDT', 'PRE-HT', 'PWHT'], required: true }), welds, field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true }), field('note', 'Note', { type: 'textarea' })] },
   { key: 'inspection-upload', title: 'Upload NDT on multiple welds', module: 'welding', submit: 'Save results', description: 'One report number and result per round for every selected weld.', fields: [field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), welds, field('rounds', 'Rounds', { hidden: true }), date] },
-  { key: 'pwht-upload', title: 'Upload Pre-HT/PWHT on multiple welds', module: 'welding', submit: 'Save', description: 'Pre-HT and PWHT report numbers for every selected weld.', fields: [welds, field('preReportNo', 'Pre report number'), field('reportNo', 'Report number'), field('checked', 'Check', { type: 'checkbox' }), date] },
+  { key: 'pwht-upload', title: 'Upload Pre-HT/PWHT on multiple welds', module: 'welding', submit: 'Upload', description: 'Pre-HT and PWHT report numbers for every selected weld.', fields: [welds, field('preReportNo', 'Pre-HT Rp/Nr.'), field('reportNo', 'PWHT Rp/Nr.'), field('checked', 'PWHT 100%', { type: 'checkbox' }), date] },
+  { key: 'ndt-restart', title: 'Restart NDT process', module: 'welding', submit: 'Yes', description: 'Start NDT processes of one weld again: they leave their request and their results are removed; the weld\'s other processes stay.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true, required: true })] },
+  { key: 'inspection-request-undo', title: 'Undo request', module: 'welding', submit: 'Undo', description: 'Take a weld, or some of its processes, off an NDT request. The request line stays in the records as removed.', fields: [field('requestNo', 'Request number', { required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true })] },
   { key: 'visual-inspection', title: 'Visual inspection', module: 'welding', submit: 'Save visual report', description: 'Write one visual inspection report to several welds.', fields: [welds, field('itp', 'ITP', { type: 'select', options: ['ITP 1', 'ITP 2'] }), field('activityNo', 'Activity No.'), field('engineerId', 'QA/QC engineer', { type: 'ref', ref: 'qa_engineers' }), field('customNo', 'Custom No.'), field('reportNo', 'Report No.', { required: true }), field('date', 'Inspection date', { type: 'date', required: true }), field('accepted', 'Accepted', { type: 'ref', ref: 'welds', multiple: true }), field('notAccepted', 'Not accepted', { type: 'ref', ref: 'welds', multiple: true }), field('notApplicable', 'Not applicable', { type: 'ref', ref: 'welds', multiple: true }), ...VT_ACTION_FIELDS] },
 ];
 export const INSPECTION_ACTION_KEYS = INSPECTION_ACTIONS.map(action => action.key);
 /** Actions whose permission depends on the inspection type in the request. */
-export const TYPED_INSPECTION_ACTIONS = ['ndt-weld', 'mass-inspection-request', 'inspection-upload'];
+export const TYPED_INSPECTION_ACTIONS = ['ndt-weld', 'mass-inspection-request', 'inspection-upload', 'ndt-restart', 'inspection-request-undo'];
 /** Permission area and operation of an action of this flow (see `actionScope` in `shared/permissions.ts`). */
-export function inspectionActionScope(key: string, data: Record<string, unknown> = {}): [string, 'insert' | 'edit' | 'delete' | 'print'] | undefined {
-  if (key === 'ndt-weld' || key === 'inspection-upload') return [data.type === 'NDT PRE' ? '94' : '76', 'insert'];
+export function inspectionActionScope(key: string, data: Record<string, unknown> = {}): [string, 'insert' | 'edit' | 'delete' | 'print' | 'show'] | undefined {
+  // Undoing a request is done in the request archive (NDT request archive 66; it has no NDT Pre area of its own).
+  if (key === 'inspection-request-undo') return ['66', 'show'];
+  if (key === 'ndt-weld' || key === 'inspection-upload' || key === 'ndt-restart') return [data.type === 'NDT PRE' ? '94' : '76', 'insert'];
   if (key === 'mass-inspection-request') return [data.type === 'PWHT' || data.type === 'PRE-HT' ? '65' : '50', 'print'];
   if (key === 'pwht-upload') return ['97', 'insert'];
   // Visual inspection 116: deleting a VT report needs its Delete right, every other operation its Add right.

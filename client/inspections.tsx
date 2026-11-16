@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ClipboardCheck, FileText, Loader2, Pencil, Printer, Upload } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertCircle, ArrowLeft, Download, FileText, Filter, Loader2, Pencil, Printer, RefreshCw, Search, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
-  locationField, managerColumns, managerRequests, managerWelds, processField, roundErrors, roundLabel,
-  weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type InspectionKind, type ManagerTab, type RoundInput,
+  ARCHIVE_PAGE_SIZES, ARCHIVE_VIEWS, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
+  archiveViewLabel, filterManagerWelds, groupRequests, inspectionFileError, keepEligible, locationField, managerColumns, managerResults, managerWelds, massRequestPlan, monthRange, processField, requestArchiveArea, requestDetail, requestFlag, requestSelectable, resultLabel, roundErrors, roundLabel,
+  weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type ArchiveFilter, type ArchiveRow, type ArchiveView, type InspectionKind, type ManagerFilter, type ManagerTab, type MassRequestPlan, type RequestDetailLine, type RequestFilter, type RequestGroup, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
   vtEligibleWelds, vtGenerateError, vtMarks, vtMissingMessage, vtOpenReports, vtResultRows, vtSeq, vtUploadReports, vtWeldIds,
   TRACER_DETAIL_TEXTS, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_NO_CANDIDATES, TRACER_PANEL_NOTE, TRACER_REMOVABLE_HINT, TRACER_SELECT_TEXT, autoReweld, naBlockErrors,
@@ -15,6 +16,7 @@ import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { Badge, EmptyState, Modal, TableScroll } from './components.tsx';
 import { RequestPdfButton, VisualReportPdfButton, WeldRequestPdfButtons } from './pdf-documents.tsx';
+import { InspectionCell } from './weld-inspection-cell.tsx';
 
 // ----- shared pieces ------------------------------------------------------------------------------------------
 
@@ -54,8 +56,8 @@ async function uploadFiles(entityType: string, entityId: string, files: File[], 
   }
   return failed;
 }
-function FilePicker({ id, label, files, onChange, pdf = false, hint }: { id: string; label: string; files: File[]; onChange: (files: File[]) => void; pdf?: boolean; hint?: string }) {
-  return <div className="field full-width"><label htmlFor={id}>{label}</label><input id={id} type="file" multiple accept={pdf ? '.pdf,application/pdf' : '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.txt'} onChange={e => onChange(Array.from(e.target.files || []))}/><small className="field-hint">{hint || (pdf ? 'PDF files only. Several files can be chosen.' : 'Several files can be chosen.')}{files.length ? ` ${files.length} selected.` : ''}</small></div>;
+function FilePicker({ id, label, files, onChange, pdf = false, hint, single = false }: { id: string; label: string; files: File[]; onChange: (files: File[]) => void; pdf?: boolean; hint?: string; single?: boolean }) {
+  return <div className="field full-width"><label htmlFor={id}>{label}</label><input id={id} type="file" multiple={!single} accept={pdf ? '.pdf,application/pdf' : '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.txt'} onChange={e => onChange(Array.from(e.target.files || []))}/><small className="field-hint">{hint || (pdf ? 'PDF files only. Several files can be chosen.' : 'Several files can be chosen.')}{files.length ? ` ${files.length} selected.` : ''}</small></div>;
 }
 function FileLinks({ files }: { files: Row[] }) {
   if (!files.length) return <p className="muted">No documents yet.</p>;
@@ -296,45 +298,76 @@ export function TracerDetailBody({ detail, place, processName }: { detail: Trace
 // ----- mass actions -------------------------------------------------------------------------------------------
 
 type MassProps = { isoId?: string; weldIds?: string[]; onClose: () => void };
-const requestFlag: Record<string, string> = { 'NDT PRE': 'ndoReqPre', NDT: 'ndoReq', 'PRE-HT': 'pwhtReqPre', PWHT: 'pwhtReq' };
 const scopeWelds = (rows: Rows, isoId?: string, weldIds?: string[]) => activeRows(rows, 'welds').filter(weld => (!isoId || weld.isoId === isoId) && (!weldIds?.length || weldIds.includes(weld.id))).sort((a, b) => String(a.weldNo).localeCompare(String(b.weldNo), 'en', { numeric: true }));
+/** The welds ticked in the table (a dialog opened with nothing ticked sees none: the reference asks to select welds first). */
+const tickedWelds = (rows: Rows, weldIds?: string[]) => activeRows(rows, 'welds').filter(weld => (weldIds || []).includes(weld.id)).sort((a, b) => String(a.weldNo).localeCompare(String(b.weldNo), 'en', { numeric: true }));
+/** "RT - Execution: …": the process name and its description. */
+const processText = (rows: Rows, id: unknown) => { const process = rows.ndt_processes?.find(row => row.id === id); return process ? [process.name, process.description].filter(Boolean).map(String).join(' - ') : '-'; };
+const REQUEST_PDF: Record<string, string> = { NDT: 'ndt-request', 'NDT PRE': 'ndt-pre-request', 'PRE-HT': 'pwht-request', PWHT: 'pwht-request' };
+/** Makes the PDF of a request (stored on it as its request document) and opens it in a new tab; a blocked tab downloads it instead. */
+async function openRequestPdf(type: string, number: string, isometrics: boolean) {
+  const blob = await apiBlob(`/pdf/${REQUEST_PDF[type]}?${new URLSearchParams({ requestNo: number, isometrics: isometrics ? '1' : '0' })}`, { method: 'POST' });
+  const url = URL.createObjectURL(blob);
+  if (!window.open(url, '_blank')) { const link = document.createElement('a'); link.href = url; link.download = `${number}-request.pdf`; document.body.appendChild(link); link.click(); link.remove(); }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
-/** Generate mass NDT-Pre / NDT / Pre-HT/PWHT request: one request number, processes to include, note. */
-export function MassRequestDialog({ kind, isoId, weldIds, onClose }: MassProps & { kind: 'NDT PRE' | 'NDT' | 'PWHT' }) {
-  const { rows, canRun, siteId } = useWorkspace();
-  const [type, setType] = useState<string>(kind === 'PWHT' ? 'PWHT' : kind);
-  const pool = scopeWelds(rows, isoId, weldIds).filter(weld => weld[requestFlag[type]] === true && !(rows.inspection_requests || []).some(row => !row._archived && row.weldId === weld.id && row.type === type && row.status === 'Open'));
-  const [selected, setSelected] = useState<string[]>(() => pool.map(weld => weld.id));
-  const [processIds, setProcessIds] = useState<string[]>([]), [location, setLocation] = useState(''), [pwhtProcess, setPwhtProcess] = useState(''), [pwhtLocation, setPwhtLocation] = useState(''), [note, setNote] = useState(''), [date, setDate] = useState(today());
+export interface MassRequestFormProps {
+  kind: 'NDT PRE' | 'NDT' | 'PWHT'; type: string; onType: (type: string) => void; plan: MassRequestPlan; processes: { id: string; label: string }[];
+  chosen: string[]; onChosen: (ids: string[]) => void; note: string; onNote: (note: string) => void; include: boolean; onInclude: (value: boolean) => void;
+  error: string; busy: boolean; onClose: () => void; onSubmit: (event: FormEvent) => void;
+}
+/**
+ * The print dialog of "Generate Mass … request" (reference pdfNdtRequestLanguageISO / pdfNdtPreRequestLanguageISO / pdfPwhtRequestLanguageISO):
+ * the open processes of the ticked welds (NDT) or Pre-WHT / PWHT (radio), a note, the isometric option and Go. Go is the only way
+ * a request is made: it creates the request and its PDF in one step.
+ */
+export function MassRequestForm({ kind, type, onType, plan, processes, chosen, onChosen, note, onNote, include, onInclude, error, busy, onClose, onSubmit }: MassRequestFormProps) {
+  const ndt = kind !== 'PWHT';
+  const title = kind === 'NDT PRE' ? 'NDT-Pre Request' : kind === 'NDT' ? 'NDT Request' : 'PWHT request';
+  return <Modal title={title} onClose={onClose}><form onSubmit={onSubmit}><div className="modal-body"><Alert message={error}/>
+    <div className="alert" role="note"><span>{MASS_REQUEST_TEXTS.alert}</span></div>
+    {ndt ? (plan.error ? <p className="muted" role="status">{plan.error}</p>
+        : <fieldset className="field full-width inspection-processes"><legend>{kind === 'NDT PRE' ? 'NDT-Pre Process' : 'NDT Process'}</legend>{processes.map(process => <label key={process.id}><input type="checkbox" checked={chosen.includes(process.id)} onChange={e => onChosen(e.target.checked ? [...chosen, process.id] : chosen.filter(id => id !== process.id))}/>{process.label}</label>)}</fieldset>)
+      : <><fieldset className="field inspection-processes"><legend className="sr-only">Pre-HT or PWHT</legend>
+          <label><input type="radio" name="mass-pwht-type" checked={type === 'PRE-HT'} onChange={() => onType('PRE-HT')}/>Pre-WHT</label>
+          <label><input type="radio" name="mass-pwht-type" checked={type === 'PWHT'} onChange={() => onType('PWHT')}/>PWHT</label></fieldset>
+        {plan.error && <p className="muted" role="status">{plan.error}</p>}</>}
+    {ndt && <div className="field full-width"><label htmlFor="mass-note">Note</label><textarea id="mass-note" rows={3} maxLength={2000} value={note} onChange={e => onNote(e.target.value)}/></div>}
+    <div className="field checkbox-field"><label htmlFor="mass-iso"><input id="mass-iso" type="checkbox" checked={include} onChange={e => onInclude(e.target.checked)}/><span>{MASS_REQUEST_TEXTS.includeIsometrics}</span></label></div>
+  </div><Footer busy={busy} onClose={onClose} submit="Go" disabled={Boolean(plan.error) || (ndt && !chosen.length)}/></form></Modal>;
+}
+
+/** Generate Mass NDT-Pre / NDT / Pre-HT/PWHT request for the welds ticked in the table. Go creates the request (one number R + five digits) and its PDF. */
+export function MassRequestDialog({ kind, weldIds, onClose }: MassProps & { kind: 'NDT PRE' | 'NDT' | 'PWHT' }) {
+  const { rows, canRun } = useWorkspace();
+  const [type, setType] = useState<string>(kind), [chosen, setChosen] = useState<string[]>([]), [note, setNote] = useState(''), [include, setInclude] = useState(false);
   const { busy, error, setError, run } = useSubmit(onClose);
-  const ndt = type === 'NDT' || type === 'NDT PRE';
+  const ndt = kind !== 'PWHT';
+  const plan = massRequestPlan(type, tickedWelds(rows, weldIds), rows.inspection_requests, rows.inspection_results, rows.ndt_processes);
   if (!canRun('mass-inspection-request', { type })) return <NoAccess onClose={onClose} what="creating these requests"/>;
-  const title = kind === 'NDT PRE' ? 'Generate Mass NDT-Pre request' : kind === 'NDT' ? 'Generate Mass NDT request' : 'Generate Mass Pre-HT/PWHT request';
+  const processes = plan.processIds.map(id => ({ id, label: String(rows.ndt_processes?.find(row => row.id === id)?.name ?? '-') }));
+  const picked = chosen.filter(id => plan.processIds.includes(id));
   function submit(event: FormEvent) {
     event.preventDefault();
-    const ids = selected.filter(id => pool.some(weld => weld.id === id));
-    if (!ids.length) { setError('Select at least one weld.'); return; }
-    if (ndt && !processIds.length) { setError('Choose the NDT processes to include.'); return; }
-    void run(async () => { await post('/actions/mass-inspection-request', { type, weldIds: ids, processIds: ndt ? processIds : [], locationId: ndt ? location : '', pwhtProcessId: ndt ? '' : pwhtProcess, pwhtLocationId: ndt ? '' : pwhtLocation, date, note }); return `Request created for ${ids.length} weld${ids.length === 1 ? '' : 's'}.`; });
+    if (plan.error) { setError(plan.error); return; }
+    if (ndt && !picked.length) { setError(MASS_REQUEST_TEXTS.selectProcess); return; }
+    void run(async () => {
+      const saved = await post<{ records: Row[] }>('/actions/mass-inspection-request', { type, weldIds: plan.open.map(line => line.weldId), processIds: ndt ? picked : [], note });
+      const number = String(saved.records[0]?.number ?? ''), made = `Request ${number} created for ${saved.records.length} weld${saved.records.length === 1 ? '' : 's'}.`;
+      try { await openRequestPdf(type, number, include); return made; }
+      catch (failure) { return `${made} Its PDF could not be made (${(failure as ApiError).message || 'try again'}); print it from the request archive.`; }
+    });
   }
-  return <Modal wide title={title} subtitle="One request number for the chosen welds. Print it from the NDT/PWHT Manager (Request archive) or from a weld's request." onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
-    <div className="form-grid">
-      {kind === 'PWHT' && <Select id="mass-type" label="Treatment" value={type} onChange={value => { setType(value); setSelected([]); }} options={[{ value: 'PRE-HT', label: 'Pre-HT' }, { value: 'PWHT', label: 'PWHT' }]} empty={null}/>}
-      {ndt ? <><Select id="mass-location" label="NDT location" value={location} onChange={setLocation} options={options(enabledRows(rows, 'ndt_locations', siteId))} empty="Select NDT location"/>
-        <fieldset className="field full-width inspection-processes"><legend>NDT processes to include <span className="required">*</span></legend>{options(enabledRows(rows, 'ndt_processes', siteId, processIds)).map(option => <label key={option.value}><input type="checkbox" checked={processIds.includes(option.value)} onChange={e => setProcessIds(e.target.checked ? [...processIds, option.value] : processIds.filter(id => id !== option.value))}/>{option.label}</label>)}</fieldset></>
-        : <><Select id="mass-pwht-process" label="PWHT process" value={pwhtProcess} onChange={setPwhtProcess} options={options(enabledRows(rows, 'pwht_processes', siteId))} empty="Select PWHT process"/><Select id="mass-pwht-location" label="PWHT location" value={pwhtLocation} onChange={setPwhtLocation} options={options(enabledRows(rows, 'pwht_locations', siteId))} empty="Select PWHT location"/></>}
-      <Text id="mass-date" label="Request date" type="date" value={date} onChange={setDate} required/>
-      <div className="field full-width"><label htmlFor="mass-note">Note</label><textarea id="mass-note" rows={3} value={note} onChange={e => setNote(e.target.value)}/></div>
-    </div>
-    <WeldPicker welds={pool} value={selected} onChange={setSelected} label="Welds requiring this examination without an open request"/>
-  </div><Footer busy={busy} onClose={onClose} submit="Create request" disabled={!pool.length}/></form></Modal>;
+  return <MassRequestForm kind={kind} type={type} onType={setType} plan={plan} processes={processes} chosen={picked} onChosen={setChosen} note={note} onNote={setNote} include={include} onInclude={setInclude} error={error} busy={busy} onClose={onClose} onSubmit={submit}/>;
 }
 
 /** Upload NDT on multiple welds: report number and result per round, and files. */
 export function UploadNdtDialog({ isoId, weldIds, onClose, type: initial = 'NDT' }: MassProps & { type?: 'NDT' | 'NDT PRE' }) {
   const { rows, canRun } = useWorkspace();
   const [type, setType] = useState<'NDT' | 'NDT PRE'>(initial);
-  const pool = scopeWelds(rows, isoId, weldIds).filter(weld => weld[requestFlag[type]] === true);
+  const poolFor = (examination: string) => scopeWelds(rows, isoId, weldIds).filter(weld => weld[requestFlag(examination)] === true);
+  const pool = poolFor(type);
   const [selected, setSelected] = useState<string[]>(() => weldIds?.length ? pool.map(weld => weld.id) : []);
   const [rounds, setRounds] = useState(() => NDT_ROUNDS.map(round => ({ round: round.key, reportNo: '', result: '' })));
   const [date, setDate] = useState(today()), [files, setFiles] = useState<File[]>([]);
@@ -353,40 +386,43 @@ export function UploadNdtDialog({ isoId, weldIds, onClose, type: initial = 'NDT'
       return failed ? `Results saved; ${failed} file${failed === 1 ? '' : 's'} could not be uploaded.` : `Results saved for ${ids.length} weld${ids.length === 1 ? '' : 's'}.`;
     });
   }
+  // Changing the examination keeps the ticked welds that the new examination still applies to (scn-SA-D4).
+  const changeType = (value: string) => { setType(value as 'NDT' | 'NDT PRE'); setSelected(current => keepEligible(current, poolFor(value).map(weld => weld.id))); };
   return <Modal wide title="Upload NDT on multiple welds" subtitle="The same report number and result per round are written to every selected weld." onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
-    <div className="form-grid"><Select id="upload-type" label="Examination" value={type} onChange={value => { setType(value as 'NDT' | 'NDT PRE'); setSelected([]); }} options={[{ value: 'NDT', label: 'NDT' }, { value: 'NDT PRE', label: 'NDT Pre' }]} empty={null}/><Text id="upload-date" label="NDT date" type="date" value={date} onChange={setDate} required/></div>
+    <div className="form-grid"><Select id="upload-type" label="Examination" value={type} onChange={changeType} options={[{ value: 'NDT', label: 'NDT' }, { value: 'NDT PRE', label: 'NDT Pre' }]} empty={null}/><Text id="upload-date" label="NDT date" type="date" value={date} onChange={setDate} required/></div>
     <TableScroll><table className="data-table inspection-rounds"><thead><tr><th scope="col">Round</th><th scope="col">Report number</th><th scope="col">Result</th></tr></thead><tbody>{rounds.map((round, i) => <tr key={round.round}><th scope="row">{roundLabel(round.round)}</th><td><input aria-label={`Report number ${roundLabel(round.round)}`} value={round.reportNo} onChange={e => setRounds(list => list.map((item, index) => index === i ? { ...item, reportNo: e.target.value } : item))}/></td><td><select aria-label={`Result ${roundLabel(round.round)}`} value={round.result} onChange={e => setRounds(list => list.map((item, index) => index === i ? { ...item, result: e.target.value } : item))}>{NDT_RESULT_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></td></tr>)}</tbody></table></TableScroll>
     <WeldPicker welds={pool} value={selected} onChange={setSelected}/>
     <FilePicker id="upload-files" label="NDT documents" files={files} onChange={setFiles} pdf hint="PDF files only; attached to the report."/>
   </div><Footer busy={busy} onClose={onClose} submit="Save results" disabled={!pool.length}/></form></Modal>;
 }
 
-/** Upload Pre-HT/PWHT on multiple welds: Pre report number, report number, file, check. */
+/** Upload Pre-HT/PWHT on multiple welds (reference uploadPWHTonMultipleWelds): Pre-HT Rp/Nr., PWHT Rp/Nr., one PDF document, PWHT 100%. */
 export function UploadPwhtDialog({ isoId, weldIds, onClose }: MassProps) {
   const { rows, canRun } = useWorkspace();
   const pool = scopeWelds(rows, isoId, weldIds).filter(weld => weld.pwhtReqPre === true || weld.pwhtReq === true);
   const [selected, setSelected] = useState<string[]>(() => weldIds?.length ? pool.map(weld => weld.id) : []);
-  const [preReportNo, setPre] = useState(''), [reportNo, setReport] = useState(''), [checked, setChecked] = useState(false), [date, setDate] = useState(today()), [files, setFiles] = useState<File[]>([]);
+  const [preReportNo, setPre] = useState(''), [reportNo, setReport] = useState(''), [checked, setChecked] = useState(false), [files, setFiles] = useState<File[]>([]);
   const { busy, error, setError, run } = useSubmit(onClose);
   if (!canRun('pwht-upload')) return <NoAccess onClose={onClose} what="recording heat treatment reports"/>;
   function submit(event: FormEvent) {
     event.preventDefault();
     const ids = selected.filter(id => pool.some(weld => weld.id === id)); if (!ids.length) { setError('Select at least one weld.'); return; }
-    if (!preReportNo.trim() && !reportNo.trim()) { setError('Enter a Pre report number, a report number, or both.'); return; }
+    if (!preReportNo.trim() && !reportNo.trim()) { setError('Enter a Pre-HT Rp/Nr., a PWHT Rp/Nr., or both.'); return; }
     const missing = pool.find(weld => ids.includes(weld.id) && (preReportNo.trim() && weld.pwhtReqPre !== true || reportNo.trim() && weld.pwhtReq !== true));
     if (missing) { setError(`Weld ${weldName(missing)} does not require ${preReportNo.trim() && missing.pwhtReqPre !== true ? 'Pre-HT' : 'PWHT'}.`); return; }
+    const wrong = files.map(file => inspectionFileError(PWHT_DOCUMENT, file.name)).find(Boolean); if (wrong) { setError(wrong); return; }
     void run(async () => {
-      const saved = await post<{ records: Row[] }>('/actions/pwht-upload', { weldIds: ids, preReportNo: preReportNo.trim(), reportNo: reportNo.trim(), checked, date });
-      const failed = files.length && saved.records[0] ? await uploadFiles('inspection_results', saved.records[0].id, files, 'Heat treatment report') : 0;
+      const saved = await post<{ records: Row[] }>('/actions/pwht-upload', { weldIds: ids, preReportNo: preReportNo.trim(), reportNo: reportNo.trim(), checked });
+      const failed = files.length && saved.records[0] ? await uploadFiles('inspection_results', saved.records[0].id, files, PWHT_DOCUMENT) : 0;
       return failed ? `Reports saved; ${failed} file${failed === 1 ? '' : 's'} could not be uploaded.` : `Heat treatment saved for ${ids.length} weld${ids.length === 1 ? '' : 's'}.`;
     });
   }
   return <Modal wide title="Upload Pre-HT/PWHT on multiple welds" subtitle="Records the treatment report on every selected weld that requires it." onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
-    <div className="form-grid"><Text id="pwht-pre" label="Pre report number" value={preReportNo} onChange={setPre}/><Text id="pwht-report" label="Report number" value={reportNo} onChange={setReport}/><Text id="pwht-date" label="Date" type="date" value={date} onChange={setDate} required/>
-      <div className="field checkbox-field"><label htmlFor="pwht-check"><input id="pwht-check" type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)}/><span>Check</span></label><small className="field-hint">Tick when the treatment chart has been reviewed.</small></div></div>
+    <div className="form-grid"><Text id="pwht-pre" label="Pre-HT Rp/Nr." value={preReportNo} onChange={setPre}/><Text id="pwht-report" label="PWHT Rp/Nr." value={reportNo} onChange={setReport}/>
+      <div className="field checkbox-field"><label htmlFor="pwht-check"><input id="pwht-check" type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)}/><span>PWHT 100%</span></label></div></div>
     <WeldPicker welds={pool} value={selected} onChange={setSelected}/>
-    <FilePicker id="pwht-files" label="File" files={files} onChange={setFiles}/>
-  </div><Footer busy={busy} onClose={onClose} submit="Save" disabled={!pool.length}/></form></Modal>;
+    <FilePicker id="pwht-files" label="Document (Only PDFs are allowed)" files={files} onChange={setFiles} pdf single hint="One PDF file."/>
+  </div><Footer busy={busy} onClose={onClose} submit="Upload" disabled={!pool.length}/></form></Modal>;
 }
 
 // ----- visual inspection hub ---------------------------------------------------------------------------------
@@ -583,70 +619,248 @@ export function useInspectionMenu(isoId: string) {
 
 // ----- NDT/PWHT Manager ---------------------------------------------------------------------------------------
 
+/** "16.11.2026. 12:40", the way the archives show their last refresh. */
+export const refreshStamp = (at: Date) => { const pad = (value: number) => String(value).padStart(2, '0'); return `${pad(at.getDate())}.${pad(at.getMonth() + 1)}.${at.getFullYear()}. ${pad(at.getHours())}:${pad(at.getMinutes())}`; };
+function downloadCsv(name: string, header: string[], lines: string[][]) {
+  const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
+  const url = URL.createObjectURL(new Blob([[header, ...lines].map(line => line.map(quote).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+const projectIdOf = (rows: Rows, weld: Row) => String(weldContext(rows, weld).project?.id ?? '');
+const projectOptions = (rows: Rows) => options(activeRows(rows, 'projects'), row => String(row.internnumber || row.description || row.id));
+/** Index no., charge no. and material of side 1 or 2 of a weld, as the manager tables show them. */
+function weldMaterial(rows: Rows, label: (resource: string, id: unknown) => string, weld: Row, side: 1 | 2) {
+  const certificate = rows.certifications?.find(row => row.id === weld[`certificate${side}Id`]), id = weld[`material${side}Id`];
+  return { index: String(certificate?.indexNo || '—'), charge: String(weld[`chargeNo${side}`] || '—'), material: id ? String(rows.materials?.find(row => row.id === id)?.description || label('materials', id)) : '—' };
+}
+/** The Proces column: the welding process of the weld ("-" when none), never an NDT process. */
+export const weldingProcessText = (weld: Row, processes: Row[] | undefined) => { const found = weld.processId ? (processes || []).find(row => row.id === weld.processId) : undefined; return found ? String(found.name) : '-'; };
+
+/** "Show [10] entries" and the paging line under a manager table. */
+function Pager({ total, page, setPage, size, setSize, sizes, unit }: { total: number; page: number; setPage: (page: number) => void; size: number; setSize: (size: number) => void; sizes: number[]; unit: string }) {
+  const pages = Math.max(1, Math.ceil(total / size)), current = Math.min(page, pages - 1);
+  return <div className="table-footer"><label className="inspection-page-size">Show <select aria-label="Rows per page" value={size} onChange={e => { setSize(Number(e.target.value)); setPage(0); }}>{sizes.map(item => <option key={item} value={item}>{item}</option>)}</select> entries</label>
+    <span role="status">{total ? `Showing ${current * size + 1} to ${Math.min(current * size + size, total)} of ${total} ${unit}` : `Showing 0 of 0 ${unit}`}</span>
+    <div><button type="button" className="btn small" disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button><span>{current + 1} / {pages}</span><button type="button" className="btn small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div></div>;
+}
+
 /** Welding data → NDT/PWHT Manager: the eight tabs of the reference. */
 export function InspectionManager() {
-  const { rows, canRecord, canRun, hasFeature } = useWorkspace();
+  const { rows, canRecord, canRun, canArea, hasFeature } = useWorkspace();
   const [tabKey, setTab] = useState(MANAGER_TABS[0].key), [selected, setSelected] = useState<string[]>([]), [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<ManagerFilter>({});
   const [dialog, setDialog] = useState<ReactNode>(null);
-  const tab = MANAGER_TABS.find(item => item.key === tabKey)!;
-  if (!hasFeature('inspections') || !canRecord('welds') || !canRecord('inspection_requests')) return <EmptyState title="This area is restricted" description="Your profile does not include the NDT/PWHT Manager."/>;
+  // The request archives need their own area (NDT request archive 66, PWHT request archive 67).
+  const tabs = MANAGER_TABS.filter(item => !item.requests || canArea(requestArchiveArea(item)));
+  const tab = tabs.find(item => item.key === tabKey) ?? tabs[0];
+  if (!hasFeature('inspections') || !canRecord('welds') || !canRecord('inspection_requests') || !tab) return <EmptyState title="This area is restricted" description="Your profile does not include the NDT/PWHT Manager."/>;
   const welds = activeRows(rows, 'welds');
   const match = (values: unknown[]) => !query.trim() || values.some(value => String(value ?? '').toLowerCase().includes(query.trim().toLowerCase()));
   const close = () => { setDialog(null); setSelected([]); };
-  const switchTab = (key: ManagerTab['key']) => { setTab(key); setSelected([]); };
+  const switchTab = (key: ManagerTab['key']) => { setTab(key); setSelected([]); setQuery(''); };
+  const projectOf = (weld: Row) => projectIdOf(rows, weld);
+  const count = (item: ManagerTab) => item.requests ? groupRequests(item, rows.inspection_requests).length : item.archive ? managerResults(item, 'finished', welds, rows.inspection_results, rows.inspection_requests, rows.ndt_processes).length : managerWelds(item, welds, rows.inspection_results).length;
+  const weldTab = !tab.requests && !tab.archive;
+  const shownWelds = weldTab ? filterManagerWelds(managerWelds(tab, welds, rows.inspection_results), filter, projectOf).filter(weld => { const context = weldContext(rows, weld); return match([context.projectName, context.isoName, weld.weldNo, welderNames(rows, weld), weldRequestNumbers(rows, weld, tab)]); }) : [];
+  const selectRight = weldTab && (canRun('mass-inspection-request', { type: tab.types[0] }) || canRun(tab.kind === 'PWHT' ? 'pwht-upload' : 'inspection-upload', { type: tab.types[0] }));
   return <div className="page inspection-manager">
     <div className="page-heading"><div><div className="eyebrow">WELD PILOT · WELDING DATA</div><h1>NDT/PWHT Manager</h1><p>Welds that need NDT Pre, NDT or heat treatment, and every request and result already recorded.</p></div></div>
     <section className="panel">
-      <div className="table-tabs inspection-tabs" role="tablist" aria-label="NDT/PWHT Manager">{MANAGER_TABS.map(item => { const count = item.requests ? managerRequests(item, rows.inspection_requests).length : managerWelds(item, welds, rows.inspection_results).length; return <button key={item.key} type="button" role="tab" aria-selected={tabKey === item.key} className={tabKey === item.key ? 'selected' : ''} onClick={() => switchTab(item.key)}>{item.label}<span className="count-pill">{count}</span></button>; })}</div>
-      <div className="inspection-toolbar"><div className="field"><label htmlFor="manager-search">Search</label><input id="manager-search" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Project, ISO, weld, report…"/></div>
-        {!tab.requests && !tab.archive && <ManagerActions tab={tab} selected={selected} open={setDialog} onDone={close}/>}</div>
-      {tab.requests ? <RequestArchive tab={tab} match={match}/> : <WeldTab tab={tab} welds={managerWelds(tab, welds, rows.inspection_results).filter(weld => { const context = weldContext(rows, weld); return match([context.projectName, context.isoName, weld.weldNo, welderNames(rows, weld), currentRequest(rows.inspection_requests, weld.id, tab.types[0])?.number]); })} selected={selected} setSelected={setSelected} selectable={!tab.archive && (canRun('mass-inspection-request', { type: tab.types[0] }) || canRun(tab.kind === 'PWHT' ? 'pwht-upload' : 'inspection-upload', { type: tab.types[0] }))}/>}
+      <div className="table-tabs inspection-tabs" role="tablist" aria-label="NDT/PWHT Manager">{tabs.map(item => <button key={item.key} type="button" role="tab" aria-selected={tab.key === item.key} className={tab.key === item.key ? 'selected' : ''} onClick={() => switchTab(item.key)}>{item.label}<span className="count-pill">{count(item)}</span></button>)}</div>
+      {weldTab && <div className="inspection-toolbar"><div className="field"><label htmlFor="manager-search">Search</label><input id="manager-search" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search"/></div>
+        <ManagerActions tab={tab} selected={selected} open={setDialog} onDone={close} filtered={Boolean(filter.project || filter.welder || filter.weldType)} onFilter={() => setDialog(<ManagerFilterDialog filter={filter} onApply={next => { setFilter(next); setSelected([]); setDialog(null); }} onClose={() => setDialog(null)}/>)}/></div>}
+      {tab.requests ? <RequestArchive key={tab.key} tab={tab}/> : tab.archive ? <ArchiveTab key={tab.key} tab={tab}/> : <WeldTab key={tab.key} tab={tab} welds={shownWelds} selected={selected} setSelected={setSelected} canSelect={selectRight}/>}
     </section>
     {dialog}
   </div>;
 }
-function ManagerActions({ tab, selected, open, onDone }: { tab: ManagerTab; selected: string[]; open: (node: ReactNode) => void; onDone: () => void }) {
+/** Request numbers (R00161, R00162) of the live requests of a weld on a tab. */
+const weldRequestNumbers = (rows: Rows, weld: Row, tab: ManagerTab) => [...new Set(tab.types.flatMap(type => (rows.inspection_requests || []).filter(row => !row._archived && row.weldId === weld.id && row.type === type && row.status !== 'Cancelled').map(row => String(row.number || '')).filter(Boolean)))].join(', ');
+
+/** The Filter dialog of the request managers: Project, Welder, Type. */
+function ManagerFilterDialog({ filter, onApply, onClose }: { filter: ManagerFilter; onApply: (filter: ManagerFilter) => void; onClose: () => void }) {
+  const { rows } = useWorkspace();
+  const [draft, setDraft] = useState(filter);
+  const welders = options(activeRows(rows, 'welders'), row => [`[${row.welderCode || row.number || ''}]`, row.name].filter(Boolean).join(' ')), types = options(activeRows(rows, 'weld_types'), row => `[${row.abbreviation || ''}] ${row.name}`);
+  return <Modal title="Filter" onClose={onClose}><form onSubmit={event => { event.preventDefault(); onApply(draft); }}><div className="modal-body">
+    <Select id="manager-filter-project" label="Project" value={draft.project || ''} onChange={project => setDraft({ ...draft, project })} options={projectOptions(rows)} empty="---Any---"/>
+    <Select id="manager-filter-welder" label="Welder" value={draft.welder || ''} onChange={welder => setDraft({ ...draft, welder })} options={welders} empty="---Any---"/>
+    <Select id="manager-filter-type" label="Type" value={draft.weldType || ''} onChange={weldType => setDraft({ ...draft, weldType })} options={types} empty="---Any---"/>
+  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">Go</button></div></form></Modal>;
+}
+
+function ManagerActions({ tab, selected, open, onDone, onFilter, filtered }: { tab: ManagerTab; selected: string[]; open: (node: ReactNode) => void; onDone: () => void; onFilter: () => void; filtered: boolean }) {
   const { canRun } = useWorkspace();
   const type = tab.types[0] as 'NDT' | 'NDT PRE';
   const pwht = tab.kind === 'PWHT';
+  const ticked = selected.length > 0;
   return <div className="inspection-actions">
-    {canRun('mass-inspection-request', { type: pwht ? 'PWHT' : type }) && <button type="button" className="btn" disabled={!selected.length} onClick={() => open(<MassRequestDialog kind={pwht ? 'PWHT' : type} weldIds={selected} onClose={onDone}/>)}><Printer size={15}/>{pwht ? 'Generate Pre-HT/PWHT request' : tab.kind === 'NDT PRE' ? 'Generate NDT-Pre request' : 'Generate NDT request'}</button>}
-    {pwht ? canRun('pwht-upload') && <button type="button" className="btn primary" disabled={!selected.length} onClick={() => open(<UploadPwhtDialog weldIds={selected} onClose={onDone}/>)}><Upload size={15}/>Upload Pre-HT/PWHT</button>
-      : canRun('inspection-upload', { type }) && <button type="button" className="btn primary" disabled={!selected.length} onClick={() => open(<UploadNdtDialog type={type} weldIds={selected} onClose={onDone}/>)}><Upload size={15}/>Upload results</button>}
-    <small className="field-hint">{selected.length ? `${selected.length} selected` : 'Tick welds to request or record them.'}</small>
+    <button type="button" className="btn" onClick={onFilter}><Filter size={15}/>Filter{filtered && <span className="count-pill">on</span>}</button>
+    {/* The NDT managers show Generate only once welds are ticked; the PWHT manager always shows it. */}
+    {canRun('mass-inspection-request', { type: pwht ? 'PWHT' : type }) && (pwht || ticked) && <button type="button" className="btn" onClick={() => open(<MassRequestDialog kind={pwht ? 'PWHT' : type} weldIds={selected} onClose={onDone}/>)}><Printer size={15}/>{pwht ? 'Generate Mass Pre-HT/PWHT request' : tab.kind === 'NDT PRE' ? 'Generate Mass NDT request PRE' : 'Generate Mass NDT request'}</button>}
+    {ticked && (pwht ? canRun('pwht-upload') && <button type="button" className="btn primary" onClick={() => open(<UploadPwhtDialog weldIds={selected} onClose={onDone}/>)}><Upload size={15}/>Upload Pre-HT/PWHT</button>
+      : canRun('inspection-upload', { type }) && <button type="button" className="btn primary" onClick={() => open(<UploadNdtDialog type={type} weldIds={selected} onClose={onDone}/>)}><Upload size={15}/>Upload results</button>)}
+    {ticked && <small className="field-hint">{selected.length} selected</small>}
   </div>;
 }
-function WeldTab({ tab, welds, selected, setSelected, selectable }: { tab: ManagerTab; welds: Row[]; selected: string[]; setSelected: (ids: string[]) => void; selectable: boolean }) {
+function WeldTab({ tab, welds, selected, setSelected, canSelect }: { tab: ManagerTab; welds: Row[]; selected: string[]; setSelected: (ids: string[]) => void; canSelect: boolean }) {
   const { rows, label } = useWorkspace();
-  const [page, setPage] = useState(0);
-  if (!welds.length) return <EmptyState title={tab.archive ? 'Nothing archived yet' : 'No welds waiting'} description={tab.archive ? 'Welds move here once a result is recorded.' : 'Welds appear here when their requirement flag is set and no result is recorded yet.'}/>;
+  const [page, setPage] = useState(0), [size, setSize] = useState(MANAGER_PAGE_SIZES[0]);
+  if (!welds.length) return <EmptyState title="No welds waiting" description={tab.kind === 'PWHT' ? 'Welds appear here when Pre-HT or PWHT is required.' : 'Welds appear here when their requirement flag is set and no result is recorded yet.'}/>;
   const sorted = [...welds].sort((a, b) => label('isometrics', a.isoId).localeCompare(label('isometrics', b.isoId), 'en', { numeric: true }) || String(a.weldNo).localeCompare(String(b.weldNo), 'en', { numeric: true }));
-  const pages = Math.max(1, Math.ceil(sorted.length / 50)), current = Math.min(page, pages - 1), shown = sorted.slice(current * 50, current * 50 + 50);
-  const columns = managerColumns(tab);
-  const certificate = (weld: Row, side: number) => rows.certifications?.find(row => row.id === weld[`certificate${side}Id`]);
-  const material = (weld: Row, side: number) => { const id = weld[`material${side}Id`]; return id ? String(rows.materials?.find(row => row.id === id)?.description || label('materials', id)) : '—'; };
-  const pre = tab.kind === 'NDT PRE';
-  const process = (weld: Row) => tab.kind === 'PWHT' ? [weld.pwhtPreProcessId, weld.pwhtProcessId].filter(Boolean).map(id => label('pwht_processes', id)).join(', ') || '—' : weld[processField(pre, 1)] ? label('ndt_processes', weld[processField(pre, 1)]) : '—';
-  return <><TableScroll><table className="data-table inspection-table" aria-label={tab.label}><thead><tr>{columns.map((column, i) => <th scope="col" key={i}>{column}</th>)}{selectable && <th scope="col"><input type="checkbox" aria-label="Select all welds on this page" checked={shown.every(weld => selected.includes(weld.id))} onChange={e => setSelected(e.target.checked ? [...new Set([...selected, ...shown.map(weld => weld.id)])] : selected.filter(id => !shown.some(weld => weld.id === id)))}/></th>}</tr></thead>
-    <tbody>{shown.map(weld => { const context = weldContext(rows, weld); const request = tab.types.map(type => currentRequest(rows.inspection_requests, weld.id, type)).find(Boolean); return <tr key={weld.id}>
-      <td>{context.projectName}</td><td>{context.isoName}</td><th scope="row">{weldName(weld)}</th><td>{String(rows.weld_types?.find(row => row.id === weld.typeId)?.abbreviation || label('weld_types', weld.typeId))}</td><td>{welderNames(rows, weld) || '—'}</td>
-      <td><ManagerCell weld={weld} kind={tab.kind}/></td><td>{String(request?.number || '—')}</td>
-      <td>{String(certificate(weld, 1)?.indexNo || '—')}</td><td>{String(weld.chargeNo1 || '—')}</td><td>{material(weld, 1)}</td><td>{String(certificate(weld, 2)?.indexNo || '—')}</td><td>{String(weld.chargeNo2 || '—')}</td><td>{material(weld, 2)}</td>
-      <td>{process(weld)}</td><td>{weld.wpsId ? label('wps', weld.wpsId) : '—'}</td>
-      {selectable && <td><input type="checkbox" aria-label={`Select weld ${weldName(weld)}`} checked={selected.includes(weld.id)} onChange={e => setSelected(e.target.checked ? [...selected, weld.id] : selected.filter(id => id !== weld.id))}/></td>}
+  const pages = Math.max(1, Math.ceil(sorted.length / size)), current = Math.min(page, pages - 1), shown = sorted.slice(current * size, current * size + size);
+  const columns = managerColumns(tab), pwht = tab.kind === 'PWHT';
+  // NDT / NDT Pre: a weld is selectable only while one of its NDT processes is on no request yet; the PWHT manager selects every row.
+  const selectable = (weld: Row) => canSelect && requestSelectable(weld, tab.kind, rows.inspection_requests, rows.inspection_results, rows.ndt_processes);
+  const pickable = shown.filter(selectable);
+  return <><TableScroll><table className="data-table inspection-table" aria-label={tab.label}><thead><tr>{columns.map((column, i) => <th scope="col" key={i}>{column}</th>)}{canSelect && <th scope="col">{pickable.length > 0 && <input type="checkbox" aria-label="Select all welds on this page" checked={pickable.every(weld => selected.includes(weld.id))} onChange={e => setSelected(e.target.checked ? [...new Set([...selected, ...pickable.map(weld => weld.id)])] : selected.filter(id => !pickable.some(weld => weld.id === id)))}/>}</th>}</tr></thead>
+    <tbody>{shown.map(weld => { const context = weldContext(rows, weld), first = weldMaterial(rows, label, weld, 1), second = weldMaterial(rows, label, weld, 2); return <tr key={weld.id}>
+      <td>{context.projectName}</td><td>{pwht && context.iso ? <Link className="record-link" to={`/workspace/isometrics/${context.iso.id}`}>{context.isoName}</Link> : context.isoName}</td><th scope="row">{weldName(weld)}</th><td>{String(rows.weld_types?.find(row => row.id === weld.typeId)?.abbreviation || label('weld_types', weld.typeId))}</td><td>{welderNames(rows, weld) || '—'}</td>
+      <td><InspectionCell weld={weld} kind={tab.kind}/></td>{!pwht && <td>{weldRequestNumbers(rows, weld, tab) || '—'}</td>}
+      <td>{first.index}</td><td>{first.charge}</td><td>{first.material}</td><td>{second.index}</td><td>{second.charge}</td><td>{second.material}</td>
+      <td>{weldingProcessText(weld, rows.weld_processes)}</td><td>{weld.wpsId ? label('wps', weld.wpsId) : '—'}</td>
+      {canSelect && <td>{selectable(weld) ? <input type="checkbox" aria-label={`Select weld ${weldName(weld)}`} checked={selected.includes(weld.id)} onChange={e => setSelected(e.target.checked ? [...selected, weld.id] : selected.filter(id => id !== weld.id))}/> : '-'}</td>}
     </tr>; })}</tbody></table></TableScroll>
-    <div className="table-footer"><span role="status">{current * 50 + 1}–{Math.min(current * 50 + 50, sorted.length)} of {sorted.length} welds</span><div><button type="button" className="btn small" disabled={current === 0} onClick={() => setPage(current - 1)}>Previous</button><span>{current + 1} / {pages}</span><button type="button" className="btn small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div></div></>;
+    <Pager total={sorted.length} page={current} setPage={setPage} size={size} setSize={setSize} sizes={MANAGER_PAGE_SIZES} unit="welds"/></>;
 }
-function ManagerCell({ weld, kind }: { weld: Row; kind: InspectionKind }) {
-  const [open, setOpen] = useState(false); const { rows } = useWorkspace();
-  const state = inspectionCellState(weld, kind, workspaceCellRows(rows));
-  return <><button type="button" className="text-link" onClick={() => setOpen(true)} aria-label={`${KIND_LABELS[kind]} of weld ${weldName(weld)}: ${state.status.replace('-', ' ')}`}><ClipboardCheck size={14}/>{state.status === 'accepted' ? 'Accepted' : state.status === 'rejected' ? 'NA' : state.status === 'requested' ? 'Requested' : state.status === 'not-applicable' ? 'Not applicable' : 'Open'}</button>{open && <InspectionDialog weld={weld} kind={kind} onClose={() => setOpen(false)}/>}</>;
+
+// ----- archive tabs: one row per examined process -------------------------------------------------------------
+
+/** Cells of an archive row as text, in the order of `managerColumns` (without the closing "Open" column). */
+function archiveCells(rows: Rows, label: (resource: string, id: unknown) => string, tab: ManagerTab, row: ArchiveRow, view: ArchiveView): string[] {
+  const weld = row as Row, context = weldContext(rows, weld), first = weldMaterial(rows, label, weld, 1), second = weldMaterial(rows, label, weld, 2);
+  const diameter = rows.diameters?.find(item => item.id === weld.diameterId)?.sizeinch;
+  const process = tab.kind === 'PWHT' ? (row.processId ? label('pwht_processes', row.processId) : '-') : row.processId ? `${row.roundIndex}-${processText(rows, row.processId)}` : '-';
+  const documented = view === 'finished' && (rows.attachments || []).some(file => !file._archived && (file.entityType === 'inspection_results' && file.entityId === row.resultId || file.entityType === 'inspection_requests' && Boolean(row.requestId) && file.entityId === row.requestId && file.documentType !== REQUEST_DOCUMENT));
+  return [context.projectName, context.isoName, weldName(weld), String(rows.weld_types?.find(item => item.id === weld.typeId)?.name || '-'), welderNames(rows, weld) || '-', diameter === undefined || diameter === null || diameter === '' ? '-' : String(diameter).replace('.', ','), formatDate(row.resultDate), process,
+    view === 'finished' ? resultLabel(row.resultValue) : '---', first.index, first.charge, first.material, second.index, second.charge, second.material, weld.wpsId ? label('wps', weld.wpsId) : '-', documented ? 'Yes' : 'No', row.reportNo || '-'];
 }
-function RequestArchive({ tab, match }: { tab: ManagerTab; match: (values: unknown[]) => boolean }) {
-  const { rows, label } = useWorkspace();
-  const requests = managerRequests(tab, rows.inspection_requests).filter(row => { const weld = rows.welds?.find(item => item.id === row.weldId); const context = weld ? weldContext(rows, weld) : undefined; return match([row.number, row.type, weld?.weldNo, context?.isoName, context?.projectName, row.status]); });
-  if (!requests.length) return <EmptyState title="No requests yet" description="Requests created from this manager or from an isometric are archived here."/>;
+/** NDT archive PRE / NDT archive / PWHT archive: Finished / Open results / Open welds views, Refresh, Export and Filter. */
+function ArchiveTab({ tab }: { tab: ManagerTab }) {
+  const { rows, label, refresh, notify } = useWorkspace();
+  const [view, setView] = useState<ArchiveView>('finished'), [filter, setFilter] = useState<ArchiveFilter>({}), [filtering, setFiltering] = useState(false), [query, setQuery] = useState('');
+  const [page, setPage] = useState(0), [size, setSize] = useState(20), [refreshedAt, setRefreshedAt] = useState(() => new Date()), [busy, setBusy] = useState(false);
+  const welds = activeRows(rows, 'welds');
+  const list = managerResults(tab, view, welds, rows.inspection_results, rows.inspection_requests, rows.ndt_processes, { filter, projectOf: weld => projectIdOf(rows, weld) });
+  const cells = list.map(row => ({ row, text: archiveCells(rows, label, tab, row, view) })).filter(item => !query.trim() || item.text.some(value => value.toLowerCase().includes(query.trim().toLowerCase())));
+  const columns = managerColumns(tab);
+  const pages = Math.max(1, Math.ceil(cells.length / size)), current = Math.min(page, pages - 1);
+  async function reload() { setBusy(true); try { await refresh(); setRefreshedAt(new Date()); } catch { notify('The archive could not be refreshed.'); } finally { setBusy(false); } }
+  const exportCsv = () => downloadCsv(`${tab.key}-${view}.csv`, columns.slice(0, -1), cells.map(item => item.text));
+  const heading = archiveViewLabel(tab, view);
+  return <div className="inspection-archive">
+    <div className="inspection-toolbar"><div className="field"><label htmlFor="archive-search">Search</label><input id="archive-search" type="search" value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} placeholder="Search"/></div>
+      <div className="inspection-actions"><Select id="archive-view" label="Switch view" value={view} onChange={value => { setView(value as ArchiveView); setPage(0); }} options={ARCHIVE_VIEWS.map(item => ({ value: item, label: archiveViewLabel(tab, item) }))} empty={null}/>
+        <button type="button" className="btn" disabled={busy} onClick={() => void reload()}>{busy ? <Loader2 size={15} className="spin"/> : <RefreshCw size={15}/>}Refresh</button>
+        <button type="button" className="btn" disabled={!cells.length} onClick={exportCsv}><Download size={15}/>Export</button>
+        <button type="button" className="btn" onClick={() => setFiltering(true)}><Filter size={15}/>Filter{(filter.project || filter.processId || filter.result) && <span className="count-pill">on</span>}</button></div></div>
+    <h2 className="inspection-archive-heading">{heading} <small className="muted">Last refresh: {refreshStamp(refreshedAt)}</small></h2>
+    {cells.length ? <><TableScroll><table className="data-table inspection-table" aria-label={`${tab.label}: ${heading}`}><thead><tr>{columns.map((column, i) => <th scope="col" key={i}>{column || <span className="sr-only">Isometric</span>}</th>)}</tr></thead>
+      <tbody>{cells.slice(current * size, current * size + size).map(({ row, text }) => <tr key={row.id}>{text.map((value, i) => i === 2 ? <th scope="row" key={i}>{value}</th> : <td key={i}>{value}</td>)}<td>{row.isoId ? <Link className="record-link" to={`/workspace/isometrics/${row.isoId}`} target="_blank">Open</Link> : '-'}</td></tr>)}</tbody></table></TableScroll>
+      <Pager total={cells.length} page={current} setPage={setPage} size={size} setSize={setSize} sizes={ARCHIVE_PAGE_SIZES} unit="entries"/></>
+      : <EmptyState title={view === 'finished' ? 'Nothing finished yet' : view === 'open-results' ? 'No open results' : 'No open welds'} description={view === 'finished' ? 'A process moves here once its result is recorded.' : view === 'open-results' ? 'Processes of a request that still wait for their result are listed here.' : 'Welds with a process that is on no request yet are listed here.'}/>}
+    {filtering && <ArchiveFilterDialog tab={tab} filter={filter} onApply={next => { setFilter(next); setPage(0); setFiltering(false); }} onClose={() => setFiltering(false)}/>}
+  </div>;
+}
+/** "Filter welds by project": Project, NDT process and Result. */
+function ArchiveFilterDialog({ tab, filter, onApply, onClose }: { tab: ManagerTab; filter: ArchiveFilter; onApply: (filter: ArchiveFilter) => void; onClose: () => void }) {
+  const { rows } = useWorkspace();
+  const [draft, setDraft] = useState(filter);
+  return <Modal title="Filter welds by project" onClose={onClose}><form onSubmit={event => { event.preventDefault(); onApply(draft); }}><div className="modal-body">
+    <Select id="archive-filter-project" label="Project" value={draft.project || ''} onChange={project => setDraft({ ...draft, project })} options={projectOptions(rows)} empty="All"/>
+    {tab.kind !== 'PWHT' && <Select id="archive-filter-process" label="NDT process" value={draft.processId || ''} onChange={processId => setDraft({ ...draft, processId })} options={activeRows(rows, 'ndt_processes').map(row => ({ value: row.id, label: processText(rows, row.id) }))} empty="All"/>}
+    <Select id="archive-filter-result" label="Result" value={draft.result || ''} onChange={result => setDraft({ ...draft, result })} options={[{ value: 'Accepted', label: 'Accepted' }, { value: 'Rejected', label: 'NA' }]} empty="All"/>
+  </div><div className="modal-footer"><button className="btn primary">Filter</button><button type="button" className="btn" onClick={onClose}>Cancel</button></div></form></Modal>;
+}
+
+// ----- request archives: one row per request -------------------------------------------------------------------
+
+/** NDT request archive / PWHT request archive: Date, Request number, Welds, Options (print, Undo); filters Project, NDT, From Date, To Date. */
+function RequestArchive({ tab }: { tab: ManagerTab }) {
+  const { rows, canRun } = useWorkspace();
+  const month = monthRange(today());
+  const [draft, setDraft] = useState<RequestFilter>({ from: month.from, to: month.to }), [applied, setApplied] = useState<RequestFilter>(draft);
+  const [page, setPage] = useState(0), [size, setSize] = useState(10), [detail, setDetail] = useState('');
   const pwht = tab.kind === 'PWHT';
-  return <TableScroll><table className="data-table inspection-table" aria-label={tab.label}><thead><tr><th scope="col">Request number</th><th scope="col">Type</th><th scope="col">Project</th><th scope="col">ISO</th><th scope="col">Weld no.</th><th scope="col">{pwht ? 'PWHT process' : 'NDT processes'}</th><th scope="col">{pwht ? 'PWHT location' : 'NDT location'}</th><th scope="col">Request date</th><th scope="col">Status</th><th scope="col">Note</th><th scope="col"><span className="sr-only">Request document</span></th></tr></thead>
-    <tbody>{requests.map(row => { const weld = rows.welds?.find(item => item.id === row.weldId); const context = weld ? weldContext(rows, weld) : undefined; return <tr key={row.id}><th scope="row">{String(row.number || '—')}</th><td>{row.type === 'NDT PRE' ? 'NDT Pre' : row.type === 'PRE-HT' ? 'Pre-HT' : String(row.type)}</td><td>{context?.projectName || '—'}</td><td>{context?.isoName || '—'}</td><td>{weldName(weld)}</td><td>{pwht ? (row.pwhtProcessId ? label('pwht_processes', row.pwhtProcessId) : '—') : String(row.processes || (row.processId ? label('ndt_processes', row.processId) : '—'))}</td><td>{pwht ? (row.pwhtLocationId ? label('pwht_locations', row.pwhtLocationId) : '—') : row.locationId ? label('ndt_locations', row.locationId) : '—'}</td><td>{formatDate(row.date)}</td><td><Badge>{row.status === 'Rejected' ? 'NA' : String(row.status)}</Badge></td><td>{String(row.note || '')}</td><td><RequestPdfButton request={row}/></td></tr>; })}</tbody></table></TableScroll>;
+  const projectOf = (weldId: string) => { const weld = rows.welds?.find(item => item.id === weldId); return weld ? projectIdOf(rows, weld) : ''; };
+  const groups = groupRequests(tab, rows.inspection_requests, applied, projectOf);
+  const chosen = groups.find(group => group.key === detail);
+  if (chosen) return <RequestDetail tab={tab} group={chosen} onBack={() => setDetail('')}/>;
+  const pages = Math.max(1, Math.ceil(groups.length / size)), current = Math.min(page, pages - 1);
+  const undo = !pwht && canRun('inspection-request-undo', { type: applied.pre ? 'NDT PRE' : 'NDT' });
+  return <div className="inspection-archive">
+    <form className="inspection-toolbar inspection-request-filter" onSubmit={event => { event.preventDefault(); setApplied(draft); setPage(0); }}>
+      <Select id="request-project" label="Project" value={draft.project || ''} onChange={project => setDraft({ ...draft, project })} options={projectOptions(rows)} empty="All projects"/>
+      {!pwht && <Select id="request-pre" label="NDT" value={draft.pre ? 'pre' : ''} onChange={value => setDraft({ ...draft, pre: value === 'pre' })} options={[{ value: '', label: 'NDT' }, { value: 'pre', label: 'NDT Pre' }]} empty={null}/>}
+      <Text id="request-from" label="From Date" type="date" value={draft.from || ''} onChange={from => setDraft({ ...draft, from })}/>
+      <Text id="request-to" label="To Date" type="date" value={draft.to || ''} onChange={to => setDraft({ ...draft, to })}/>
+      <button className="btn"><Search size={15}/>Filter</button></form>
+    {groups.length ? <><TableScroll><table className="data-table inspection-table" aria-label={tab.label}><thead><tr>{managerColumns(tab).map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
+      <tbody>{groups.slice(current * size, current * size + size).map(group => <tr key={group.key}><td>{formatDate(group.date)}</td><th scope="row"><button type="button" className="text-link" onClick={() => setDetail(group.key)} aria-label={`Open request ${group.shown}`}>{group.shown}</button></th><td>{group.welds}</td>
+        <td className="inspection-options"><RequestPdfButton request={group.lines[0]}/>{undo && <button type="button" className="btn small" onClick={() => setDetail(group.key)}>Undo</button>}</td></tr>)}</tbody></table></TableScroll>
+      <Pager total={groups.length} page={current} setPage={setPage} size={size} setSize={setSize} sizes={MANAGER_PAGE_SIZES} unit="requests"/></>
+      : <EmptyState title="No requests found" description="Requests generated from the Manager or from an isometric are archived here. Widen the date range or the project to see more."/>}
+  </div>;
+}
+type UndoPick = { weldId: string; processId: string };
+/** One request: its welds and processes (ISO, Weld no., NDT). The NDT archive restarts ticked processes or undoes a single one. */
+function RequestDetail({ tab, group, onBack }: { tab: ManagerTab; group: RequestGroup; onBack: () => void }) {
+  const { rows, label, canRun, refresh, notify } = useWorkspace();
+  const [picked, setPicked] = useState<UndoPick[]>([]), [confirm, setConfirm] = useState<{ text: string[]; run: () => Promise<void> } | null>(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const lines = requestDetail(group.lines, rows.inspection_results, rows.ndt_processes);
+  const pwht = tab.kind === 'PWHT', canUndo = !pwht && canRun('inspection-request-undo', { type: group.type });
+  const isPicked = (line: RequestDetailLine) => picked.some(item => item.weldId === line.weldId && item.processId === line.processId);
+  const toggle = (line: RequestDetailLine, on: boolean) => setPicked(on ? [...picked, { weldId: line.weldId, processId: line.processId }] : picked.filter(item => !(item.weldId === line.weldId && item.processId === line.processId)));
+  /** One undo call per weld; the processes of a weld that go together. */
+  async function undo(items: UndoPick[]) {
+    setBusy(true); setError('');
+    try {
+      for (const weldId of new Set(items.map(item => item.weldId))) await post('/actions/inspection-request-undo', { type: group.type, requestNo: group.number, weldId, processIds: items.filter(item => item.weldId === weldId).map(item => item.processId).filter(Boolean) });
+      await refresh(); notify(items.length === 1 ? 'The process was taken off the request.' : 'The selected processes were taken off the request.'); setPicked([]); setConfirm(null);
+    } catch (failure) { setError((failure as ApiError).message || 'Undo failed'); setConfirm(null); } finally { setBusy(false); }
+  }
+  const ask = (items: UndoPick[], text: string[]) => { setError(''); setConfirm({ text, run: () => undo(items) }); };
+  const restart = () => {
+    if (!picked.length) { setError('Select at least one process'); return; }
+    const withResult = lines.some(line => isPicked(line) && line.hasResult);
+    ask(picked, ['You are about to restart the selected NDT process.', ...(withResult ? ['The NDT result for the selected process will be removed.'] : []), 'Are you sure?']);
+  };
+  return <div className="inspection-archive">
+    <div className="inspection-toolbar"><h2 className="inspection-archive-heading">{tab.label}: request {group.shown}</h2><button type="button" className="btn" onClick={onBack}><ArrowLeft size={15}/>Back to the request archive</button></div>
+    {error && <Alert message={error}/>}
+    <TableScroll><table className="data-table inspection-table" aria-label={`Request ${group.shown}`}><thead><tr><th scope="col">ISO</th><th scope="col">Weld no.</th><th scope="col">{pwht ? 'PWHT' : 'NDT'}</th>{canUndo && <th scope="col"><span className="sr-only">Select</span></th>}{canUndo && <th scope="col"><span className="sr-only">Undo</span></th>}</tr></thead>
+      <tbody>{lines.map(line => { const weld = rows.welds?.find(item => item.id === line.weldId), context = weld ? weldContext(rows, weld) : undefined; return <tr key={`${line.request.id}:${line.processId}`}>
+        <td>{context?.isoName || '—'}</td><td>{weldName(weld)}</td><td>{pwht ? (group.type === 'PRE-HT' ? 'Pre-HT' : 'PWHT') : line.processId ? processText(rows, line.processId) : '-'}</td>
+        {canUndo && <td><input type="checkbox" aria-label={`Select ${weldName(weld)} ${line.processId ? label('ndt_processes', line.processId) : ''}`} checked={isPicked(line)} onChange={e => toggle(line, e.target.checked)}/></td>}
+        {canUndo && <td><button type="button" className="btn small" disabled={busy} onClick={() => ask([{ weldId: line.weldId, processId: line.processId }], [line.last ? 'Undo this process and remove this weld from the request?' : 'Undo this process on this request?'])}>Undo</button></td>}
+      </tr>; })}</tbody></table></TableScroll>
+    {canUndo && picked.length > 0 && <div className="logistics-actions"><button type="button" className="btn" disabled={busy} onClick={restart}>Restart NDT process</button></div>}
+    {confirm && <div className="alert" role="alertdialog" aria-label="Confirm undo">{confirm.text.map(line => <span key={line}>{line}</span>)}<div className="logistics-actions"><button type="button" className="btn small danger" disabled={busy} onClick={() => void confirm.run()}>{busy && <Loader2 size={14} className="spin"/>}Yes</button><button type="button" className="btn small" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button></div></div>}
+  </div>;
+}
+
+/**
+ * "Restart NDT process" of a weld's NDT / NDT Pre dialog (reference): lists the weld's processes that are on a request with
+ * their result; the ticked ones leave their request and their results are removed, the weld's other processes stay.
+ */
+export function NdtRestartBox({ weld, type, onDone }: { weld: Row; type: 'NDT' | 'NDT PRE'; onDone?: () => void }) {
+  const { rows, label, canRun, refresh, notify } = useWorkspace();
+  const [open, setOpen] = useState(false), [ticked, setTicked] = useState<string[]>([]), [asking, setAsking] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  if (!canRun('ndt-restart', { type })) return null;
+  const lines = requestDetail((rows.inspection_requests || []).filter(row => !row._archived && row.weldId === weld.id && row.type === type && row.status !== 'Cancelled'), rows.inspection_results, rows.ndt_processes).filter(line => line.processId);
+  if (!lines.length) return null;
+  const result = (line: RequestDetailLine) => (rows.inspection_results || []).filter(row => !row._archived && row.requestId === line.request.id && row.processId === line.processId && row.result).map(row => row.result)[0];
+  const withResult = lines.some(line => ticked.includes(line.processId) && result(line));
+  async function restart() {
+    setBusy(true); setError('');
+    try { await post('/actions/ndt-restart', { weldId: weld.id, type, processIds: ticked }); await refresh(); notify('The selected NDT process was restarted.'); setOpen(false); setAsking(false); setTicked([]); onDone?.(); }
+    catch (failure) { setError((failure as ApiError).message || 'Restart failed'); setAsking(false); } finally { setBusy(false); }
+  }
+  return <section className="inspection-section"><button type="button" className="btn" aria-expanded={open} onClick={() => setOpen(!open)}>Restart NDT process</button>
+    {open && <div><Alert message={error}/>{lines.map(line => <label key={`${line.request.id}:${line.processId}`} className="inspection-restart-line"><input type="checkbox" checked={ticked.includes(line.processId)} onChange={e => setTicked(e.target.checked ? [...ticked, line.processId] : ticked.filter(id => id !== line.processId))}/><span>{processText(rows, line.processId)}</span>{result(line) && <Badge>{resultLabel(result(line))}</Badge>}</label>)}
+      <button type="button" className="btn" disabled={busy || !ticked.length} onClick={() => setAsking(true)}>Restart</button>
+      {asking && <div className="alert" role="alertdialog" aria-label="Confirm restart"><span>You are about to restart the selected NDT process.</span>{withResult && <span>The NDT result for the selected process will be removed.</span>}<span>Are you sure?</span><div className="logistics-actions"><button type="button" className="btn small danger" disabled={busy} onClick={() => void restart()}>{busy && <Loader2 size={14} className="spin"/>}Yes</button><button type="button" className="btn small" disabled={busy} onClick={() => setAsking(false)}>Cancel</button></div></div>}</div>}
+  </section>;
 }

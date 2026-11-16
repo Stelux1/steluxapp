@@ -446,10 +446,10 @@ test('documents, the ISO Book and the MTO dashboard inputs follow project site a
   // the record routes (403, scn-SC-D9); a document named by its number is unknown (404); the own one prints.
   for (const path of ['/pdf/lisl-gu?isoId=iso-4', '/pdf/weld-cards?isoId=iso-4', '/pdf/punch-list-blank?isoId=iso-4', '/pdf/welders-summary?isoId=iso-4',
     '/pdf/punch-list?isoId=iso-4', '/pdf/flange-report?isoId=iso-4', '/pdf/certification-index?siteId=site-river', '/pdf/certification-index?projectId=project-steam']) assert.equal(await status(north.as, path, 'weld'), 403, path);
-  for (const path of ['/pdf/ndt-request?requestNo=R-2026-0004', '/pdf/ndt-pre-request?requestNo=R-2026-0003']) assert.equal(await status(north.as, path, 'weld'), 404, path);
+  for (const path of ['/pdf/ndt-request?requestNo=R00004', '/pdf/ndt-pre-request?requestNo=R00003']) assert.equal(await status(north.as, path, 'weld'), 404, path);
   for (const path of ['/pdf/lisl-gu?isoId=iso-1', '/pdf/ndt-request?requestNo=NDT-2026-0001', '/pdf/punch-list?isoId=iso-1', '/pdf/flange-report?isoId=iso-1', '/pdf/certification-index?siteId=site-north']) assert.equal(await status(north.as, path, 'weld'), 200, path);
   const files = f.store.list('attachments').length;
-  assert.equal(await status(north.as, '/pdf/ndt-request?requestNo=R-2026-0004', 'weld', { method: 'POST' }), 404, 'attach to a request of the other main project');
+  assert.equal(await status(north.as, '/pdf/ndt-request?requestNo=R00004', 'weld', { method: 'POST' }), 404, 'attach to a request of the other main project');
   assert.equal(f.store.list('attachments').length, files, 'nothing was attached');
   // Sample pick lists are 00001 (North) and 00002 (Riverside): five digits (w2-mto-stock-core), and punch items have a counter of their own.
   assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00001', 'mto'), 404, 'pick list of North');

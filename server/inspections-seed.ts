@@ -36,13 +36,16 @@ export function seedInspectionSamples(store: Store) {
     // NDT Pre (MT before the final pass) on three field welds of the steam network.
     for (const id of ['weld-20', 'weld-22', 'weld-24']) set(id, { ndoReqPre: true, ndtPreLocationId: 'ndt-field', ndtPreProcess1Id: 'ndt-3' });
     rules.run('ndt-weld', { weldId: 'weld-20', type: 'NDT PRE', locationId: 'ndt-field', welderId: 'welder-1', rounds: [{ round: 'Initial', processId: 'ndt-3', reportNo: 'MT-2026-020', date: '2026-10-18', result: 'Accepted' }] });
-    rules.run('mass-inspection-request', { type: 'NDT PRE', weldIds: ['weld-22', 'weld-24'], processIds: ['ndt-3'], locationId: 'ndt-field', date: '2026-10-22', note: 'Magnetic particle test of the root and hot pass before capping.' });
-    rules.run('mass-inspection-request', { type: 'NDT', weldIds: ['weld-22', 'weld-23', 'weld-24'], processIds: ['ndt-0', 'ndt-1'], locationId: 'ndt-field', date: '2026-10-23', note: 'Radiography of the field closing welds; UT where film access is limited.' });
+    // A mass request takes the processes and the location from the welds and is dated the day it is generated: the sample dates it back.
+    const requested = (made: { records?: { id: string; _version: number }[] }, date: string) => { for (const request of made.records || []) store.update('inspection_requests', request.id, { date }, request._version, SYSTEM); };
+    for (const id of ['weld-22', 'weld-23', 'weld-24']) set(id, { ndtLocationId: 'ndt-field', ndtProcess1Id: 'ndt-0', ndtProcess2Id: 'ndt-1' });
+    requested(rules.run('mass-inspection-request', { type: 'NDT PRE', weldIds: ['weld-22', 'weld-24'], processIds: ['ndt-3'], note: 'Magnetic particle test of the root and hot pass before capping.' }), '2026-10-22');
+    requested(rules.run('mass-inspection-request', { type: 'NDT', weldIds: ['weld-22', 'weld-23', 'weld-24'], processIds: ['ndt-0', 'ndt-1'], note: 'Radiography of the field closing welds; UT where film access is limited.' }), '2026-10-23');
     // Pre-HT and PWHT: W002 preheated and treated; W020 waits for its PWHT request.
     set('weld-2', { pwhtReqPre: true, pwhtPreLocationId: 'pwht-shop', pwhtPreProcessId: 'pwht-1' });
     rules.run('pwht-upload', { weldIds: ['weld-2'], preReportNo: 'PHT-2026-002', checked: true, date: '2026-10-18' });
     set('weld-20', { pwhtReq: true, pwhtLocationId: 'pwht-shop', pwhtProcessId: 'pwht-1' });
-    rules.run('mass-inspection-request', { type: 'PWHT', weldIds: ['weld-20'], pwhtProcessId: 'pwht-1', pwhtLocationId: 'pwht-shop', date: '2026-10-24', note: 'Heat treatment cycle as specified in the WPS; chart recorder required.' });
+    requested(rules.run('mass-inspection-request', { type: 'PWHT', weldIds: ['weld-20'], note: 'Heat treatment cycle as specified in the WPS; chart recorder required.' }), '2026-10-24');
     // One visual report on the first cooling-water isometric.
     rules.run('visual-inspection', { weldIds: ['weld-1', 'weld-10', 'weld-19'], accepted: ['weld-1', 'weld-10'], notApplicable: ['weld-19'], itp: 'ITP 1', activityNo: '4.2', engineerId: 'qa-1', customNo: 'NFY-VT-07', reportNo: 'VT-2026-014', date: '2026-10-21' });
     store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_inspections_v1','1')").run();
