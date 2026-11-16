@@ -10,7 +10,10 @@ import { currentDrawingFile } from './iso-book-parts.ts';
 import { blankPunchPdf, flangeLabelsPdf, flangePdf, pickListPdf, punchPdf, reservedMaterialsPdf } from './operational-lists.ts';
 import {
   REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
+  ORDER_COLUMNS, orderDocumentModel,
 } from '../../shared/pdf-documents.ts';
+import { A4_PORTRAIT, documentHeader, plainTable, renderOperational } from './operational-blocks.ts';
+import { canScope } from '../../shared/permissions.ts';
 import { flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../../shared/pdf-lists.ts';
 import { REQUEST_DOCUMENT } from '../../shared/inspections.ts';
 import { pickListReports, reservedMaterials } from '../../shared/mto-logistics.ts';
@@ -189,7 +192,30 @@ const reservedMaterialsDocument: PdfScopedDefinition = {
   },
 };
 
+/**
+ * Order materials: the order document of one order (`?orderId=…`), opened after "Order checked materials" and printed from
+ * Order archive. Printing needs the print right of Order materials (13) or Order archive (17).
+ */
+const orderMaterials: PdfScopedDefinition = {
+  key: 'order-materials', title: 'Order materials', report: 'pdf-order', scope: 'scoped',
+  async build({ store, documents, user, rows, projectIds, query, now }) {
+    if (!['13', '17'].some(area => canScope(user, area, 'print'))) throw new AppError(403, 'Your permission profile does not allow this document.');
+    const model = orderDocumentModel(rows, query.orderId ?? '', projectIds);
+    if (!model) throw notFound('This order');
+    const company = companyForDocuments(store, documents);
+    const { bytes } = await renderOperational({
+      page: A4_PORTRAIT, title: `Order materials ${model.number}`, generatedAt: now,
+      async layout(pdf) {
+        const header = await documentHeader(pdf, { title: 'Order materials', subtitle: model.date ? `Order ${model.number} - ${model.date}` : `Order ${model.number}`, company, left: model.items });
+        return { header, steps: [{ table: plainTable(ORDER_COLUMNS, [11, 9, 10, 5, 7, 8, 32, 7, 5], model.lines, { size: 7, headerSize: 7 }) }] };
+      },
+    });
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(text(model.order.date)) ? text(model.order.date).replaceAll('-', '') : isoDate(now).replaceAll('-', '');
+    return { bytes, fileName: `${day}_R${safe(model.number, 'order')}-OrderMaterial` };
+  },
+};
+
 export const OPERATIONAL_DOCUMENTS: (PdfDocumentDefinition | PdfScopedDefinition)[] = [
   requestDefinition('ndt-request'), requestDefinition('ndt-pre-request'), requestDefinition('pwht-request'), visualReport,
-  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList, reservedMaterialsDocument,
+  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList, reservedMaterialsDocument, orderMaterials,
 ];

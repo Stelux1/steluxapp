@@ -55,8 +55,9 @@ test('every menu item resolves to a real page and resource items use resourcePat
   // Every page the hosted profile delivers today stays reachable from at least one menu.
   const listed = new Set(items.map(({ item }) => pilotItemPath(item)?.split('?')[0]));
   // Calculation lines and cut list open inside "MTO & calculations";
-  // inspection requests open as the request archives of the NDT/PWHT Manager.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // inspection requests open as the request archives of the NDT/PWHT Manager; isometric materials are edited on the
+  // isometric itself (the reference's Order / Take in menu has no Isometric materials, mto-procurement-stock-011).
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
 

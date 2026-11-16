@@ -1,7 +1,8 @@
-import { orderStatus, receiptRemaining } from '../shared/mto-procurement.ts';
+import { orderRequestLines, orderStatus, receiptRemaining } from '../shared/mto-procurement.ts';
+import { lineIsoIds } from '../shared/materials.ts';
 import type { Row } from '../shared/types.ts';
 import { AppError, positive, qty, type Actor, type Store } from './store.ts';
-import { changeSiteStock, receivingSiteId } from './mto-stock.ts';
+import { changeSiteStock, receivingSiteId, takeFromSite } from './mto-stock.ts';
 
 type Input = Record<string, unknown>;
 /** What `runAction` hands to the procurement rules: its own transaction helpers, so a failure rolls everything back. */
@@ -25,13 +26,103 @@ export function receivingWarehouseId(store: Store, value: unknown): string {
   throw new AppError(422, 'Choose the receiving storehouse.', { warehouseId: 'Select a storehouse.' });
 }
 
-/** The log entry of one delivery line (or of one correction, with a negative quantity). */
-export function recordReceipt(ctx: ProcurementContext, entry: { order: Row; line: Row; warehouseId: string; supplierId: string; chargeNo: string; quantity: number; correctsId?: string; note?: string }) {
+/** The log entry of one delivery line (or of one correction, with a negative quantity). `takenAt`: the moment of a take-in made now. */
+export function recordReceipt(ctx: ProcurementContext, entry: { order: Row; line: Row; warehouseId: string; supplierId: string; chargeNo: string; quantity: number; correctsId?: string; note?: string; takenAt?: string }) {
   const { order, line } = entry;
   return ctx.add('receipts', {
     orderId: order.id, lineId: line.id, materialId: line.materialId || '', customMaterialId: line.customMaterialId || '', warehouseId: entry.warehouseId, supplierId: entry.supplierId,
-    chargeNo: entry.chargeNo, quantity: entry.quantity, date: ctx.date, correction: entry.quantity < 0, correctsId: entry.correctsId || '', note: entry.note ?? ctx.note,
+    chargeNo: entry.chargeNo, quantity: entry.quantity, date: ctx.date, ...(entry.takenAt ? { takenAt: entry.takenAt } : {}), correction: entry.quantity < 0, correctsId: entry.correctsId || '', note: entry.note ?? ctx.note,
   });
+}
+
+const PLANNING_RESOURCES = ['isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'materials', 'custom_materials', 'projects'];
+const str = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+
+/**
+ * Order checked materials (pilots): one order for the checked requirement lines, one line per material with the quantity
+ * Order materials shows (need − what open orders of that material still bring), the requirement ids kept on the line.
+ * The number continues the order counter as five digits (00001, 00002, …); no supplier (it is assigned in Order archive).
+ * `stamped`: the order is made now, so its time is kept for the archive ("06.11.2025. 07:42").
+ */
+export function orderCheckedMaterials(ctx: ProcurementContext, requirementIds: string[], stamped: boolean) {
+  const rows = Object.fromEntries(PLANNING_RESOURCES.map(key => [key, ctx.store.list(key)]));
+  const { lines, error } = orderRequestLines(rows, requirementIds);
+  if (error) throw new AppError(error.status, error.message);
+  const isos = new Map(rows.isometrics.map(iso => [iso.id, iso]));
+  const projects = [...new Set(lines.flatMap(line => line.isoIds.map(id => String(isos.get(id)?.projectId || ''))).filter(Boolean))];
+  const order = ctx.add('orders', { number: ctx.store.nextDigits('PO'), supplierId: '', projectId: projects.length === 1 ? projects[0] : '', date: ctx.date, status: 'Pending', note: ctx.note, ...(stamped ? { orderedAt: new Date().toISOString() } : {}) });
+  for (const line of lines) {
+    const first = rows.iso_materials.find(row => row.id === line.requirementIds[0])!;
+    const custom = Boolean(first.customMaterialId) && !first.materialId;
+    const record = ctx.ensure(custom ? 'custom_materials' : 'materials', custom ? first.customMaterialId : first.materialId);
+    const snapshot = Object.fromEntries(['materialNo', 'description', 'uom', 'dia', 'lbs'].map(name => [name, record[name] || '']));
+    ctx.add('order_lines', {
+      ...snapshot, orderId: order.id, materialId: custom ? '' : record.id, customMaterialId: custom ? record.id : '',
+      requirementId: line.requirementIds.length === 1 ? line.requirementIds[0] : '', requirementIds: line.requirementIds.join(','),
+      isoId: line.isoIds.length === 1 ? line.isoIds[0] : '', quantity: positive(line.quantity), received: 0,
+    });
+  }
+  return { resource: 'orders', record: ctx.store.get('orders', order.id) };
+}
+
+/**
+ * Receive materials, step 2 (pilots): the "Today rec." quantity of each line of one order. More than ordered is accepted
+ * (the line then reads received > ordered and leaves Pending order); a negative quantity corrects an earlier receipt and can
+ * take back at most what the line has received. A delivery goes into the Material inventory of the line's project site
+ * (shared/mto-stock.ts); a correction takes it out again, charge by charge. Received orders can still be taken in; a
+ * cancelled one cannot. The supplier is stored on the receipt only. All lines are saved together or not at all.
+ * `stamped`: the take-in is made now, so its time is kept for the log ("06.11.2025 07:43").
+ */
+export function receiveMaterials(ctx: ProcurementContext, data: Input, stamped: boolean) {
+  const { store, actor } = ctx;
+  const order = ctx.ensure('orders', data.orderId);
+  if (order.status === 'Cancelled') throw new AppError(409, 'This order is cancelled.');
+  const supplierId = str(data.supplierId) || String(order.supplierId || '');
+  if (!supplierId) throw new AppError(422, 'Choose the delivery supplier.', { supplierId: 'Choose the delivery supplier.' });
+  ctx.ensure('suppliers', supplierId);
+  if (!Array.isArray(data.items) || !data.items.length || data.items.length > 500) throw new AppError(422, 'Enter at least one received quantity.');
+  const rows = Object.fromEntries(['isometrics', 'iso_materials', 'projects'].map(key => [key, store.list(key)]));
+  const takenAt = stamped ? new Date().toISOString() : '';
+  const seen = new Set<string>();
+  for (const raw of data.items) {
+    const item = (raw && typeof raw === 'object' ? raw : {}) as Input;
+    const line = ctx.ensure('order_lines', item.lineId);
+    if (line.orderId !== order.id || seen.has(line.id)) throw new AppError(422, 'Each delivery line must belong to this order and appear once.');
+    seen.add(line.id);
+    if (typeof item.quantity !== 'number' || !Number.isFinite(item.quantity) || qty(item.quantity) === 0) throw new AppError(422, 'Enter a received quantity other than zero.');
+    const amount = qty(item.quantity), received = qty(Number(line.received) + amount);
+    if (received < 0) throw new AppError(409, `Only ${qty(Number(line.received))} of this line can be taken back.`);
+    const refs = { materialId: String(line.materialId || ''), customMaterialId: String(line.customMaterialId || '') };
+    if (Boolean(refs.materialId) === Boolean(refs.customMaterialId)) throw new AppError(422, 'This order line has no material.');
+    const custom = Boolean(refs.customMaterialId), itemId = custom ? refs.customMaterialId : refs.materialId;
+    const siteId = receivingSiteId(store, order, { ...line, isoId: lineIsoIds(rows, line)[0] || '' });
+    let warehouseId = '';
+    if (!siteId) { const wh = ctx.ensure('warehouses', receivingWarehouseId(store, data.warehouseId)); if (wh.use === 'Tools') throw new AppError(422, 'Choose a warehouse that holds materials.'); warehouseId = wh.id; }
+    const chargeNo = str(item.chargeNo);
+    const extra = { requirementId: String(line.requirementId || ''), isoId: String(line.isoId || '') };
+    ctx.patch('order_lines', line, { received });
+    if (amount > 0) {
+      const note = `${order.number}${ctx.note ? ' · ' + ctx.note : ''}`;
+      if (siteId) {
+        changeSiteStock(store, actor, siteId, refs, chargeNo, amount);
+        ctx.add('movements', { number: store.next('MM'), ...refs, warehouseId: '', siteId, quantity: amount, type: 'Receipt', date: ctx.date, chargeNo, ...extra, note });
+      } else {
+        ctx.balance(false, itemId, warehouseId, chargeNo, amount, custom);
+        ctx.movement(false, 'Receipt', itemId, warehouseId, amount, { chargeNo, ...extra, note }, custom);
+      }
+    } else {
+      // A correction: what was taken in comes out again. Refused (and everything rolled back) when the stock was already used.
+      const note = `Correction of ${order.number}${ctx.note ? ' · ' + ctx.note : ''}`;
+      if (siteId) {
+        for (const part of takeFromSite(store, actor, siteId, refs, -amount, String(line.materialNo || 'material'))) ctx.add('movements', { number: store.next('MM'), ...refs, warehouseId: '', siteId, quantity: -part.quantity, type: 'Adjustment', date: ctx.date, chargeNo: String(part.row.chargeNo || ''), ...extra, note });
+      } else {
+        ctx.balance(false, itemId, warehouseId, chargeNo, amount, custom);
+        ctx.movement(false, 'Adjustment', itemId, warehouseId, amount, { chargeNo, ...extra, note }, custom);
+      }
+    }
+    recordReceipt(ctx, { order, line, warehouseId, supplierId, chargeNo, quantity: amount, takenAt });
+  }
+  return { resource: 'orders', record: refreshOrderStatus(ctx, order) };
 }
 
 /** Recompute the order status from its lines after a receipt or a correction. */

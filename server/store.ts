@@ -382,6 +382,11 @@ export class Store {
     const row = this.db.prepare('INSERT INTO counters(key,value) VALUES (?,1) ON CONFLICT(key) DO UPDATE SET value=counters.value+1 RETURNING value').get(prefix) as { value: number };
     return `${prefix}-${new Date().getUTCFullYear()}-${String(row.value).padStart(4, '0')}`;
   }
+  /** The next value of the same running counter as plain zero-padded digits, without prefix or year (order numbers 00001, 00002, …). */
+  nextDigits(prefix: string, width = 5) {
+    const row = this.db.prepare('INSERT INTO counters(key,value) VALUES (?,1) ON CONFLICT(key) DO UPDATE SET value=counters.value+1 RETURNING value').get(prefix) as { value: number };
+    return String(row.value).padStart(width, '0');
+  }
   audit(key: string, id: string, action: string, summary: string, actor: Actor) {
     // Notifications are personal messages, not events of the workspace: they are not part of its audit trail.
     if (key === 'notifications') return;

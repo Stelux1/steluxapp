@@ -74,8 +74,9 @@ test('scn-SC-D1: a 409 raised by a rule carries the rule sentence, with no recor
   const f = await fixture(t); await f.setup(); f.usePilot('mto');
   const order = f.db.list('orders').find(o => !['Received', 'Cancelled'].includes(String(o.status)))!;
   const line = f.db.list('order_lines').find(l => l.orderId === order.id)!;
-  const over = await refused(await f.request('/actions/receive', 'POST', { orderId: order.id, supplierId: order.supplierId, warehouseId: 'warehouse-main', items: [{ lineId: line.id, quantity: Number(line.quantity) + 1000 }] }), 409);
-  assert.equal(over.error, 'Received quantity exceeds the outstanding quantity.');
+  // MTO Pilot accepts more than ordered (as the reference); taking back more than the line received is the rule's 409.
+  const over = await refused(await f.request('/actions/receive', 'POST', { orderId: order.id, supplierId: order.supplierId || 'supplier-steel', items: [{ lineId: line.id, quantity: -(Number(line.received) + 1000) }] }), 409);
+  assert.equal(over.error, `Only ${Number(line.received)} of this line can be taken back.`);
   const stock = f.db.list('stock')[0];
   const short = await f.request('/actions/adjust-material', 'POST', { warehouseId: stock.warehouseId, materialId: stock.materialId, customMaterialId: stock.customMaterialId, chargeNo: stock.chargeNo, quantity: -(Number(stock.quantity) + 1000), reason: 'Count' });
   if (short.status === 409) assert.match((await short.json()).error, /^Insufficient stock/);
