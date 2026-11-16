@@ -57,6 +57,7 @@ import { registerWpsRoutes } from './wps.ts';
 import { registerMemoTemplateRoutes } from './memo-templates.ts';
 import { registerNdtBatchRoutes } from './ndt-batch.ts';
 import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope, deriveMaterialRows, materialMassEdit, registerIsoMaterialImportRoutes, registerMaterialDbRoutes } from './mto-materials.ts';
+import { registerProjectImportRoutes } from './project-import.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
 import { activeSite, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
@@ -489,6 +490,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerNdtBatchRoutes(app, { store, documents, access });
   if (pilots) registerMaterialDbRoutes(app, { store, access });
   if (pilots) registerIsoMaterialImportRoutes(app, { store, access });
+  // Projects → Import: Import projects and Import all project data (server/project-import.ts).
+  if (pilots) registerProjectImportRoutes(app, { store, access, availability });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);

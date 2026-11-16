@@ -23,6 +23,7 @@ import { FlagMark, IsoFilterDialog, IsoKpiCards } from './iso-list.tsx';
 import { CopyIsometricsDialog, PhaseDialog } from './iso-actions.tsx';
 import { IsoBookProjectButton, IsoBookSelectionButton } from './iso-book.tsx';
 import { ProjectRowButtons, ProjectsOptionsMenu } from './project-options.tsx';
+import { ProjectImportMenu } from './project-import.tsx';
 import { isStandardAttachmentName, STANDARD_DOCUMENT_MESSAGE } from '../shared/weld-catalogs.ts';
 import { EMPTY_TABLE_TEXT, NO_MATCH_TEXT, entriesText } from '../shared/ui-texts.ts';
 import { NO_RIGHTS_TEXT } from '../shared/pilots.ts';
@@ -135,6 +136,7 @@ export function TablePage({ resourceKey, scopeProjectId = '', headingExtra }: {r
     {certificates.active && <CertificationActions projectId={String(filters._projectId || scopeProjectId || '')}/>}
     {headingActions.length > 0 && <Dropdown trigger={<span className="btn">Actions<ChevronDown size={15}/></span>}>{headingActions.map(key => <button key={key} onClick={e => { closeMenu(e); setAction(key); }}>{ACTIONS[key].title}<ArrowRight size={14}/></button>)}</Dropdown>}
     {projectOptions && <ProjectsOptionsMenu checked={selectedRows.filter(row => !row._archived)} canDelete={selectedRows.every(row => canRecord(def.key, 'delete', row))} canEdit={writable} onDelete={() => setBulkArchiving(true)} onMassEdit={() => setBulk(true)} onShowDeleted={() => { setTab('archived'); setPage(0); setSelected([]); }}/>}
+    {projectButtons && <ProjectImportMenu/>}
     {isoList && hasFeature('pilots') && scopeProjectId && <IsoBookProjectButton isos={(rows.isometrics || []).filter(row => !row._archived && row.projectId === scopeProjectId)}/>}
     {headingExtra}
     {creatable && <button className="btn primary" onClick={() => def.createAction ? setAction(def.createAction) : setEditor('new')}><Plus size={17}/>{def.createAction ? ACTIONS[def.createAction].title : def.wording?.add ?? `Add ${def.singular}`}</button>}
