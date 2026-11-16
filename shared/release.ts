@@ -161,6 +161,12 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // enablement wherever they are delivered (the server accepts its request names for every enablement catalog).
     for (const key of WELD_CATALOG_RESOURCES) deliverResource(availability, key);
     availability.resources[CATALOG_SITES] = fields('resourceKey recordId siteId enabled');
+    // PQR (Weld Pilot → Weld data, first item as in the reference): the page, its reusable attribute values (records only,
+    // offered and created from the PQR form) and the WPS–PQR links (Procedure qualifications on the WPS form).
+    deliverResource(availability, 'pqr');
+    deliverResource(availability, 'qualification_options', undefined, { page: false });
+    availability.resources.wps_pqr = fields('wpsId pqrId ownerArchived');
+    availability.resources.wps.push('pqrIds', 'pqrId');
     // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
     for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
     for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];

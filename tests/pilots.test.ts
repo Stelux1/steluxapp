@@ -12,7 +12,7 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, pageAvailable, pagePath, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { canResource, SHARED_PILOT_SCOPES, RESOURCE_SCOPES } from '../shared/permissions.ts';
 import { PILOTS, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemResources, splitPilotPath } from '../shared/pilots.ts';
-import type { Bootstrap, Module, User } from '../shared/types.ts';
+import type { Bootstrap, Module, Row, User } from '../shared/types.ts';
 import * as catalog from '../client/catalog.ts';
 import { resourcePath } from '../client/records.tsx';
 
@@ -66,8 +66,8 @@ test('the pilot prefix is accepted only where the profile delivers pilots and ne
   assert.deepEqual(splitPilotPath('/mto'), { pilot: 'mto', path: '/' });
   assert.deepEqual(splitPilotPath('/weldx/welding/welds'), { path: '/weldx/welding/welds' });
   for (const path of ['/', '/weld', '/mto/', '/weld/dashboard', '/weld/welding/welds', '/weld/welding/lisl', '/mto/materials/planning', '/mto/workspace/isometrics/iso-1', '/mto/materials/certifications', '/weld/materials/planning', '/welding/welds', '/materials/planning']) assert.ok(pageAvailable(hosted, path, RESOURCES), path);
-  for (const path of ['/weld/settings/users', '/mto/settings/profiles', '/weld/settings/signatures']) assert.ok(pageAvailable(hosted, path, RESOURCES), path);
-  for (const path of ['/weld/welding/pqr', '/mto/materials/orders', '/weld/tools', '/weld/settings/companies', '/weld/weld/welding/welds', '/mto/mto/materials/planning', '/weldx/welding/welds', '/materials/orders']) assert.equal(pageAvailable(hosted, path, RESOURCES), false, path);
+  for (const path of ['/weld/settings/users', '/mto/settings/profiles', '/weld/settings/signatures', '/weld/welding/pqr']) assert.ok(pageAvailable(hosted, path, RESOURCES), path);
+  for (const path of ['/mto/materials/orders', '/weld/tools', '/weld/settings/companies', '/weld/weld/welding/welds', '/mto/mto/materials/planning', '/weldx/welding/welds', '/materials/orders']) assert.equal(pageAvailable(hosted, path, RESOURCES), false, path);
   assert.equal(pagePath(hosted, '/weld/welding/reports'), '/welding/reports');
   for (const profile of ['welding-demo', 'access-prototype'] as const) {
     const availability = availabilityFor(profile)!;
@@ -139,7 +139,7 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
 test('hosted pages are served under both prefixes and undelivered pages stay 404', async t => {
   const f = await hostedFixture(t);
   for (const path of ['/', '/weld', '/mto', '/weld/dashboard', '/weld/welding/welds', '/weld/welding/lisl', '/mto/materials/planning', '/mto/workspace/isometrics/iso-1', '/weld/workspace/isometrics/iso-1', '/weld/materials/planning', '/welding/welds', '/materials/planning', '/weld/welding/reports?report=wdi']) assert.equal((await f.request(path)).status, 200, path);
-  for (const path of ['/weld/welding/pqr', '/mto/materials/orders', '/weld/tools', '/weld/weld/welding/welds', '/weld/welding/reports?report=releases', '/mto/welding/reports?report=releases']) assert.equal((await f.request(path)).status, 404, path);
+  for (const path of ['/mto/materials/orders', '/weld/tools', '/weld/weld/welding/welds', '/weld/welding/reports?report=releases', '/mto/welding/reports?report=releases']) assert.equal((await f.request(path)).status, 404, path);
 });
 
 test('a weld-only account sees shared catalogs through the API but stays out of MTO records', async t => {
@@ -173,6 +173,33 @@ test('an MTO-only account sees shared catalogs through the API but stays out of 
   const data = await (await f.request('/api/bootstrap')).json() as Bootstrap;
   for (const key of ['welds', 'inspection_requests', 'inspection_results', 'welders']) assert.equal(data.rows[key], undefined, key);
   assert.ok(data.rows.certifications); assert.ok(data.rows.spools);
+});
+
+test('PQR is a Weld Pilot page of the hosted profile: an administrator reads and creates PQRs, an MTO-only account cannot', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const weld = (await (await f.request('/api/auth/status')).json()).user as User;
+  assert.ok(weld.availability!.navigation.includes('pqr'), 'the PQR page is delivered in Weld Pilot');
+  assert.ok(pageAvailable(weld.availability, '/weld/welding/pqr', RESOURCES));
+  assert.equal((await f.request('/weld/welding/pqr')).status, 200);
+  assert.equal((await f.request('/api/records/pqr')).status, 200);
+  assert.equal((await f.request('/api/records/qualification_options')).status, 200, 'the reusable attribute values');
+  const created = await f.request('/api/records/pqr', 'POST', { name: 'STX-PQR-HOSTED' }); assert.equal(created.status, 201, await created.clone().text());
+  const pqr = (await created.json()).record as Row;
+  const wps = await f.request('/api/records/wps', 'POST', { name: 'STX-WPS-HOSTED', method: '141', definition: 'Hosted PQR link', allProjects: true, pqrIds: [pqr.id] }); assert.equal(wps.status, 201, await wps.clone().text());
+  const wpsId = (await wps.json()).record.id as string;
+  assert.deepEqual(f.store.list('wps_pqr').filter(row => row.wpsId === wpsId).map(row => row.pqrId), [pqr.id], 'the WPS keeps its PQR link');
+  assert.ok(((await (await f.request('/api/bootstrap')).json()) as Bootstrap).rows.wps_pqr.some(row => row.wpsId === wpsId), 'the links reach Weld Pilot');
+  f.usePilot('mto');
+  const menuKeys = (key: 'weld' | 'mto') => PILOT_MAP[key].groups.flatMap(group => group.items.map(item => item.resource));
+  assert.ok(menuKeys('weld').includes('pqr')); assert.ok(!menuKeys('mto').includes('pqr'), 'MTO Pilot has no PQR menu entry');
+  assert.equal((await f.request('/api/records/pqr')).status, 403, 'MTO Pilot does not read PQRs');
+  f.usePilot('weld');
+  await f.signIn('MTO only PQR', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });
+  assert.equal((await f.request('/api/records/pqr')).status, 403, 'not enabled for Weld Pilot');
+  f.usePilot('mto');
+  assert.equal((await f.request('/api/records/pqr')).status, 403);
+  assert.equal((await f.request('/api/records/pqr', 'POST', { name: 'DENIED' })).status, 403);
+  assert.equal(f.store.list('pqr').filter(row => row.name === 'DENIED').length, 0);
 });
 
 test('read-only welding never writes a shared catalog and detailed permission profiles are unchanged', async t => {
