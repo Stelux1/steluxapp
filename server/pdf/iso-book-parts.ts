@@ -47,6 +47,7 @@ const byCreated = (a: Row, b: Row) => a._createdAt.localeCompare(b._createdAt) |
 export const NOT_IN_BOOK: Record<string, string> = {
   'weld-cards': 'Weld cards are cut out and handed to the welders; the book has no Weld card part.',
   'weld-labels': 'Weld labels are stuck on the spools; the book\'s Flange labels part is a different label and is deferred.',
+  'flange-labels': 'Flange labels are printed for the flanges ticked on the Flange Management page; the book\'s Flange labels part stays deferred.',
   'hydrotest-request': 'A hydrotest request covers a test system of several isometrics; the book has no Hydrotest part.',
 };
 

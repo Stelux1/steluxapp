@@ -4,6 +4,10 @@ import { printDate } from '../../shared/pdf-lisl.ts';
 import { projectItems } from '../../shared/pdf-documents.ts';
 import { BLANK_PUNCH_COLUMNS, BLANK_PUNCH_ROWS, FLANGE_PDF_COLUMNS, PICKLIST_COLUMNS, blankPunchHeader, punchColumns, punchRowCells, type FlangeReportModel, type PickListModel, type PunchListModel } from '../../shared/pdf-lists.ts';
 import type { Row } from '../../shared/types.ts';
+import { flangeAssetTag, flangePath, type FlangeItem } from '../../shared/flanges.ts';
+import { columns, lineHeight, spacer, type Block } from './engine.ts';
+import { DEFAULT_LABEL_GRID, LABEL_MARGIN, labelGeometry, type LabelGrid } from './weld-labels.ts';
+import { renderBlocks } from './weld-cards.ts';
 
 const text = (value: unknown) => String(value ?? '').trim();
 type Rows = Record<string, Row[]>;
@@ -56,6 +60,36 @@ export function flangePdf(input: FlangePdfInput) {
       return { header, steps };
     },
   });
+}
+
+/** One flange label: isometric, flange ID, asset tag and size, with a QR code of the flange's page. */
+export function flangeLabelBlock(item: FlangeItem, link: string, width: number, height: number): Block {
+  const size = Math.min(9, Math.max(5, height / 9)), pad = Math.min(5, height / 12), qr = Math.min(height - 2 * pad, width * 0.4, 72);
+  return {
+    height: () => height,
+    draw(canvas, x, y, w) {
+      canvas.rect(x, y, w, height, { stroke: 0.75, lineWidth: 0.3 });
+      const textLeft = x + pad + qr + 7, textWidth = w - 2 * pad - qr - 7, big = size * 1.7;
+      const content = lineHeight(size) * 3 + lineHeight(big); let top = y + Math.max(pad, (height - content) / 2);
+      canvas.text(item.isoNo, textLeft, top, { size, font: 'bold', maxWidth: textWidth }); top += lineHeight(size);
+      canvas.text(text(item.row.flange_id) || 'No flange ID', textLeft, top, { size: big, font: 'bold', maxWidth: textWidth }); top += lineHeight(big);
+      canvas.text(flangeAssetTag(item.row), textLeft, top, { size, maxWidth: textWidth }); top += lineHeight(size);
+      canvas.text([item.row.flange_size, item.row.flange_rating].map(text).filter(Boolean).join(' / '), textLeft, top, { size, maxWidth: textWidth });
+      canvas.qr(link, x + pad, y + (height - qr) / 2, qr);
+    },
+  };
+}
+export interface FlangeLabelsPdfInput { items: FlangeItem[]; origin?: string; grid?: LabelGrid; generatedAt: Date }
+/** The text a flange QR code encodes: the flange page of the app, with the public origin when one is configured. */
+export const flangeLabelLink = (origin: string | undefined, id: string) => `${/^https?:\/\/[^/\s]+$/i.test(String(origin ?? '').trim().replace(/\/+$/, '')) ? String(origin).trim().replace(/\/+$/, '') : ''}${flangePath(id)}`;
+/** Flange labels: the ticked flanges in a grid of labels per A4 sheet (default 3 x 8), like the weld labels. */
+export function flangeLabelsPdf(input: FlangeLabelsPdfInput) {
+  const grid = input.grid ?? DEFAULT_LABEL_GRID, geometry = labelGeometry(grid), rows: Block[] = [];
+  for (let i = 0; i < input.items.length; i += grid.columns) {
+    const chunk = input.items.slice(i, i + grid.columns);
+    rows.push(columns(Array.from({ length: grid.columns }, (_, c) => ({ block: chunk[c] ? flangeLabelBlock(chunk[c], flangeLabelLink(input.origin, chunk[c].row.id), geometry.labelWidth, geometry.labelHeight) : spacer(geometry.labelHeight), width: { fill: 1 } })), 0));
+  }
+  return renderBlocks({ page: { size: 'A4', orientation: 'portrait', margins: { top: LABEL_MARGIN, bottom: LABEL_MARGIN, left: LABEL_MARGIN, right: LABEL_MARGIN } }, title: 'Flange labels', generatedAt: input.generatedAt, blocks: rows });
 }
 
 export interface PickListPdfInput extends Common { model: PickListModel }

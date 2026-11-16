@@ -30,6 +30,8 @@ interface ButtonProps {
   /** Download name without extension. */
   fileName: string;
   options?: PdfOption[];
+  /** Text of the dialog's submit button; `Create PDF` when absent. */
+  submit?: string;
   /** Create with POST so the server also stores the file on the request. */
   attach?: boolean;
   /** What the account may not do here, shown instead of the button's dialog (disabled button with this hint). */
@@ -52,17 +54,17 @@ export function pdfDocumentQuery(params: Record<string, string>, options: PdfOpt
 }
 const initialValues = (options: PdfOption[]) => Object.fromEntries(options.map(option => [option.name, option.kind === 'checkbox' ? option.defaultValue ?? false : option.kind === 'choices' ? option.choices.map(choice => choice.value) : '']));
 
-export function PdfDocumentButton({ document: key, report, params, label, title, subtitle, fileName, options = [], attach = false, blocked, allowed = true, hint }: ButtonProps) {
+export function PdfDocumentButton({ document: key, report, params, label, title, subtitle, fileName, options = [], submit, attach = false, blocked, allowed = true, hint }: ButtonProps) {
   const { canReadReport, hasFeature } = useWorkspace(); const pilot = usePilot();
   const [open, setOpen] = useState(false);
   if (!hasFeature('pilots') || !pilot || !allowed || !canReadReport(report, 'export')) return null;
   return <>
     <button type="button" className="btn small pdf-doc-button" disabled={Boolean(blocked)} title={blocked || hint} onClick={() => setOpen(true)}><FileText size={14} aria-hidden="true"/>{label}</button>
-    {open && <PdfDocumentDialog document={key} params={params} label={label} title={title} subtitle={subtitle} fileName={fileName} options={options} attach={attach} onClose={() => setOpen(false)}/>}
+    {open && <PdfDocumentDialog document={key} params={params} label={label} title={title} subtitle={subtitle} fileName={fileName} options={options} submit={submit} attach={attach} onClose={() => setOpen(false)}/>}
   </>;
 }
 
-function PdfDocumentDialog({ document: key, params, label, title, subtitle, fileName, options, attach, onClose }: { document: string; params: Record<string, string>; label: string; title?: string; subtitle?: string; fileName: string; options: PdfOption[]; attach: boolean; onClose: () => void }) {
+function PdfDocumentDialog({ document: key, params, label, title, subtitle, fileName, options, submit, attach, onClose }: { document: string; params: Record<string, string>; label: string; title?: string; subtitle?: string; fileName: string; options: PdfOption[]; submit?: string; attach: boolean; onClose: () => void }) {
   const { refresh } = useWorkspace(); const id = useId();
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues(options));
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [done, setDone] = useState('');
@@ -98,7 +100,7 @@ function PdfDocumentDialog({ document: key, params, label, title, subtitle, file
           return <fieldset className="field pdf-doc-choices" key={option.name}><legend>{option.label}</legend>{option.choices.map(choice => <label key={choice.value}><input type="checkbox" checked={chosen.includes(choice.value)} disabled={busy} onChange={event => set(option.name, event.target.checked ? [...chosen, choice.value] : chosen.filter(value => value !== choice.value))}/>{choice.label}</label>)}{option.hint && <small>{option.hint}</small>}</fieldset>;
         })}
       </div>
-      <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button><button type="submit" className="btn primary" disabled={busy}>{busy ? <><Loader2 size={15} className="spin"/>Creating PDF…</> : 'Create PDF'}</button></div>
+      <div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button><button type="submit" className="btn primary" disabled={busy}>{busy ? <><Loader2 size={15} className="spin"/>Creating PDF…</> : submit || 'Create PDF'}</button></div>
     </form>
   </Modal>;
 }
@@ -153,11 +155,15 @@ export function PunchListPdfButton({ filters }: { filters: PunchPdfFilters }) {
   return <PdfDocumentButton document="punch-list" report="pdf-punch" params={{ projectId: filters.projectId, punchType: filters.punchType, category: filters.category, kpi: filters.kpi, q: filters.q.trim() }} label="Print PDF" title="Punch list" subtitle="Prints the items the page shows under its filters."
     fileName="Punch-list" options={[{ name: 'documents', label: 'Include punch document', kind: 'checkbox', defaultValue: true, hint: 'Adds a Document column that names the photos, documents and sign-off of each item.' }]}/>;
 }
-/** Flange report of the isometric or the project chosen in the page's filters. */
-export function FlangeReportPdfButton({ filters }: { filters: { projectId: string; isoId: string; finished: string; query: string } }) {
-  const scope: Record<string, string> = filters.isoId ? { isoId: filters.isoId } : { projectId: filters.projectId };
-  return <PdfDocumentButton document="flange-report" report="pdf-flanges" params={{ ...scope, finished: filters.finished, q: filters.query.trim() }} label="Report" title="Flange report" subtitle={filters.isoId ? 'Chosen isometric' : 'Chosen project'} fileName="Flange-report"
-    blocked={filters.isoId || filters.projectId ? undefined : 'Choose a project or an isometric in the filter first.'}/>;
+/** Flange report of the ticked flanges (the page's checkboxes). */
+export function FlangeReportPdfButton({ ids }: { ids: string[] }) {
+  return <PdfDocumentButton document="flange-report" report="pdf-flanges" params={{ ids: ids.join(',') }} label="Report" title="Flanges — Report" subtitle={`${ids.length} flange${ids.length === 1 ? '' : 's'} ticked`} submit="Go" fileName="Flange-report"
+    blocked={ids.length ? undefined : 'Tick at least one flange first.'}/>;
+}
+/** QR labels of the ticked flanges. */
+export function FlangeLabelsPdfButton({ ids }: { ids: string[] }) {
+  return <PdfDocumentButton document="flange-labels" report="pdf-flanges" params={{ ids: ids.join(',') }} label="Print labels" title="Print labels" subtitle={`${ids.length} flange${ids.length === 1 ? '' : 's'} ticked`} submit="Go" fileName="Flange-labels"
+    blocked={ids.length ? undefined : 'Tick at least one flange first.'}/>;
 }
 /** Pick list of one report number (the Pick List archive). */
 export function PickListPdfButton({ reportNo }: { reportNo: string }) {

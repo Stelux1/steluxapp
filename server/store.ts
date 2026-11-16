@@ -89,6 +89,8 @@ export class Store {
       for (const [i, keys] of (resource.unique || []).entries()) {
         this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "${resource.key}_unique_${i}" ON ${table(resource.key)} (${keys.map(k => `coalesce(json_extract(data, '$.${k}'), '')`).join(',')}) WHERE archived=0;`);
       }
+      // Flange ID is optional now: the old (isometric, Flange ID) index would refuse a second flange without one. The store checks filled IDs itself.
+      if (resource.key === 'flanges') this.db.exec('DROP INDEX IF EXISTS "flanges_unique_0"');
     }
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS stock_identity ON stock(materialId,warehouseId,coalesce(json_extract(data,'$.chargeNo'),'')) WHERE archived=0;
@@ -179,6 +181,8 @@ export class Store {
       if(key==='pqr'&&input[field.name]===undefined&&existing?.[field.name]===undefined){if(field.name==='attribute25Id')value=input.standard??existing?.standard??'';if(field.name==='attribute5Id')value=input.material??existing?.material??'';}
       if(key==='isometrics'&&field.name==='xRay'&&typeof value==='number')value=String(value);
       if(key==='flanges')value=flangeStoredValue(field,value);
+      // The project of a flange follows its isometric; one the form sent (it only narrows the isometric list) is replaced.
+      if(key==='flanges'&&field.name==='projectId'){const iso=this.list('isometrics',true).find(r=>r.id===(input.isoId??existing?.isoId));if(iso?.projectId)value=iso.projectId;}
       if(key==='material_parts'&&field.name==='custom'&&typeof value==='boolean')value=value?'Yes':'';
       if(key==='isometrics'&&existing&&['itpRevNo','itp2RevNo'].includes(field.name)&&input[field.name]===undefined&&existing[field.name]===undefined){const type=field.name==='itpRevNo'?'ITP':'ITP 2';value=this.list('revisions').find(r=>r.isoId===existing.id&&r.type===type)?.revNo??field.default??'0';}
       // The hosted profile leaves a few shared requirements out (an attest number is optional in the reference).
@@ -209,7 +213,11 @@ export class Store {
       data[field.name] = value as Value;
     }
     for (const [name, message] of Object.entries(prepared.errors)) errors[name] ??= message;
-    if (key === 'flanges') for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
+    if (key === 'flanges') {
+      for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
+      // A Flange ID is unique per isometric, only when it is filled.
+      if (data.flange_id && data.isoId && this.list('flanges').some(r => r.id !== existing?.id && r.isoId === data.isoId && String(r.flange_id ?? '').trim() === data.flange_id)) errors.flange_id ??= 'This isometric already has a flange with this Flange ID.';
+    }
     if (key === 'ndt_defect_codes' && actor.id !== SYSTEM.id) data.system = existing?.system === true;
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));

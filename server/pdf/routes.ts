@@ -56,7 +56,7 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
       const rows = readable(REPORT_RESOURCES[definition.report] || []);
       if (definition.scope === 'scoped') {
         const projectIds = new Set((rows.projects || []).filter(project => !project._archived && projectInPilot(project, user.pilot)).map(project => project.id));
-        result = await definition.build({ store, documents, user, rows, query, now, isometrics, isoIds: new Set(isometrics.map(row => row.id)), projectIds });
+        result = await definition.build({ store, documents, user, rows, query, now, isometrics, isoIds: new Set(isometrics.map(row => row.id)), projectIds, publicOrigin, origin });
       } else {
         const iso = isometrics.find(row => row.id === query.isoId);
         if (!iso) throw new AppError(404, 'This isometric could not be found.');
