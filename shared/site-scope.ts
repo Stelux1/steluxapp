@@ -1,4 +1,5 @@
 import type { Relation } from './welding.ts';
+import type { Row } from './types.ts';
 
 /**
  * Access per main project (project site), per pilot — hosted profile with pilots only.
@@ -23,6 +24,49 @@ export const siteIdsField = (pilot: ScopePilot) => `${pilot}SiteIds`;
 export const siteScopeLabel = (pilot: ScopePilot) => `${TITLES[pilot]} project site access`;
 /** Whether a stored scope value limits the account (anything but "Specific project site(s)" means all sites, legacy accounts included). */
 export const scopeLimited = (value: unknown) => value === SITE_SCOPE_SPECIFIC;
+
+/**
+ * A profile per project site (reference user form, 'Specific project site(s)': a 'Home location | Profile' table per
+ * application). Stored on the account as `weldSiteProfiles` / `mtoSiteProfiles`: JSON text {siteId: profileId}. A ticked
+ * site without an entry (and every account saved before this field) uses the pilot's profile, so nothing is backfilled.
+ * Only read while the pilot's scope is 'Specific project site(s)'.
+ */
+export const siteProfilesField = (pilot: ScopePilot) => `${pilot}SiteProfiles`;
+/** The most main projects one account can carry a profile for (keeps the stored text small). */
+export const MAX_SITE_PROFILES = 500;
+const ID = /^[A-Za-z0-9_-]{1,100}$/;
+/** The stored {siteId: profileId} map; anything that is not such a map reads as empty (the pilot's profile applies). */
+export function siteProfilesOf(value: unknown): Record<string, string> {
+  let input: unknown = value;
+  if (typeof value === 'string') { if (!value.trim()) return {}; try { input = JSON.parse(value); } catch { return {}; } }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  return Object.fromEntries(Object.entries(input).filter((entry): entry is [string, string] => ID.test(entry[0]) && typeof entry[1] === 'string' && ID.test(entry[1])));
+}
+/** A {siteId: profileId} map from a request: its stored text, or an error message when it is not a valid map. */
+export function readSiteProfiles(value: unknown): { text: string } | { error: string } {
+  let input: unknown = value;
+  if (typeof value === 'string') { if (!value.trim()) return { text: '' }; if (value.length > 60_000) return { error: 'The profiles per project site could not be read.' }; try { input = JSON.parse(value); } catch { return { error: 'The profiles per project site could not be read.' }; } }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'The profiles per project site could not be read.' };
+  const entries = Object.entries(input);
+  if (entries.length > MAX_SITE_PROFILES || entries.some(([site, profile]) => !ID.test(site) || typeof profile !== 'string' || !ID.test(profile))) return { error: 'Choose a profile for every ticked project site.' };
+  return { text: entries.length ? JSON.stringify(Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))) : '' };
+}
+
+/**
+ * Records that belong to the main projects they are linked to: a welder is active on the main projects of its
+ * `welder_sites` links (reference: the welder list shows the welders active on the home location plus the globally
+ * deployable ones). A globally deployable welder, and one linked to no main project, stays shared.
+ */
+export const SITE_LINKED: Record<string, { links: string; ownerKey: string; global: string }> = {
+  welders: { links: 'welder_sites', ownerKey: 'welderId', global: 'globallyDeployable' },
+};
+/** The main projects a linked record belongs to, or 'all' when it is shared (see SITE_LINKED). Archived links count for an archived record only. */
+export function linkedSites(key: string, row: Record<string, unknown>, links: Row[]): string[] | 'all' {
+  const rule = SITE_LINKED[key];
+  if (!rule || row[rule.global] === true) return 'all';
+  const sites = [...new Set(links.filter(link => link[rule.ownerKey] === row.id && (!link._archived || row._archived && link.ownerArchived)).map(link => String(link.siteId || '')).filter(Boolean))].sort();
+  return sites.length ? sites : 'all';
+}
 
 /** The checkbox list per pilot, stored as `user_sites` links that carry the pilot. Pilots profile only. */
 export const USER_SITE_RELATIONS: Relation[] = SCOPE_PILOTS.map(pilot => ({
@@ -82,11 +126,12 @@ export const SITE_RULES: Record<string, SiteRule> = {
   transfer_orders: shared(SITE, ['fromWarehouseId', 'warehouses'], ['toWarehouseId', 'warehouses']),
   transfer_order_items: via(['orderId', 'transfer_orders']),
   // Welding catalogs and welder data (global); their links to projects and sites follow the linked record.
-  roles: 'global', welder_customs_catalog: 'global', certificate_types: 'global', welders: 'global', welder_certificates: 'global',
+  // A welder follows its main projects (SITE_LINKED); its qualifications and custom links follow the welder.
+  roles: 'global', welder_customs_catalog: 'global', certificate_types: 'global', welders: 'global', welder_certificates: shared(['welderId', 'welders']),
   weld_processes: 'global', weld_types: 'global', coatings: 'global', diameters: 'global', qualification_options: 'global',
   pqr: 'global', wps: 'global', ndt_groups: 'global', ndt_processes: 'global', ndt_defect_codes: 'global',
   ndt_locations: 'global', pwht_processes: 'global', pwht_locations: 'global', qa_engineers: 'global', attachment_names: 'global', itps: 'global',
-  wps_pqr: 'global', welder_customs: 'global',
+  wps_pqr: 'global', welder_customs: shared(['welderId', 'welders']),
   wps_projects: via(PROJECT), wps_sites: via(SITE), itp_projects: via(PROJECT), welder_sites: via(SITE),
   certificate_projects: via(PROJECT), wire_projects: via(PROJECT),
   // A welding wire belongs to one main project like a certificate.

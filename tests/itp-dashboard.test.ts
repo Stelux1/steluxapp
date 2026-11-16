@@ -296,8 +296,9 @@ test('Link ITP: the picker rules are enforced on the server, number and revision
   const reader = f.client(); await reader.login(f.account('Link reader', { generalPermission: RO, materialsPermission: RW, weldingPermission: RO }));
   assert.equal((await put('iso-7', { itpId: 'itp-03' }, reader)).status, 403);
   const mto = f.client(); await mto.login(f.account('Link mto', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW }));
-  const stale = f.store.get('isometrics', 'iso-7');
-  assert.equal((await mto.request('/records/isometrics/iso-7', { method: 'PUT', pilot: 'mto', data: { itpId: 'itp-03', _version: stale._version } })).status, 403, 'the ITP register belongs to Weld Pilot');
+  // iso-1: STX-2403 (iso-7) is switched off for MTO Pilot, which does not deliver it at all (scn-SC-N9).
+  const stale = f.store.get('isometrics', 'iso-1');
+  assert.equal((await mto.request('/records/isometrics/iso-1', { method: 'PUT', pilot: 'mto', data: { itpId: 'itp-03', _version: stale._version } })).status, 403, 'the ITP register belongs to Weld Pilot');
 });
 
 test('the sample data lets the dashboard show compliant and not compliant groups, weld type abbreviations and tracers', () => {

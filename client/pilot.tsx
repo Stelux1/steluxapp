@@ -103,9 +103,11 @@ export function PilotSelector({ user, pilots, onOpen, onLogout, logo }: { user: 
 const pathOnly = (path: string) => path.split('?')[0];
 /** Whether the current page is a delivered page of this pilot's menu that the profile may not open (then the page says so). */
 export function usePilotNoRights(pathname: string) {
-  const state = usePilot(); const { user, canRecord, canReadReport } = useWorkspace();
+  const state = usePilot(); const { user, canRecord, canReadReport, canArea, projectScopeEnabled, siteId } = useWorkspace();
   if (!state?.entered) return false;
-  return pilotPageState(state.pilot, pathname, { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport }) === 'no-rights';
+  // The main project is chosen first: until then the choice is shown, whatever the page.
+  if (projectScopeEnabled && !siteId) return false;
+  return pilotPageState(state.pilot, pathname, { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport, canArea }) === 'no-rights';
 }
 /** The page of a menu item the profile may not open (the server refuses its data in any case). */
 export function PilotNoRights() {
@@ -118,7 +120,7 @@ const queryOf = (path: string) => path.includes('?') ? path.slice(path.indexOf('
  * `collapsed`: the menu is reduced to one icon per group; a group opens as a panel beside the icons.
  */
 export function PilotNavigation({ onPassword, collapsed = false }: { onPassword: () => void; collapsed?: boolean }) {
-  const state = usePilot()!; const { user, canRecord, canReadReport } = useWorkspace(); const location = useLocation();
+  const state = usePilot()!; const { user, canRecord, canReadReport, canArea } = useWorkspace(); const location = useLocation();
   const [searching, setSearching] = useState(false);
   // Collapsed menu: the group whose panel is open, and where the panel starts (the top of its icon).
   const [panel, setPanel] = useState<{ title: string; top: number } | null>(null);
@@ -143,7 +145,8 @@ export function PilotNavigation({ onPassword, collapsed = false }: { onPassword:
   }, [panel]);
   const target = (item: PilotItem) => item.resource && RESOURCE_MAP[item.resource] && !item.path ? resourcePath(item.resource) : pilotItemPath(item);
   // Every page the workspace delivers is listed; one the profile may not open is greyed and opens the "no rights" page.
-  const rights: MenuRights = { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport };
+  // Page areas (the Weld dashboard 35, Export welds 81, …) need their own Show as well.
+  const rights: MenuRights = { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport, canArea };
   const restricted = (item: PilotItem) => pilotItemState(item, rights) === 'no-rights';
   const groups = state.pilot.groups.map(group => ({ ...group, items: group.items.filter(item => pilotItemState(item, rights) !== 'hidden') })).filter(group => group.items.length);
   const items = groups.flatMap(group => group.items);

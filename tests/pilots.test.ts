@@ -133,9 +133,10 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   const password = 'Pilot-Test-Password';
-  const signIn = async (name: string, levels: Record<string, string>) => {
+  /** `account`: fields of the account itself, e.g. the applications it is enabled for (entering a pilot depends on those alone). */
+  const signIn = async (name: string, levels: Record<string, string>, account: Record<string, unknown> = {}) => {
     const profile = store.create('profiles', { name, ...levels });
-    const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, profileId: profile.id, active: true });
+    const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, profileId: profile.id, active: true, ...account });
     store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
     const response = await request('/api/auth/login', 'POST', { email: user.email, password }); assert.equal(response.status, 200);
     return (await response.json()).user as User;
@@ -151,7 +152,7 @@ test('hosted pages are served under both prefixes and undelivered pages stay 404
 
 test('a weld-only account sees shared catalogs through the API but stays out of MTO records', async t => {
   const f = await hostedFixture(t); await f.setup();
-  const user = await f.signIn('Weld only', { generalPermission: 'Read & write', materialsPermission: 'No access', weldingPermission: 'Read & write' });
+  const user = await f.signIn('Weld only', { generalPermission: 'Read & write', materialsPermission: 'No access', weldingPermission: 'Read & write' }, { mtoEnabled: false });
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['weld']);
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
@@ -171,7 +172,7 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
 
 test('an MTO-only account sees shared catalogs through the API but stays out of weld and inspection records', async t => {
   const f = await hostedFixture(t); await f.setup();
-  const user = await f.signIn('MTO only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });
+  const user = await f.signIn('MTO only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['mto']);
   assert.equal((await f.request('/api/records/certifications')).status, 403, 'not enabled for Weld Pilot');
   f.usePilot('mto');

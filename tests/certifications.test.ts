@@ -276,7 +276,8 @@ test('main project of certificates and wires over the API: lists, records, welds
   assert.deepEqual(ids('certifications'), ['cert-h1043', 'cert-h3305', 'certificate-1', 'certificate-3']);
   assert.deepEqual(ids('welding_wires'), ['wire-1', 'wire-2']);
   for (const path of ['/history/certifications/certificate-2', '/history/welding_wires/wire-3']) assert.equal((await north.request(path)).status, 403, path);
-  assert.equal((await north.request('/pdf/certification-index?siteId=site-river')).status, 404);
+  // A main project out of reach named by id: the record routes' refusal (403, scn-SC-D9).
+  assert.equal((await north.request('/pdf/certification-index?siteId=site-river')).status, 403);
   assert.equal((await north.request('/certifications/zip?siteId=site-river')).status, 404);
   // Creating in, or moving to, the other main project is refused; links to its projects too.
   assert.equal((await north.request('/records/certifications', { method: 'POST', data: { siteId: 'site-river', name: 'X', allProjects: true } })).status, 403);

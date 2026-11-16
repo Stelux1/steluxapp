@@ -12,13 +12,13 @@ import { documentStorage } from '../server/documents.ts';
 import { currentSignature } from '../server/signatures.ts';
 import { releaseAccess } from '../server/release-access.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.ts';
-import { areaPilots, canResource, isAdministrator, pilotBoundary, type CopyParts } from '../shared/permissions.ts';
+import { areaPilots, canResource, canScope, isAdministrator, parsePermissionRules, PERMISSION_AREAS, pilotBoundary, type CopyParts } from '../shared/permissions.ts';
 import { isoBlockers, isoProgress, isoQuality } from '../shared/iso-status.ts';
 import type { IsoSummary } from '../shared/iso-summary.ts';
 import { isoBudgets as mtoIsoBudgets, materialStatus } from '../shared/mto-materials.ts';
 import { punchCounts } from '../shared/punch.ts';
 import { hydrotestState } from '../shared/hydrotest.ts';
-import { allowedPilots } from '../shared/pilots.ts';
+import { allowedPilots, pagePilots, PILOT_MAP, pilotItemState, type MenuRights } from '../shared/pilots.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { projectResource } from '../shared/release.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -220,11 +220,13 @@ test('an account disabled for a pilot mid-session is refused on its next request
   const refused = await as.request('/records/iso_materials', { pilot: 'mto' }); assert.equal(refused.status, 403); assert.equal((await json(refused)).code, 'pilot');
   assert.deepEqual((await json<{ user: User }>(await as.request('/auth/status'))).user.pilots, ['weld']);
   assert.equal(await status(await as.request('/bootstrap', { pilot: 'weld' })), 200);
-  // A pilot whose profile does not open the pilot's module is not enterable either.
+  // Entering depends on the application being enabled only (access-users-profiles-020): a profile without welding
+  // rights enters Weld Pilot, and every welding route refuses it.
   const blind = f.profile('No welding', { generalPermission: RW, materialsPermission: RW, weldingPermission: NONE });
   const next = f.store.get('users', user.id); f.store.update('users', user.id, { weldProfileId: blind }, next._version);
-  assert.equal(await status(await as.request('/bootstrap', { pilot: 'weld' })), 403);
-  assert.deepEqual((await json<{ user: User }>(await as.request('/auth/status'))).user.pilots, []);
+  assert.equal(await status(await as.request('/bootstrap', { pilot: 'weld' })), 200);
+  assert.deepEqual((await json<{ user: User }>(await as.request('/auth/status'))).user.pilots, ['weld']);
+  assert.equal(await status(await as.request('/records/welds', { pilot: 'weld' })), 403);
   // Deactivation ends the session everywhere.
   const last = f.store.get('users', user.id); f.store.update('users', user.id, { active: false }, last._version);
   assert.equal(await status(await as.request('/auth/password', { method: 'POST', data: { currentPassword: PASSWORD, password: 'Whatever-Password-1' } })), 401);
@@ -282,7 +284,9 @@ test('signatures: own records only, administrators view but never write; images 
   const first = await f.upload(a, 'weld', 'signatures', signature.id, PNG, 'full-signature.png', 'image/png'); assert.equal(first.status, 201);
   const firstFile = (await json<{ record: Row }>(first)).record; assert.equal(firstFile.documentType, 'Full signature');
   await new Promise(resolve => setTimeout(resolve, 5));
-  const second = await f.upload(a, 'mto', 'signatures', signature.id, JPEG, 'scan.jpeg', 'image/jpeg'); assert.equal(second.status, 201);
+  // Signatures are a Weld Pilot page (area 96 belongs to Weld Pilot only).
+  assert.equal(await status(await f.upload(a, 'mto', 'signatures', signature.id, JPEG, 'scan.jpeg', 'image/jpeg')), 403);
+  const second = await f.upload(a, 'weld', 'signatures', signature.id, JPEG, 'scan.jpeg', 'image/jpeg'); assert.equal(second.status, 201);
   const secondFile = (await json<{ record: Row }>(second)).record;
   const documents = documentStorage(f.store, f.dir, 'disk');
   const current = currentSignature(f.store, documents, alice.id, 'Full signature')!;
@@ -296,7 +300,8 @@ test('signatures: own records only, administrators view but never write; images 
   const bobView = await json<{ rows: Record<string, Row[]> }>(await b.request('/bootstrap', { pilot: 'weld' }));
   assert.equal(bobView.rows.signatures.length, 0); assert.ok(!bobView.rows.attachments.some(row => row.entityType === 'signatures'));
   assert.equal(await status(await f.admin.request(`/files/${secondFile.id}`, { pilot: 'weld' })), 200);
-  assert.ok((await json<{ rows: Record<string, Row[]> }>(await f.admin.request('/bootstrap', { pilot: 'mto' }))).rows.signatures.some(row => row.id === signature.id));
+  assert.ok((await json<{ rows: Record<string, Row[]> }>(await f.admin.request('/bootstrap', { pilot: 'weld' }))).rows.signatures.some(row => row.id === signature.id));
+  assert.equal((await json<{ rows: Record<string, Row[]> }>(await f.admin.request('/bootstrap', { pilot: 'mto' }))).rows.signatures, undefined, 'MTO Pilot has no signatures');
   // Writing on behalf of another user: refused for that user and for the administrator.
   for (const as of [b, f.admin]) {
     assert.equal(await status(await f.upload(as, 'weld', 'signatures', signature.id, PNG, 'forged.png', 'image/png')), 403);
@@ -452,6 +457,8 @@ test('copy isometrics across the boundary: each part follows the account in the 
   const writer = f.profile('Writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
   const viewer = f.profile('Copy viewer', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO });
   const norm = f.store.create('calculation_norms', { name: 'Fit-up per metre', uom: 'M', hoursPerUnit: 1.5 });
+  // The target STX-2403 is switched off for MTO Pilot in the sample data, and MTO Pilot changes nothing of it (scn-SC-N9): switch it on here.
+  const skid = f.store.get('projects', 'project-skid'); f.store.update('projects', skid.id, { mtoPilot: true }, skid._version);
   /** A drawing in STX-2401 with two welds, one material requirement (pipe, metres) and one calculation line. */
   const source = (isoNo: string) => {
     const iso = f.store.create('isometrics', { isoNo, projectId: 'project-cooling' });
@@ -528,4 +535,126 @@ test('other release profiles: no summaries or copy rules are delivered and Copy 
   const as = f.client(); await as.login(weldsOnly.email);
   assert.equal(await status(await as.request('/actions/copy-isometrics', { method: 'POST', data: { isoIds: ['iso-2'], projectId: 'project-skid', copyMaterials: true } })), 403, 'single profile without the materials add right');
   assert.equal(await status(await as.request('/actions/copy-isometrics', { method: 'POST', data: { isoIds: ['iso-2'], projectId: 'project-skid', copyWelds: true } })), 201);
+});
+
+// ----- the permissions core: area list, pilot mapping, page areas, signatures, entering a pilot ------------------------
+
+/** A profile with the reference matrix (Detailed permissions): `rules` is {area: verbs}. */
+const detailed = (store: Store, name: string, rules: Record<string, string[]>) => store.create('profiles', { name, permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(rules), generalPermission: NONE, materialsPermission: NONE, weldingPermission: NONE, toolsPermission: NONE, settingsPermission: NONE }).id;
+
+test('the area list has Visual inspection 116 and ITPs 120; stored local rules are read through an alias; pilots follow the App column', () => {
+  const area = (key: string) => PERMISSION_AREAS.find(item => item.key === key);
+  assert.deepEqual([area('116')?.name, area('116')?.verbs], ['Visual inspection', ['show', 'insert', 'edit', 'delete', 'print']]);
+  assert.deepEqual([area('120')?.name, area('120')?.verbs], ['ITPs', ['show', 'insert', 'edit', 'delete']]);
+  assert.equal(area('local-visual-results'), undefined); assert.equal(area('local-itps'), undefined);
+  // A profile saved with the earlier local keys reads as the reference areas, with the verbs those areas have.
+  assert.deepEqual(parsePermissionRules(JSON.stringify({ 'local-visual-results': ['show', 'insert', 'export', 'import'], 'local-itps': ['show', 'print'], '63': ['show'] })), { '116': ['show', 'insert'], '120': ['show'], '63': ['show'] });
+  assert.throws(() => parsePermissionRules(JSON.stringify({ '120': ['print'] })), /invalid/, 'ITPs has no Print');
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  const viewer: User = { id: 'u', name: 'U', email: 'u@example.test', profileId: 'p', availability: hosted, pilot: 'weld', permissions: { general: 0, materials: 0, welding: 1, tools: 0, settings: 0 }, capabilities: parsePermissionRules(JSON.stringify({ 'local-visual-results': ['show'] })) };
+  assert.ok(canResource(viewer, 'inspection_results', 'show', { id: 'r', type: 'VI' } as unknown as Row), 'Show on 116 reads visual inspection results');
+  assert.equal(canResource(viewer, 'inspection_results', 'show', { id: 'r', type: 'NDT' } as unknown as Row), false);
+  assert.equal(canResource(viewer, 'inspection_results', 'insert', { id: 'r', type: 'VI' } as unknown as Row), false);
+  assert.ok(canResource({ ...viewer, capabilities: { '120': ['show'] } }, 'itps'), 'ITPs 120 opens the ITP register');
+  // Pilots of the areas (weld__system__profiles.txt data-apps).
+  for (const key of ['85', '86', '89', '99', '37']) assert.deepEqual(areaPilots(key), ['weld', 'mto'], key);
+  assert.deepEqual(areaPilots('96'), ['weld']); assert.deepEqual(areaPilots('93'), []); assert.deepEqual(areaPilots('71'), ['mto']);
+  assert.deepEqual(areaPilots('116'), ['weld']); assert.deepEqual(areaPilots('120'), ['weld']); assert.deepEqual(areaPilots('local-itps'), ['weld']);
+  // Release prefab / field now cross into MTO Pilot; Signatures do not.
+  const both: User = { ...viewer, capabilities: { '86': ['show'], '89': ['show'], '96': ['show', 'insert'] } };
+  assert.ok(canResource(pilotBoundary(both, 'mto'), 'releases', 'show', { id: 'r', type: 'Prefab' } as unknown as Row));
+  assert.equal(canResource(pilotBoundary(both, 'mto'), 'signatures', 'insert'), false);
+  assert.ok(canResource(pilotBoundary(both, 'weld'), 'signatures', 'insert'));
+  assert.deepEqual(pagePilots('/settings/signatures'), ['weld']); assert.deepEqual(pagePilots('/settings/users'), ['weld', 'mto']);
+});
+
+test('page areas gate their page: the Weld dashboard (35), Export welds (81) and the Materials list (78), in the menu and on the server', async t => {
+  const f = await fixture(t);
+  const base = { '4': ['show'], '5': ['show'], '64': ['show'], '63': ['show', 'export'], '70': ['show'], '16': ['show', 'export'], '68': ['show'], '76': ['show'], '50': ['show'] };
+  const without = f.account('No page areas', { profileId: detailed(f.store, 'Welds without dashboard', base) });
+  const withAreas = f.account('Page areas', { profileId: detailed(f.store, 'Welds with dashboard', { ...base, '35': ['show'], '78': ['show'], '81': ['show', 'export'] }) });
+  const a = f.client(), b = f.client(); await a.login(without.email); await b.login(withAreas.email);
+  const rights = (user: User): MenuRights => ({ delivered: () => true, canRecord: key => canResource(user, key), canReadReport: () => true, canArea: key => canScope(user, key) });
+  const item = (pilot: 'weld' | 'mto', label: string) => PILOT_MAP[pilot].groups.flatMap(group => group.items).find(entry => entry.label === label)!;
+  const weldA = (await json<{ user: User }>(await a.request('/bootstrap', { pilot: 'weld' }))).user, weldB = (await json<{ user: User }>(await b.request('/bootstrap', { pilot: 'weld' }))).user;
+  assert.ok(weldB.capabilities?.['35']?.includes('show'), 'the page area survives into the bootstrap capabilities');
+  assert.equal(weldA.capabilities?.['35'], undefined);
+  assert.equal(pilotItemState(item('weld', 'Dashboard'), rights(weldA)), 'no-rights', 'welds show without 35: no Dashboard');
+  assert.equal(pilotItemState(item('weld', 'Dashboard'), rights(weldB)), 'open');
+  assert.equal(pilotItemState(item('weld', 'Export weld data'), rights(weldA)), 'no-rights');
+  assert.equal(pilotItemState(item('weld', 'Export weld data'), rights(weldB)), 'open');
+  assert.equal(pilotItemState(item('weld', 'Iso overview'), rights(weldA)), 'no-rights', 'Iso overview needs 92');
+  // Export weld data downloads need Export on 81; LISL stays the Data LISL export as well.
+  assert.equal(await status(await a.request('/reports/wdi', { pilot: 'weld' })), 403);
+  assert.equal(await status(await b.request('/reports/wdi', { pilot: 'weld' })), 200);
+  assert.equal(await status(await a.request('/reports/lisl', { pilot: 'weld' })), 200);
+  // Materials list: area 78.
+  const mtoA = (await json<{ user: User }>(await a.request('/bootstrap', { pilot: 'mto' }))).user, mtoB = (await json<{ user: User }>(await b.request('/bootstrap', { pilot: 'mto' }))).user;
+  assert.equal(pilotItemState(item('mto', 'Materials list'), rights(mtoA)), 'no-rights');
+  assert.equal(pilotItemState(item('mto', 'Materials list'), rights(mtoB)), 'open');
+  const refused = await a.request('/mto/materials-list', { pilot: 'mto' }); assert.equal(refused.status, 403);
+  assert.ok(!(await refused.text()).includes('Ord'), 'no order state for an account without 78');
+  assert.equal(await status(await b.request('/mto/materials-list', { pilot: 'mto' })), 200);
+  // Module-level profiles keep every page: a welding reader reads the dashboard area.
+  const reader = f.account('Module reader', { profileId: f.profile('Module reader', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO }) });
+  const c = f.client(); await c.login(reader.email);
+  const weldC = (await json<{ user: User }>(await c.request('/bootstrap', { pilot: 'weld' }))).user;
+  assert.equal(pilotItemState(item('weld', 'Dashboard'), rights(weldC)), 'open');
+  assert.equal(await status(await c.request('/mto/materials-list', { pilot: 'mto' })), 200);
+});
+
+test('signatures follow the Signatures area 96 and exist in Weld Pilot only', async t => {
+  const f = await fixture(t);
+  const none = f.account('No signatures', { profileId: detailed(f.store, 'Without 96', { '63': ['show'] }) });
+  const view = f.account('Sees signatures', { profileId: detailed(f.store, 'Show 96', { '63': ['show'], '96': ['show'] }) });
+  const own = f.account('Signs', { profileId: detailed(f.store, 'Show and insert 96', { '63': ['show'], '96': ['show', 'insert'] }) });
+  const signature = (user: { id: string; name: string }) => ({ name: user.name, userId: user.id, kind: 'Full signature' });
+  for (const [user, read, write] of [[none, 403, 403], [view, 200, 403], [own, 200, 201]] as const) {
+    const as = f.client(); await as.login(user.email);
+    assert.equal(await status(await as.request('/records/signatures', { pilot: 'weld' })), read, `${user.name} list`);
+    assert.equal(await status(await as.request('/records/signatures', { method: 'POST', pilot: 'weld', data: signature(user) })), write, `${user.name} save`);
+    assert.equal(await status(await as.request('/records/signatures', { pilot: 'mto' })), 403, `${user.name} in MTO Pilot`);
+    assert.equal(await status(await as.request('/records/signatures', { method: 'POST', pilot: 'mto', data: { ...signature(user), kind: 'Short signature' } })), 403, `${user.name} save in MTO Pilot`);
+  }
+  // Module levels (hosted): Signatures follow the Weld Pilot level; Read only views, Read & write saves.
+  const reader = f.account('Weld reader signs', { profileId: f.profile('Weld read only', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO }) });
+  const r = f.client(); await r.login(reader.email);
+  assert.equal(await status(await r.request('/records/signatures', { pilot: 'weld' })), 200);
+  assert.equal(await status(await r.request('/records/signatures', { method: 'POST', pilot: 'weld', data: signature(reader) })), 403);
+});
+
+test('entering a pilot depends on the application being enabled; with no area right the account gets no record, list, export or action', async t => {
+  const f = await fixture(t);
+  const isoFile = (await json<{ record: Row }>(await f.upload(f.admin, 'weld', 'isometrics', 'iso-1', 'Isometric note', 'iso-note.txt', 'text/plain'))).record;
+  // A profile with page areas only: it enters both pilots, and nothing is delivered or allowed.
+  const empty = f.account('Enabled without rights', { profileId: detailed(f.store, 'Page areas only', { '35': ['show'], '78': ['show'], '93': ['show'] }) });
+  const as = f.client(); const entry = await as.login(empty.email);
+  assert.deepEqual(entry.pilots, ['weld', 'mto']);
+  for (const pilot of ['weld', 'mto']) {
+    const body = await json<{ user: User; rows: Record<string, Row[]>; activity: unknown[] }>(await as.request('/bootstrap', { pilot }));
+    assert.deepEqual(Object.entries(body.rows).filter(([, rows]) => rows.length).map(([key]) => key), [], `${pilot}: no records`);
+    assert.deepEqual(body.activity, [], `${pilot}: no activity`);
+  }
+  const iso = f.store.get('isometrics', 'iso-1'), weld = f.store.get('welds', 'weld-1');
+  const requests: [string, string, Options][] = [
+    ['weld', '/records/welds', {}], ['weld', '/records/isometrics', {}], ['weld', '/records/projects', {}], ['weld', '/records/sites', {}], ['weld', '/records/welders', {}], ['weld', '/records/certifications', {}],
+    ['weld', '/history/welds/weld-1', {}], ['weld', `/files/${isoFile.id}`, {}], ['weld', '/export/welds?format=csv', {}], ['weld', '/export/isometrics?format=csv', {}], ['weld', '/reports/lisl', {}],
+    ['weld', '/pdf/lisl?isoId=iso-1', {}], ['weld', '/iso-book/parts?isoIds=iso-1', {}],
+    ['weld', `/records/welds/${weld.id}`, { method: 'PUT', data: { description: 'No', _version: weld._version } }],
+    ['weld', `/records/isometrics/${iso.id}`, { method: 'PUT', data: { area: 'No', _version: iso._version } }],
+    ['weld', '/actions/save-weld', { method: 'POST', data: { isoId: 'iso-1', weldNo: 'W099' } }],
+    ['weld', '/actions/phases', { method: 'POST', data: { isoIds: ['iso-1'], field_test: 'Complete' } }],
+    ['weld', '/records/signatures', { method: 'POST', data: { name: 'No', userId: empty.id, kind: 'Full signature' } }],
+    ['mto', '/records/iso_materials', {}], ['mto', '/records/stock', {}], ['mto', '/mto/materials-list', {}], ['mto', '/reports/mto', {}], ['mto', '/export/iso_materials?format=csv', {}],
+    ['mto', '/actions/add-iso-material', { method: 'POST', data: { isoId: 'iso-1', source: 'Custom', materialNo: 'NO', description: 'No', quantity: 1, uom: 'M' } }],
+  ];
+  for (const [pilot, path, options] of requests) {
+    const response = await as.request(path, { pilot, ...options });
+    assert.ok([403, 404].includes(response.status), `${pilot} ${options.method || 'GET'} ${path}: ${response.status}`);
+    assert.notEqual(response.status, 200);
+  }
+  // The application switched off: refused at the door.
+  const row = f.store.get('users', empty.id); f.store.update('users', empty.id, { weldEnabled: false }, row._version);
+  const refused = await as.request('/bootstrap', { pilot: 'weld' }); assert.equal(refused.status, 403); assert.equal((await json(refused)).code, 'pilot');
+  assert.equal(await status(await as.request('/bootstrap', { pilot: 'mto' })), 200);
 });

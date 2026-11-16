@@ -3,7 +3,7 @@ import type { Store } from '../store.ts';
 import { AppError } from '../store.ts';
 import type { documentStorage } from '../documents.ts';
 import { actorOf, type AuthRequest } from '../auth.ts';
-import { scopeRows } from '../site-scope.ts';
+import { isSiteRefusal, scopeRows } from '../site-scope.ts';
 import { canDocument, PDF_DOCUMENTS, type PdfResult } from './documents.ts';
 import { RESOURCES } from '../../shared/resources.ts';
 import { canResource, REPORT_RESOURCES } from '../../shared/permissions.ts';
@@ -32,6 +32,8 @@ export interface PdfRouteDependencies {
  * also stored as a document of each record in `attachTo` (the account needs the import right on that record, as for a file upload).
  */
 export function registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin }: PdfRouteDependencies) {
+  /** A record of a main project out of reach is refused with the record routes' 403 (`site`); anything else is left to the document's own answer. */
+  const refuseOutOfReach = (key: string, id: string) => { try { store.get(key, id, true); } catch (error) { if (isSiteRefusal(error)) throw error; } };
   async function generate(req: Request, attach: boolean): Promise<{ result: PdfResult; query: Record<string, string>; attached: number }> {
     const definition = availability?.features.includes('pilots') ? PDF_DOCUMENTS.find(item => item.key === req.params.document) : undefined;
     if (!definition || attach && !(definition.scope === 'scoped' && definition.attachable)) throw new AppError(404, 'This document does not exist.');
@@ -45,14 +47,18 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
     if (definition.scope === 'project') {
       const projects = readableRows(req, 'projects', false).filter(row => !row._archived && (!user.pilot || projectInPilot(row, user.pilot)));
       const chosen = query.projectId ? projects.find(row => row.id === query.projectId) : null;
-      if (query.projectId && !chosen) throw new AppError(404, 'This project could not be found.');
+      // A project or main project out of reach is refused like on the record routes (403 `site`), not reported missing.
+      if (query.projectId && !chosen) { refuseOutOfReach('projects', query.projectId); throw new AppError(404, 'This project could not be found.'); }
       const siteId = String(chosen?.siteId ?? query.siteId ?? '');
       // A main project outside the account's project site access is unknown to it (server/site-scope.ts).
       const site = siteId ? scopeRows('sites', store.list('sites')).find(row => row.id === siteId) ?? null : null;
-      if (query.siteId && !site) throw new AppError(404, 'This main project could not be found.');
+      if (query.siteId && !site) { refuseOutOfReach('sites', query.siteId); throw new AppError(404, 'This main project could not be found.'); }
       result = await definition.build({ store, documents, user, rows: readable([]), query, now, publicOrigin, origin, project: chosen ?? null, site });
     } else {
       const isometrics = user.pilot ? pilotIsometrics(readableRows(req, 'isometrics', false), user.pilot).filter(row => !row._archived) : [];
+      // An isometric or project of a main project out of reach is refused like on the record routes (403 `site`), not reported missing.
+      if (query.isoId && !isometrics.some(row => row.id === query.isoId)) refuseOutOfReach('isometrics', query.isoId);
+      if (query.projectId) refuseOutOfReach('projects', query.projectId);
       const rows = readable(REPORT_RESOURCES[definition.report] || []);
       if (definition.scope === 'scoped') {
         const projectIds = new Set((rows.projects || []).filter(project => !project._archived && projectInPilot(project, user.pilot)).map(project => project.id));

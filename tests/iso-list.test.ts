@@ -298,9 +298,10 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   const password = 'Iso-List-Test-Password';
-  const signIn = async (name: string, levels: Record<string, string>) => {
+  /** `account`: fields of the account itself, e.g. the applications it is enabled for (entering a pilot depends on those alone). */
+  const signIn = async (name: string, levels: Record<string, string>, account: Record<string, unknown> = {}) => {
     const profile = store.create('profiles', { name, ...levels });
-    const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, profileId: profile.id, active: true });
+    const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, profileId: profile.id, active: true, ...account });
     store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
     assert.equal((await request('/api/auth/login', 'POST', { email: user.email, password })).status, 200);
   };
@@ -338,7 +339,7 @@ test('hosted export gives the flag columns as Yes / No / n/a, the same in both p
   for (const column of ['NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.']) assert.ok(column in rows[0], column);
   assert.deepEqual(['NoBo', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'].map(c => by('STX-CW-003')[c]), ['Yes', 'No', 'No', 'No', 'Yes', 'Yes', 'No']);
   assert.deepEqual([by('STX-SK-010').Pfb, by('STX-SK-010').Fld, by('STX-CW-001').Pfb], ['n/a', 'No', 'No']);
-  await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' });
+  await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
   assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Pilot');
   f.usePilot('mto');
   const limited = (await table('iso-3')).at(0)!;

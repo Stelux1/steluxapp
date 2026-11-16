@@ -2,7 +2,7 @@ import type { Express } from 'express';
 import { scopeRows } from './site-scope.ts';
 import { AppError, qty, today, validDate, type Actor, type Store } from './store.ts';
 import { materialIdentity } from '../shared/materials.ts';
-import { canResource } from '../shared/permissions.ts';
+import { canResource, canScope } from '../shared/permissions.ts';
 import { reportCsv, type Report } from '../shared/reports.ts';
 import { reportWorkbook } from './report-export.ts';
 import type { Availability, Row } from '../shared/types.ts';
@@ -263,7 +263,8 @@ export function registerMtoStockRoutes(app: Express, store: Store, availability:
   app.get('/api/mto/materials-list', async (req, res) => {
     access.resource('stock'); // 404 where the profile does not deliver the inventory
     const user = (req as unknown as AuthRequest).user;
-    if (!canResource(user, 'iso_materials') || !canResource(user, 'stock')) throw new AppError(403, 'Your permission profile does not allow this action.');
+    // The page needs Show on its own area, Material list (78), besides the records it reads.
+    if (!canResource(user, 'iso_materials') || !canResource(user, 'stock') || !canScope(user, '78')) throw new AppError(403, 'Your permission profile does not allow this action.');
     const param = (name: string) => typeof req.query[name] === 'string' ? String(req.query[name]).slice(0, 150) : '';
     const filters = { siteId: param('siteId'), projectId: param('projectId'), isoId: param('isoId'), query: param('q').slice(0, 500) };
     // Access per project site: a limited request lists only its main projects' records (server/site-scope.ts).

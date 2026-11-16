@@ -310,7 +310,7 @@ export function inspectionActionScope(key: string, data: Record<string, unknown>
   if (key === 'ndt-weld' || key === 'inspection-upload') return [data.type === 'NDT PRE' ? '94' : '76', 'insert'];
   if (key === 'mass-inspection-request') return [data.type === 'PWHT' || data.type === 'PRE-HT' ? '65' : '50', 'print'];
   if (key === 'pwht-upload') return ['97', 'insert'];
-  if (key === 'visual-inspection') return ['local-visual-results', 'insert'];
+  if (key === 'visual-inspection') return ['116', 'insert'];
   if (key === 'tracers') return ['63', 'edit'];
   return undefined;
 }
