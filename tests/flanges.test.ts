@@ -217,12 +217,17 @@ test('the sample flanges sit on isometrics of the sample projects', async t => {
   assert.equal(isoFlangeCount(flanges, 'iso-1'), 2);
 });
 
-test('a flange needs no Flange ID; a filled one stays unique per isometric; the project follows the isometric', async t => {
+test('a flange needs no Flange ID; a filled one stays unique per isometric, and only one flange without one per isometric; the project follows the isometric', async t => {
   const f = await hostedFixture(t); await f.setup();
   await f.signIn('Weld writer', { generalPermission: RW, materialsPermission: NONE, weldingPermission: RW });
   const blank = await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3' });
   assert.equal(blank.status, 201, 'add without Flange ID is accepted');
-  assert.equal((await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3' })).status, 201, 'a second one without Flange ID on the same isometric too');
+  const second = await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3' });
+  assert.equal(second.status, 422, 'a second one without Flange ID on the same isometric is refused');
+  assert.equal((await second.json()).fields.flange_id, 'This isometric already has a flange without a Flange ID. Enter a Flange ID.');
+  assert.equal((await f.request('/api/records/flanges', 'POST', { isoId: 'iso-1' })).status, 201, 'one without Flange ID on another isometric');
+  const blankRecord = (await blank.clone().json()).record;
+  assert.equal((await f.request(`/api/records/flanges/${blankRecord.id}`, 'PUT', { operator: 'Edited', _version: blankRecord._version })).status, 200, 'the flange without Flange ID can still be edited');
   assert.equal((await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3', flange_id: 'FL-U-1' })).status, 201);
   const again = await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3', flange_id: 'FL-U-1' });
   assert.equal(again.status, 422); assert.ok((await again.json()).fields.flange_id);
@@ -230,7 +235,7 @@ test('a flange needs no Flange ID; a filled one stays unique per isometric; the 
   const iso = f.store.get('isometrics', 'iso-3'); const record = (await blank.json()).record;
   assert.equal(record.projectId, iso.projectId, 'stored from the isometric');
   const other = f.store.list('projects').find(project => project.id !== iso.projectId)!;
-  const wrong = await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3', projectId: other.id });
+  const wrong = await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3', flange_id: 'FL-U-2', projectId: other.id });
   assert.equal(wrong.status, 201); assert.equal((await wrong.json()).record.projectId, iso.projectId, 'a project sent with the form only narrows the list');
   assert.ok(!f.store.list('flanges').some(flange => 'assetTag' in flange), 'the sample flanges keep their asset tag in line_number');
   assert.ok(['flange-1', 'flange-2', 'flange-3', 'flange-4'].every(id => flangeAssetTag(f.store.get('flanges', id)).startsWith('AT-')));

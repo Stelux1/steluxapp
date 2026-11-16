@@ -89,8 +89,6 @@ export class Store {
       for (const [i, keys] of (resource.unique || []).entries()) {
         this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "${resource.key}_unique_${i}" ON ${table(resource.key)} (${keys.map(k => `coalesce(json_extract(data, '$.${k}'), '')`).join(',')}) WHERE archived=0;`);
       }
-      // Flange ID is optional now: the old (isometric, Flange ID) index would refuse a second flange without one. The store checks filled IDs itself.
-      if (resource.key === 'flanges') this.db.exec('DROP INDEX IF EXISTS "flanges_unique_0"');
     }
     this.db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS stock_identity ON stock(materialId,warehouseId,coalesce(json_extract(data,'$.chargeNo'),'')) WHERE archived=0;
@@ -217,6 +215,8 @@ export class Store {
       for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
       // A Flange ID is unique per isometric, only when it is filled.
       if (data.flange_id && data.isoId && this.list('flanges').some(r => r.id !== existing?.id && r.isoId === data.isoId && String(r.flange_id ?? '').trim() === data.flange_id)) errors.flange_id ??= 'This isometric already has a flange with this Flange ID.';
+      // The unique rule (isometric, Flange ID) also holds for an empty Flange ID: one flange without an ID per isometric.
+      if (!String(data.flange_id ?? '').trim() && data.isoId && this.list('flanges').some(r => r.id !== existing?.id && r.isoId === data.isoId && !String(r.flange_id ?? '').trim())) errors.flange_id ??= 'This isometric already has a flange without a Flange ID. Enter a Flange ID.';
     }
     if (key === 'ndt_defect_codes' && actor.id !== SYSTEM.id) data.system = existing?.system === true;
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
