@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, GripVertical, ListPlus, Loader2, Lock, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Dropdown, EmptyState, Modal, TableScroll, revealInvalidField } from './components.tsx';
@@ -60,7 +60,16 @@ function CheckField({ label, checked, onChange, disabled, hint, error }: { label
   const id = `weld-${useId().replaceAll(':', '')}`;
   return <div className="field checkbox-field"><label htmlFor={id}><input id={id} type="checkbox" checked={checked} disabled={disabled} onChange={event => onChange?.(event.target.checked)}/><span>{label}</span></label>{hint && <small className="field-hint">{hint}</small>}{error && <small className="field-error">{error}</small>}</div>;
 }
-const Failure = ({ message }: { message: string }) => message ? <div className="alert error" role="alert"><AlertCircle size={18}/><span>{message}</span></div> : null;
+/** The error banner. A long form may be scrolled to its end, so a new message focuses the first invalid field, else scrolls the banner into view. */
+function Failure({ message }: { message: string }) {
+  const banner = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!message || !banner.current) return;
+    const invalid = banner.current.closest('form')?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (invalid) invalid.focus(); else banner.current.scrollIntoView({ block: 'nearest' });
+  }, [message]);
+  return message ? <div ref={banner} className="alert error" role="alert"><AlertCircle size={18}/><span>{message}</span></div> : null;
+}
 
 /** The options a charge number offers: nothing new, EXISTING, CONN ISO, then the project's certificates. */
 function chargeOptions(data: WeldData, selected: string) {
@@ -342,10 +351,16 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
   const unlocked = welds.filter(weld => !locks.get(weld.id)!.locked);
   const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canMass = canRun('mass-edit-welds'), canSort = canRun('reorder-welds') && !sortingOff, canDelete = canRecord('welds', 'delete');
   function toggleSorting() { const next = !sortingOff; setSortingOff(next); try { localStorage.setItem(SORTING_KEY, next ? '1' : '0'); } catch { /* the choice just is not remembered */ } }
-  async function reorder(next: string[] | null, moved?: Row) {
+  async function reorder(next: string[] | null, moved?: Row, direction?: 'up' | 'down') {
     if (!next || busy) return; setBusy(true); setError('');
     try { await post('/actions/reorder-welds', { isoId: iso.id, weldIds: next }); await refresh(); if (moved) setAnnounce(`Weld ${str(moved.weldNo)} moved to place ${next.indexOf(moved.id) + 1} of ${next.length}.`); }
     catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); setDragging(''); }
+    // The arrow buttons are disabled while saving, which drops keyboard focus: give it back to the moved weld (the other arrow once it reached an end).
+    if (moved && direction) requestAnimationFrame(() => {
+      const button = (dir: 'up' | 'down') => document.querySelector<HTMLButtonElement>(`button[aria-label="${CSS.escape(`Move weld ${str(moved.weldNo)} ${dir}`)}"]`);
+      const target = [button(direction), button(direction === 'up' ? 'down' : 'up')].find(candidate => candidate && !candidate.disabled);
+      target?.focus();
+    });
   }
   const sideCells = (weld: Row, side: 1 | 2) => {
     const certificate = data.certs.get(str(weld[`certificate${side}Id`])), material = data.materials.get(str(weld[`material${side}Id`] || certificate?.materialId));
@@ -376,7 +391,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
         const lock = locks.get(weld.id)!, type = data.types.get(str(weld.typeId)), welders = WELDERS.map(name => data.welders.get(str(weld[name]))).filter((row): row is Row => Boolean(row));
         const abbreviation = typeAbbreviation(type), tooltip = locationTooltip(weldLocation(type));
         return <tr key={weld.id} className={`${lock.locked ? 'weld-row-locked' : ''} ${dragging === weld.id ? 'weld-row-dragging' : ''}`} onDragOver={event => { if (dragging && dragging !== weld.id) event.preventDefault(); }} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, weld.id), welds.find(row => row.id === dragging)); }}>
-          <td className="weld-sort-cell">{canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld)}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld)}><ArrowDown size={14}/></button></> : <span className="muted">—</span>}</td>
+          <td className="weld-sort-cell">{canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld, 'up')}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld, 'down')}><ArrowDown size={14}/></button></> : <span className="muted">—</span>}</td>
           <td className="weld-no">{canEdit && !lock.locked ? <button type="button" className="record-link" onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
           <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}${type?.name ? ` (${str(type.name)})` : ''}`}>{abbreviation}</span> : <span className="muted">—</span>}</td>
           <td>{welders.length ? <span title={welders.map(row => str(row.name || row.number)).join(', ')}>{welders.map(row => str(row.welderCode || row.number)).join(', ')}</span> : <span className="muted">—</span>}</td>
