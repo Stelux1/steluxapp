@@ -2,7 +2,7 @@ import type { ActionDefinition, ActionField, Availability, PermissionVerb, Row }
 import { materialIdentity, materialRecord, pickClaims, pickIssued, requirementExecution } from './materials.ts';
 import { priorityLabel } from './priority.ts';
 import { materialStatusPercent, type CoverageLine } from './mto-materials.ts';
-import { claimInventorySiteId, claimSiteId, countedSiteId, countedStock, isoSiteId } from './mto-stock.ts';
+import { claimSiteId, countedSiteId, countedStock, inventoryClaims, isoSiteId } from './mto-stock.ts';
 
 /**
  * Isometric execution, pick lists and logistics (MTO Pilot).
@@ -150,8 +150,8 @@ const stockPools = (rows: Record<string, Row[]>) => {
   for (const row of active(rows, 'stock')) { const site = countedSiteId(rows, row); if (!site) continue; const value = pool(poolKey(site, materialIdentity(row))); value.stock = round(value.stock + Number(row.quantity)); }
   for (const row of active(rows, 'reservations').filter(row => row.status === 'Reserved')) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.reserved = round(value.reserved + Number(row.quantity)); }
   // Pick lists written before the site inventory existed take from a storehouse line: they claim here only when that
-  // line is an old-model row counted for a main project (claimInventorySiteId).
-  for (const row of active(rows, 'picklists').filter(pickClaims)) { const site = claimInventorySiteId(rows, row); if (!site) continue; const value = pool(poolKey(site, materialIdentity(row))); value.claimed = round(value.claimed + Number(row.quantity)); }
+  // line is an old-model row counted for a main project (inventoryClaims).
+  for (const claim of inventoryClaims(rows)) { const value = pool(poolKey(claim.siteId, claim.identity)); value.claimed = round(value.claimed + claim.quantity); }
   for (const value of pools.values()) value.free = round(value.stock - value.reserved - value.claimed);
   return pools;
 };
@@ -229,7 +229,7 @@ export function planStart(rows: Record<string, Row[]>, isoId: string) {
  */
 export function allocateStock(rows: Record<string, Row[]>, siteId: string, identity: string, quantity: number) {
   const onHand = countedStock(rows, siteId, identity).reduce((sum, entry) => sum + Number(entry.row.quantity), 0);
-  const claimed = active(rows, 'picklists').filter(line => pickClaims(line) && materialIdentity(line) === identity && claimInventorySiteId(rows, line) === siteId).reduce((sum, line) => sum + Number(line.quantity), 0);
+  const claimed = inventoryClaims(rows).filter(claim => claim.siteId === siteId && claim.identity === identity).reduce((sum, claim) => sum + claim.quantity, 0);
   const room = Math.max(0, round(onHand - claimed));
   const take = round(Math.min(room, quantity));
   return { quantity: take, shortfall: round(quantity - take) };

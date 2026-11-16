@@ -154,7 +154,9 @@ export const transferOrderPath = (id: string) => `/materials/transfer_orders?ord
 export function orderPlaces(rows: Record<string, Row[]>, order: Row): { from: string; to: string } {
   const name = (key: string, id: unknown) => String((rows[key] || []).find(row => row.id === id)?.name ?? '');
   const route = transferRoute(String(order.type));
-  const from = route?.from === 'inventory' ? (order.fromSiteId ? `Inventory · ${name('sites', order.fromSiteId)}` : '—') : order.fromWarehouseId ? name('warehouses', order.fromWarehouseId) : 'Storehouse of each item';
+  // An order of the old model names no source project site: the main project its old-model rows count for (else its storehouse).
+  const source = route?.from === 'inventory' ? transferSourceSiteId(rows, order) : '';
+  const from = route?.from === 'inventory' ? (source && name('sites', source) ? `Inventory · ${name('sites', source)}` : order.fromWarehouseId && name('warehouses', order.fromWarehouseId) || '—') : order.fromWarehouseId ? name('warehouses', order.fromWarehouseId) : 'Storehouse of each item';
   const to = route?.to === 'storehouse' ? name('warehouses', order.toWarehouseId) || '—' : order.siteId ? `${route?.to === 'site' ? '' : 'Inventory · '}${name('sites', order.siteId)}` : '—';
   return { from, to };
 }
@@ -229,33 +231,90 @@ export const picksFromSite = (line: Row) => !line.warehouseId;
 
 /** Whether a stock row says where it is (every row written since the two location kinds exist). */
 export const hasLocationKind = (row: Row) => row.locationKind === 'site' || row.locationKind === 'storehouse';
+/** Whether a stock row is one of the old model: no location kind, a storehouse. Only such a row is ever derived. */
+export const isOldModelRow = (row: Row) => !hasLocationKind(row) && Boolean(row.warehouseId);
+/**
+ * Read-only values the server derives from EVERY stored row and attaches to each old-model stock row it delivers or
+ * computes with from a narrower set of rows (server/mto-stock.ts `withLegacyStock`): the hosted profile does not deliver
+ * a storehouse's main project (storehouses are company-wide there), and an account limited to one main project does not
+ * receive the pick lists of another. They are never stored (the store keeps only resource fields) and never accepted from
+ * a request (they are no delivered field); `projectRow` (shared/release.ts) keeps them on the rows it projects.
+ * - `legacySiteId`: the main project the row counts for (`legacyInventorySiteId`), '' for none;
+ * - `legacyClaimed`: what untaken pick lists of the old rule claim of the row (`legacyClaimed`).
+ * Both name only the row's own main project and its own quantity: the main project the access per project site already
+ * files the row under (shared/site-scope.ts: a stock row without `siteId` follows its storehouse's stored main project).
+ */
+export const LEGACY_STOCK_FIELDS = ['legacySiteId', 'legacyClaimed'] as const;
 /**
  * THE derivation: the main project whose inventory an old-model stock row counts for (its storehouse's stored main
- * project), '' for every other row (a row with a location kind, or one whose storehouse names no main project).
+ * project), '' for every other row (a row with a location kind, or one whose storehouse names no main project). A row the
+ * server delivered carries it as `legacySiteId`; otherwise (the server's own reads of the store) it is read from the
+ * storehouse.
  */
 export function legacyInventorySiteId(rows: Record<string, Row[]>, stock: Row): string {
-  if (hasLocationKind(stock) || !stock.warehouseId) return '';
+  if (!isOldModelRow(stock)) return '';
+  if (typeof stock.legacySiteId === 'string') return stock.legacySiteId;
   return String((rows.warehouses || []).find(row => row.id === stock.warehouseId)?.siteId || '');
 }
 /** The main project whose inventory a stock row counts for: a site row's own, an old-model row's derived one, else ''. */
 export const countedSiteId = (rows: Record<string, Row[]>, stock: Row): string => isSiteStock(stock) ? String(stock.siteId || '') : legacyInventorySiteId(rows, stock);
-/** What untaken pick-list lines of the old rule (they name a storehouse and a charge) still claim of one storehouse line. */
-export function legacyClaimed(rows: Record<string, Row[]>, stock: Row): number {
-  if (isSiteStock(stock)) return 0;
-  const identity = materialIdentity(stock);
-  return round6(live(rows, 'picklists').filter(line => !picksFromSite(line) && line.returned !== true && line.taken === false && line.issued !== true
-    && line.warehouseId === stock.warehouseId && materialIdentity(line) === identity && String(line.chargeNo || '') === String(stock.chargeNo || '')).reduce((sum, line) => sum + Number(line.quantity), 0));
+/** An untaken pick-list line of the old rule: it names a storehouse and a charge and takes from that storehouse line. */
+const oldRuleClaim = (line: Row) => !picksFromSite(line) && line.returned !== true && line.taken === false && line.issued !== true;
+/** The stock row an untaken pick-list line of the old rule will be taken from: the first live storehouse row of its storehouse, material and charge. */
+function oldClaimSource(rows: Record<string, Row[]>, line: Row): Row | undefined {
+  const identity = materialIdentity(line);
+  return live(rows, 'stock').find(row => !isSiteStock(row) && row.warehouseId === line.warehouseId && materialIdentity(row) === identity && String(row.chargeNo || '') === String(line.chargeNo || ''));
 }
 /**
- * The main project whose counted inventory an untaken pick-list line claims from: a line of the site inventory its own
- * main project; a line of the old rule the derived main project of the storehouse line it will be taken from ('' when
- * that line is no old-model row, or gone: then no isometric counts the stock it claims).
+ * What untaken pick-list lines of the old rule still claim of one storehouse line: each line claims from the row it will
+ * be taken from (`oldClaimSource`). A row the server delivered carries it as `legacyClaimed`.
  */
-export function claimInventorySiteId(rows: Record<string, Row[]>, line: Row): string {
-  if (picksFromSite(line)) return claimSiteId(rows, line);
-  const identity = materialIdentity(line);
-  const stock = live(rows, 'stock').find(row => !isSiteStock(row) && row.warehouseId === line.warehouseId && materialIdentity(row) === identity && String(row.chargeNo || '') === String(line.chargeNo || ''));
-  return stock ? legacyInventorySiteId(rows, stock) : '';
+export function legacyClaimed(rows: Record<string, Row[]>, stock: Row): number {
+  if (isSiteStock(stock)) return 0;
+  if (typeof stock.legacyClaimed === 'number' && Number.isFinite(stock.legacyClaimed)) return stock.legacyClaimed;
+  if (stock._archived) return 0;
+  const identity = materialIdentity(stock);
+  return round6(live(rows, 'picklists').filter(line => oldRuleClaim(line) && line.warehouseId === stock.warehouseId && materialIdentity(line) === identity
+    && String(line.chargeNo || '') === String(stock.chargeNo || '') && oldClaimSource(rows, line)?.id === stock.id).reduce((sum, line) => sum + Number(line.quantity), 0));
+}
+/** The derived values of one stock row (see LEGACY_STOCK_FIELDS), or null for a row that is no old-model row. */
+export function legacyStockValues(rows: Record<string, Row[]>, stock: Row): { legacySiteId: string; legacyClaimed: number } | null {
+  if (!isOldModelRow(stock)) return null;
+  const { legacySiteId: _site, legacyClaimed: _claimed, ...plain } = stock;
+  return { legacySiteId: legacyInventorySiteId(rows, plain as Row), legacyClaimed: legacyClaimed(rows, plain as Row) };
+}
+/**
+ * Every untaken pick-list claim on counted inventory, as (main project, material, quantity): a line of the site
+ * inventory claims from its own main project; a line of the old rule through the old-model row it will be taken from,
+ * in that row's derived main project (none when that row is no old-model row any more, or gone). Read through the stock
+ * rows, so an account that does not receive the pick list itself still sees what it claims of a row it does receive.
+ */
+export function inventoryClaims(rows: Record<string, Row[]>): { siteId: string; identity: string; quantity: number }[] {
+  const claims: { siteId: string; identity: string; quantity: number }[] = [];
+  for (const line of live(rows, 'picklists')) {
+    if (!picksFromSite(line) || line.returned === true || line.taken !== false || line.issued === true) continue;
+    const siteId = claimSiteId(rows, line);
+    if (siteId) claims.push({ siteId, identity: materialIdentity(line), quantity: Number(line.quantity) });
+  }
+  for (const stock of live(rows, 'stock')) {
+    const siteId = legacyInventorySiteId(rows, stock), quantity = siteId ? legacyClaimed(rows, stock) : 0;
+    if (quantity > 0) claims.push({ siteId, identity: materialIdentity(stock), quantity });
+  }
+  return claims;
+}
+/**
+ * The main project a transfer order takes material from: its own `fromSiteId`; for an order out of "the inventory"
+ * written by the old model (no `fromSiteId`), the derived main project of the old-model rows its items name, else of its
+ * storehouse (read where the storehouse's main project is known: on the server). '' when it cannot be told.
+ */
+export function transferSourceSiteId(rows: Record<string, Row[]>, order: Row): string {
+  if (order.fromSiteId) return String(order.fromSiteId);
+  if (transferRoute(String(order.type))?.from !== 'inventory') return '';
+  const stock = new Map((rows.stock || []).map(row => [row.id, row]));
+  const named = orderItemsOf(rows, order.id).map(item => stock.get(String(item.stockId || ''))).filter((row): row is Row => Boolean(row));
+  const sites = new Set(named.map(row => countedSiteId(rows, row)));
+  if (named.length) return sites.size === 1 ? [...sites][0] : '';
+  return order.fromWarehouseId ? String((rows.warehouses || []).find(row => row.id === order.fromWarehouseId)?.siteId || '') : '';
 }
 /**
  * The stock rows counted as one main project's inventory (optionally of one material), in charge order: its site

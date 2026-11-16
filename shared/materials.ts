@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { claimInventorySiteId, countedSiteId } from './mto-stock.ts';
+import { countedSiteId, inventoryClaims } from './mto-stock.ts';
 
 export const MATERIAL_FIELDS=['materialNo','description','materialGroup','articleNo','legacyNo','dia','lbs','uom','price'] as const;
 export function materialRecord(rows:Record<string,Row[]>,row:Row){return row.materialId?rows.materials?.find(m=>m.id===row.materialId):row.customMaterialId?rows.custom_materials?.find(m=>m.id===row.customMaterialId):row.customMaterial?row:undefined;}
@@ -31,11 +31,11 @@ export function requirementExecution(rows:Record<string,Row[]>,filters:{projectI
   const lines=active('order_lines').filter(l=>orders.has(String(l.orderId)));const picks=active('picklists').filter(pickIssued);
   // Inv.: the Material inventory of the isometric's project site (rows with locationKind 'site', plus the old-model
   // storehouse rows derived to it; other storehouse lines never count), less what pick lists claim of it and have not
-  // taken yet (shared/mto-stock.ts holds the location rules: countedSiteId, claimInventorySiteId).
+  // taken yet (shared/mto-stock.ts holds the location rules: countedSiteId, inventoryClaims).
   const projectSite=new Map(active('projects').map(p=>[p.id,String(p.siteId||'')]));
   const available=new Map<string,number>();const bump=(key:string,delta:number)=>available.set(key,round((available.get(key)||0)+delta));
   for(const s of active('stock')){const site=countedSiteId(rows,s);if(site)bump(site+'|'+materialIdentity(s),Number(s.quantity));}
-  for(const p of active('picklists'))if(pickClaims(p)){const site=claimInventorySiteId(rows,p);if(site)bump(site+'|'+materialIdentity(p),-Number(p.quantity));}
+  for(const claim of inventoryClaims(rows))bump(claim.siteId+'|'+claim.identity,-claim.quantity);
   // Lines without an order or pick link share what was ordered / picked for their material in line order. A line's share is capped by its
   // quantity at the start of its quantity log, so a later change of one line's quantity never moves the shares of the others.
   const startQuantity=new Map<string,number>();for(const c of [...(rows.material_quantity_changes||[])].filter(c=>!c._archived).sort((a,b)=>Number(b.sequence)-Number(a.sequence)))startQuantity.set(String(c.requirementId),Number(c.previousQuantity));

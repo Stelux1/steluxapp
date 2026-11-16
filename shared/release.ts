@@ -16,7 +16,7 @@ import { RELEASE_ACTIONS } from './releases.ts';
 import { deliverMtoMaterials } from './mto-materials.ts';
 import { MATERIAL_IMPORT_PATH } from './material-db.ts';
 import { PROCUREMENT_ACTION_FIELDS, PROCUREMENT_PATHS, PROCUREMENT_RESOURCE_FIELDS } from './mto-procurement.ts';
-import { deliverMtoStock } from './mto-stock.ts';
+import { LEGACY_STOCK_FIELDS, deliverMtoStock } from './mto-stock.ts';
 import { deliverMtoLogistics, MTO_LOGISTICS_PAGES } from './mto-logistics.ts';
 import { PDF_REPORT_RESOURCES } from './pdf-report-keys.ts';
 import { PQR_IMPORT_PATH, WELD_DATA_COLUMNS, WPS_HOSTED_FIELDS, hostedWeldDataField, orderWpsFields } from './wps.ts';
@@ -241,9 +241,14 @@ export const resourceAvailable = (availability: Availability | undefined, key: s
 export const rowAvailable = (availability: Availability | undefined, key: string, row: Row) => resourceAvailable(availability, key) && (!availability || !['inspection_requests', 'inspection_results'].includes(key) || availability.inspectionTypes.includes(String(row.type)));
 export const fieldAvailable = (availability: Availability | undefined, key: string, field: string) => !availability || Boolean(availability.resources[key]?.includes(field));
 export const actionAvailable = (availability: Availability | undefined, key: string, type?: unknown) => !availability || Object.hasOwn(availability.actions, key) && (type === undefined || !key.startsWith('inspection-') || availability.inspectionTypes.includes(String(type)));
+/**
+ * Read-only values the server derives and attaches to the rows it delivers; they are no delivered field, so no request can
+ * write them (stock: the old-model values of shared/mto-stock.ts `LEGACY_STOCK_FIELDS`).
+ */
+const DERIVED_FIELDS: Record<string, readonly string[]> = { stock: LEGACY_STOCK_FIELDS };
 export function projectRow(availability: Availability | undefined, key: string, row: Row): Row {
   if (!availability) return row;
-  const output = Object.fromEntries(Object.entries(row).filter(([name]) => name === 'id' || ['_version', '_archived', '_createdAt', '_updatedAt'].includes(name) || fieldAvailable(availability, key, name))) as Row;
+  const output = Object.fromEntries(Object.entries(row).filter(([name]) => name === 'id' || ['_version', '_archived', '_createdAt', '_updatedAt'].includes(name) || fieldAvailable(availability, key, name) || Boolean(DERIVED_FIELDS[key]?.includes(name)))) as Row;
   // Accounts saved before access per pilot existed are enabled in both pilots (see shared/resources.ts).
   if (key === 'users' && availability.features.includes('pilots')) for (const name of ['weldEnabled', 'mtoEnabled']) if (typeof output[name] !== 'boolean') output[name] = true;
   return output;
