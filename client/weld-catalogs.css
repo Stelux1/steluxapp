@@ -3,3 +3,10 @@
 .catalog-options-hint { margin: 0; padding: 8px 12px; max-width: 240px; font-size: 13px; color: var(--muted); }
 .catalog-options-error { font-size: 13px; color: #b42318; max-width: 320px; }
 @media (max-width: 480px) { .catalog-options-error { max-width: 100%; } }
+.defect-norm-bar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 12px; padding: 14px 18px 0; }
+.defect-norm-bar .field { margin: 0; min-width: 180px; }
+.defect-norm-bar .btn { min-height: 38px; }
+.defect-norm-help { font-size: 13px; color: var(--muted); flex: 1 1 260px; align-self: center; }
+.row-lock { display: inline-flex; align-items: center; color: var(--muted); padding: 0 6px; }
+.actions-cell .row-lock + .dropdown { display: inline-block; vertical-align: middle; }
+.actions-cell .row-lock { vertical-align: middle; }

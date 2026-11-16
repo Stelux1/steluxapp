@@ -1,19 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store, SYSTEM } from '../server/store.ts';
 import { seed, seedInspectionSamples } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
-import { setAvailability, siteOfRecord } from '../server/weld-catalogs.ts';
+import { activateDefectNorm, setAvailability, siteOfRecord } from '../server/weld-catalogs.ts';
 import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
-import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, missingRequired, orderedAttachmentNames, selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { ATTACHMENT_POSITIONS, CATALOG_SITES, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, FORM_ENABLEMENT, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { STANDARD_DEFECT_CODES, standardDefectCodeId } from '../shared/defect-codes.ts';
+import { upgradeWeldCatalogs } from '../server/catalog-upgrade.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
@@ -65,11 +67,11 @@ test('the hosted profile requires the reference fields; the shared resource keep
   assert.deepEqual(missingRequired('weld_types', { name: 'Butt', location: 'Shop', abbreviation: 'BW' }), {});
   assert.deepEqual(missingRequired('weld_types', { description: 'x' }, row('w', { location: 'Shop', abbreviation: 'BW' })), {}, 'stored values count on an edit');
   assert.deepEqual(missingRequired('weld_types', { abbreviation: ' ' }, row('w', { location: 'Shop', abbreviation: 'BW' })), { abbreviation: 'Abbreviation is required.' });
-  assert.deepEqual(Object.keys(missingRequired('qa_engineers', { name: 'Ana' })), ['companyId']);
+  assert.deepEqual(Object.keys(missingRequired('qa_engineers', { name: 'Ana' })), ['company']);
   assert.deepEqual(Object.keys(missingRequired('companies', { name: 'Co' })), ['address']);
   for (const key of ['weld_types', 'coatings', 'ndt_processes', 'pwht_processes', 'qa_engineers', 'companies']) {
     const resource = projectResource(hosted, RESOURCE_MAP[key]);
-    assert.ok(resource.fields.filter(f => ['location', 'abbreviation', 'description', 'companyId', 'address'].includes(f.name) && missingRequired(key, {})[f.name]).every(f => f.required), key);
+    assert.ok(resource.fields.filter(f => ['location', 'abbreviation', 'description', 'company', 'address'].includes(f.name) && missingRequired(key, {})[f.name]).every(f => f.required), key);
     assert.ok(RESOURCE_MAP[key].fields.filter(f => missingRequired(key, {})[f.name]).every(f => !f.required), `${key} stays optional outside the hosted profile`);
   }
 });
@@ -81,15 +83,15 @@ test('every catalog carries the capture\'s labels, columns and options and is de
   assert.deepEqual(labels('weld_types'), ['Weld type', 'Shop/Field', 'Abbreviation', 'Joint type', 'Groove type']);
   assert.deepEqual(labels('coatings'), ['Coating', 'Abbreviation']);
   assert.deepEqual(labels('ndt_groups'), ['NDT process group', 'Description']);
-  assert.deepEqual(labels('ndt_processes'), ['NDT process', 'Description', 'Group', 'WPR']);
+  assert.deepEqual(labels('ndt_processes'), ['NDT process', 'Description', 'Method', 'Welder Performance Report (WPR)']);
   assert.deepEqual(labels('ndt_defect_codes'), ['Code', 'English', 'Dutch', 'Group', 'Norm', 'ISO 6520-1']);
-  assert.deepEqual(labels('ndt_locations'), ['Location']);
+  assert.deepEqual(labels('ndt_locations'), ['NDT location']);
   assert.deepEqual(labels('pwht_processes'), ['PWHT process Nr.', 'Description']);
-  assert.deepEqual(labels('pwht_locations'), ['Location']);
+  assert.deepEqual(labels('pwht_locations'), ['PWHT location']);
   assert.deepEqual(labels('qa_engineers'), ['Name', 'Company', 'Phone', 'Email address', 'Stamp']);
   assert.deepEqual(labels('companies'), ['Name', 'Address', 'Phone', 'Email address']);
   assert.deepEqual(labels('attachment_names').slice(0, 3), ['Name', 'ISO Book', 'Hydrotest']);
-  assert.deepEqual(resource('qa_engineers').fields.slice(0, 8).map(f => f.label), ['Name', 'Company', 'Phone', 'Email address', 'Stamp', 'Level', 'Certificate 1', 'Certificate 2']);
+  assert.deepEqual(resource('qa_engineers').fields.filter(f => !f.hidden).slice(0, 8).map(f => f.label), ['Name', 'Company', 'Phone', 'Email address', 'Stamp', 'Level', 'Certificate 1', 'Certificate 2']);
   assert.deepEqual(resource('weld_types').fields.find(f => f.name === 'location')?.options, ['Shop', 'Field']);
   assert.deepEqual(resource('attachment_names').fields.find(f => f.name === 'position')?.options, ['Before Isometric', 'After Isometric']);
   assert.equal(resource('ndt_defect_codes').fields.find(f => f.name === 'group')?.options?.length, 6);
@@ -174,7 +176,7 @@ test('hosted: reference-required fields are enforced on create and edit, in both
   assert.equal((await f.request('/api/records/ndt_processes', 'POST', { name: 'ECT', description: 'Eddy current testing', groupId: 'ndt-group-ut', wpr: true })).status, 201);
   assert.equal((await f.request('/api/records/pwht_processes', 'POST', { name: 'PWHT-03' })).status, 422);
   assert.equal((await f.request('/api/records/qa_engineers', 'POST', { name: 'No company' })).status, 422);
-  assert.equal((await f.request('/api/records/qa_engineers', 'POST', { name: 'Ana Ruiz', companyId: 'company-north', stamp: 'AR-01', certificate1: 'ISO 9712 MT-2' })).status, 201);
+  assert.equal((await f.request('/api/records/qa_engineers', 'POST', { name: 'Ana Ruiz', company: 'Site Lillo', stamp: 'AR-01', certificate1: 'ISO 9712 MT-2' })).status, 201);
   assert.equal((await f.request('/api/records/companies', 'POST', { name: 'Harbour Welding BV' })).status, 422);
   assert.equal((await f.request('/api/records/companies', 'POST', { name: 'Harbour Welding BV', address: '5 Dockside', phone: '+31 10 555 0199' })).status, 201);
   response = await f.request('/api/records/ndt_defect_codes', 'POST', { code: 'X1' });
@@ -192,13 +194,11 @@ test('hosted: enablement through the form, the bulk Options and refusal of malfo
   let response = await f.request('/api/records/coatings', 'POST', { name: 'Epoxy topcoat', abbreviation: 'ET', enabledOnSite: false, enabledSiteId: 'site-river' });
   assert.equal(response.status, 201); const coating = (await body(response)).record!;
   let links = (await f.rows('catalog_sites')).filter(l => l.recordId === coating.id);
-  assert.deepEqual(links.map(l => [l.resourceKey, l.siteId, l.enabled]), [['coatings', 'site-river', false]]);
+  assert.deepEqual(links.map(l => [l.resourceKey, l.siteId, l.enabled]).sort(), [['coatings', 'site-north', false], ['coatings', 'site-river', false]], 'a new coating is off on every main project unless its box is ticked');
   assert.equal(coating.enabledOnSite, undefined, 'the instruction is not stored on the record');
-  // The catalog stays global: the other main project still has it.
-  assert.equal(enabledOnSite('coatings', coating, 'site-north', { catalog_sites: await f.rows('catalog_sites') }), true);
   response = await f.request(`/api/records/coatings/${coating.id}`, 'PUT', { enabledOnSite: true, enabledSiteId: 'site-river', _version: coating._version });
   assert.equal(response.status, 200);
-  links = (await f.rows('catalog_sites')).filter(l => l.recordId === coating.id); assert.deepEqual(links.map(l => l.enabled), [true]);
+  links = (await f.rows('catalog_sites')).filter(l => l.recordId === coating.id); assert.deepEqual(links.map(l => [l.siteId, l.enabled]).sort(), [['site-north', false], ['site-river', true]]);
   // Bulk "Deactivate on this site" for checked rows, and "Activate" again.
   const types = (await f.rows('weld_types')).slice(0, 3);
   const bulk = (enabled: boolean, siteId = 'site-north') => f.request('/api/bulk/weld_types', 'POST', { ids: types.map(r => r.id), versions: Object.fromEntries(types.map(r => [r.id, r._version])), changes: { enabledOnSite: enabled, enabledSiteId: siteId } });
@@ -330,4 +330,272 @@ test('hosted: suppliers, service companies and laydowns (delivered by the MTO fl
     assert.equal(f.store.update('spools', river.id, { [field]: id }, f.store.get('spools', river.id)._version)[field], id, field);
   }
   assert.throws(() => f.store.create('orders', { number: 'PO-TEST-1', projectId: 'project-cooling', supplierId: supplier.id, date: '2026-11-02' }), (error: { fields?: Record<string, string> }) => /not enabled/.test(error.fields?.supplierId || ''));
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Flow C1: generic behaviour of the catalog pages and the NDT data catalogs
+// ---------------------------------------------------------------------------------------------------------
+const catalog = (key: string) => projectResource(hosted, RESOURCE_MAP[key]);
+const visible = (key: string) => catalog(key).fields.filter(f => !f.hidden);
+
+test('catalog pages carry the reference titles, add buttons and dialog headings (hosted only)', () => {
+  const expected: Record<string, [string, string, string, string]> = {
+    weld_processes: ['Weld process', 'Add welding process', 'Edit welding process', 'Delete welding process'],
+    weld_types: ['Weld type', 'Add weld type', 'Edit weld type', 'Delete weld type'],
+    coatings: ['Coating', 'Add coating', 'Edit coating', 'Delete coating'],
+    ndt_processes: ['NDT process', 'Add NDT process', 'Edit NDT process', 'Delete NDT process'],
+    ndt_defect_codes: ['Defect codes', 'Add', 'Edit', 'Delete'],
+    ndt_locations: ['NDT locations', 'Add NDT location', 'Edit NDT location', 'Delete NDT location'],
+    pwht_processes: ['PWHT process', 'Add PWHT process', 'Edit PWHT process', 'Delete PWHT process'],
+    pwht_locations: ['PWHT locations', 'Add PWHT location', 'Edit PWHT location', 'Delete PWHT location'],
+    qa_engineers: ['QA/QC engineers', 'Add QA/QC engineer', 'Edit QA/QC engineer', 'Delete QA/QC engineer'],
+  };
+  for (const [key, [title, add, edit, remove]] of Object.entries(expected)) {
+    const resource = catalog(key);
+    assert.deepEqual([resource.title, resource.wording?.add, resource.wording?.edit, resource.wording?.remove], [title, add, edit, remove], key);
+    assert.equal(deleteWording(key, resource.singular).title, remove, key);
+    assert.equal(projectResource(undefined, RESOURCE_MAP[key]).wording, undefined, `${key}: the full profile keeps its own wording`);
+  }
+  assert.deepEqual(Object.keys(CATALOG_WORDING).sort(), Object.keys(expected).sort());
+  assert.equal(deleteWording('ndt_groups', 'NDT process group').title, 'Delete NDT process group');
+  assert.equal(deleteWording('ndt_locations', 'NDT location').text, 'Are you sure?');
+});
+
+test('the row action of a hosted catalog reads Delete, the record is archived underneath and can be restored', async t => {
+  assert.equal(rowDeleteLabel('ndt_locations', false, true), 'Delete');
+  assert.equal(rowDeleteLabel('ndt_locations', true, true), 'Restore record');
+  assert.equal(rowDeleteLabel('ndt_locations', false, false), 'Archive record', 'other profiles keep the archive wording');
+  assert.equal(rowDeleteLabel('welds', false, true), 'Archive record', 'pages outside the catalogs are untouched');
+  for (const key of ['ndt_groups', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'weld_processes', 'weld_types', 'coatings']) assert.ok(DELETE_WORDING_RESOURCES.includes(key), key);
+  const f = await hostedFixture(t); await f.setup();
+  const created = (await body(await f.request('/api/records/ndt_locations', 'POST', { name: 'Gate lab' }))).record!;
+  const response = await f.request(`/api/records/ndt_locations/${created.id}/archive`, 'POST', { _version: created._version });
+  assert.equal(response.status, 200);
+  assert.equal(f.store.get('ndt_locations', created.id, true)._archived, true, 'archived, not erased');
+  assert.ok(!(await f.rows('ndt_locations')).some(row => row.id === created.id && !row._archived), 'gone from the active list');
+});
+
+test('catalog lists offer the reference page sizes: 5/20/50/100/500, and 25/50/100/500 for welding wire and certifications', () => {
+  assert.deepEqual(pageSizes('diameters', true), { sizes: [5, 20, 50, 100, 500], initial: 20 });
+  assert.deepEqual(pageSizes('ndt_defect_codes', true), { sizes: [5, 20, 50, 100, 500], initial: 20 });
+  assert.deepEqual(pageSizes('welding_wires', true), { sizes: [25, 50, 100, 500], initial: 25 });
+  assert.deepEqual(pageSizes('certifications', true), { sizes: [25, 50, 100, 500], initial: 25 });
+  assert.deepEqual(pageSizes('diameters', false), { sizes: [20, 50, 100], initial: 20 }, 'other profiles keep their sizes');
+  assert.deepEqual(pageSizes('welds', true), { sizes: [20, 50, 100], initial: 20 }, 'lists outside the catalogs keep their sizes');
+});
+
+test('the Options menu asks for a Confirm before anything is written', () => {
+  assert.equal(OPTIONS_WORDING.activate.item, 'Activate selected');
+  assert.equal(OPTIONS_WORDING.deactivate.item, 'Deactivate selected');
+  assert.equal(OPTIONS_WORDING.activate.text, 'By clicking ‘Confirm,’ you will activate the selected options.');
+  assert.equal(OPTIONS_WORDING.deactivate.text, 'By clicking ‘Confirm,’ you will deactivate the selected options.');
+  assert.deepEqual([OPTIONS_WORDING.confirm, OPTIONS_WORDING.cancel], ['Confirm', 'Cancel']);
+  // The menu component sends the bulk request only from the Confirm button (client/weld-catalogs.tsx): the items open the dialog.
+  const source = readFileSync(new URL('../client/weld-catalogs.tsx', import.meta.url), 'utf8');
+  assert.ok(!/onClick=\{\(\) => void apply\((true|false)\)\}/.test(source), 'no menu item applies at once');
+  assert.match(source, /onClick=\{\(\) => void apply\(confirming\)\}/);
+});
+
+test('the Add form carries "Enable on this site" on NDT process, QA/QC engineers and Coating only, unticked', () => {
+  assert.deepEqual(Object.keys(FORM_ENABLEMENT).filter(key => FORM_ENABLEMENT[key] === false).sort(), ['coatings', 'ndt_processes', 'qa_engineers']);
+  for (const key of ['suppliers', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'ndt_defect_codes', 'weld_types', 'weld_processes']) assert.equal(Object.hasOwn(FORM_ENABLEMENT, key), false, key);
+  assert.ok(NEW_RECORDS_OFF.includes('ndt_locations') && NEW_RECORDS_OFF.includes('ndt_processes') && !NEW_RECORDS_OFF.includes('weld_types'));
+});
+
+test('hosted: a catalog record a user adds is off on every main project unless the box is ticked; the sample data keeps "enabled"', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const links = async (id: string) => (await f.rows('catalog_sites')).filter(l => l.recordId === id).map(l => [l.siteId, l.enabled]).sort();
+  const location = (await body(await f.request('/api/records/ndt_locations', 'POST', { name: 'Gate lab' }))).record!;
+  assert.deepEqual(await links(location.id), [['site-north', false], ['site-river', false]]);
+  const rows = { catalog_sites: await f.rows('catalog_sites') };
+  assert.equal(enabledOnSite('ndt_locations', location, 'site-north', rows), false); assert.equal(enabledOnSite('ndt_locations', location, 'site-river', rows), false);
+  const ticked = (await body(await f.request('/api/records/ndt_processes', 'POST', { name: 'ECT', description: 'Eddy current', enabledOnSite: true, enabledSiteId: 'site-north' }))).record!;
+  assert.deepEqual(await links(ticked.id), [['site-river', false]], 'enabled needs no row on the current site; the other main project is off');
+  const unticked = (await body(await f.request('/api/records/ndt_processes', 'POST', { name: 'ECT-2', description: 'Eddy current 2', enabledOnSite: false, enabledSiteId: 'site-north' }))).record!;
+  assert.deepEqual(await links(unticked.id), [['site-north', false], ['site-river', false]]);
+  const refreshed = { catalog_sites: await f.rows('catalog_sites') };
+  assert.equal(enabledOnSite('ndt_processes', ticked, 'site-north', refreshed), true); assert.equal(enabledOnSite('ndt_processes', ticked, 'site-river', refreshed), false);
+  // A weld type has no box and no switch-off: it stays enabled everywhere, as its list shows every type.
+  const type = (await body(await f.request('/api/records/weld_types', 'POST', { name: 'Test weld', location: 'Shop', abbreviation: 'TW' }))).record!;
+  assert.deepEqual(await links(type.id), []);
+  // Existing records keep their state; records written by the system (sample data, demo copy) keep "enabled everywhere".
+  assert.deepEqual(await links('ndt-shop'), []);
+  assert.equal(f.store.list(CATALOG_SITES).filter(l => l.recordId === 'ndt-lab').length, 1);
+  const system = f.store.create('ndt_locations', { name: 'Seeded later' }, SYSTEM);
+  assert.deepEqual(f.store.list(CATALOG_SITES).filter(l => l.recordId === system.id), []);
+  // Switched on later through Options (Activate selected).
+  const current = (await f.rows('ndt_locations')).find(r => r.id === location.id)!;
+  assert.equal((await f.request('/api/bulk/ndt_locations', 'POST', { ids: [location.id], versions: { [location.id]: current._version }, changes: { enabledOnSite: true, enabledSiteId: 'site-north' } })).status, 200);
+  assert.deepEqual(await links(location.id), [['site-north', true], ['site-river', false]]);
+});
+
+test('PWHT selects offer every PWHT record whatever its availability; NDT selects and server checks still follow it', () => {
+  const options = ['a', 'b'].map(id => row(id));
+  const rows = { catalog_sites: [link('pwht_locations', 'a', 'north', false), link('pwht_processes', 'a', 'north', false), link('ndt_locations', 'a', 'north', false)] };
+  assert.deepEqual(enabledOptions('pwht_locations', options, 'north', rows).map(o => o.id), ['a', 'b']);
+  assert.deepEqual(enabledOptions('pwht_processes', options, 'north', rows).map(o => o.id), ['a', 'b']);
+  assert.deepEqual(enabledOptions('ndt_locations', options, 'north', rows).map(o => o.id), ['b']);
+  assert.deepEqual(enabledOptions('ndt_locations', options, 'north', { catalog_sites: [] }).map(o => o.id), ['a', 'b']);
+  const store = new Store(':memory:'); seed(store);
+  setAvailability(store, 'pwht_locations', 'pwht-shop', 'site-north', false, SYSTEM); setAvailability(store, 'pwht_processes', 'pwht-1', 'site-north', false, SYSTEM);
+  const request = (extra: Record<string, unknown>) => store.create('inspection_requests', { number: `T-${Math.random()}`, weldId: 'weld-1', type: 'PWHT', date: '2026-10-20', status: 'Open', ...extra }, SYSTEM);
+  assert.ok(request({ pwhtLocationId: 'pwht-shop', pwhtProcessId: 'pwht-1' }).id, 'a switched-off PWHT location and process may be used');
+  assert.throws(() => request({ locationId: 'ndt-lab' }), /highlighted/, 'a switched-off NDT location is still refused');
+  store.close();
+});
+
+test('Group and Method: the NDT process form says Method and Welder Performance Report (WPR), without hints; the column stays Group', () => {
+  const process = catalog('ndt_processes');
+  const group = process.fields.find(f => f.name === 'groupId')!, wpr = process.fields.find(f => f.name === 'wpr')!;
+  assert.deepEqual([group.label, group.columnLabel, group.hint], ['Method', 'Group', undefined]);
+  assert.deepEqual([wpr.label, wpr.columnLabel, wpr.hint], ['Welder Performance Report (WPR)', 'WPR', undefined]);
+  assert.deepEqual(process.fields.map(f => f.name), ['name', 'description', 'groupId', 'wpr']);
+  assert.equal(RESOURCE_MAP.ndt_processes.fields.find(f => f.name === 'groupId')!.label, 'Group', 'the full profile keeps its form');
+});
+
+test('Defect codes: the reference groups with Crack first, and the NDT / PWHT location columns read NDT location / PWHT location', () => {
+  assert.deepEqual(DEFECT_GROUPS, ['Crack', 'Cavity', 'Inclusion', 'Fusion', 'Shape', 'Miscellaneous']);
+  const group = catalog('ndt_defect_codes').fields.find(f => f.name === 'group')!;
+  assert.equal(group.default, 'Crack'); assert.deepEqual(group.options, DEFECT_GROUPS);
+  assert.equal(catalog('ndt_defect_codes').fields.find(f => f.name === 'norm')!.default, 'Current list');
+  assert.equal(group.legacy?.['Lack of fusion'], 'Fusion'); assert.equal(group.legacy?.['Imperfect shape'], 'Shape');
+  assert.equal(catalog('ndt_locations').fields.find(f => f.name === 'name')!.label, 'NDT location');
+  assert.equal(catalog('pwht_locations').fields.find(f => f.name === 'name')!.label, 'PWHT location');
+  assert.equal(catalog('ndt_defect_codes').fields.find(f => f.name === 'system')!.hidden, true, 'the lock flag is never a form field');
+});
+
+test('Weld process, Weld type and Coating forms carry the reference fields only', () => {
+  assert.deepEqual(visible('weld_processes').map(f => f.name), ['name']);
+  assert.deepEqual(visible('weld_types').map(f => f.name), ['name', 'location', 'abbreviation', 'jointType', 'grooveType']);
+  assert.equal(visible('weld_types').find(f => f.name === 'location')!.default, 'Shop');
+  assert.deepEqual(visible('coatings').map(f => f.name), ['name', 'abbreviation']);
+  assert.deepEqual(catalog('weld_types').columns, ['name', 'location', 'abbreviation', 'jointType', 'grooveType']);
+});
+
+test('QA/QC engineers: Company is required free text in the hosted profile', async t => {
+  const company = catalog('qa_engineers').fields.find(f => f.name === 'company')!;
+  assert.deepEqual([company.label, company.type, company.required, company.hidden], ['Company', 'text', true, false]);
+  assert.equal(catalog('qa_engineers').fields.find(f => f.name === 'companyId')!.hidden, true);
+  assert.deepEqual(catalog('qa_engineers').columns, ['name', 'company', 'phone', 'email', 'stamp']);
+  const f = await hostedFixture(t); await f.setup();
+  let response = await f.request('/api/records/qa_engineers', 'POST', { name: 'Ana Ruiz' });
+  assert.equal(response.status, 422); assert.equal((await body(response)).fields!.company, 'Company is required.');
+  response = await f.request('/api/records/qa_engineers', 'POST', { name: 'Ana Ruiz', company: 'Site Lillo' });
+  assert.equal(response.status, 201); assert.equal((await body(response)).record!.company, 'Site Lillo');
+});
+
+test('the standard defect codes: ISO 6520-1, ASME B31.3 and API 1104, locked, and none of the invented ones', () => {
+  const norm = (name: string) => STANDARD_DEFECT_CODES.filter(code => code[4] === name).map(code => code[0]);
+  assert.deepEqual(norm('ISO 6520-1'), ['100', '101', '102', '103', '104', '105', '106', '201', '202', '301', '302', '303', '304', '401', '402', '501', '502', '503', '504', '505', '506', '507', '508', '509', '510', '511']);
+  assert.deepEqual(norm('ASME B31.3'), ['CRACK', 'LOF', 'IP', 'ROUND', 'ELONG', 'UC', 'REINF']);
+  assert.deepEqual(norm('API 1104'), ['C', 'IP', 'IPD', 'ICP', 'IF', 'BT', 'P']);
+  assert.equal(new Set(STANDARD_DEFECT_CODES.map(code => standardDefectCodeId(code[0], code[4]))).size, STANDARD_DEFECT_CODES.length, 'ids are unique');
+  assert.ok(STANDARD_DEFECT_CODES.every(code => DEFECT_GROUPS.includes(code[3]) && code[2] && code[1]), 'every code has its texts and a known group');
+  const dutch = (code: string, normName: string) => STANDARD_DEFECT_CODES.find(c => c[0] === code && c[4] === normName)![2];
+  assert.deepEqual([dutch('102', 'ISO 6520-1'), dutch('401', 'ISO 6520-1'), dutch('402', 'ISO 6520-1'), dutch('501', 'ISO 6520-1'), dutch('502', 'ISO 6520-1'), dutch('507', 'ISO 6520-1')], ['Dwarscheur', 'Bindingsfout', 'Onvolledige doorlassing', 'Inkarteling', 'Te hoge sluitlaag', 'Lineaire hoog-laag']);
+  const store = new Store(':memory:'); seed(store);
+  const codes = store.list('ndt_defect_codes');
+  assert.equal(codes.length, STANDARD_DEFECT_CODES.length); assert.ok(codes.every(code => code.system === true));
+  for (const invented of ['B31-CR', 'B31-IP', 'B31-CV', 'PO', 'SL', 'LF', '2011', '2013', '2015', '601']) assert.ok(!codes.some(code => code.code === invented), invented);
+  assert.equal(codes.filter(code => code.code === 'IP').length, 2); assert.deepEqual(codes.filter(code => code.code === 'IP').map(code => code.norm).sort(), ['API 1104', 'ASME B31.3']);
+  assert.equal(isLockedRecord('ndt_defect_codes', codes[0], true), true); assert.equal(isLockedRecord('ndt_defect_codes', codes[0], false), false);
+  assert.equal(isLockedRecord('ndt_defect_codes', row('x', { system: false }), true), false);
+  store.close();
+});
+
+test('hosted: a standard defect code cannot be edited or deleted (403), switching it per site still works, a client code stays editable', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const standard = (await f.rows('ndt_defect_codes')).find(code => code.code === '401')!;
+  let response = await f.request(`/api/records/ndt_defect_codes/${standard.id}`, 'PUT', { dutch: 'Anders', _version: standard._version });
+  assert.equal(response.status, 403); assert.equal(f.store.get('ndt_defect_codes', standard.id).dutch, 'Bindingsfout');
+  response = await f.request(`/api/records/ndt_defect_codes/${standard.id}/archive`, 'POST', { _version: standard._version });
+  assert.equal(response.status, 403); assert.equal(f.store.get('ndt_defect_codes', standard.id).code, '401', 'still active');
+  response = await f.request('/api/bulk/ndt_defect_codes', 'POST', { ids: [standard.id], versions: { [standard.id]: standard._version }, changes: { enabledOnSite: false, enabledSiteId: 'site-river' } });
+  assert.equal(response.status, 200, 'activation per site stays possible');
+  response = await f.request('/api/bulk/ndt_defect_codes', 'POST', { ids: [standard.id], versions: { [standard.id]: f.store.get('ndt_defect_codes', standard.id)._version }, changes: { system: false } });
+  assert.ok([403, 404].includes(response.status), 'the flag is not bulk-editable');
+  // A client's own code: editable and deletable, and a request can never make it (or unmake a standard code) a standard code.
+  response = await f.request('/api/records/ndt_defect_codes', 'POST', { code: 'X-1', english: 'Client defect', group: 'Crack', norm: 'Current list', system: true });
+  assert.equal(response.status, 201); const own = (await body(response)).record!; assert.equal(own.system, false);
+  response = await f.request(`/api/records/ndt_defect_codes/${own.id}`, 'PUT', { english: 'Client defect 2', _version: own._version });
+  assert.equal(response.status, 200);
+  const edited = f.store.get('ndt_defect_codes', own.id);
+  assert.equal((await f.request(`/api/records/ndt_defect_codes/${own.id}/archive`, 'POST', { _version: edited._version })).status, 200);
+});
+
+test('activating a norm switches every code of that norm on for the main project and leaves the others as they were', () => {
+  const store = new Store(':memory:'); seed(store);
+  const api = store.list('ndt_defect_codes').filter(code => code.norm === 'API 1104'), asme = store.list('ndt_defect_codes').filter(code => code.norm === 'ASME B31.3');
+  for (const code of [...api, ...asme]) setAvailability(store, 'ndt_defect_codes', code.id, 'site-river', false, SYSTEM);
+  assert.equal(activateDefectNorm(store, 'site-river', 'API 1104', SYSTEM), 7);
+  const rows = { catalog_sites: store.list(CATALOG_SITES) };
+  assert.ok(api.every(code => enabledOnSite('ndt_defect_codes', code, 'site-river', rows)));
+  assert.ok(asme.every(code => !enabledOnSite('ndt_defect_codes', code, 'site-river', rows)), 'other norms unchanged');
+  assert.ok(api.every(code => enabledOnSite('ndt_defect_codes', code, 'site-north', rows)), 'other sites unchanged');
+  store.close();
+});
+
+test('saving a new Defect norm on a project site turns that norm\'s codes on for the site', () => {
+  const store = new Store(':memory:'); seed(store); store.hostedRules = true;
+  const iso = store.list('ndt_defect_codes').filter(code => code.norm === 'ISO 6520-1');
+  for (const code of iso) setAvailability(store, 'ndt_defect_codes', code.id, 'site-river', false, SYSTEM);
+  const river = store.get('sites', 'site-river');
+  store.update('sites', river.id, { defectNorm: 'ISO 6520-1' }, river._version, SYSTEM);
+  const rows = { catalog_sites: store.list(CATALOG_SITES) };
+  assert.ok(iso.every(code => enabledOnSite('ndt_defect_codes', code, 'site-river', rows)));
+  // Another save with the same norm changes nothing; a name change alone does not touch availability.
+  for (const code of iso.slice(0, 2)) setAvailability(store, 'ndt_defect_codes', code.id, 'site-river', false, SYSTEM);
+  const saved = store.get('sites', 'site-river'); store.update('sites', saved.id, { phone: '+32 3 555 0100' }, saved._version, SYSTEM);
+  assert.equal(enabledOnSite('ndt_defect_codes', iso[0], 'site-river', { catalog_sites: store.list(CATALOG_SITES) }), false);
+  store.close();
+});
+
+test('the sample weld types carry the reference values: Shop / Field abbreviations, joint and groove types', () => {
+  const store = new Store(':memory:'); seed(store);
+  const byName = (name: string) => store.list('weld_types').find(type => type.name === name)!;
+  const pick = (type: Row) => [type.location, type.abbreviation, type.jointType, type.grooveType];
+  assert.deepEqual(pick(byName('Butt Weld - Shop')), ['Shop', 'WS', 'BW', 'L']);
+  assert.deepEqual(pick(byName('Butt Weld - Field')), ['Field', 'FW', 'BW', 'V']);
+  assert.deepEqual(pick(byName('HOOK-UP')), ['Field', 'YTI', 'BW', '-']);
+  assert.deepEqual(pick(byName('Branch welds - Field')), ['Field', 'FW', 'BR', '1']);
+  assert.equal(store.list('weld_types').length, 17);
+  assert.ok(store.list('weld_types').every(type => ['WS', 'FW', 'YTI'].includes(String(type.abbreviation))));
+  assert.deepEqual(new Set(store.list('weld_types').map(type => type.jointType)), new Set(['BR', 'BW', 'FL', 'LG', 'RP', 'RP-GW', 'SW', 'VJ']));
+  assert.deepEqual(store.list('weld_processes').map(process => process.name).sort(), ['111', '135', '136', '141'], 'bare names, no suffix');
+  assert.ok(store.list('weld_processes').every(process => /^[0-9A-Z/-]+$/.test(String(process.name))));
+  store.close();
+});
+
+test('the upgrade step ships the standard defect codes and the QA/QC company text to an older workspace, once', () => {
+  const store = new Store(':memory:'); seed(store);
+  // An older workspace: the invented sample codes, no lock, an engineer with a company record only.
+  store.db.exec('DELETE FROM ndt_defect_codes');
+  const old = [['401', 'Lack of fusion', 'Bindfout', 'Lack of fusion', 'ISO 6520-1'], ['B31-CR', 'Cracks', 'Scheuren', 'Crack', 'ASME B31.3'], ['PO', 'Porosity', 'Porositeit', 'Cavity', 'Current list']];
+  for (const [code, english, dutch, group, norm] of old) store.create('ndt_defect_codes', { code, english, dutch, group, norm, system: false }, SYSTEM);
+  const engineer = store.get('qa_engineers', 'qa-1'); store.update('qa_engineers', engineer.id, { company: '' }, engineer._version, SYSTEM);
+  const first = upgradeWeldCatalogs(store);
+  assert.deepEqual(first, { defectCodesAdded: STANDARD_DEFECT_CODES.length - 1, defectCodesMarked: 1, engineersFilled: 1 });
+  const active = store.list('ndt_defect_codes');
+  assert.equal(active.length, STANDARD_DEFECT_CODES.length + 2, 'the two old codes that are not standard stay');
+  const fusion = active.find(code => code.code === '401' && code.norm === 'ISO 6520-1')!;
+  assert.deepEqual([fusion.system, fusion.dutch, fusion.group], [true, 'Bindingsfout', 'Fusion']);
+  assert.ok(active.some(code => code.code === 'B31-CR') && active.some(code => code.code === 'PO'), 'nothing is removed');
+  assert.equal(active.filter(code => code.code === 'IP').length, 2);
+  assert.equal(store.get('qa_engineers', 'qa-1').company, 'Stelux Engineering');
+  const second = upgradeWeldCatalogs(store);
+  assert.deepEqual(second, { defectCodesAdded: 0, defectCodesMarked: 0, engineersFilled: 0 }, 'a rerun adds and changes nothing');
+  assert.deepEqual(upgradeWeldCatalogs(store, { dryRun: true }), second);
+  store.close();
+});
+
+test('Weld Pilot shows no laydown or service-company fields on the spools page; MTO Pilot keeps them', () => {
+  const spools = catalog('spools');
+  assert.ok(spools.fields.some(f => f.name === 'laydownId') && spools.columns.includes('laydownId'), 'the shared resource carries the logistics fields');
+  const weld = pilotResource(spools, 'weld');
+  for (const name of ['laydownId', 'serviceCompanyId']) {
+    assert.ok(weld.fields.find(f => f.name === name)!.hidden, `${name} is not a form field in Weld Pilot`);
+    assert.ok(!weld.columns.includes(name), `${name} is not a column in Weld Pilot`);
+  }
+  assert.equal(pilotResource(spools, 'mto'), spools); assert.equal(pilotResource(spools, undefined), spools);
+  const types = catalog('weld_types'); assert.equal(pilotResource(types, 'weld'), types, 'other resources are returned as they are');
 });

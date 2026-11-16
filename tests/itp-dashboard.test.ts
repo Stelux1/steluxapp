@@ -307,8 +307,8 @@ test('the sample data lets the dashboard show compliant and not compliant groups
   // 31 welds in the sample, one without a welder (W031); the main project's limit is 4 %; W005 was repaired.
   assert.deepEqual([result.kpis.totalWelds, result.kpis.welded, result.kpis.repaired, result.kpis.repairPerformance.limit], [31, 30, 1, 4]);
   assert.equal(result.kpis.repairRate, 3.3);                                          // 1 / 30
-  // Abbreviations come from the weld catalog owner (server/weld-catalogs-seed.ts): Shop and Field types differ.
-  assert.deepEqual(result.kpis.weldsByType.map(item => item.label).sort(), ['BR-F', 'BR-S', 'BW-F', 'BW-S']);
+  // Abbreviations come from the weld catalog owner (server/weld-catalogs-seed.ts): the Shop / Field code of the reference (WS / FW).
+  assert.deepEqual(result.kpis.weldsByType.map(item => item.label).sort(), ['FW', 'WS']);
   assert.equal(result.kpis.weldsByType.reduce((sum, item) => sum + item.count, 0), 31);
   assert.ok(result.compliance.some(group => group.compliant) && result.compliance.some(group => !group.compliant));
   assert.equal(result.compliance.reduce((sum, group) => sum + group.total, 0), 30 - 2 /* W007, W023 are tracers */ - 0);
