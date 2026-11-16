@@ -1,3 +1,4 @@
+import { MTO_STOCK_ACTIONS } from './mto-stock.ts';
 import type { ActionDefinition, ActionField, Module } from './types.ts';
 const ref = (name: string, label: string, resource: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'ref', ref: resource, required: true, ...extra });
 const text = (name: string, label: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'text', ...extra });
@@ -37,6 +38,7 @@ add('revision', 'Add drawing revision', 'general', 'Preserve the current revisio
 add('remove-material-quantity','Remove quantity by revision','materials','Reduce the requirement and retain its revision reference in the quantity log.',[ref('requirementId','Material requirement','iso_materials'),ref('revisionId','Revision','revisions'),number('quantity','Quantity to remove',{min:0.01,step:0.01}),date,note],'Remove quantity');
 add('set-material-type', 'Set type', 'materials', 'Set the operation phase of the checked materials.', [ref('requirementIds', 'Material requirements', 'iso_materials', { multiple: true }), ref('phaseId', 'Type', 'operation_phases')], 'Set type');
 add('archive-iso-materials', 'Delete selected materials', 'materials', 'Remove the checked materials from the isometric. They are archived and can be restored.', [ref('requirementIds', 'Material requirements', 'iso_materials', { multiple: true })], 'Delete selected');
+defs.push(...MTO_STOCK_ACTIONS);
 export const ACTIONS = Object.fromEntries(defs.map(d => [d.key, d]));
 export const ACTION_LIST = defs;
 export function actionPermission(key: string): Module { return ACTIONS[key].module; }

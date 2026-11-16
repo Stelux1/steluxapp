@@ -190,7 +190,9 @@ const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 
 test('the hosted profile delivers the MTO catalogs and the data behind Ord.? / Inv. / Picked', () => {
   for (const key of ['materials', 'uoms', 'operation_phases', 'iso_materials', 'material_parts', 'material_types', 'suppliers']) assert.ok(hosted.navigation.includes(key), `${key} has a page`);
-  for (const key of ['custom_materials', 'orders', 'order_lines', 'stock', 'movements', 'picklists', 'material_quantity_changes']) { assert.ok(hosted.resources[key]?.length, `${key} is delivered`); assert.ok(!hosted.navigation.includes(key), `${key} has no page of its own here`); }
+  for (const key of ['custom_materials', 'orders', 'order_lines', 'stock', 'movements', 'picklists', 'material_quantity_changes']) assert.ok(hosted.resources[key]?.length, `${key} is delivered`);
+  // The stock page belongs to the inventory flow (Material inventory); the others stay data only here.
+  for (const key of ['custom_materials', 'orders', 'order_lines', 'movements', 'material_quantity_changes']) assert.ok(!hosted.navigation.includes(key), `${key} has no page of its own here`);
   assert.deepEqual(hosted.resources.uoms, ['name']);
   for (const name of ['componentCode', 'progressClass', 'partId', 'typeId', 'materialGroup']) assert.ok(hosted.resources.materials.includes(name), name);
   for (const name of ['progressClass', 'componentCode', 'revisionId']) assert.ok(hosted.resources.iso_materials.includes(name), name);

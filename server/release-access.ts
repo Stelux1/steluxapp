@@ -69,7 +69,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
     } catch { return null; }
     if (availability) {
-      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied'].includes(event.action)) return null;
+      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'transferred', 'returned', 'corrected', 'adjusted', 'removed', 'completed', 'cancelled'].includes(event.action)) return null;
       if (event.action === 'inspected' && !availability.inspectionTypes.some(type => ['accepted', 'rejected'].some(result => event.summary.startsWith(`${type} ${result} · `)))) return null;
     }
     return availability || account.capabilities ? { ...event, summary: `${event.action[0].toUpperCase() + event.action.slice(1)} ${resource(event.entityType).singular}` } : event;

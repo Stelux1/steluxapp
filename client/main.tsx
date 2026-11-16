@@ -15,5 +15,6 @@ import './pilots.css';
 import './signatures.css';
 import './mto-materials.css';
 import './mto-procurement.css';
+import './mto-stock.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

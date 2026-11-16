@@ -1,9 +1,10 @@
 import type { ActionDefinition, Availability, Field, Resource, Row } from './types.ts';
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
-import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { deliverMtoMaterials } from './mto-materials.ts';
 import { PROCUREMENT_ACTION_FIELDS, PROCUREMENT_PATHS, PROCUREMENT_RESOURCE_FIELDS } from './mto-procurement.ts';
+import { deliverMtoStock } from './mto-stock.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -132,6 +133,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // actions are delivered without menu pages of their own; the pages are reached by path.
     for (const [key, names] of Object.entries(PROCUREMENT_RESOURCE_FIELDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
     for (const [key, names] of Object.entries(PROCUREMENT_ACTION_FIELDS)) availability.actions[key] = [...new Set([...(availability.actions[key] || []), ...names])];
+    // Storehouses, material inventory with its operations, transfer orders and the Materials list (MTO Pilot).
+    deliverMtoStock(availability, RESOURCES, deliverResource);
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
@@ -208,6 +211,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
+  if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);
