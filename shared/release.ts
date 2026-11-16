@@ -124,6 +124,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
+    // Flange Management (Weld Pilot → Releases): the flange record and its page.
+    deliverResource(availability, 'flanges');
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');

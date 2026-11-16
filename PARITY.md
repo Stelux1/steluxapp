@@ -74,6 +74,22 @@ Older local WPS/PQR records receive compatibility defaults once, preserving thei
 
 For older local requirements, the first new quantity-change entry uses the then-current quantity as Beginning. Earlier quantity edits cannot be reconstructed from audit summaries that did not store amounts. This is a local compatibility limit, not a source-data migration rule. Local quantity removal deliberately records the requirement change only; returning already-picked material to inventory is still separate, unverified work.
 
+## Flange Management (Weld Pilot → Releases, hosted profile `welding-workspace`)
+
+Code: `shared/flanges.ts` (fields, status, torque comparison, list helpers), `client/flanges.tsx`, `tests/flanges.test.ts`.
+
+| Part | State | Notes |
+|---|---|---|
+| List columns Project, Iso number, Flange ID, Asset tag, Flange Size, Gasket Type, Target Moment (Nm), Status, Options | matches the capture | Options are view, edit, documents (opens the record on its documents), delete (archives, restorable). |
+| Filter Project and Finished (—, No, Yes); Export | matches the capture | Export is a CSV of the listed rows, including the derived Status; cells that start like a formula are quoted. |
+| Form fields and labels | matches the capture, except Project | Six sections: identification and location, flange and gasket, bolting, tightening, inspection and commissioning, operating data. Isometric is required; the project follows from the isometric (no stored project field, so the hosted database needs no new column). Field names of older records are kept (`tightning_date`, `commisioning_date`, `studbolt_afmeting`). |
+| Status (Planned, Tightened, Inspected, Finished) | inferred | `flangeStatus()`: Finished when the finished box is ticked or an inspection result and a commissioning date exist; Inspected when an inspection result exists; Tightened when a tightening date and both passes exist; Planned otherwise. The capture shows only "Planned". |
+| Flange tightening standard | free entry only | The page and the form name the standard of the main project. No torque table is installed, so nothing is pre-filled for any of the three standards and no value is invented. |
+| Torque check | inferred | `flangeTorqueErrors()` compares only entered values on client and server: first pass <= second pass <= target moment + max deviation. Max deviation is read as Nm above the target; the reference unit is not in the capture. |
+| Real torque catalog | extension point, deferred | Register a function per standard in `FLANGE_TORQUE_CATALOGS` (`shared/flanges.ts`); `flangeTorqueSuggestion()` is the single place to read it. The form must offer suggestions without overwriting entered values. Needs the real tables from the owner. |
+| Flanges on the isometric | done | The isometric page (Weld Pilot) shows the flange count by status and a link to the list filtered to that isometric. |
+| Report, Print labels, Excel import | deferred | Not built. |
+
 ## Remaining implementation and comparison work
 
 1. Continue comparing requirement-based ordering and delivery screens: the checked-order/execution/pending-line UI is implemented, while source reservation rules, archive interactions and the order PDF's mutation side effects remain unverified. The live action submits to a PDF endpoint and was not triggered. Compare material-status calculations against reliable source evidence before claiming equivalence.
