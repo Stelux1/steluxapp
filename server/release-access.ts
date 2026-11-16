@@ -8,6 +8,7 @@ import type { Availability, AuditEvent, Module, Row, User } from '../shared/type
 import { Store, AppError } from './store.ts';
 import { effectiveProfileId, publicUser } from './auth.ts';
 import { availableWps, RELATIONS, relationMatches } from '../shared/welding.ts';
+import { WPS_COPY_FIELDS } from '../shared/wps.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
 import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 import { allowedSites, inSiteScope, isSiteRefusal } from './site-scope.ts';
@@ -60,6 +61,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (!names || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !names.includes(name) && !(name === '_version' && !action) && !(!action && enablementKey(key) && ENABLEMENT_INPUT.includes(name)))) throw notFound();
     if (action && !actionAvailable(availability, key, value.type)) throw notFound();
     if (!action && ['inspection_requests', 'inspection_results'].includes(key) && value.type !== undefined && !availability.inspectionTypes.includes(String(value.type))) throw notFound();
+    // A WPS copy is made by the copy action (server/wps.ts); a plain write cannot make or change one.
+    if (!action && key === 'wps' && WPS_COPY_FIELDS.some(name => value[name] !== undefined)) throw new AppError(422, 'Use Copy to copy a WPS to another project site.');
     if (!action && key === 'punchlists') { const refusal = punchWriteError(value, existing); if (refusal) throw new AppError(422, refusal); }
     if (!action && key === 'welds' && (!existing || value.isoId !== undefined || value.wpsId !== undefined)) {
       const wpsId = value.wpsId ?? existing?.wpsId;

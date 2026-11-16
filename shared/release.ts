@@ -13,6 +13,7 @@ import { PROCUREMENT_ACTION_FIELDS, PROCUREMENT_PATHS, PROCUREMENT_RESOURCE_FIEL
 import { deliverMtoStock } from './mto-stock.ts';
 import { deliverMtoLogistics, MTO_LOGISTICS_PAGES } from './mto-logistics.ts';
 import { PDF_REPORT_RESOURCES } from './pdf-report-keys.ts';
+import { PQR_IMPORT_PATH, WELD_DATA_COLUMNS, WPS_HOSTED_FIELDS, hostedWeldDataField, orderWpsFields } from './wps.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -167,6 +168,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     deliverResource(availability, 'qualification_options', undefined, { page: false });
     availability.resources.wps_pqr = fields('wpsId pqrId ownerArchived');
     availability.resources.wps.push('pqrIds', 'pqrId');
+    // WPS material groups and copies (shared/wps.ts); the copy fields are written by the copy action only.
+    availability.resources.wps.push(...WPS_HOSTED_FIELDS);
     // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
     for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
     for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
@@ -237,12 +240,13 @@ export function projectResource(availability: Availability | undefined, resource
   const prototype = availability.features.includes('lisl');
   const pilots = availability.features.includes('pilots');
   const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
-  const listed = pilots ? HOSTED_COLUMNS[resource.key] : undefined;
+  const listed = pilots ? HOSTED_COLUMNS[resource.key] ?? WELD_DATA_COLUMNS[resource.key] : undefined;
+  const ordered = (fields: Field[]) => pilots && resource.key === 'wps' ? orderWpsFields(fields) : fields;
   const projected: Resource = {
     ...(pilots ? catalogResource(resource) : resource), description: descriptions[resource.key] || resource.description,
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => pilots ? catalogField(resource.key, f) : f).map(f => {
+    fields: ordered(resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? catalogField(resource.key, hostedWeldDataField(resource.key, hostedField(resource.key, f))) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),
@@ -286,6 +290,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
   if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
   if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
+  if (pathname === PQR_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('pqr')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (availability.features.includes('pilots') && MTO_LOGISTICS_PAGES.includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;

@@ -21,6 +21,7 @@ import { ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
 import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 import { HOSTED_OPTIONAL, hostedFreeValue } from '../shared/welder-data.ts';
+import { pqrNumber } from '../shared/wps.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -180,11 +181,13 @@ export class Store {
         if (field.type === 'email' && text && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) errors[field.name] = 'Enter a valid email address.';
         if (field.type === 'date' && text) { try { validDate(text, field.label); } catch (e) { errors[field.name] = (e as Error).message; } }
         if (field.options && text && !field.options.includes(text) && !(field.legacy && Object.hasOwn(field.legacy, text)) && !(this.hostedRules && hostedFreeValue(key, field.name))) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
-        if(field.ref&&text&&field.creatable){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);
+        // A value removed from its dropdown (hosted) stays on the records that already store it.
+        const keptRemoved=this.hostedRules&&field.creatable&&existing?.[field.name]===text;
+        if(field.ref&&text&&field.creatable&&!keptRemoved){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);
           // A text that names no existing value adds one to the catalog: that needs the add right there, not only the right to edit this record.
           if(!found&&actor.canAdd&&!actor.canAdd(field.ref))throw new AppError(403,`Your permission profile does not allow adding a new value for ${field.label}. Choose an existing value.`,{[field.name]:'Choose an existing value.'});
           value=(found||this.create(field.ref,{name:text,category:field.refCategory},actor)).id;}}
-        if (field.ref && value) { try { this.get(field.ref, value); } catch (error) { if (error instanceof AppError && error.code === SITE_REFUSED) throw error; errors[field.name] = `Choose an active ${field.label.toLowerCase()}.`; } }
+        if (field.ref && value && !keptRemoved) { try { this.get(field.ref, value); } catch (error) { if (error instanceof AppError && error.code === SITE_REFUSED) throw error; errors[field.name] = `Choose an active ${field.label.toLowerCase()}.`; } }
       }
       data[field.name] = value as Value;
     }
@@ -297,7 +300,8 @@ export class Store {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');
         if(this.hostedRules&&key==='welders')archiveWelderQualifications(this,id,actor);
         for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource).filter(l=>l[relation.ownerKey]===id)){const marked=this.update(relation.resource,link.id,{ownerArchived:true},link._version,actor);this.archive(relation.resource,marked.id,marked._version,actor);}
-        for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
+        // Hosted: a PQR attribute value can be removed from its dropdown while PQRs keep showing it (shared/wps.ts).
+        if (!(this.hostedRules && key === 'qualification_options')) for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
           const dependent = this.db.prepare(`SELECT id FROM ${table(resource.key)} WHERE "${f.name}"=? AND archived=0 LIMIT 1`).get(id);
           if (dependent) throw new AppError(409, `This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
         }
@@ -311,6 +315,7 @@ export class Store {
   }
   display(key: string, row: Row): string {
     if(key==='welders'&&!row.name)return String(row.number||row.id);
+    if(key==='pqr'&&this.hostedRules)return pqrNumber(row,this.list('qualification_options',true));
     if (key === 'iso_materials' && !row.materialId) return String(row.materialNo || row.id);
     if(['order_lines','stock','movements','picklists'].includes(key)&&row.customMaterialId)return this.display('custom_materials',this.get('custom_materials',row.customMaterialId,true));
     const def = this.resource(key); const f = def.fields.find(f => f.name === def.display);

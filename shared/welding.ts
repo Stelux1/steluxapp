@@ -3,8 +3,9 @@ import { WELDER_DATA_RELATIONS } from './welder-data.ts';
 import { USER_SITE_RELATIONS } from './site-scope.ts';
 
 export const PQR_ATTRIBUTES=[
-  ['Material EN15608','Materials'],['WPS','Procedure'],['Insp Authority No.','Procedure'],['Report No.','Procedure'],['Material','Materials'],['Filler Material','Materials'],['Pipe / Plate','Materials'],['t','Materials'],['Position','Procedure'],['Welding Process ASME','Procedure'],['Welding Process EN','Procedure'],['Weld Groove Type','Procedure'],['Shielding Gas','Materials'],['Mat. gr.','EN scope'],['EN Ø','EN scope'],['EN T','EN scope'],['ASME IX Mat.gr','ASME scope'],['ASME IX Ø','ASME scope'],['ASME IX T','ASME scope'],['Preheat (°C)','Tests & treatment'],['Annealing (°C/1h)','Tests & treatment'],['Impact Test','Tests & treatment'],['Hardness Test','Tests & treatment'],['Macro','Tests & treatment'],['Standard','Procedure'],['Comments','Notes']
-].map(([label,section],i)=>({name:`attribute${i+1}Id`,label,section,category:label}));
+  ['Material EN15608','Materials'],['PQR','Procedure','WPS'],['Insp Authority No.','Procedure'],['Report No.','Procedure'],['Material','Materials'],['Filler Material','Materials'],['Pipe/ Plate','Materials','Pipe / Plate'],['t','Materials'],['Position','Procedure'],['Welding Process ASME','Procedure'],['Welding Process EN','Procedure'],['Weld Groove Type','Procedure'],['Shielding Gas','Materials'],['Mat. gr.','EN scope'],['EN Ø','EN scope'],['EN T','EN scope'],['ASME IX Mat.gr','ASME scope'],['ASME IX Ø','ASME scope'],['ASME IX T','ASME scope'],['Preheat (°C)','Tests & treatment'],['Annealing (°C/1h)','Tests & treatment'],['Impact Test','Tests & treatment'],['Hardness Test','Tests & treatment'],['Macro','Tests & treatment'],['Standard','Procedure'],['Comments','Notes']
+].map(([label,section,category],i)=>({name:`attribute${i+1}Id`,label,section,category:category||label}));
+// The PQR and Pipe/ Plate labels follow the reference; their stored attribute categories keep the earlier names.
 export interface Relation {field:string;label:string;resource:string;ownerKey:string;target:string;targetKey:string;showIf?:ActionField['showIf'];
   /** Extra values every link of this relation carries (several relations may share one link resource). */ match?:Record<string,string>;
   /** Form section of the relation field (default: Links & availability). */ section?:string;

@@ -1,4 +1,5 @@
 import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
+import { WPS_EXTRA_FIELDS } from './wps.ts';
 import { SITE_SCOPE_ALL, SITE_SCOPE_OPTIONS, USER_SITES, siteScopeField, siteScopeLabel } from './site-scope.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
@@ -165,6 +166,9 @@ extend('isometrics', [r('itpId', 'Linked ITP / KNR', 'itps', { hidden: true }), 
 // Punch progress of the isometric (0 / 25 / 50 / 75 / 100 %), entered in the isometric header; empty until entered.
 extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true })]);
 extend('wps', [b('active', 'Active', { default: true })]);
+// WPS material groups and copies, PQR validity (shared/wps.ts; the hosted profile shows them).
+extend('wps', WPS_EXTRA_FIELDS);
+extend('pqr', [d('validUntil', 'Valid until')]);
 extend('materials', [t('wallThickness', 'Wall thickness')]);
 extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Material code'), t('diameter', 'Diameter (inch)'), t('materialDescription', 'Description of material'), t('wallThickness', 'Wall thickness'), t('schedule', 'Schedule')]);
 // Welders, roles, qualifications, material data and certificates (shared/welder-data.ts).

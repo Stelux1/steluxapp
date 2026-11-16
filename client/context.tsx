@@ -6,6 +6,7 @@ import { Wordmark } from './brand.tsx';
 import { api } from './api.ts';
 import { canResource,canAction,canScope,canReport } from '../shared/permissions.ts';
 import { pilotScope, projectScope } from '../shared/project-scope.ts';
+import { pqrNumber } from '../shared/wps.ts';
 import { usePilot } from './pilot.tsx';
 import { useNavigate } from 'react-router-dom';
 import type {PermissionVerb} from '../shared/types.ts';
@@ -36,6 +37,7 @@ export function WorkspaceProvider({ user, onUnauthenticated, children }: { user:
   const label = (resource: string, id: unknown) => {
     const row = data.rows[resource]?.find(r => r.id === id); if (!row) return id ? 'Unavailable record' : '—';
     if(resource==='welders'&&!row.name)return String(row.number);
+    if (resource === 'pqr' && data.user.availability?.features.includes('pilots')) return pqrNumber(row, data.rows.qualification_options);
     if (resource === 'iso_materials' && !row.materialId) return String(row.materialNo || 'Custom material');
     if(['order_lines','stock','movements','picklists'].includes(resource)&&row.customMaterialId)return String(data.rows.custom_materials?.find(r=>r.id===row.customMaterialId)?.materialNo||'Custom material');
     const def = RESOURCE_MAP[resource]; const field = def.fields.find(f => f.name === def.display);
