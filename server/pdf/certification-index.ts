@@ -3,7 +3,7 @@ import { renderDocument } from './document.ts';
 import type { PdfProjectDocumentDefinition } from './documents.ts';
 import { fileDay, fileSafe, naturalCompare } from './links.ts';
 import { projectCertificates } from '../../shared/site-settings.ts';
-import { certificatesForProject } from '../../shared/welder-data.ts';
+import { certificatesForProject, inOwnerSite } from '../../shared/welder-data.ts';
 import type { Row } from '../../shared/types.ts';
 
 /**
@@ -80,6 +80,8 @@ export const certificationIndexDocument: PdfProjectDocumentDefinition = {
     // The setting belongs to the main project; the links come from the full records, the certificates from what the account may read.
     const limited = Boolean(site) && projectCertificates(site);
     let certificates = (rows.certifications || []).filter(cert => !cert._archived);
+    // A certificate belongs to one main project: the index lists that main project's certificates (and shared older ones).
+    if (site) { const owned = { links: store.list('certificate_projects', true), projects: store.list('projects', true) }; certificates = certificates.filter(cert => inOwnerSite('certifications', cert, site.id, owned)); }
     if (limited) certificates = indexCertificates(certificates, store.list('certificate_projects'), project ? [project.id] : store.list('projects').filter(row => row.siteId === site!.id).map(row => row.id), site);
     // The certificate decides what the account may see; the printed cells come from the stored record and the catalogs it names
     // (supplier, material, type of material...), which a pilot's own field list would otherwise hide from this document.

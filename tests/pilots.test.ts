@@ -155,15 +155,18 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['weld']);
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
-  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'uoms', 'orders', 'order_lines', 'receipts', 'stock', 'movements', 'transfer_orders', 'reservations', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
+  for (const key of ['iso_materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'uoms', 'orders', 'order_lines', 'receipts', 'stock', 'movements', 'transfer_orders', 'reservations', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
+  // The Material database is read-only in Weld Pilot (the material of certificates and welds); see tests/certifications.test.ts.
+  assert.equal((await f.request('/api/records/materials')).status, 200);
   // Material part, type of material and supplier are shared catalogs of both pilots.
   for (const key of ['material_parts', 'material_types', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   assert.equal((await f.request('/api/reports/mto')).status, 403);
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'DENIED', quantity: 1 })).status, 403);
-  const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001', certType: '3.1', diameter: '1/2"', materialPartId: 'part-0', materialTypeId: 'material-type-0', schedule: '40', wallThickness: '2.77' }); assert.equal(created.status, 201);
+  const created = await f.request('/api/records/certifications', 'POST', { siteId: 'site-north', name: 'Weld pilot cert', chargeNo: 'W-001', certType: '3.1', diameter: '1/2"', materialPartId: 'part-0', materialTypeId: 'material-type-0', schedule: '40', wallThickness: '2.77' }); assert.equal(created.status, 201);
   const data = await (await f.request('/api/bootstrap')).json() as Bootstrap;
   assert.ok(data.rows.certifications.some(row => row.name === 'Weld pilot cert')); assert.ok(data.rows.spools.length);
-  for (const key of ['iso_materials', 'materials', 'orders', 'stock']) assert.equal(data.rows[key], undefined, key);
+  for (const key of ['iso_materials', 'orders', 'stock']) assert.equal(data.rows[key], undefined, key);
+  assert.ok(data.rows.materials.length, 'the Material database is read in Weld Pilot');
 });
 
 test('an MTO-only account sees shared catalogs through the API but stays out of weld and inspection records', async t => {

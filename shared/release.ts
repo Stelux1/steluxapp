@@ -4,7 +4,7 @@ import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogField, catalogResource } from './weld-catalogs.ts';
-import { HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
+import { HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
@@ -170,6 +170,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
     for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
     for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
+    // Certificates and welding wires carry the main project they belong to (shared/welder-data.ts → SITE_OWNED).
+    for (const key of Object.keys(SITE_OWNED)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), 'siteId'])];
     // Weld table and weld entry on the isometric: the entry fields of a weld and the actions behind the form.
     deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer'));
     availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS];
@@ -248,8 +250,11 @@ export function projectResource(availability: Availability | undefined, resource
     actions: resource.actions?.filter(key => actionAvailable(availability, key)),
     createAction: resource.createAction && actionAvailable(availability, resource.createAction) ? resource.createAction : undefined,
   };
+  if (!pilots) return projected;
+  // List headers of the reference: one lookup for the list page (catalog fields name theirs with `columnLabel`, the material data in HOSTED_COLUMN_LABELS).
+  const columnLabels = { ...Object.fromEntries(projected.fields.filter(f => f.columnLabel).map(f => [f.name, f.columnLabel!])), ...HOSTED_COLUMN_LABELS[resource.key] };
   // Form order of the reference (shared/welder-data.ts); the other profiles keep the order of the shared definition.
-  return pilots ? { ...projected, fields: hostedFieldOrder(resource.key, projected.fields) } : projected;
+  return { ...projected, ...(Object.keys(columnLabels).length ? { columnLabels } : {}), fields: hostedFieldOrder(resource.key, projected.fields) };
 }
 export function projectAction(availability: Availability | undefined, action: ActionDefinition): ActionDefinition {
   if (!availability) return action;

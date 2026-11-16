@@ -148,14 +148,15 @@ test('welding wire form: reference field order, generated index number, free tex
   assert.deepEqual([relation.label, relation.allField, relation.showIf], ['Project', 'allProjects', undefined]);
   assert.deepEqual(hostedFieldOrder('welding_wires', [{ name: 'description' }, { name: 'projectIds' }, { name: 'norm' }, { name: 'chargeNo' }]).map(field => field.name), ['chargeNo', 'norm', 'projectIds', 'description']);
   assert.deepEqual(HOSTED_COLUMNS.welding_wires, ['name', 'chargeNo', 'classification', 'typeMaterial', 'diameter', 'certType', 'attestNo', 'supplierId', 'controlled', 'accepted']);
-  // The list headers read Ctrl. / Accp. (wire and certificate); the form labels stay in full.
-  assert.deepEqual(HOSTED_COLUMN_LABELS.welding_wires, { controlled: 'Ctrl.', accepted: 'Accp.' }); assert.deepEqual(HOSTED_COLUMN_LABELS.certifications, { controlled: 'Ctrl.', accepted: 'Accp.' });
+  // The list headers read Ctrl. / Accp. (wire and certificate; the certificate also Material No / Dia.); the form labels stay in full.
+  assert.deepEqual(HOSTED_COLUMN_LABELS.welding_wires, { controlled: 'Ctrl.', accepted: 'Accp.' }); assert.deepEqual(HOSTED_COLUMN_LABELS.certifications, { materialId: 'Material No', diameter: 'Dia.', controlled: 'Ctrl.', accepted: 'Accp.' });
+  assert.deepEqual(projectResource(availabilityFor(HOSTED_RELEASE_PROFILE), RESOURCE_MAP.welding_wires).columnLabels, { controlled: 'Ctrl.', accepted: 'Accp.' }, 'the list page reads the headers from the delivered resource');
   assert.equal(hostedField('certifications', RESOURCE_MAP.certifications.fields.find(field => field.name === 'controlled')!).label, 'Controlled');
   const f = await fixture(t); await f.setup();
-  let response = await f.request('/api/records/welding_wires', 'POST', { chargeNo: 'C-77', typeMaterial: 'A106 Gr B', certType: '152516', diameter: 1.6, allProjects: true });
+  let response = await f.request('/api/records/welding_wires', 'POST', { siteId: 'site-north', chargeNo: 'C-77', typeMaterial: 'A106 Gr B', certType: '152516', diameter: 1.6, allProjects: true });
   assert.equal(response.status, 201); const created = (await json(response)).record;
   assert.match(created.name, /^\d{4}$/); assert.equal(created.certType, '152516'); assert.equal(created.typeMaterial, 'A106 Gr B'); assert.equal('manufacturer' in created, false);
-  response = await f.request('/api/records/certifications', 'POST', { name: 'ATT-1', certType: '152516', allProjects: false, projectIds: ['project-steam'] });
+  response = await f.request('/api/records/certifications', 'POST', { siteId: 'site-river', name: 'ATT-1', certType: '152516', allProjects: false, projectIds: ['project-steam'] });
   assert.equal(response.status, 201); assert.equal((await json(response)).record.certType, '152516');
   // Wires written before the field existed show the name of their linked type of material.
   const listed = ((await json(await f.request('/api/records/welding_wires'))).rows as Row[]).find(item => item.id === 'wire-1')!;

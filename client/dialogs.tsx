@@ -11,17 +11,18 @@ import { api, post, ApiError, formatNumber, apiUrl } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Modal, FieldInput, revealInvalidField } from './components.tsx';
 import { PermissionProfileEditor } from './permission-profile-editor.tsx';
+import { CertificationRecordEditor } from './certifications.tsx';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { FORM_ENABLEMENT, enabledOnSite, pilotResource } from '../shared/weld-catalogs.ts';
 import { usePilot } from './pilot.tsx';
-import { DIAMETER_NUMBER_MESSAGE, diameterNumbers, hostedFieldOrder } from '../shared/welder-data.ts';
+import { DIAMETER_NUMBER_MESSAGE, SITE_OWNED, diameterNumbers, hostedFieldOrder } from '../shared/welder-data.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
 import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
-export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
+export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:props.resourceKey==='certifications'?<CertificationRecordEditor record={props.record} onClose={props.onClose} fallback={<ResourceEditor {...props}/>}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = pilotResource(RESOURCE_MAP[resourceKey], usePilot()?.pilot.key); const { rows,user,refresh, notify, isoSummaries, canRecord } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=(user.availability?.features.includes('pilots')?hostedFieldOrder:(_key:string,list:ActionField[])=>list)(resourceKey,[...def.fields,...relationFields(resourceKey),...(enablement.form?[enablementField(enablement.siteName,resourceKey)]:[])]).filter(f=>!f.generated);
+  const def = pilotResource(RESOURCE_MAP[resourceKey], usePilot()?.pilot.key); const { rows,user,refresh, notify, isoSummaries, canRecord, siteId } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=(user.availability?.features.includes('pilots')?hostedFieldOrder:(_key:string,list:ActionField[])=>list)(resourceKey,[...def.fields,...relationFields(resourceKey),...(enablement.form?[enablementField(enablement.siteName,resourceKey)]:[])]).filter(f=>!f.generated);
   // Welding wire (hosted): the certificate file is chosen in the same dialog and attached once the wire is saved.
   const [file, setFile] = useState<File | null>(null); const withFile = resourceKey === 'welding_wires' && Boolean(user.availability?.features.includes('pilots')) && canRecord(resourceKey, 'import', record);
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.form?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):FORM_ENABLEMENT[resourceKey]??true}:{})}));
@@ -40,7 +41,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
       const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
       const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
       return JSON.stringify(value)!==JSON.stringify(previous);
-    })) : values; const saved = await api<{ record?: Row }>(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.form ? { enabledSiteId: enablement.siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); const saveNote = `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`;
+    })) : values; const saved = await api<{ record?: Row }>(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.form ? { enabledSiteId: enablement.siteId } : {}), ...(!record && user.availability?.features.includes('pilots') && SITE_OWNED[resourceKey] ? { siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); const saveNote = `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`;
       if (withFile && file && saved.record) { try { const body = new FormData(); body.set('file', file); body.set('entityType', resourceKey); body.set('entityId', saved.record.id); await api('/files', { method: 'POST', body }); } catch (failure) { await refresh(); notify(`${saveNote} The file could not be attached: ${(failure as Error).message}`); onClose(); return; } }
       await refresh(); notify(saveNote); onClose(); }
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }

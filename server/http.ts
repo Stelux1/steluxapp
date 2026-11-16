@@ -26,13 +26,14 @@ import { isoSummariesFor } from './iso-summary.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
-import { FLAG_BULK_FIELDS, FLAG_BULK_RESOURCES } from '../shared/welder-data.ts';
+import { FLAG_BULK_RESOURCES, flagBulkAllowed } from '../shared/welder-data.ts';
 import { withLegacyValues } from './welder-data.ts';
 import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
+import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { assertAccountReach, assertCopyInScope, assertSiteAccessEdit, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteScopeFor, type SiteScope } from './site-scope.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
@@ -169,9 +170,11 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   registerIsoBookRoutes({ app, store, documents, availability, access, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   registerMtoStockRoutes(app, store, availability, access);
+  if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
+    if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
@@ -219,7 +222,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     access.input(resource.key, req.body.changes);
-    if (availability?.features.includes('pilots') && FLAG_BULK_RESOURCES.includes(resource.key) && Object.keys(req.body.changes).some(k => !FLAG_BULK_FIELDS.includes(k))) throw new AppError(404, 'This resource could not be found.');
+    // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).
+    if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
     const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });

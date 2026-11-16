@@ -279,12 +279,14 @@ test('Certification index: the 13 columns of a certificate as the Certifications
   const everything = (await get(f, '/pdf/certification-index')).pages[0].text;
   for (const index of ['0001', '0002', '0003', '0004', '0005', '0006']) assert.ok(everything.includes(index), index);
   assert.ok(everything.includes('All projects') && everything.includes('All certificates'));
-  // A link added on the Certifications page is honoured; the setting off lists every certificate for a project.
-  f.store.create('certificate_projects', { certificateId: 'certificate-2', projectId: 'project-cooling' }, ACTOR);
-  assert.ok((await get(f, '/pdf/certification-index?projectId=project-cooling')).pages[0].text.includes('0002'), 'a new project link');
+  // A link added on the Certifications page is honoured; the setting off lists every certificate of the main project for a project.
+  f.store.create('certificate_projects', { certificateId: 'cert-h3305', projectId: 'project-cooling' }, ACTOR);
+  assert.ok((await get(f, '/pdf/certification-index?projectId=project-cooling')).pages[0].text.includes('0006'), 'a new project link');
   const current = f.store.get('sites', 'site-north'); f.store.update('sites', current.id, { projectCertificates: false }, current._version, ACTOR);
   const off = (await get(f, '/pdf/certification-index?projectId=project-cooling')).pages[0].text;
-  for (const index of ['0001', '0002', '0003', '0004', '0005', '0006']) assert.ok(off.includes(index), `${index} with the setting off`);
+  for (const index of ['0001', '0003', '0004', '0006']) assert.ok(off.includes(index), `${index} with the setting off`);
+  // A certificate belongs to one main project: those of the riverside installation are not listed for a north project.
+  for (const index of ['0002', '0005']) assert.ok(!off.includes(index), `${index} belongs to another main project`);
   for (const query of ['projectId=missing', 'siteId=missing']) assert.equal((await f.admin.request(`/pdf/certification-index?${query}`, { pilot: 'weld' })).status, 404, query);
   assert.equal((await f.admin.request('/pdf/certification-index', { pilot: 'mto' })).status, 200, 'certificates are shared with MTO Pilot');
 });

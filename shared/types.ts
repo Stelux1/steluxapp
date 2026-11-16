@@ -31,6 +31,8 @@ export interface Resource {
   unique?: string[][]; readonly?: boolean; source?: string; actions?: string[]; createAction?: string;
   /** Headings of the Add / Edit / Delete dialogs and the add button where the hosted profile words them its own way. */
   wording?: { add: string; edit: string; remove: string };
+  /** List headers that differ from the field labels (the form keeps the field label). */
+  columnLabels?: Record<string, string>;
 }
 export type PermissionVerb='show'|'insert'|'edit'|'delete'|'export'|'import'|'print';
 export type PermissionRules=Record<string,PermissionVerb[]>;

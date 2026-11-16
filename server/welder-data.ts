@@ -4,7 +4,7 @@
  * certificate fields of a main project, and the cascade from a welder to its qualifications.
  */
 import type { Row } from '../shared/types.ts';
-import { CUSTOM_RANGES, FLAG_BULK_FIELDS, FREE_VALUE_MAX, HOSTED_FREE_VALUES, QUALIFICATION_RANGES, certificateMandatoryErrors, diameterNumbers, hostedRequiredErrors, isoAsmeLabel, nextIndexNumber, rangeErrors } from '../shared/welder-data.ts';
+import { CUSTOM_RANGES, FLAG_BULK_FIELDS, FREE_VALUE_MAX, HOSTED_FREE_VALUES, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
 import type { Actor, Store } from './store.ts';
 
 export interface Prepared { input: Record<string, unknown>; errors: Record<string, string>; }
@@ -19,10 +19,30 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
   let merged: Record<string, unknown> = { ...existing, ...next };
   const errors: Record<string, string> = { ...hostedRequiredErrors(key, merged) };
   if (key === 'certifications' || key === 'welding_wires') {
-    // Index number: the next free four-digit number unless one was typed.
+    const owned = SITE_OWNED[key], siteId = String(merged.siteId ?? '').trim();
+    const ownership = () => ({ links: store.list(owned.links, true), projects: store.list('projects', true) });
+    // The main project of a certificate or wire is set when it is created and never moves (records of other main projects would follow it).
+    if (existing && next.siteId !== undefined && String(next.siteId ?? '').trim() !== String(existing.siteId ?? '').trim()) errors.siteId = 'The main project of this record cannot be changed.';
+    // Linked projects must be projects of that main project.
+    if (siteId && Array.isArray(next.projectIds)) {
+      const projects = new Map(store.list('projects', true).map(row => [row.id, row]));
+      if (next.projectIds.some(id => projects.has(String(id)) && projects.get(String(id))!.siteId !== siteId)) errors.projectIds = 'Choose projects of this main project.';
+    }
+    // Index number: the next free four-digit number of the main project unless one was typed.
     const field = key === 'certifications' ? 'indexNo' : 'name';
-    if (blank(merged[field])) { next[field] = nextIndexNumber(store.list(key, true).map(row => row[field])); merged = { ...merged, [field]: next[field] }; }
+    // A wire's index number is its name, unique over all active wires (shared/resources.ts): a number another main project holds is skipped.
+    const taken = key === 'welding_wires' ? new Set(store.list(key).filter(row => row.id !== existing?.id).map(row => String(row.name ?? '').trim())) : undefined;
+    if (blank(merged[field])) { next[field] = nextSiteIndexNumber(key, field, siteId, store.list(key, true).filter(row => row.id !== existing?.id), ownership(), taken); merged = { ...merged, [field]: next[field] }; }
   }
+  if (key === 'certifications') {
+    // The diameter is a Weld diameter; its text is kept on the record for the documents that print it. A typed text
+    // (an import, an older certificate) is matched to the Weld diameter of that name.
+    const diameters = store.list('diameters', true);
+    if (next.diameterId !== undefined) { const chosen = diameters.find(row => row.id === next.diameterId); next.diameter = chosen ? String(chosen.diameter ?? '') : ''; }
+    else if (next.diameter !== undefined && blank(merged.diameterId)) next.diameterId = diameterIdFor(next.diameter, diameters);
+    merged = { ...merged, diameter: next.diameter ?? merged.diameter, diameterId: next.diameterId ?? merged.diameterId };
+  }
+  if (key === 'welds') Object.assign(errors, weldOwnerErrors(store, input, merged));
   // Setting Controlled / Accepted alone (the bulk bar) is not a save of the certificate's data: the mandatory-field rule does not apply to it.
   if (key === 'certifications' && !(existing && Object.keys(next).length && Object.keys(next).every(name => FLAG_BULK_FIELDS.includes(name)))) {
     const projectIds = Array.isArray(next.projectIds) ? next.projectIds.map(String) : existing ? store.list('certificate_projects').filter(link => link.certificateId === existing.id).map(link => String(link.projectId)) : [];
@@ -43,6 +63,26 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
     if (!blank(merged.issuedAt) && !blank(merged.expiresAt) && String(merged.expiresAt) < String(merged.issuedAt)) errors.expiresAt = 'The expiry date cannot be before the issue date.';
   }
   return { input: next, errors };
+}
+
+/** Certificate and wire fields of a weld, with the resource they name. */
+const WELD_OWNED: [string, string][] = [['certificate1Id', 'certifications'], ['certificate2Id', 'certifications'], ['wire1Id', 'welding_wires'], ['wire2Id', 'welding_wires']];
+/**
+ * A weld takes certificates and welding wires of its own main project only (or shared older ones). Checked for the
+ * values a write sets, and for all of them when the weld moves to another isometric.
+ */
+function weldOwnerErrors(store: Store, input: Record<string, unknown>, merged: Record<string, unknown>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const checked = WELD_OWNED.filter(([name]) => (input[name] !== undefined || input.isoId !== undefined) && !blank(merged[name]));
+  if (!checked.length) return errors;
+  let siteId = '';
+  try { const iso = store.get('isometrics', merged.isoId, true); siteId = String(store.get('projects', iso.projectId, true).siteId ?? ''); } catch { return errors; /* the isometric is reported with its own field */ }
+  for (const [name, key] of checked) {
+    let record: Row; try { record = store.get(key, merged[name], true); } catch { continue; }
+    const owned = SITE_OWNED[key];
+    if (!inOwnerSite(key, record, siteId, { links: store.list(owned.links, true), projects: store.list('projects', true) })) errors[name] = key === 'certifications' ? 'Choose a certificate of this main project.' : 'Choose a welding wire of this main project.';
+  }
+  return errors;
 }
 
 /**

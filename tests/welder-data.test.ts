@@ -129,7 +129,10 @@ test('the hosted profile delivers the welder and material data pages with the re
   assert.deepEqual(labels('material_parts'), ['Part', 'Custom']);
   assert.deepEqual(labels('material_types'), ['Type of material', 'Type of steel', 'Material description', 'Basic material', 'Material group', 'ISO / ASME']);
   assert.deepEqual(labels('welding_wires'), ['Index number', 'Charge number', 'Rod type', 'Type of material', 'mm', 'Certificate-type', 'Attest number', 'Supplier', 'Controlled', 'Accepted']);
-  assert.deepEqual(labels('certifications'), ['Index number', 'Charge number', 'Certificate-type', 'Attest number', 'Material No', 'Type of material', 'Material part', 'Basic material', 'Diameter', 'Schedule', 'Wall thickness', 'Supplier', 'Controlled', 'Accepted']);
+  // The certificate list headers of the reference are shorter than the form labels (Material No, Dia., Ctrl., Accp.).
+  const headers = (key: string) => view(key).columns.map(name => view(key).columnLabels?.[name] ?? view(key).fields.find(field => field.name === name)?.label);
+  assert.deepEqual(headers('certifications'), ['Index number', 'Charge number', 'Certificate-type', 'Attest number', 'Material No', 'Type of material', 'Material part', 'Basic material', 'Dia.', 'Schedule', 'Wall thickness', 'Supplier', 'Ctrl.', 'Accp.']);
+  assert.deepEqual(labels('certifications').slice(-2), ['Controlled', 'Accepted'], 'the form keeps Controlled / Accepted');
   const requiredOf = (key: string) => view(key).fields.filter(field => field.required).map(field => field.label);
   assert.deepEqual(requiredOf('roles'), ['Role', 'Abbreviation']); assert.deepEqual(requiredOf('diameters'), ['Diameter', 'Size in mm']); assert.deepEqual(requiredOf('material_types'), ['Type of material', 'Type of steel']);
   assert.deepEqual(view('welders').fields.filter(field => field.required).map(field => field.label), ['ID nr.']);
@@ -177,38 +180,49 @@ test('hosted rules: required abbreviations, ranges, index numbers and the ISO / 
   // The group is choose-or-type: a value that is not in the list is accepted (see tests/material-data.test.ts).
   assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'Bad', typeOfSteel: 'Carbon steel', iso15608: '99.9' })).status, 201);
   // Welding wire index numbers are generated when left empty.
-  response = await f.request('/api/records/welding_wires', 'POST', { classification: 'ER70S-6', diameter: 1.6, chargeNo: 'C-1', certType: '3.1', controlled: true, allProjects: true });
+  response = await f.request('/api/records/welding_wires', 'POST', { siteId: 'site-north', classification: 'ER70S-6', diameter: 1.6, chargeNo: 'C-1', certType: '3.1', controlled: true, allProjects: true });
   assert.equal(response.status, 201); const first = (await json(response)).record.name; assert.match(first, /^\d{4}$/);
-  assert.equal((await json(await f.request('/api/records/welding_wires', 'POST', { classification: 'ER316LSi', allProjects: true }))).record.name, String(Number(first) + 1).padStart(4, '0'));
+  assert.equal((await json(await f.request('/api/records/welding_wires', 'POST', { siteId: 'site-north', classification: 'ER316LSi', allProjects: true }))).record.name, String(Number(first) + 1).padStart(4, '0'));
   // The full profile keeps its old behaviour: no abbreviation needed, no generated number.
   const full = new Store(':memory:'); assert.equal(full.hostedRules, false);
   assert.ok(full.create('roles', { name: 'Welder' })); assert.equal(full.create('welding_wires', { name: 'FULL-1' }).name, 'FULL-1');
   full.close();
 });
 
-test('hosted rules: mandatory certificate fields, project links and numbering', async t => {
+test('hosted rules: mandatory certificate fields of the main project, project links and numbering per main project', async t => {
   const f = await fixture(t); await f.setup();
-  const complete = { name: 'ATT-900', chargeNo: 'H-900', certType: '3.1', diameter: '2"', materialPartId: 'part-0', materialTypeId: 'material-type-a106b', schedule: '40', wallThickness: '3.91' };
-  // site-north has "Mandatory fields" on; a certificate for all projects reaches it.
+  const complete = { name: 'ATT-900', chargeNo: 'H-900', certType: '3.1', diameterId: 'diameter-6', materialPartId: 'part-0', materialTypeId: 'material-type-a106b', schedule: '40', wallThickness: '3.91' };
+  // A certificate is created in a main project.
   let response = await f.request('/api/records/certifications', 'POST', { name: 'ATT-900' });
+  assert.equal(response.status, 422); assert.ok((await json(response)).fields.siteId);
+  // site-north has "Mandatory fields" on.
+  response = await f.request('/api/records/certifications', 'POST', { name: 'ATT-900', siteId: 'site-north' });
   assert.equal(response.status, 422); const fields = (await json(response)).fields; assert.deepEqual(Object.keys(fields).sort(), ['certType', 'chargeNo', 'diameter', 'materialPartId', 'materialTypeId', 'schedule', 'wallThickness']);
-  // Linked only to a project of a site without the setting, nothing extra is required.
-  response = await f.request('/api/records/certifications', 'POST', { name: 'ATT-901', allProjects: false, projectIds: ['project-steam'] }); assert.equal(response.status, 201);
-  const loose = (await json(response)).record; assert.match(loose.indexNo, /^\d{4}$/);
-  // Linked to a project of the site with the setting: required again, also when an existing certificate is relinked.
-  assert.equal((await f.request(`/api/records/certifications/${loose.id}`, 'PUT', { projectIds: ['project-cooling'], _version: loose._version })).status, 422);
-  response = await f.request('/api/records/certifications', 'POST', { ...complete, allProjects: false, projectIds: ['project-cooling'] }); assert.equal(response.status, 201);
+  // site-river has it off: nothing extra is required, even for all projects (judged by the certificate's own main project).
+  response = await f.request('/api/records/certifications', 'POST', { name: 'ATT-903', siteId: 'site-river', allProjects: true }); assert.equal(response.status, 201);
+  response = await f.request('/api/records/certifications', 'POST', { name: 'ATT-901', siteId: 'site-river', allProjects: false, projectIds: ['project-steam'] }); assert.equal(response.status, 201);
+  const loose = (await json(response)).record;
+  // Index numbers count per main project: the riverside installation holds 0002 and 0005 (and ATT-903 took 0006).
+  assert.equal(loose.indexNo, '0007');
+  // Projects of another main project cannot be linked, and the main project of a certificate never moves.
+  response = await f.request(`/api/records/certifications/${loose.id}`, 'PUT', { projectIds: ['project-cooling'], _version: loose._version });
+  assert.equal(response.status, 422); assert.ok((await json(response)).fields.projectIds);
+  assert.equal((await f.request(`/api/records/certifications/${loose.id}`, 'PUT', { siteId: 'site-north', _version: loose._version })).status, 422);
+  response = await f.request('/api/records/certifications', 'POST', { ...complete, siteId: 'site-north', allProjects: false, projectIds: ['project-cooling'] }); assert.equal(response.status, 201);
   const created = (await json(response)).record;
-  assert.equal((await f.request('/api/records/certifications', 'POST', { ...complete, name: 'ATT-902', indexNo: created.indexNo })).status, 201, 'a typed index number is kept');
+  assert.equal(created.indexNo, '0007', 'north holds 0001, 0003, 0004 and 0006'); assert.equal(created.diameter, '2"', 'the diameter text follows the Weld diameter');
+  assert.equal((await f.request('/api/records/certifications', 'POST', { ...complete, siteId: 'site-north', name: 'ATT-902', indexNo: created.indexNo })).status, 201, 'a typed index number is kept');
+  // An attest number is optional in the hosted profile.
+  response = await f.request('/api/records/certifications', 'POST', { ...complete, siteId: 'site-north', name: '' }); assert.equal(response.status, 201);
   const data = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
   assert.deepEqual(data.rows.certificate_projects.filter(link => link.certificateId === created.id).map(link => link.projectId), ['project-cooling']);
   // A partial update is judged on the stored record: clearing a mandatory value is refused, other edits pass.
   assert.equal((await f.request(`/api/records/certifications/${created.id}`, 'PUT', { schedule: '', _version: created._version })).status, 422);
   assert.equal((await f.request(`/api/records/certifications/${created.id}`, 'PUT', { controlled: true, accepted: true, _version: created._version })).status, 200);
-  // The seed links certificate 2 to the steam project only: with project-specific certificates on it is not offered for the cooling project.
+  // The seed links certificate 3 to the cooling project only: with project-specific certificates on it is not offered for the skid project.
   const site = data.rows.sites.find(item => item.id === 'site-north');
-  const offered = certificatesForProject({ certificates: data.rows.certifications, links: data.rows.certificate_projects, projectId: 'project-cooling', site }).map(item => item.id);
-  assert.ok(offered.includes('certificate-1') && offered.includes('certificate-3') && !offered.includes('certificate-2'));
+  const offered = certificatesForProject({ certificates: data.rows.certifications, links: data.rows.certificate_projects, projectId: 'project-skid', site }).map(item => item.id);
+  assert.ok(offered.includes('certificate-1') && offered.includes('cert-h3305') && !offered.includes('certificate-3'));
 });
 
 test('welders: relations, Deleted tab cascade, expire warnings from the seed and validation', async t => {
