@@ -145,6 +145,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures', 'company_data']) deliverResource(availability, key);
+    // Access per project site (shared/site-scope.ts): the scope per pilot is a user field, the chosen sites are user_sites links.
+    availability.resources.users.push('weldSiteIds', 'mtoSiteIds');
+    availability.resources.user_sites = fields('userId pilot siteId ownerArchived');
     // Hydrotest release (shared/hydrotest.ts): test systems carry the client's acceptance; requests have no page of their own
     // (they open from the test system), so they are delivered without a menu entry.
     deliverResource(availability, 'test_systems', ['accepted']);

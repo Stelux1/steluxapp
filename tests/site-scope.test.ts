@@ -1,0 +1,407 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { Store, SYSTEM } from '../server/store.ts';
+import { seed, seedSiteScopeSamples } from '../server/seed.ts';
+import { createApp } from '../server/http.ts';
+import { passwordHash } from '../server/auth.ts';
+import { SiteScope, allowedSites, siteAccessChanges } from '../server/site-scope.ts';
+import { siteOfRecord } from '../server/weld-catalogs.ts';
+import { HOSTED_RELEASE_PROFILE, availabilityFor, projectResource, type ReleaseProfile } from '../shared/release.ts';
+import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
+import { RELATIONS, relationFields } from '../shared/welding.ts';
+import { SITE_RULES, SITE_SCOPE_ALL, SITE_SCOPE_SPECIFIC, USER_SITES } from '../shared/site-scope.ts';
+import type { Row, User } from '../shared/types.ts';
+
+const PASSWORD = 'Site-Scope-Password';
+const RW = 'Read & write', NONE = 'No access', ADMIN = 'Administration';
+// Sample data (server/seed.ts): North fabrication yard holds STX-2401 (iso-1..3) and STX-2403 (iso-7..10);
+// Riverside installation holds STX-2402 (iso-4..6, ISO numbers STX-ST-…).
+const NORTH = 'site-north', RIVER = 'site-river';
+const RIVER_ISOS = ['iso-4', 'iso-5', 'iso-6'];
+const RIVER_TEXT = 'STX-ST-';
+type Options = { method?: string; pilot?: string; data?: unknown };
+
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, releaseProfile: ReleaseProfile = HOSTED_RELEASE_PROFILE) {
+  const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-site-scope-'));
+  const store = new Store(join(dir, 'test.sqlite')); seed(store);
+  const server = createApp(store, dir, { releaseProfile, serveClient: false }).listen(0, '127.0.0.1'); await once(server, 'listening');
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const client = () => {
+    let cookie = '';
+    const request = async (path: string, { method = 'GET', pilot, data }: Options = {}) => {
+      const form = data instanceof FormData;
+      const response = await fetch(`${origin}/api${path}`, { method, headers: { ...(form ? {} : { 'Content-Type': 'application/json' }), 'X-Stelux-Request': '1', Origin: origin, ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : form ? data : JSON.stringify(data) });
+      if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0];
+      return response;
+    };
+    const login = async (email: string) => { const response = await request('/auth/login', { method: 'POST', data: { email, password: PASSWORD } }); assert.equal(response.status, 200, email); return (await response.json()).user as User; };
+    return { request, login };
+  };
+  const profile = (name: string, levels: Record<string, string>) => store.create('profiles', { name, toolsPermission: NONE, settingsPermission: NONE, ...levels }).id;
+  /** An account; `sites` gives the chosen main projects per limited pilot (stored as user_sites links). */
+  const account = (name: string, data: Record<string, unknown>, sites: Partial<Record<'weld' | 'mto', string[]>> = {}) => {
+    const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, active: true, ...data });
+    for (const [pilot, ids] of Object.entries(sites)) for (const siteId of ids!) store.create(USER_SITES, { userId: user.id, pilot, siteId }, SYSTEM);
+    store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(PASSWORD));
+    const as = client();
+    return { user, as, login: () => as.login(String(user.email)) };
+  };
+  const admin = client();
+  assert.equal((await admin.request('/auth/setup', { method: 'POST', data: { name: 'Scope admin', email: 'scope-admin@example.test', password: PASSWORD } })).status, 201);
+  const upload = (as: ReturnType<typeof client>, pilot: string, entityType: string, entityId: string, name = 'note.txt') => {
+    const body = new FormData(); body.set('entityType', entityType); body.set('entityId', entityId); body.set('file', new Blob(['Site scope test file'], { type: 'text/plain' }), name);
+    return as.request('/files', { method: 'POST', pilot, data: body });
+  };
+  return { store, client, admin, profile, account, upload };
+}
+const json = async <T = Record<string, unknown>>(response: Response) => await response.json() as T;
+type Bootstrap = { user: User; rows: Record<string, Row[]>; activity: { entityType: string; entityId: string }[]; isoSummaries?: Record<string, unknown>; mainProjects?: { id: string; pilots: string[] }[] };
+const snapshot = (store: Store) => JSON.stringify(Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key, true)])));
+/** The resolved main project of every row: one SiteScope over the whole workspace. */
+const resolver = (store: Store) => new SiteScope(store, 'weld', new Set());
+
+test('one table decides the main project of every resource; it agrees with siteOfRecord and refuses unknown resources', () => {
+  const missing = RESOURCES.map(resource => resource.key).filter(key => !Object.hasOwn(SITE_RULES, key));
+  assert.deepEqual(missing, [], 'every resource needs an entry in SITE_RULES (shared/site-scope.ts)');
+  assert.deepEqual(Object.keys(SITE_RULES).filter(key => !RESOURCE_MAP[key]), [], 'no rule for a resource that does not exist');
+  for (const [key, rule] of Object.entries(SITE_RULES)) {
+    if (typeof rule === 'string') continue;
+    for (const [field, target] of rule.via) {
+      assert.ok(RESOURCE_MAP[key].fields.some(f => f.name === field), `${key}.${field} exists`);
+      assert.ok(Object.hasOwn(SITE_RULES, target), `${key}.${field} leads to ${target}, which has a rule`);
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-site-rules-'));
+  const store = new Store(join(dir, 'test.sqlite')); seed(store);
+  try {
+    const scope = resolver(store);
+    let compared = 0;
+    for (const resource of RESOURCES) for (const row of store.list(resource.key, true)) {
+      const expected = siteOfRecord(store, resource.key, row);
+      if (!expected) continue;
+      assert.equal(scope.siteOf(resource.key, row), expected, `${resource.key} ${row.id}`); compared++;
+    }
+    assert.ok(compared > 100, `compared ${compared} records`);
+    // Every attachment follows its record; a record of an unknown type is refused, never treated as global.
+    assert.equal(scope.siteOf('attachments', { entityType: 'welds', entityId: 'weld-4' }), RIVER);
+    assert.equal(scope.allows('attachments', { entityType: 'no_such_resource', entityId: 'x' }), false);
+    assert.equal(scope.allows('no_such_resource', { id: 'x' }), false);
+    assert.equal(scope.allows('welds', { id: 'w', isoId: '' }), false, 'a weld without isometric cannot be told: refused');
+    assert.equal(scope.allows('warehouses', { id: 'w', siteId: '' }), true, 'a storehouse of no main project is shared');
+    assert.equal(scope.allows('materials', { id: 'm' }), true, 'catalogs are global');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the scope resolves records from one read per collection, not one query per row', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-site-perf-'));
+  const store = new Store(join(dir, 'test.sqlite')); seed(store);
+  try {
+    const welds = store.list('welds', true), results = store.list('inspection_results', true);
+    const reads: string[] = []; let gets = 0;
+    const list = store.list.bind(store), get = store.get.bind(store);
+    store.list = (key, archived) => { reads.push(key); return list(key, archived); };
+    store.get = (key, id, archived) => { gets++; return get(key, id, archived); };
+    const scope = new SiteScope(store, 'weld', new Set([NORTH]));
+    const visible = [...welds.filter(row => scope.allows('welds', row)), ...results.filter(row => scope.allows('inspection_results', row))];
+    assert.ok(visible.length > 0 && visible.length < welds.length + results.length);
+    assert.deepEqual([...new Set(reads)].sort(), reads.slice().sort(), 'each collection is read once');
+    assert.ok(reads.length <= 4, `collections read: ${reads.join(', ')}`);
+    assert.equal(gets, 0, 'no per-row queries');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Weld Pilot limited to one main project: every read path returns nothing of the other one; MTO Pilot (all sites) returns everything', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('Site writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
+  const scoped = f.account('North welder', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC, mtoSiteScope: SITE_SCOPE_ALL }, { weld: [NORTH] });
+  // Documents on both main projects, uploaded by the administrator.
+  const riverIsoFile = (await json<{ record: Row }>(await f.upload(f.admin, 'mto', 'isometrics', 'iso-4', 'river-iso.txt'))).record;
+  const riverWeldFile = (await json<{ record: Row }>(await f.upload(f.admin, 'weld', 'welds', 'weld-4', 'river-weld.txt'))).record;
+  const northWeldFile = (await json<{ record: Row }>(await f.upload(f.admin, 'weld', 'welds', 'weld-1', 'north-weld.txt'))).record;
+  const entry = await scoped.login();
+  assert.deepEqual(entry.pilots, ['weld', 'mto']);
+  const scope = resolver(f.store);
+  const riverRecord = (key: string, row: Row) => scope.siteOf(key, row) === RIVER;
+
+  // Selector: the main projects per pilot.
+  const selector = await json<Bootstrap>(await scoped.as.request('/bootstrap'));
+  assert.deepEqual(selector.mainProjects!.map(site => [site.id, site.pilots]).sort(), [[NORTH, ['weld', 'mto']], [RIVER, ['mto']]]);
+
+  // Bootstrap (lists, search, iso summaries, activity).
+  const weld = await json<Bootstrap>(await scoped.as.request('/bootstrap', { pilot: 'weld' }));
+  assert.equal(weld.user.siteLimited, true);
+  assert.deepEqual(weld.rows.sites.map(row => row.id), [NORTH]);
+  for (const [key, rows] of Object.entries(weld.rows)) for (const row of rows) assert.ok(!riverRecord(key, row), `weld bootstrap leaks ${key} ${row.id}`);
+  assert.ok(weld.rows.welds.length > 0 && weld.rows.isometrics.length > 0);
+  assert.ok(!weld.rows.isometrics.some(row => RIVER_ISOS.includes(row.id)));
+  assert.ok(!weld.rows.attachments.some(row => [riverIsoFile.id, riverWeldFile.id].includes(row.id)));
+  assert.ok(weld.rows.attachments.some(row => row.id === northWeldFile.id));
+  assert.ok(Object.keys(weld.isoSummaries || {}).every(id => !RIVER_ISOS.includes(id)));
+  assert.ok(weld.activity.every(event => { try { return !riverRecord(event.entityType, f.store.get(event.entityType, event.entityId, true)); } catch { return true; } }), 'activity');
+  assert.ok(weld.rows.wps_sites.every(row => row.siteId === NORTH), 'links to the other main project are hidden');
+  assert.ok(weld.rows.weld_types.length > 0 && weld.rows.wps.length > 0, 'global catalogs stay');
+  const mto = await json<Bootstrap>(await scoped.as.request('/bootstrap', { pilot: 'mto' }));
+  assert.equal(mto.user.siteLimited, undefined);
+  assert.deepEqual(mto.rows.sites.map(row => row.id).sort(), [NORTH, RIVER]);
+  assert.ok(RIVER_ISOS.every(id => mto.rows.isometrics.some(row => row.id === id)));
+  assert.ok(mto.rows.iso_materials.some(row => RIVER_ISOS.includes(String(row.isoId))));
+  assert.ok(mto.rows.attachments.some(row => row.id === riverIsoFile.id));
+  assert.ok(RIVER_ISOS.every(id => Object.hasOwn(mto.isoSummaries || {}, id)));
+
+  // Lists, single records, history, files.
+  const welds = (await json<{ rows: Row[] }>(await scoped.as.request('/records/welds', { pilot: 'weld' }))).rows;
+  assert.ok(welds.length && welds.every(row => !RIVER_ISOS.includes(String(row.isoId))));
+  assert.deepEqual((await json<{ rows: Row[] }>(await scoped.as.request('/records/projects', { pilot: 'weld' }))).rows.map(row => row.siteId).filter(id => id !== NORTH), []);
+  assert.ok((await json<{ rows: Row[] }>(await scoped.as.request('/records/isometrics', { pilot: 'mto' }))).rows.some(row => row.id === 'iso-4'));
+  for (const path of ['/history/welds/weld-4', '/history/isometrics/iso-4', `/history/attachments/${riverWeldFile.id}`, `/files/${riverWeldFile.id}`, `/files/${riverIsoFile.id}`, '/history/sites/site-river']) {
+    const response = await scoped.as.request(path, { pilot: 'weld' }); assert.equal(response.status, 403, path); assert.equal((await json(response)).code, 'site', path);
+  }
+  for (const path of ['/history/welds/weld-1', `/files/${northWeldFile.id}`, `/files/${northWeldFile.id}?pilot=weld`]) assert.equal((await scoped.as.request(path, { pilot: path.includes('?') ? undefined : 'weld' })).status, 200, path);
+  for (const path of ['/history/isometrics/iso-4', `/files/${riverIsoFile.id}`, '/history/iso_materials/requirement-4']) assert.equal((await scoped.as.request(path, { pilot: 'mto' })).status, 200, `mto ${path}`);
+
+  // Reports, CSV / XLSX exports and PDF documents.
+  for (const path of ['/reports/lisl', '/reports/wdi', '/export/welds?format=csv', '/export/isometrics?format=csv', '/export/attachments?format=csv']) {
+    const response = await scoped.as.request(path, { pilot: 'weld' }); assert.equal(response.status, 200, path);
+    const text = await response.text(); assert.ok(!text.includes(RIVER_TEXT) && !text.includes('river-'), `${path} leaks the other main project`);
+  }
+  const workbook = await scoped.as.request('/export/isometrics?format=xlsx', { pilot: 'weld' }); assert.equal(workbook.status, 200);
+  const exported = await scoped.as.request('/export/wps?format=csv', { pilot: 'weld' }); assert.ok(!(await exported.text()).includes('Riverside installation'), 'relation labels of hidden sites are left out');
+  for (const path of ['/reports/mto', '/export/isometrics?format=csv']) assert.ok((await (await scoped.as.request(path, { pilot: 'mto' })).text()).includes(RIVER_TEXT), `mto ${path}`);
+  assert.equal((await scoped.as.request('/pdf/lisl?isoId=iso-4', { pilot: 'weld' })).status, 404);
+  const pdf = await scoped.as.request('/pdf/lisl?isoId=iso-1', { pilot: 'weld' }); assert.equal(pdf.status, 200); assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+});
+
+test('Weld Pilot limited to one main project: every write path naming the other one is refused with 403 and changes nothing', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('Site writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: ADMIN });
+  const scoped = f.account('North welder', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC }, { weld: [NORTH] });
+  const riverFile = (await json<{ record: Row }>(await f.upload(f.admin, 'weld', 'welds', 'weld-4', 'river-weld.txt'))).record;
+  await scoped.login();
+  const version = (key: string, id: string) => f.store.get(key, id, true)._version;
+  const before = snapshot(f.store);
+  const refused: [string, string, unknown?][] = [
+    // Record id of the other main project in the URL.
+    ['PUT', '/records/welds/weld-4', { description: 'Forged', _version: version('welds', 'weld-4') }],
+    ['PUT', '/records/isometrics/iso-4', { description: 'Forged', _version: version('isometrics', 'iso-4') }],
+    ['PUT', '/records/sites/site-river', { phone: '+31 10 555 0000', _version: version('sites', RIVER) }],
+    ['POST', '/records/welds/weld-4/archive', { _version: version('welds', 'weld-4') }],
+    ['POST', '/records/spools/spool-4/archive', { _version: version('spools', 'spool-4') }],
+    // Parent id of the other main project in the body (create and move).
+    ['POST', '/records/isometrics', { isoNo: 'FORGED-1', projectId: 'project-steam' }],
+    ['POST', '/records/spools', { name: 'FORGED-SP', isoId: 'iso-4' }],
+    ['POST', '/records/punchlists', { name: 'Forged punch', isoId: 'iso-4', category: 'A' }],
+    ['PUT', '/records/isometrics/iso-1', { projectId: 'project-steam', _version: version('isometrics', 'iso-1') }],
+    ['PUT', '/records/projects/project-cooling', { siteId: RIVER, _version: version('projects', 'project-cooling') }],
+    ['POST', '/records/sites', { name: 'New yard outside my scope' }],
+    // Bulk edits naming a record of the other main project, alone or mixed with an allowed one.
+    ['POST', '/bulk/isometrics', { ids: ['iso-4'], changes: { area: 'Forged' }, versions: { 'iso-4': version('isometrics', 'iso-4') } }],
+    ['POST', '/bulk/isometrics', { ids: ['iso-1', 'iso-4'], changes: { area: 'Forged' }, versions: { 'iso-1': version('isometrics', 'iso-1'), 'iso-4': version('isometrics', 'iso-4') } }],
+    ['POST', '/bulk/weld_types', { ids: ['weld-type-1'], changes: { enabledOnSite: false, enabledSiteId: RIVER }, versions: { 'weld-type-1': version('weld_types', 'weld-type-1') } }],
+    // Actions whose payload names a record of the other main project.
+    ['POST', '/actions/phases', { isoIds: ['iso-1', 'iso-4'], field_test: 'Complete' }],
+    ['POST', '/actions/inspection-request', { type: 'NDT', weldIds: ['weld-4'], date: '2026-11-16' }],
+    ['POST', '/actions/repair', { weldId: 'weld-4', date: '2026-11-16', note: 'Forged repair' }],
+    ['POST', '/actions/save-weld', { weldId: 'weld-4', isoId: 'iso-4', expectedVersion: version('welds', 'weld-4'), weldNo: 'W004' }],
+    ['POST', '/actions/add-welds', { isoId: 'iso-4', start: 90, end: 91 }],
+    ['POST', '/actions/mass-edit-welds', { weldIds: ['weld-1', 'weld-4'], changes: { ndoReq: true } }],
+    ['POST', '/actions/reorder-welds', { isoId: 'iso-4', weldIds: ['weld-4', 'weld-13'] }],
+    ['POST', '/actions/ndt-weld', { weldId: 'weld-4', type: 'NDT' }],
+    ['POST', '/actions/revision', { isoId: 'iso-4', type: 'ISO', revNo: '9', date: '2026-11-16' }],
+    ['POST', '/actions/release', { isoIds: ['iso-4'], type: 'Prefab', reportNo: 'R-1', date: '2026-11-16' }],
+    ['POST', '/actions/copy-isometrics', { isoIds: ['iso-4'], projectId: 'project-steam' }],
+    ['POST', '/actions/copy-isometrics', { isoIds: ['iso-1'], projectId: 'project-steam' }],
+    ['POST', '/actions/hydrotest-move', { testSystemId: 'test-cw', isoIds: ['iso-4'] }],
+    // Relations: links to a main project outside the scope cannot be added.
+    ['PUT', '/records/wps/wps-1', { siteIds: [NORTH, RIVER, 'site-none'], _version: version('wps', 'wps-1') }],
+  ];
+  for (const [method, path, data] of refused) {
+    const response = await scoped.as.request(path, { method, pilot: 'weld', data });
+    assert.equal(response.status, 403, `${method} ${path} ${JSON.stringify(data)} → ${response.status} ${JSON.stringify(await response.clone().json().catch(() => ({})))}`);
+  }
+  // Uploads: attached to a record of the other main project, in either form.
+  assert.equal((await f.upload(scoped.as, 'weld', 'welds', 'weld-4')).status, 403);
+  assert.equal((await f.upload(scoped.as, 'weld', 'isometrics', 'iso-4')).status, 403);
+  assert.equal((await f.upload(scoped.as, 'weld', 'attachments', riverFile.id)).status, 403);
+  const finish = new FormData(); finish.set('signerType', 'Inspector'); finish.set('file', new Blob(['x'], { type: 'text/plain' }), 'sign.txt');
+  const riverPunch = f.store.create('punchlists', { name: 'River punch', isoId: 'iso-4', category: 'A', description: 'Support missing at the pipe rack' }, SYSTEM);
+  const afterPunch = snapshot(f.store);
+  assert.equal((await scoped.as.request(`/punch/${riverPunch.id}/finish`, { method: 'POST', pilot: 'weld', data: finish })).status, 403);
+  assert.equal(afterPunch, snapshot(f.store), 'refused uploads change nothing');
+  assert.equal(JSON.parse(before).welds.length, f.store.list('welds', true).length);
+  f.store.archive('punchlists', riverPunch.id, riverPunch._version, SYSTEM);
+
+  // The same kinds of writes inside the allowed main project still work.
+  const north = await scoped.as.request('/records/welds/weld-1', { method: 'PUT', pilot: 'weld', data: { description: 'North edit', _version: version('welds', 'weld-1') } });
+  assert.equal(north.status, 200);
+  assert.equal((await scoped.as.request('/actions/phases', { method: 'POST', pilot: 'weld', data: { isoIds: ['iso-1'], field_test: 'Complete' } })).status, 201);
+  assert.equal((await f.upload(scoped.as, 'weld', 'welds', 'weld-1')).status, 201);
+  assert.equal((await scoped.as.request('/records/spools', { method: 'POST', pilot: 'weld', data: { name: 'North spool X', isoId: 'iso-1' } })).status, 201);
+  // Saving a WPS keeps its hidden link to the other main project instead of removing it.
+  const wps = await scoped.as.request('/records/wps/wps-1', { method: 'PUT', pilot: 'weld', data: { siteIds: [NORTH], description: 'North only edit', _version: version('wps', 'wps-1') } });
+  assert.equal(wps.status, 200);
+  assert.deepEqual(f.store.list('wps_sites').filter(row => row.wpsId === 'wps-1').map(row => row.siteId).sort(), [NORTH, RIVER]);
+  // MTO Pilot has no limit for this account: the other main project's records are writable there.
+  const requirement = f.store.get('iso_materials', 'requirement-4');
+  assert.equal((await scoped.as.request('/records/iso_materials/requirement-4', { method: 'PUT', pilot: 'mto', data: { chargeNo: 'CH-RIVER', _version: requirement._version } })).status, 200);
+  assert.equal((await f.upload(scoped.as, 'mto', 'isometrics', 'iso-4')).status, 201);
+  // … but Copy isometrics from MTO Pilot may not carry welds into a main project outside the Weld Pilot scope.
+  const copy = await scoped.as.request('/actions/copy-isometrics', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-4'], projectId: 'project-steam', copyWelds: true } });
+  assert.equal(copy.status, 403); assert.match((await json<{ error: string }>(copy)).error, /Weld Pilot access/);
+  // None of the refused requests left a trace in the other main project.
+  for (const id of RIVER_ISOS) assert.notEqual(f.store.get('isometrics', id).area, 'Forged');
+  assert.equal(f.store.get('welds', 'weld-4').description, JSON.parse(before).welds.find((row: Row) => row.id === 'weld-4').description);
+  assert.ok(!f.store.list('isometrics', true).some(row => String(row.isoNo).startsWith('FORGED')));
+  assert.ok(!f.store.list('sites', true).some(row => row.name === 'New yard outside my scope'));
+  assert.equal(f.store.get('isometrics', 'iso-1').projectId, 'project-cooling');
+});
+
+test('MTO Pilot limited to the other main project: materials list, inventory and MTO actions follow the scope', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('MTO writer', { generalPermission: RW, materialsPermission: ADMIN, weldingPermission: RW });
+  const river = f.account('River preparator', { profileId: writer, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [RIVER] });
+  await river.login();
+  const list = await json<{ rows: { id: string; values: Record<string, unknown> }[] }>(await river.as.request('/mto/materials-list', { pilot: 'mto' }));
+  const requirements = new Map(f.store.list('iso_materials').map(row => [row.id, row]));
+  assert.ok(list.rows.length > 0 && list.rows.every(row => RIVER_ISOS.includes(String(requirements.get(row.id)?.isoId))));
+  const data = await json<Bootstrap>(await river.as.request('/bootstrap', { pilot: 'mto' }));
+  assert.deepEqual(data.rows.warehouses.map(row => row.id), ['warehouse-field']);
+  assert.ok(data.rows.stock.every(row => row.warehouseId === 'warehouse-field'));
+  assert.ok(data.rows.laydowns.length && data.rows.laydowns.every(row => row.siteId !== NORTH));
+  const open = f.store.create('iso_materials', { isoId: 'iso-1', materialId: 'material-1', quantity: 5000, phaseId: 'phase-0' }, SYSTEM);
+  const before = snapshot(f.store);
+  for (const [path, body] of [
+    ['/actions/add-iso-material', { isoId: 'iso-1', source: 'Custom', materialNo: 'FORGED-MTO', description: 'Forged pipe', quantity: 1, uom: 'M' }],
+    ['/actions/order-requirements', { requirementIds: [open.id] }],
+    ['/actions/archive-iso-materials', { requirementIds: ['requirement-1'] }],
+    ['/actions/move-materials', { requirementIds: ['requirement-1'], laydownId: 'material-laydown-1' }],
+    ['/actions/reserve-iso', { isoId: 'iso-1' }],
+  ] as [string, unknown][]) {
+    const response = await river.as.request(path, { method: 'POST', pilot: 'mto', data: body });
+    assert.ok([403].includes(response.status), `${path} → ${response.status} ${JSON.stringify(await response.json())}`);
+  }
+  assert.equal(snapshot(f.store), before);
+  // Weld Pilot has no limit for this account.
+  assert.ok((await json<Bootstrap>(await river.as.request('/bootstrap', { pilot: 'weld' }))).rows.isometrics.some(row => row.id === 'iso-1'));
+});
+
+test('an account limited to no main project sees an explanatory empty state; legacy accounts and other profiles are unchanged', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('Site writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
+  const none = f.account('Nowhere', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC });
+  await none.login();
+  const empty = await json<Bootstrap>(await none.as.request('/bootstrap', { pilot: 'weld' }));
+  assert.equal(empty.user.siteLimited, true);
+  for (const key of ['sites', 'projects', 'isometrics', 'welds', 'spools', 'attachments']) assert.deepEqual(empty.rows[key], [], key);
+  assert.ok(empty.rows.weld_types.length > 0, 'global catalogs stay readable');
+  assert.deepEqual((await json<Bootstrap>(await none.as.request('/bootstrap'))).mainProjects!.map(site => site.pilots), [['mto'], ['mto']]);
+  assert.equal((await none.as.request('/records/welds', { pilot: 'weld' })).status, 200);
+
+  // Legacy account: saved before access per project site existed (no scope fields at all).
+  const legacy = f.account('Legacy', { profileId: writer });
+  f.store.db.prepare(`UPDATE users SET data=json_remove(data,'$.weldSiteScope','$.mtoSiteScope') WHERE id=?`).run(legacy.user.id);
+  assert.equal(f.store.get('users', legacy.user.id).weldSiteScope, undefined);
+  await legacy.login();
+  for (const pilot of ['weld', 'mto'] as const) {
+    const view = await json<Bootstrap>(await legacy.as.request('/bootstrap', { pilot }));
+    assert.equal(view.user.siteLimited, undefined); assert.deepEqual(view.rows.sites.map(row => row.id).sort(), [NORTH, RIVER]);
+    assert.equal(allowedSites(f.store, f.store.get('users', legacy.user.id), pilot), 'all');
+  }
+  assert.equal((await legacy.as.request('/history/welds/weld-4', { pilot: 'weld' })).status, 200);
+  const legacyWeld = f.store.get('welds', 'weld-4');
+  assert.equal((await legacy.as.request('/records/welds/weld-4', { method: 'PUT', pilot: 'weld', data: { description: 'Legacy edit', _version: legacyWeld._version } })).status, 200);
+  // Links without the Specific scope do not limit anyone.
+  const links = f.account('Links only', { profileId: writer, weldSiteScope: SITE_SCOPE_ALL }, { weld: [NORTH] });
+  await links.login(); assert.equal((await json<Bootstrap>(await links.as.request('/bootstrap', { pilot: 'weld' }))).rows.sites.length, 2);
+});
+
+test('other release profiles ignore project site access and do not show its fields', async t => {
+  for (const profile of ['full', 'welding-demo'] as const) {
+    const f = await fixture(t, profile);
+    const writer = f.profile('Writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW, settingsPermission: ADMIN });
+    const limited = f.account('Would be limited', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC, mtoSiteScope: SITE_SCOPE_SPECIFIC });
+    await limited.login();
+    const data = await json<Bootstrap>(await limited.as.request('/bootstrap'));
+    assert.deepEqual(data.rows.sites.map(row => row.id).sort(), [NORTH, RIVER], profile);
+    assert.equal(data.user.siteLimited, undefined, profile);
+    assert.equal((await limited.as.request('/history/welds/weld-4')).status, 200, profile);
+    if (profile === 'full') {
+      const csv = await (await limited.as.request('/export/users?format=csv')).text();
+      assert.ok(!csv.includes('project site'), 'no site access columns outside pilots');
+    }
+  }
+  assert.ok(RESOURCE_MAP.users.fields.filter(f => ['weldSiteScope', 'mtoSiteScope'].includes(f.name)).every(f => f.hidden), 'hidden outside pilots');
+  assert.deepEqual(relationFields('users'), [], 'the site lists are pilots-only relations');
+  const hosted = projectResource(availabilityFor(HOSTED_RELEASE_PROFILE), RESOURCE_MAP.users);
+  for (const name of ['weldSiteScope', 'mtoSiteScope']) { const field = hosted.fields.find(f => f.name === name)!; assert.equal(field.hidden, false); assert.equal(field.section, 'Applications'); assert.deepEqual(field.options, [SITE_SCOPE_ALL, SITE_SCOPE_SPECIFIC]); }
+  assert.deepEqual(RELATIONS.users.map(r => [r.field, r.section, r.match]), [['weldSiteIds', 'Applications', { pilot: 'weld' }], ['mtoSiteIds', 'Applications', { pilot: 'mto' }]]);
+  assert.equal(availabilityFor('welding-demo')!.resources.user_sites, undefined);
+});
+
+test('administrators set project site access per pilot in the user form; it cannot be widened by a limited account', async t => {
+  const f = await fixture(t);
+  const reviewer = f.profile('Reviewer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
+  const target = f.account('Field engineer', { profileId: reviewer });
+  // An unlimited administrator limits Weld Pilot to North and leaves MTO Pilot on all sites.
+  const row = f.store.get('users', target.user.id);
+  const saved = await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: [NORTH], _version: row._version } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(f.store.list(USER_SITES).filter(link => link.userId === row.id).map(link => [link.pilot, link.siteId]), [['weld', NORTH]]);
+  const users = await json<Bootstrap>(await f.admin.request('/bootstrap', { pilot: 'weld' }));
+  assert.ok(users.rows.user_sites.some(link => link.userId === row.id && link.pilot === 'weld'));
+  await target.login();
+  assert.deepEqual((await json<Bootstrap>(await target.as.request('/bootstrap', { pilot: 'weld' }))).rows.sites.map(site => site.id), [NORTH]);
+  // MTO links are kept apart from Weld links.
+  const next = f.store.get('users', row.id);
+  assert.equal((await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'mto', data: { mtoSiteScope: SITE_SCOPE_SPECIFIC, mtoSiteIds: [RIVER], _version: next._version } })).status, 200);
+  assert.deepEqual(f.store.list(USER_SITES).filter(link => link.userId === row.id).map(link => `${link.pilot}:${link.siteId}`).sort(), [`mto:${RIVER}`, `weld:${NORTH}`]);
+  assert.equal((await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { weldSiteScope: 'Some sites', _version: f.store.get('users', row.id)._version } })).status, 422);
+  // Users and their site links are for administrators only.
+  assert.equal((await target.as.request('/records/user_sites', { pilot: 'weld' })).status, 403);
+  // A new account is created with its access in one request.
+  const created = await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'New coordinator', email: 'new-coordinator@example.test', profileId: reviewer, active: true, weldEnabled: true, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: [RIVER], mtoEnabled: true, password: 'New-Coordinator-1' } });
+  assert.equal(created.status, 201);
+  const createdId = (await json<{ record: Row }>(created)).record.id;
+  assert.deepEqual(f.store.list(USER_SITES).filter(link => link.userId === createdId).map(link => [link.pilot, link.siteId]), [['weld', RIVER]]);
+  // A limited administrator may edit accounts, but not change anyone's project site access, nor its own.
+  const adminProfile = f.profile('Site admin', { generalPermission: ADMIN, materialsPermission: ADMIN, weldingPermission: ADMIN, settingsPermission: ADMIN });
+  const limitedAdmin = f.account('North admin', { profileId: adminProfile, weldSiteScope: SITE_SCOPE_SPECIFIC }, { weld: [NORTH] });
+  await limitedAdmin.login();
+  const victim = f.store.get('users', target.user.id);
+  for (const data of [{ weldSiteScope: SITE_SCOPE_ALL }, { weldSiteIds: [NORTH, RIVER] }]) {
+    const response = await limitedAdmin.as.request(`/records/users/${victim.id}`, { method: 'PUT', pilot: 'weld', data: { ...data, _version: victim._version } });
+    assert.equal(response.status, 403, JSON.stringify(data));
+  }
+  assert.equal((await limitedAdmin.as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'Escalated', email: 'escalated@example.test', profileId: adminProfile, active: true, weldSiteScope: SITE_SCOPE_ALL, weldSiteIds: [RIVER], password: 'Escalated-Password-1' } })).status, 403);
+  const self = f.store.get('users', limitedAdmin.user.id);
+  assert.equal((await limitedAdmin.as.request(`/records/users/${self.id}`, { method: 'PUT', pilot: 'weld', data: { weldSiteScope: SITE_SCOPE_ALL, _version: self._version } })).status, 403);
+  assert.equal((await limitedAdmin.as.request(`/records/users/${victim.id}`, { method: 'PUT', pilot: 'weld', data: { title: 'Senior engineer', weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: [NORTH], _version: victim._version } })).status, 200, 'unchanged access with other edits is fine');
+  // A limited administrator sees only its own main projects' links of other accounts.
+  const view = await json<Bootstrap>(await limitedAdmin.as.request('/bootstrap', { pilot: 'weld' }));
+  assert.ok(view.rows.user_sites.every(link => link.siteId === NORTH));
+  // Unlimited administrators cannot change their own access either (no self-lockout).
+  const me = f.store.list('users').find(user => user.email === 'scope-admin@example.test')!;
+  assert.equal((await f.admin.request(`/records/users/${me.id}`, { method: 'PUT', pilot: 'weld', data: { weldSiteScope: SITE_SCOPE_SPECIFIC, _version: me._version } })).status, 403);
+  // Change detection.
+  assert.deepEqual(siteAccessChanges(f.store, { weldSiteScope: SITE_SCOPE_ALL, weldSiteIds: [] }), []);
+  assert.deepEqual(siteAccessChanges(f.store, { mtoSiteIds: [RIVER] }, f.store.get('users', row.id)), []);
+  assert.deepEqual(siteAccessChanges(f.store, { mtoSiteIds: [NORTH] }, f.store.get('users', row.id)), ['mto']);
+});
+
+test('the sample workspace has an account limited to North fabrication yard in Weld Pilot', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-site-seed-'));
+  const store = new Store(join(dir, 'test.sqlite')); seed(store);
+  try {
+    store.create('profiles', { name: 'Highest rights for QAQC', generalPermission: RW }, SYSTEM, 'profile-qaqc');
+    store.create('profiles', { name: 'Only review', generalPermission: RW }, SYSTEM, 'profile-review');
+    seedSiteScopeSamples(store); seedSiteScopeSamples(store);
+    const user = store.get('users', 'user-sample-north');
+    assert.equal(allowedSites(store, user, 'mto'), 'all');
+    assert.deepEqual([...allowedSites(store, user, 'weld') as Set<string>], [NORTH]);
+    assert.equal(store.list(USER_SITES).length, 1, 'runs once');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});

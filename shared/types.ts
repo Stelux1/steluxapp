@@ -35,6 +35,8 @@ export interface User {
   pilot?: 'weld' | 'mto';
   /** Where the profile delivers pilots: the pilots this account may enter. */
   pilots?: ('weld' | 'mto')[];
+  /** Where the profile delivers pilots: the account is limited to chosen main projects in the current pilot (shared/site-scope.ts). */
+  siteLimited?: boolean;
 }
 export interface AuditEvent { id: string; entityType: string; entityId: string; action: string; summary: string; actorId: string; actorName: string; createdAt: string; }
 export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[];

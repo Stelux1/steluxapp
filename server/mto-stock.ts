@@ -1,4 +1,5 @@
 import type { Express } from 'express';
+import { scopeRows } from './site-scope.ts';
 import { AppError, qty, today, validDate, type Actor, type Store } from './store.ts';
 import { materialIdentity } from '../shared/materials.ts';
 import { canResource } from '../shared/permissions.ts';
@@ -265,7 +266,8 @@ export function registerMtoStockRoutes(app: Express, store: Store, availability:
     if (!canResource(user, 'iso_materials') || !canResource(user, 'stock')) throw new AppError(403, 'Your permission profile does not allow this action.');
     const param = (name: string) => typeof req.query[name] === 'string' ? String(req.query[name]).slice(0, 150) : '';
     const filters = { siteId: param('siteId'), projectId: param('projectId'), isoId: param('isoId'), query: param('q').slice(0, 500) };
-    const rows = Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock'].map(key => [key, store.list(key)]));
+    // Access per project site: a limited request lists only its main projects' records (server/site-scope.ts).
+    const rows = Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock'].map(key => [key, scopeRows(key, store.list(key))]));
     const list = materialsList(rows, filters);
     const format = param('format');
     if (format === 'csv' || format === 'xlsx') {

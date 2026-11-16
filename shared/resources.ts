@@ -1,4 +1,5 @@
 import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
+import { SITE_SCOPE_ALL, SITE_SCOPE_OPTIONS, USER_SITES, siteScopeField, siteScopeLabel } from './site-scope.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
@@ -102,7 +103,7 @@ add('diameters', 'Weld diameters', 'weld diameter', 'welding', 'Material data', 
 add('qualification_options','PQR attribute values','attribute value','welding','Weld data','Reusable values for the source PQR attributes.',[s('category','Attribute',PQR_ATTRIBUTES.map(a=>a.category),{required:true}),t('name','Value',{required:true})],['category','name'],{display:'name',unique:[['category','name']]});
 add('pqr','Procedure qualifications','PQR','welding','Weld data','PQR attributes, EN/ASME scope, treatment and test records. Choose an existing attribute value or type a new one for reuse.',[t('name','Certificate number',{hint:'Leave blank to generate a local reference.'}),...PQR_ATTRIBUTES.map(a=>r(a.name,a.label,'qualification_options',{section:a.section,creatable:true,refCategory:a.category})),t('standard','Legacy standard',{hidden:true}),r('processId','Legacy process','weld_processes',{hidden:true}),t('material','Legacy material',{hidden:true}),{...note(),hidden:true}],['name','attribute1Id','attribute2Id','attribute4Id','attribute25Id'],{unique:[['name']]});
 add('wps','WPS methods','WPS method','welding','Weld data','Welding procedure specifications, project availability, and multiple PQR links.',[t('name','WPS number',{required:true}),t('method','Weld process',{required:true}),t('definition','WPS definition',{required:true}),t('jointType','Joint type'),b('allProjects','Available on all projects',{default:true}),r('processId','Welding process reference','weld_processes',{section:'Additional references'}),r('pqrId','Primary PQR','pqr',{hidden:true}),t('standard','Standard',{section:'Additional references'}),note()],['name','method','definition','jointType','allProjects'],{unique:[['name']]});
-for(const [owner,relations] of Object.entries(RELATIONS))for(const rel of relations)add(rel.resource,rel.label,'assignment','welding','Assignments','Linked welding setup records.',[r(rel.ownerKey,owner==='wps'?'WPS':owner==='itps'?'ITP / KNR':'Welder',owner,{required:true}),r(rel.targetKey,rel.label,rel.target,{required:true}),b('ownerArchived','Owner archived',{hidden:true})],[rel.ownerKey,rel.targetKey],{readonly:true,display:rel.targetKey,unique:[[rel.ownerKey,rel.targetKey]]});
+for(const [owner,relations] of Object.entries(RELATIONS))for(const rel of relations.filter(rel=>!rel.match))add(rel.resource,rel.label,'assignment','welding','Assignments','Linked welding setup records.',[r(rel.ownerKey,owner==='wps'?'WPS':owner==='itps'?'ITP / KNR':'Welder',owner,{required:true}),r(rel.targetKey,rel.label,rel.target,{required:true}),b('ownerArchived','Owner archived',{hidden:true})],[rel.ownerKey,rel.targetKey],{readonly:true,display:rel.targetKey,unique:[[rel.ownerKey,rel.targetKey]]});
 add('welding_wires', 'Welding wires', 'welding wire', 'welding', 'Material data', 'Filler material identification and charge traceability.', [t('name', 'Wire identifier', { required: true }), t('classification', 'Classification'), t('manufacturer', 'Manufacturer'), n('diameter', 'Diameter in mm'), t('chargeNo', 'Charge number'), r('certificateId', 'Certificate', 'certifications'), note()], undefined, { unique: [['name']] });
 add('ndt_groups', 'NDT process groups', 'NDT process group', 'welding', 'NDT & PWHT', 'Manage NDT process groups used throughout your workspace.', [t('name', 'NDT process group', { required: true }), t('description', 'Description')], undefined, { unique: [['name']] });
 add('ndt_processes', 'NDT processes', 'NDT process', 'welding', 'NDT & PWHT', 'Manage NDT processes used throughout your workspace.', [t('name', 'NDT process', { required: true }), t('description', 'Description'), r('groupId', 'Group', 'ndt_groups', { hint: 'The examination method, such as RT, PT or UT.' }), b('wpr', 'WPR', { hint: 'Marks the process as part of the weld procedure review.' })], undefined, { unique: [['name']] });
@@ -187,8 +188,12 @@ const APPLICATIONS = 'Applications';
 const pilotAccess = (key: 'weld' | 'mto', title: string): Field[] => [
   b(`${key}Enabled`, `${title} enabled`, { default: true, section: APPLICATIONS, hidden: true, hint: `The account may open ${title}.` }),
   r(`${key}ProfileId`, `${title} profile`, 'profiles', { section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Leave empty to use the permission profile above.' }),
+  // Access per project site (shared/site-scope.ts); the chosen sites are the user_sites links of this pilot.
+  s(siteScopeField(key), siteScopeLabel(key), SITE_SCOPE_OPTIONS, { default: SITE_SCOPE_ALL, section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Specific project site(s): the account sees and changes only the main projects ticked below.' }),
 ];
 extend('users', [t('title', 'Title', { hidden: true }), t('address', 'Address', { hidden: true }), t('phone', 'Phone', { hidden: true }), r('companyId', 'Company', 'companies', { hidden: true }), ...pilotAccess('weld', 'Weld Pilot'), ...pilotAccess('mto', 'MTO Pilot')]);
+// Project sites per pilot of an account limited to specific project sites (written through the user form, see RELATIONS.users).
+add(USER_SITES, 'User project sites', 'user project site', 'settings', 'Administration', 'The main projects an account may work on per pilot.', [r('userId', 'User', 'users', { required: true }), s('pilot', 'Application', ['weld', 'mto'], { required: true }), r('siteId', 'Project site', 'sites', { required: true }), b('ownerArchived', 'Owner archived', { hidden: true })], ['userId', 'pilot', 'siteId'], { readonly: true, display: 'siteId', unique: [['userId', 'pilot', 'siteId']] });
 // A user's own full / short signature (pilots profile): the image is the newest attachment of the record.
 extend('signatures', [r('userId', 'User', 'users', { hidden: true }), s('kind', 'Signature', ['Full signature', 'Short signature'], { hidden: true }), b('nameUnder', 'Add name under the signature', { hidden: true })]);
 // Hydrotest release (hosted profile): the client's acceptance of a test system, and the hydrotest requests (shared/hydrotest.ts).
@@ -197,7 +202,7 @@ resources.push(...HYDROTEST_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);
 /** Fields above that only the pilots profile shows. */
-export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId'], signatures: ['userId', 'kind', 'nameUnder'], isometrics: ['itpId', 'itp2Id'] };
+export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope'], signatures: ['userId', 'kind', 'nameUnder'], isometrics: ['itpId', 'itp2Id'] };
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {

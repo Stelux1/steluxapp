@@ -193,6 +193,24 @@ export function seedAccessSamples(store: Store) {
 }
 
 /**
+ * Sample account for access per project site (local sample workspace of the hosted profile only; never called for
+ * a connected database): a weld coordinator who works on North fabrication yard only in Weld Pilot and on every main
+ * project in MTO Pilot. No password, like the other sample accounts. Runs once; an existing account is left untouched.
+ */
+export function seedSiteScopeSamples(store: Store) {
+  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_site_scope_v1'").get()) return;
+  store.transaction(() => {
+    const has = (key: string, id: string) => store.list(key, true).some(row => row.id === id);
+    const ready = ['profile-qaqc', 'profile-review'].every(id => has('profiles', id)) && has('sites', 'site-north');
+    if (ready && !store.list('users', true).some(row => row.id === 'user-sample-north' || row.email === 'noor.bakker@example.com')) {
+      store.create('users', { name: 'Noor Bakker', email: 'noor.bakker@example.com', title: 'Weld coordinator, North yard', phone: '+31 10 555 0186', companyId: has('companies', 'company-north') ? 'company-north' : '', profileId: 'profile-review', active: true, weldEnabled: true, weldProfileId: 'profile-qaqc', weldSiteScope: 'Specific project site(s)', mtoEnabled: true, mtoProfileId: 'profile-review', mtoSiteScope: 'All project sites' }, SYSTEM, 'user-sample-north');
+      store.create('user_sites', { userId: 'user-sample-north', pilot: 'weld', siteId: 'site-north' }, SYSTEM);
+    }
+    store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_site_scope_v1','1')").run();
+  });
+}
+
+/**
  * Sample company data for documents (local sample workspace of the hosted profile only; never called for a
  * connected database): a fictional contractor, no logo. Runs once; an existing company record is left untouched.
  */
