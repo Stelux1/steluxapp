@@ -135,8 +135,8 @@ export function WeldRequestPdfButtons({ weld, types }: { weld: Row; types: strin
   return requests.length ? <p className="pdf-doc-row">{requests.map(request => <RequestPdfButton key={request.id} request={request}/>)}</p> : null;
 }
 /** Visual inspection report of one report number (the Visual reports archive). */
-export function VisualReportPdfButton({ reportNo }: { reportNo: string }) {
-  return reportNo && reportNo !== '—' ? <PdfDocumentButton document="visual-report" report="pdf-visual-report" params={{ reportNo }} label="Report PDF" title="Visual inspection report" subtitle={`Report ${reportNo}`} fileName={`Visual-inspection-report-${safe(reportNo)}`}/> : null;
+export function VisualReportPdfButton({ reportNo, label = 'Report PDF' }: { reportNo: string; label?: string }) {
+  return reportNo && reportNo !== '—' ? <PdfDocumentButton document="visual-report" report="pdf-visual-report" params={{ reportNo }} label={label} title="Visual inspection report" subtitle={`Report ${reportNo}`} fileName={`Visual-inspection-report-${safe(reportNo)}`}/> : null;
 }
 /** Prefab or Field release document of one release record (Hydrotest releases have their own document). */
 export function ReleasePdfButton({ release }: { release: Row }) {

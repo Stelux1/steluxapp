@@ -288,11 +288,78 @@ export const inspectionFileError = (documentType: unknown, name: string) => docu
 /** Distinct defect types already recorded, for the Initial round's suggestions (no site defect-code list exists yet). */
 export const defectTypeOptions = (results: Row[] | null | undefined) => [...new Set(live(results).map(row => textOf(row.defectType)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
+// ----- visual (VT) reports -------------------------------------------------------------------------------------
+
+/**
+ * The Visual inspection hub: "New" generates a numbered VT report for chosen welds, "Upload" marks A / NA on a report and
+ * closes it with the PDF, the archive lists the reports. A weld belongs to one report (reference manual). Results are
+ * stored as before: A is "Accepted", NA is "Rejected" (read "NA"); earlier "Not applicable" results stay valid.
+ */
+export const VT_TABS = { new: 'New', upload: 'Upload', archive: 'Visual reports archive' } as const;
+export const VT_MODES = ['Digital fill-in', 'Go (PDF)'] as const;
+export const VT_FILTERS = [{ value: 'all', label: 'Include all welds' }, { value: 'select', label: 'Select specific weld(s)' }];
+export const VT_ITPS = ['ITP 1', 'ITP 2'];
+/** Labels of the New tab, in the reference order. */
+export const VT_NEW_LABELS = { filter: 'Filter', itp: 'ITP', activityNo: 'Activity No', engineer: 'QAQC Engineer', customNo: 'Custom Report No (If needed)' };
+export const VT_PICKER_COLUMNS = ['C', 'WN', 'Type', 'Wdr'];
+export const VT_UPLOAD_COLUMNS = ['A', 'NA', 'WN', 'Type', 'Wdr'];
+export const VT_UPLOAD_HELP = 'Tick A or NA per weld and click Save A/NA. That can be done weld by weld. Only when every weld on the report is marked do you upload the PDF, or finish via New → Digital fill-in. Digital fill-in and Go (PDF) use the same report; a weld is not placed on a second report.';
+export const VT_DOCUMENT = 'VI document';
+export const VT_NO_WELDS = 'Select at least one weld.';
+export const VT_NO_OPEN_REPORT = 'There is no open report to fill in. Use Go (PDF) to create one first.';
+export const VT_CHOOSE_REPORT = 'Choose the open report you want to fill in.';
+export const VT_TICK_ONE = 'Tick at least one A or NA to save.';
+export const VT_DELETE_CONFIRM = 'Delete selected VT report(s)?';
+export const VT_NOTHING_TO_DELETE = 'Check at least one report to delete.';
+export const vtMissingMessage = (weldNos: string[]) => `Each weld must have A (accepted) or NA (not accepted) before upload. Missing: ${weldNos.join(', ')}`;
+export const vtNumber = (seq: number) => `VT ${seq}`;
+export const vtSeq = (report: Row) => Number(report.seq) || Number(/(\d+)\s*$/.exec(textOf(report.number))?.[1]) || 0;
+/** Next report number of a main project: one more than its highest number, archived reports included so a number is never reused. */
+export const nextVtSeq = (reports: Row[] | null | undefined, siteId: string) => Math.max(0, ...(reports || []).filter(report => textOf(report.siteId) === siteId).map(vtSeq)) + 1;
+/** Weld ids of a report (stored as one comma separated text). */
+export const vtWeldIds = (report: Row) => textOf(report.weldIds).split(',').map(id => id.trim()).filter(Boolean);
+export const vtResultRows = (report: Row, results: Row[] | null | undefined) => live(results).filter(row => row.type === 'VI' && textOf(row.reportNo) === textOf(report.number) && vtWeldIds(report).includes(textOf(row.weldId)) && textOf(row.result) !== '');
+/** Latest outcome of each marked weld of a report. */
+export function vtMarks(report: Row, results: Row[] | null | undefined): Map<string, string> {
+  const marks = new Map<string, string>();
+  for (const row of vtResultRows(report, results).sort((a, b) => newest(b, a))) marks.set(textOf(row.weldId), textOf(row.result));
+  return marks;
+}
+/** Welds of a report that have neither A nor NA yet. */
+export const vtOpenWeldIds = (report: Row, results: Row[] | null | undefined) => { const marks = vtMarks(report, results); return vtWeldIds(report).filter(id => !marks.has(id)); };
+/** Reports of an isometric that still have welds without a mark (the choices of "Select report" and "Digital fill-in"). */
+export const vtOpenReports = (reports: Row[] | null | undefined, results: Row[] | null | undefined, isoId?: string) => live(reports).filter(report => (!isoId || report.isoId === isoId) && vtOpenWeldIds(report, results).length > 0).sort((a, b) => vtSeq(b) - vtSeq(a));
+/** Reports of an isometric the Upload tab offers: every report whose PDF is not uploaded yet (a fully marked report waits here for its PDF). */
+export const vtUploadReports = (reports: Row[] | null | undefined, isoId?: string) => live(reports).filter(report => (!isoId || report.isoId === isoId) && report.uploaded !== true).sort((a, b) => vtSeq(b) - vtSeq(a));
+/** Weld ids already placed on a report: on a generated report, or with a visual result of an earlier report. */
+export function vtUsedWeldIds(reports: Row[] | null | undefined, results: Row[] | null | undefined): Set<string> {
+  const used = new Set<string>();
+  for (const report of live(reports)) for (const id of vtWeldIds(report)) used.add(id);
+  for (const row of live(results)) if (row.type === 'VI' && textOf(row.reportNo) && textOf(row.result) !== '') used.add(textOf(row.weldId));
+  return used;
+}
+/** Welds a new VT report may take: every live weld of the isometric not yet on a report, with or without a welder. */
+export const vtEligibleWelds = (welds: Row[] | null | undefined, reports: Row[] | null | undefined, results: Row[] | null | undefined, isoId?: string) => {
+  const used = vtUsedWeldIds(reports, results);
+  return live(welds).filter(weld => (!isoId || weld.isoId === isoId) && !used.has(weld.id)).sort((a, b) => textOf(a.weldNo).localeCompare(textOf(b.weldNo), 'en', { numeric: true }));
+};
+/** Why a set of welds cannot go on a new report, or '' when it can. */
+export function vtGenerateError(weldIds: string[], welds: Row[], reports: Row[] | null | undefined, results: Row[] | null | undefined, isoId: string): string {
+  if (!weldIds.length) return VT_NO_WELDS;
+  const onIso = live(welds).filter(weld => weld.isoId === isoId);
+  if (weldIds.some(id => !onIso.some(weld => weld.id === id))) return 'A selected weld is not on this isometric.';
+  const eligible = new Set(vtEligibleWelds(welds, reports, results, isoId).map(weld => weld.id));
+  const refused = onIso.filter(weld => weldIds.includes(weld.id) && !eligible.has(weld.id)).map(weld => textOf(weld.weldNo));
+  return refused.length ? `Weld ${refused.join(', ')} ${refused.length > 1 ? 'are' : 'is'} already on a visual report.` : '';
+}
+
 // ----- actions ------------------------------------------------------------------------------------------------
 
 const field = (name: string, label: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'text', ...extra });
 const welds = field('weldIds', 'Welds', { type: 'ref', ref: 'welds', multiple: true, required: true });
 const date = field('date', 'Date', { type: 'date' });
+/** Inputs of the VT report operations, which run under the existing "visual-inspection" action (`op`: generate, marks, upload, delete). */
+const VT_ACTION_FIELDS: ActionField[] = [field('op', 'Operation', { type: 'select', options: ['generate', 'marks', 'upload', 'delete'], hidden: true }), field('isoId', 'Isometric', { type: 'ref', ref: 'isometrics', hidden: true }), field('mode', 'Created with', { type: 'select', options: [...VT_MODES], hidden: true }), field('reportId', 'Report', { type: 'ref', ref: 'visual_reports', hidden: true }), field('reportIds', 'Reports', { type: 'ref', ref: 'visual_reports', multiple: true, hidden: true })];
 /** Actions of this flow; their dialogs live in `client/inspections.tsx`. Array inputs (`rounds`) are hidden here. */
 export const INSPECTION_ACTIONS: ActionDefinition[] = [
   { key: 'ndt-weld', title: 'Create/Update NDT Request', module: 'welding', submit: 'Save', description: 'NDT location, request number and the five examination rounds of one weld.', fields: [field('weldId', 'Weld', { type: 'ref', ref: 'welds', required: true }), field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('requestNo', 'Request number'), field('rounds', 'Rounds', { hidden: true })] },
@@ -300,7 +367,7 @@ export const INSPECTION_ACTIONS: ActionDefinition[] = [
   { key: 'mass-inspection-request', title: 'Generate mass request', module: 'welding', submit: 'Create request', description: 'One request number for the selected welds, with the processes to include and a note.', fields: [field('type', 'Inspection type', { type: 'select', options: ['NDT PRE', 'NDT', 'PRE-HT', 'PWHT'], required: true }), welds, field('processIds', 'NDT processes', { type: 'ref', ref: 'ndt_processes', multiple: true }), field('locationId', 'NDT location', { type: 'ref', ref: 'ndt_locations' }), field('pwhtProcessId', 'PWHT process', { type: 'ref', ref: 'pwht_processes' }), field('pwhtLocationId', 'PWHT location', { type: 'ref', ref: 'pwht_locations' }), date, field('note', 'Note', { type: 'textarea' })] },
   { key: 'inspection-upload', title: 'Upload NDT on multiple welds', module: 'welding', submit: 'Save results', description: 'One report number and result per round for every selected weld.', fields: [field('type', 'Inspection type', { type: 'select', options: NDT_TYPES, required: true }), welds, field('rounds', 'Rounds', { hidden: true }), date] },
   { key: 'pwht-upload', title: 'Upload Pre-HT/PWHT on multiple welds', module: 'welding', submit: 'Save', description: 'Pre-HT and PWHT report numbers for every selected weld.', fields: [welds, field('preReportNo', 'Pre report number'), field('reportNo', 'Report number'), field('checked', 'Check', { type: 'checkbox' }), date] },
-  { key: 'visual-inspection', title: 'Visual inspection', module: 'welding', submit: 'Save visual report', description: 'Write one visual inspection report to several welds.', fields: [welds, field('itp', 'ITP', { type: 'select', options: ['ITP 1', 'ITP 2'] }), field('activityNo', 'Activity No.'), field('engineerId', 'QA/QC engineer', { type: 'ref', ref: 'qa_engineers' }), field('customNo', 'Custom No.'), field('reportNo', 'Report No.', { required: true }), field('date', 'Inspection date', { type: 'date', required: true }), field('accepted', 'Accepted', { type: 'ref', ref: 'welds', multiple: true }), field('notAccepted', 'Not accepted', { type: 'ref', ref: 'welds', multiple: true }), field('notApplicable', 'Not applicable', { type: 'ref', ref: 'welds', multiple: true })] },
+  { key: 'visual-inspection', title: 'Visual inspection', module: 'welding', submit: 'Save visual report', description: 'Write one visual inspection report to several welds.', fields: [welds, field('itp', 'ITP', { type: 'select', options: ['ITP 1', 'ITP 2'] }), field('activityNo', 'Activity No.'), field('engineerId', 'QA/QC engineer', { type: 'ref', ref: 'qa_engineers' }), field('customNo', 'Custom No.'), field('reportNo', 'Report No.', { required: true }), field('date', 'Inspection date', { type: 'date', required: true }), field('accepted', 'Accepted', { type: 'ref', ref: 'welds', multiple: true }), field('notAccepted', 'Not accepted', { type: 'ref', ref: 'welds', multiple: true }), field('notApplicable', 'Not applicable', { type: 'ref', ref: 'welds', multiple: true }), ...VT_ACTION_FIELDS] },
 ];
 export const INSPECTION_ACTION_KEYS = INSPECTION_ACTIONS.map(action => action.key);
 /** Actions whose permission depends on the inspection type in the request. */
@@ -324,11 +391,12 @@ export const INSPECTION_ACTION_INPUTS: Record<string, string[]> = Object.fromEnt
  * fields, QA/QC engineers for the visual report, the five inspection types, the actions and the Manager page.
  * `deliver` is `deliverResource` of `shared/release.ts` (passed in to keep this module free of imports).
  */
-export function deliverInspections(availability: Availability, deliver: (availability: Availability, key: string, names?: string[]) => void) {
+export function deliverInspections(availability: Availability, deliver: (availability: Availability, key: string, names?: string[], options?: { page?: boolean }) => void) {
   deliver(availability, 'welds', [...INSPECTION_WELD_FIELDS.map(item => item.name), 'tracer', 'ndoReqPre', 'pwhtReqPre', 'pwhtReq']);
   deliver(availability, 'inspection_results', ['processId', 'naLength', 'defectType', ...INSPECTION_RESULT_FIELDS.map(item => item.name)]);
   deliver(availability, 'inspection_requests', ['pwhtProcessId', 'pwhtLocationId', ...INSPECTION_REQUEST_FIELDS.map(item => item.name)]);
   deliver(availability, 'qa_engineers');
+  deliver(availability, 'visual_reports', undefined, { page: false });
   for (const type of ['NDT', 'NDT PRE', 'VI', 'PWHT', 'PRE-HT']) if (!availability.inspectionTypes.includes(type)) availability.inspectionTypes.push(type);
   Object.assign(availability.actions, INSPECTION_ACTION_INPUTS);
   if (!availability.features.includes('inspections')) availability.features.push('inspections');
