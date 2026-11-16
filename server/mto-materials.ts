@@ -89,7 +89,7 @@ function archiveIsoMaterials(store: Store, data: Input, actor: Actor): MtoResult
   const records = ids.map(id => { const row = store.get('iso_materials', id); return store.archive('iso_materials', row.id, row._version, actor); });
   return { resource: 'iso_materials', records };
 }
-const executionRows = (store: Store) => Object.fromEntries(['isometrics', 'projects', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'materials', 'custom_materials', 'material_quantity_changes'].map(key => [key, store.list(key)]));
+const executionRows = (store: Store) => Object.fromEntries(['isometrics', 'projects', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'warehouses', 'materials', 'custom_materials', 'material_quantity_changes'].map(key => [key, store.list(key)]));
 
 const EDIT_FIELDS = ['requirementId', 'phaseId', 'componentCode', 'uom', 'chargeNo', 'expectedVersion'];
 const PROGRESS_OF_CODE: Record<string, string> = { '1': 'Pipe', '2': 'Supports', '3': 'Appendages' };

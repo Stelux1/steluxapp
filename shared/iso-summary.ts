@@ -80,6 +80,8 @@ export interface IsoSummarySource {
   orders?: Row[] | null;
   orderLines?: Row[] | null;
   stock?: Row[] | null;
+  /** Storehouses: an old-model stock row counts for the main project its storehouse names (shared/mto-stock.ts). */
+  warehouses?: Row[] | null;
   picklists?: Row[] | null;
   /** Reservations and every isometric of the workspace: the free stock of Material status % leaves out what others reserved or claim. */
   reservations?: Row[] | null;
@@ -156,7 +158,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
 /** The rows `materialStatus()` reads for one isometric: its own requirement lines plus the shared order, stock, pick-list and reservation rows. */
 function materialRows(source: IsoSummarySource, iso: Row, requirements: Row[]): Record<string, Row[]> {
   return { isometrics: source.allIsometrics || source.isometrics, projects: source.projects, iso_materials: requirements, materials: source.materials || [], custom_materials: source.customMaterials || [],
-    orders: source.orders || [], order_lines: source.orderLines || [], stock: source.stock || [], picklists: source.picklists || [], reservations: source.reservations || [] };
+    orders: source.orders || [], order_lines: source.orderLines || [], stock: source.stock || [], warehouses: source.warehouses || [], picklists: source.picklists || [], reservations: source.reservations || [] };
 }
 
 /**

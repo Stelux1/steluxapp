@@ -8,7 +8,7 @@ import { reportCsv, type Report } from '../shared/reports.ts';
 import { reportWorkbook } from './report-export.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { AuthRequest } from './auth.ts';
-import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, isSiteStock, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
+import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, countedStock, hasLocationKind, isSiteStock, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
 import { nextSiteIndexNumber } from '../shared/welder-data.ts';
 
 type Input = Record<string, unknown>;
@@ -64,17 +64,23 @@ export function changeSiteStock(store: Store, actor: Actor, siteId: string, refs
 /**
  * Take a quantity of one material out of a project site's inventory, charge by charge in charge order (the inventory
  * is kept per Material No). Refused, with nothing taken, when the site holds less. Returns what each charge gave.
+ * `counted`: an isometric takes (Start, picking, issue): the old-model storehouse rows derived to the site
+ * (shared/mto-stock.ts `countedStock`) give too, each up to what old pick lists do not claim of it; the part's
+ * `warehouseId` names the storehouse such a part came from ('' for a site inventory row).
  */
-export function takeFromSite(store: Store, actor: Actor, siteId: string, refs: Refs, amount: number, label = 'material'): { row: Row; quantity: number }[] {
-  const rows = siteStock({ stock: store.list('stock') }, siteId, identityOf(refs)).filter(row => Number(row.quantity) > 0);
-  const onHand = qty(rows.reduce((sum, row) => sum + Number(row.quantity), 0));
+export function takeFromSite(store: Store, actor: Actor, siteId: string, refs: Refs, amount: number, label = 'material', counted = false): { row: Row; quantity: number; warehouseId: string }[] {
+  const entries = counted
+    ? countedStock({ stock: store.list('stock'), warehouses: store.list('warehouses', true), picklists: store.list('picklists') }, siteId, identityOf(refs))
+    : siteStock({ stock: store.list('stock') }, siteId, identityOf(refs)).map(row => ({ row, free: Number(row.quantity) }));
+  const rows = entries.filter(entry => entry.free > 0);
+  const onHand = qty(rows.reduce((sum, entry) => sum + entry.free, 0));
   if (onHand + 1e-9 < amount) throw new AppError(409, `Insufficient stock of ${label} in the project site's inventory. Available: ${onHand}.`);
-  let left = qty(amount); const parts: { row: Row; quantity: number }[] = [];
-  for (const row of rows) {
+  let left = qty(amount); const parts: { row: Row; quantity: number; warehouseId: string }[] = [];
+  for (const { row, free } of rows) {
     if (left <= 0) break;
-    const take = qty(Math.min(left, Number(row.quantity)));
+    const take = qty(Math.min(left, free));
     store.update('stock', row.id, { quantity: qty(Number(row.quantity) - take) }, row._version, actor);
-    parts.push({ row, quantity: take }); left = qty(left - take);
+    parts.push({ row, quantity: take, warehouseId: isSiteStock(row) ? '' : String(row.warehouseId || '') }); left = qty(left - take);
   }
   return parts;
 }
@@ -149,11 +155,16 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
   const nameOf = (row: Row, rows = catalog()) => stockDetails(rows, row).materialNo || 'material';
   const copyWording = (row: Row) => row.corrected === true ? Object.fromEntries(['materialGroup', 'articleNo', 'uom', 'description', 'dia', 'lbs', 'corrected'].map(name => [name, row[name]])) : {};
 
-  /** Change a line's quantity; a balance below zero is refused. */
-  const change = (row: Row, delta: number, extra: Input = {}) => {
+  /**
+   * Change a line's quantity; a balance below zero is refused. A quantity booked into a line without a location kind
+   * (an old-model row) gives it `locationKind: 'storehouse'`, so what was moved in never counts as a main project's
+   * inventory (shared/mto-stock.ts, stock of the old model); `restore` (a reversal giving back what left it) keeps it.
+   */
+  const change = (row: Row, delta: number, extra: Input = {}, restore = false) => {
     const current = store.get('stock', row.id), next = qty(Number(current.quantity) + delta);
     if (next < 0) throw new AppError(409, `Insufficient stock of ${nameOf(current)}. Available: ${Number(current.quantity)}.`);
-    return store.update('stock', current.id, { quantity: next, ...extra }, current._version, actor);
+    const settled = delta > 0 && !restore && !hasLocationKind(current) ? { locationKind: 'storehouse' } : {};
+    return store.update('stock', current.id, { quantity: next, ...settled, ...extra }, current._version, actor);
   };
   /** The storehouse line of a material and charge, created when it does not exist yet. */
   const receiving = (from: Row | Input, warehouseId: string, delta: number, chargeNo = String(from.chargeNo || '')) => {
@@ -517,7 +528,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
       if ('warehouseId' in entry.place) {
         const identity = identityOf(refs), warehouseId = entry.place.warehouseId;
         const existing = store.list('stock').find(row => isStorehouseLine(row) && row.warehouseId === warehouseId && materialIdentity(row) === identity && String(row.chargeNo || '') === chargeNo);
-        if (existing) change(existing, entry.quantity);
+        if (existing) change(existing, entry.quantity, {}, true);
         else if (entry.quantity > 0) receiving(move, warehouseId, entry.quantity, chargeNo);
         else throw new AppError(409, `Insufficient stock of ${nameOf(move)} in ${label(warehouseId)} to reverse this order.`);
       } else changeSiteStock(store, actor, entry.place.siteId, refs, chargeNo, entry.quantity);
@@ -540,7 +551,7 @@ export function registerMtoStockRoutes(app: Express, store: Store, availability:
     const param = (name: string) => typeof req.query[name] === 'string' ? String(req.query[name]).slice(0, 150) : '';
     const filters = { siteId: param('siteId'), projectId: param('projectId'), isoId: param('isoId'), query: param('q').slice(0, 500), ordered: ['Yes', 'No'].includes(param('ordered')) ? param('ordered') : '' };
     // Access per project site: a limited request lists only its main projects' records (server/site-scope.ts).
-    const rows = Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock'].map(key => [key, scopeRows(key, store.list(key))]));
+    const rows = Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock', 'warehouses'].map(key => [key, scopeRows(key, store.list(key))]));
     const list = materialsList(rows, filters);
     const format = param('format');
     if (format === 'csv' || format === 'xlsx') {

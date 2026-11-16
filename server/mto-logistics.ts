@@ -5,7 +5,8 @@ import type { AuthRequest } from './auth.ts';
 import { EXPORT_TABLES, areaRight } from '../shared/export-tables.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import { PICKLIST_NOTE_MAX, START_FROM_PERCENT, allocateStock, canStartAt, isoStatuses, pickIssued, planReserve, planStart, startedPhases, undoRefusal } from '../shared/mto-logistics.ts';
-import { materialRecord } from '../shared/materials.ts';
+import { materialIdentity, materialRecord } from '../shared/materials.ts';
+import { isSiteStock } from '../shared/mto-stock.ts';
 import { runAction } from './workflows.ts';
 import { changeSiteStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 
@@ -19,7 +20,7 @@ export interface MtoActionContext {
   balance: (tool: boolean, itemId: string, warehouseId: string, chargeNo: string, delta: number, custom?: boolean) => Row;
   movement: (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra?: Input, custom?: boolean) => Row;
 }
-const RESOURCES = ['isometrics', 'projects', 'iso_materials', 'materials', 'custom_materials', 'operation_phases', 'orders', 'order_lines', 'stock', 'picklists', 'reservations'];const rowsOf = (store: Store) => Object.fromEntries(RESOURCES.map(key => [key, store.list(key)])) as Record<string, Row[]>;
+const RESOURCES = ['isometrics', 'projects', 'iso_materials', 'materials', 'custom_materials', 'operation_phases', 'orders', 'order_lines', 'stock', 'warehouses', 'picklists', 'reservations'];const rowsOf = (store: Store) => Object.fromEntries(RESOURCES.map(key => [key, store.list(key)])) as Record<string, Row[]>;
 const refs = (requirement: Row) => ({ materialId: String(requirement.materialId || ''), customMaterialId: String(requirement.customMaterialId || '') });
 const ids = (value: unknown, label: string) => {
   if (!Array.isArray(value) || !value.length || value.length > 500 || value.some(item => typeof item !== 'string' || !item)) throw new AppError(422, `Select at least one ${label}.`);
@@ -81,10 +82,10 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
       const material = materialRecord(rows, item.requirement);
       // delta-I3-R1: Start books the issue at once, charge by charge in charge order (Material log "Isometric execution
       // <ISO> | Pick List <no>"); the pick list stays "Taken? No" until the take is confirmed.
-      const parts = takeFromSite(store, context.actor, siteId, refs(item.requirement), item.quantity, String(material?.materialNo || 'material'));
+      const parts = takeFromSite(store, context.actor, siteId, refs(item.requirement), item.quantity, String(material?.materialNo || 'material'), true);
       const charges = [...new Set(parts.map(part => String(part.row.chargeNo || '')))];
       lines.push(add('picklists', { number: store.next('PICK'), reportNo, isoId: iso.id, ...refs(item.requirement), requirementId: item.requirement.id, warehouseId: '', siteId, quantity: item.quantity, date, chargeNo: charges.length === 1 ? charges[0] : '', taken: false, issued: true, note: pickNote, phaseId }));
-      for (const part of parts) add('movements', { number: store.next('MM'), ...refs(item.requirement), warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), isoId: iso.id, requirementId: item.requirement.id, note: logText, pickListNo: reportNo });
+      for (const part of parts) add('movements', { number: store.next('MM'), ...refs(item.requirement), warehouseId: part.warehouseId, siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), isoId: iso.id, requirementId: item.requirement.id, note: logText, pickListNo: reportNo });
       // The reservation is used up by what this pick list takes; a larger reservation keeps its remainder.
       const reservation = rows.reservations.find(row => row.requirementId === item.requirement.id && row.status === 'Reserved');
       if (reservation) { const left = qty(Number(reservation.quantity) - item.quantity); patch('reservations', reservation, left > 0 ? { quantity: left } : { status: 'Used', quantity: Math.min(Number(reservation.quantity), item.quantity) }); }
@@ -112,8 +113,8 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
       } else {
         // A pick list written before Start issued stock: it issues now, as it always did.
         const siteId = String(line.siteId || '') || siteOfIso(store, line.isoId);
-        const parts = takeFromSite(store, context.actor, siteId, refs(line), Number(line.quantity));
-        for (const part of parts) add('movements', { number: store.next('MM'), ...refs(line), warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), ...extra });
+        const parts = takeFromSite(store, context.actor, siteId, refs(line), Number(line.quantity), 'material', true);
+        for (const part of parts) add('movements', { number: store.next('MM'), ...refs(line), warehouseId: part.warehouseId, siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), ...extra });
       }
       return patch('picklists', line, confirmed);
     });
@@ -132,10 +133,15 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
     const iso = store.get('isometrics', lines[0].isoId, true);
     const logText = `Undo execution ${iso.isoNo} | Pick List ${reportNo}`;
     // Return exactly what Start took, charge by charge: the Issue movements of this pick list, reversed.
-    for (const move of store.list('movements').filter(row => row.pickListNo === reportNo && row.type === 'Issue' && !row.warehouseId && row.siteId)) {
+    for (const move of store.list('movements').filter(row => row.pickListNo === reportNo && row.type === 'Issue' && row.siteId)) {
       const amount = qty(-Number(move.quantity)); if (amount <= 0) continue;
-      changeSiteStock(store, context.actor, String(move.siteId), refs(move), String(move.chargeNo || ''), amount);
-      add('movements', { number: store.next('MM'), ...refs(move), warehouseId: '', siteId: String(move.siteId), quantity: amount, type: 'Return to inventory', date, chargeNo: String(move.chargeNo || ''), isoId: iso.id, requirementId: String(move.requirementId || ''), note: logText, pickListNo: reportNo });
+      const warehouseId = String(move.warehouseId || ''), chargeNo = String(move.chargeNo || '');
+      // Taken from an old-model storehouse row (it names the storehouse and the site): the quantity goes back to that
+      // line as it was, still counted for its main project; were the line gone, into the site inventory.
+      const source = warehouseId ? store.list('stock').find(row => !isSiteStock(row) && row.warehouseId === warehouseId && materialIdentity(row) === materialIdentity(move) && String(row.chargeNo || '') === chargeNo) : undefined;
+      if (source) store.update('stock', source.id, { quantity: qty(Number(source.quantity) + amount) }, source._version, context.actor);
+      else changeSiteStock(store, context.actor, String(move.siteId), refs(move), chargeNo, amount);
+      add('movements', { number: store.next('MM'), ...refs(move), warehouseId: source ? warehouseId : '', siteId: String(move.siteId), quantity: amount, type: 'Return to inventory', date, chargeNo, isoId: iso.id, requirementId: String(move.requirementId || ''), note: logText, pickListNo: reportNo });
     }
     // The pick list leaves the archive (archived, never deleted); the isometric's reservations are released.
     const archived = lines.map(line => store.archive('picklists', line.id, line._version, context.actor));

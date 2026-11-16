@@ -327,7 +327,7 @@ function sampleParity(target: Store, source: Store): NonNullable<DemoCopyResult[
   const before = isoSummariesFor(source, availability, sourceIsos);
   const after = isoSummariesFor(target, availability, target.list('isometrics').filter(iso => iso.id.startsWith(DEMO_ID_PREFIX)));
   const differing = sourceIsos.filter(iso => !same(summaryNumbers(after[`${DEMO_ID_PREFIX}${iso.id}`]), summaryNumbers(before[iso.id]))).map(iso => text(iso.isoNo));
-  const keys = ['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock'];
+  const keys = ['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock', 'warehouses'];
   const rows = (store: Store) => Object.fromEntries(keys.map(key => [key, store.list(key, true)])) as Record<string, Row[]>;
   const quantities = (store: Store, projectId: string) => materialsList(rows(store), { projectId }).map(item => [item.values.iso, item.values.description, item.values.quantity, item.values.ordered, item.values.inventory, item.values.picked]);
   const projects = source.list('projects');

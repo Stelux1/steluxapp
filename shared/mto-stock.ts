@@ -11,7 +11,8 @@ import { materialIdentity, materialRecord, requirementExecution } from './materi
  * - storehouses: company records shared by every project site, whose lines only the storehouse dialogs (transfer to
  *   project, move, return to inventory, correction, adjust, remove) and transfer orders change.
  * Both live in the one `stock` table: a row with `locationKind: 'site'` belongs to the inventory of `siteId`; every
- * other row (all rows written before this distinction existed) is a line of storehouse `warehouseId`.
+ * other row (all rows written before this distinction existed) is a line of storehouse `warehouseId`; an old one still
+ * counts for the main project its storehouse names (see "Stock of the old model" below).
  *
  * Everything here is pure: the server (server/mto-stock.ts) applies the rules inside one transaction and the
  * client (client/mto-stock.tsx) uses the same functions to show what an action will do.
@@ -214,6 +215,58 @@ export function claimSiteId(rows: Record<string, Row[]>, row: Row): string {
 }
 /** A pick-list line that takes from a project site's inventory (one written before names a storehouse). */
 export const picksFromSite = (line: Row) => !line.warehouseId;
+
+// ---- Stock of the old model -----------------------------------------------------------------------------------
+//
+// Before the two location kinds, a storehouse belonged to one main project (the `siteId` stored on its `warehouses`
+// record), material taken in on an order of that main project was booked into it, and the isometrics counted it. Those
+// stock rows carry no `locationKind`; every row written since carries 'site' or 'storehouse'. Nothing stored is changed:
+// such a row is READ as inventory of its storehouse's main project wherever an isometric counts stock (Material status,
+// Inv., free stock, dashboard, execution board, picking, Start), while it stays a line of its storehouse for every
+// storehouse operation. What an operation moves out of it follows the normal rules at its destination; a quantity booked
+// INTO it by a new operation (a move, a transfer, a receipt, an adjustment up) writes `locationKind: 'storehouse'`, which
+// ends the derivation for the whole row, so moved-in material never becomes another main project's inventory.
+
+/** Whether a stock row says where it is (every row written since the two location kinds exist). */
+export const hasLocationKind = (row: Row) => row.locationKind === 'site' || row.locationKind === 'storehouse';
+/**
+ * THE derivation: the main project whose inventory an old-model stock row counts for (its storehouse's stored main
+ * project), '' for every other row (a row with a location kind, or one whose storehouse names no main project).
+ */
+export function legacyInventorySiteId(rows: Record<string, Row[]>, stock: Row): string {
+  if (hasLocationKind(stock) || !stock.warehouseId) return '';
+  return String((rows.warehouses || []).find(row => row.id === stock.warehouseId)?.siteId || '');
+}
+/** The main project whose inventory a stock row counts for: a site row's own, an old-model row's derived one, else ''. */
+export const countedSiteId = (rows: Record<string, Row[]>, stock: Row): string => isSiteStock(stock) ? String(stock.siteId || '') : legacyInventorySiteId(rows, stock);
+/** What untaken pick-list lines of the old rule (they name a storehouse and a charge) still claim of one storehouse line. */
+export function legacyClaimed(rows: Record<string, Row[]>, stock: Row): number {
+  if (isSiteStock(stock)) return 0;
+  const identity = materialIdentity(stock);
+  return round6(live(rows, 'picklists').filter(line => !picksFromSite(line) && line.returned !== true && line.taken === false && line.issued !== true
+    && line.warehouseId === stock.warehouseId && materialIdentity(line) === identity && String(line.chargeNo || '') === String(stock.chargeNo || '')).reduce((sum, line) => sum + Number(line.quantity), 0));
+}
+/**
+ * The main project whose counted inventory an untaken pick-list line claims from: a line of the site inventory its own
+ * main project; a line of the old rule the derived main project of the storehouse line it will be taken from ('' when
+ * that line is no old-model row, or gone: then no isometric counts the stock it claims).
+ */
+export function claimInventorySiteId(rows: Record<string, Row[]>, line: Row): string {
+  if (picksFromSite(line)) return claimSiteId(rows, line);
+  const identity = materialIdentity(line);
+  const stock = live(rows, 'stock').find(row => !isSiteStock(row) && row.warehouseId === line.warehouseId && materialIdentity(row) === identity && String(row.chargeNo || '') === String(line.chargeNo || ''));
+  return stock ? legacyInventorySiteId(rows, stock) : '';
+}
+/**
+ * The stock rows counted as one main project's inventory (optionally of one material), in charge order: its site
+ * inventory rows and the old-model storehouse rows derived to it. `free` is what a row can still give: its quantity,
+ * less what untaken pick lists of the old rule claim of an old-model row.
+ */
+export function countedStock(rows: Record<string, Row[]>, siteId: string, identity?: string): { row: Row; free: number }[] {
+  if (!siteId) return [];
+  return live(rows, 'stock').filter(stock => countedSiteId(rows, stock) === siteId && (!identity || materialIdentity(stock) === identity)).sort(byCharge)
+    .map(row => ({ row, free: isSiteStock(row) ? Number(row.quantity) : round6(Number(row.quantity) - legacyClaimed(rows, row)) }));
+}
 
 // ---- Transfer orders ----------------------------------------------------------------------------------------
 

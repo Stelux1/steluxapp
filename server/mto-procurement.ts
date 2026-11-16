@@ -35,7 +35,7 @@ export function recordReceipt(ctx: ProcurementContext, entry: { order: Row; line
   });
 }
 
-const PLANNING_RESOURCES = ['isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'materials', 'custom_materials', 'projects'];
+const PLANNING_RESOURCES = ['isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'warehouses', 'materials', 'custom_materials', 'projects'];
 const str = (value: unknown) => typeof value === 'string' ? value.trim() : '';
 
 /**
