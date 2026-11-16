@@ -21,6 +21,8 @@ const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive', '/materials/materials-list', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
 // The Prefab release and Field release pages share the releases route and differ by ?view= (see client/releases.tsx).
 EXPLICIT_ROUTES.push('/welding/releases', '/welding/field_packages');
+// NDT Batch Import has a route of its own (client/ndt-batch-import.tsx).
+EXPLICIT_ROUTES.push('/welding/ndt-batch-import');
 const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.map(item => ({ pilot, group, item }))));
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
@@ -38,7 +40,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(labels('mto', 'Projects data').slice(-2), ['Pick List archive', 'Iso overview']);
   for (const key of ['weld', 'mto'] as const) { const item = PILOT_MAP[key].groups.flatMap(group => group.items).find(entry => entry.label === 'Iso overview')!; assert.equal(item.action, 'iso-overview'); assert.deepEqual(pilotItemResources(item), ['projects', 'isometrics']); }
   // Reference items without a page in this application are not listed.
-  for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
+  for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
 
 test('the Weld Pilot menu has no Weld process and no Request archive (hidden by design in the reference); the MTO Pilot keeps its service request archive', () => {

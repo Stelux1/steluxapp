@@ -10,6 +10,7 @@ import { itpHostedField } from './itps.ts';
 import { WELDERCARD_PATH, HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
+import { NDT_BATCH_PATH } from './ndt-batch.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
 import { deliverMtoMaterials } from './mto-materials.ts';
 import { MATERIAL_IMPORT_PATH } from './material-db.ts';
@@ -332,6 +333,8 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
+  // NDT Batch Import (Weld Pilot, server/ndt-batch.ts): with the inspections flow where the profile delivers pilots.
+  if (pathname === NDT_BATCH_PATH && availability.features.includes('pilots') && availability.features.includes('inspections')) return true;
   if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
   if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
   if (availability.features.includes('pilots') && availability.navigation.includes('flanges') && /^\/welding\/flanges\/[^/]+$/.test(pathname)) return true;

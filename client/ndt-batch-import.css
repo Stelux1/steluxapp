@@ -1,0 +1,34 @@
+/* NDT Batch Import (Weld Pilot → Welding data): Via file preview and Via request number, in the inspection pages' look. */
+.ndt-batch-steps { margin: 0 0 18px; padding-left: 18px; font-size: 11px; color: var(--muted); line-height: 1.8; }
+.ndt-batch-steps strong { font-weight: 500; color: var(--ink); }
+.ndt-batch-form { max-width: 640px; }
+.ndt-batch-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+.ndt-batch-summary { margin: 0 0 10px; font-size: 11px; color: var(--muted); }
+.ndt-batch-note { margin: 8px 0; font-size: 11px; }
+.ndt-batch-table td { vertical-align: top; }
+.ndt-batch-table select, .ndt-batch-table input:not([type=checkbox]) { min-height: 32px; min-width: 96px; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; background: #fff; font: inherit; }
+.ndt-batch-table input[type=checkbox] { width: 18px; height: 18px; }
+/* Red rows are not saved; rows still to be looked up are marked amber. */
+.ndt-batch-table tr.ndt-batch-error td { background: var(--inspection-due-surface); }
+.ndt-batch-table tr.ndt-batch-error .ndt-batch-state strong { color: var(--inspection-due); }
+.ndt-batch-table tr.ndt-batch-unmatched td { background: #fff7e6; }
+.ndt-batch-state { min-width: 200px; white-space: normal; }
+.ndt-batch-state strong, .ndt-batch-state span { display: block; }
+.ndt-batch-state span { margin: 2px 0 6px; overflow-wrap: anywhere; }
+.ndt-batch-hint { display: block; color: var(--inspection-due); }
+.ndt-batch-done > div { display: flex; flex-direction: column; gap: 8px; }
+.ndt-batch-repairs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ndt-batch-lookup-search { display: flex; align-items: flex-end; gap: 8px; }
+.ndt-batch-lookup-search .field { flex: 1; margin-bottom: 0; }
+.ndt-batch-lookup-list { list-style: none; margin: 12px 0 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.ndt-batch-request-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 14px; }
+.ndt-batch-request-form .field { margin-bottom: 0; min-width: 0; }
+.ndt-batch-request-form .segmented button { min-height: 34px; font-size: 11px; padding: 6px 14px; }
+.ndt-batch-iso { margin: 0 0 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ndt-batch-iso-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 8px; }
+.ndt-batch-iso-head h3 { flex: 1 1 100%; margin: 0; font-size: 14px; }
+.ndt-batch-iso-head .field { margin-bottom: 0; flex: 0 1 240px; min-width: 0; }
+@media (max-width: 600px) {
+  .ndt-batch-request-form > *, .ndt-batch-iso-head .field { flex: 1 1 100%; }
+  .ndt-batch-lookup-search { flex-direction: column; align-items: stretch; }
+}

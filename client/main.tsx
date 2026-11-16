@@ -32,5 +32,6 @@ import './mto-dashboard.css';
 import './pdf-documents.css';
 import './iso-book.css';
 import './certifications.css';
+import './ndt-batch-import.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
