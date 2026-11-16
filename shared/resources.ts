@@ -13,6 +13,7 @@ import { RELEASE_EXTRA_FIELDS } from './releases.ts';
 import { LEGACY_PUNCH_CATEGORIES, LEGACY_PUNCH_STATUSES, PUNCH_CATEGORIES, PUNCH_PROGRESS_OPTIONS, PUNCH_STATUSES, PUNCH_TYPES, SIGNER_TYPES, SIGN_METHODS } from './punch.ts';
 import { applyMtoStock } from './mto-stock.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, OWNER_FORM_SETTINGS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS, ISS_NDT_STANDARDS } from './site-settings.ts';
+import { ITP_SCOPES } from './itps.ts';
 import { ASME_GROUP_NUMBERS, ASME_P_NUMBERS, CERT_TYPES, ISO_15608_GROUPS, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS } from './welder-data.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
@@ -165,6 +166,9 @@ function extend(key: string, fields: Field[]) {
 extend('isometrics', [t('area', 'Area'), n('ndtPercentage', 'NDT %', { max: 100 }), t('pressureTestPlan', 'Pressure test plan')]);
 // ITP / KNR register links (pilots profile only): the two ITP slots of an isometric may point at register entries.
 extend('isometrics', [r('itpId', 'Linked ITP / KNR', 'itps', { hidden: true }), r('itp2Id', 'Linked ITP / KNR 2', 'itps', { hidden: true })]);
+// ITPs page (manual chapter 18): title, scope (decides the isometric slot), active, sort order; revisions are PDF attachments with a revision number (shared/itps.ts).
+extend('itps', [t('title', 'Title'), s('scope', 'Scope', [...ITP_SCOPES], { default: 'Shop+Field' }), b('active', 'Active', { default: true }), n('sortOrder', 'Sort order', { step: 1 })]);
+extend('attachments', [t('revNo', 'Revision number', { hidden: true })]);
 // Punch progress of the isometric (0 / 25 / 50 / 75 / 100 %), entered in the isometric header; empty until entered.
 extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true })]);
 extend('wps', [b('active', 'Active', { default: true })]);

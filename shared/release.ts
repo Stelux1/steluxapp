@@ -5,6 +5,7 @@ import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_COMPANY_FIELDS, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogField, catalogResource } from './weld-catalogs.ts';
 import { hostedSiteFields } from './site-settings.ts';
+import { itpHostedField } from './itps.ts';
 import { HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
@@ -146,6 +147,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // ITP / KNR register (Weld Pilot → Welding data → ITPs) and its project links; the links have no menu page.
     deliverResource(availability, 'itps', [...RESOURCE_MAP.itps.fields.map(field => field.name), 'projectIds']);
     availability.resources.itp_projects = fields('itpId projectId ownerArchived');
+    // ITP revisions are PDF attachments of the ITP with their revision number (shared/itps.ts).
+    availability.resources.attachments.push('revNo');
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures', 'company_data']) deliverResource(availability, key);
@@ -253,7 +256,7 @@ export function projectResource(availability: Availability | undefined, resource
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
     ...(pilots && resource.key === 'attachment_names' ? { singular: 'Attachment name' } : {}),
-    fields: (pilots && resource.key === 'sites' ? hostedSiteFields : (list: Field[]) => list)(ordered(resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? catalogField(resource.key, hostedWeldDataField(resource.key, hostedField(resource.key, f))) : f).map(f => {
+    fields: (pilots && resource.key === 'sites' ? hostedSiteFields : (list: Field[]) => list)(ordered(resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? catalogField(resource.key, hostedWeldDataField(resource.key, hostedField(resource.key, f))) : f).map(f => pilots ? itpHostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     })),
