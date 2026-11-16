@@ -32,6 +32,10 @@ const onSite = (store: Store, siteId: string, materialId: string) => store.list(
 const inv = (store: Store, requirementId: string) => requirementExecution(all(store)).find(entry => entry.requirement.id === requirementId)!.inventory;
 const run = (store: Store, key: string, data: Record<string, unknown>) => runAction(store, key, { date: '2026-11-01', ...data }, actor);
 const total = (store: Store) => conservedTotals(all(store));
+/** Assign to me, then Picked all and Save pick results: every line of the order picked in full. */
+const pickAll = (store: Store, orderId: string) => { run(store, 'transfer-order-assign', { orderId }); run(store, 'transfer-order-pick', { orderId, items: store.list('transfer_order_items').filter(item => item.orderId === orderId).map(item => ({ itemId: item.id, qtyPicked: Number(item.quantity), lineStatus: 'Picked' })) }); };
+/** The whole lifecycle of an order picked in full: assign, pick, Complete transfer. */
+const completeAll = (store: Store, orderId: string, extra: Record<string, unknown> = {}) => { pickAll(store, orderId); return run(store, 'transfer-order-complete', { orderId, ...extra }); };
 const refused = (status: number, pattern: RegExp) => (error: unknown) => { assert.equal((error as { status: number }).status, status); assert.match((error as Error).message, pattern); return true; };
 
 test('quantities must be at least 0.01 in steps of 0.01', () => {
@@ -113,7 +117,7 @@ test('stock never goes negative and a refused action leaves everything unchanged
   const other = line(s, 'warehouse-main', 'material-1');
   assert.throws(() => run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: other.id, quantity: 1 }, { stockId: main.id, quantity: 999 }] }), refused(409, /Insufficient/));
   assert.throws(() => run(s, 'stock-move', { stockId: main.id, toWarehouseId: 'warehouse-field', quantity: 500 }), refused(409, /Insufficient/));
-  assert.throws(() => run(s, 'stock-return', { stockId: main.id, siteId: 'site-river', quantity: Number(main.quantity) + 1 }), refused(409, /Insufficient/), 'a storehouse cannot return more than it holds');
+  assert.throws(() => run(s, 'stock-return', { stockId: main.id, siteId: 'site-river', quantity: Number(main.quantity) + 1 }), refused(409, /exceeds available balance/), 'a storehouse cannot return more than it holds');
   assert.throws(() => run(s, 'inventory-remove', { siteId: 'site-north', materialId: 'material-3', quantity: 999, comment: 'Count' }), refused(409, /Insufficient stock/));
   assert.throws(() => run(s, 'stock-adjust', { stockId: main.id, quantity: -1, reason: 'Count correction', reasonText: 'Count' }), refused(422, /zero or more/));
   assert.equal(JSON.stringify([s.list('stock'), s.list('movements', true)]), snapshot);
@@ -270,7 +274,7 @@ test('transfer orders: validation follows the type, items need a material number
   const before = s.list('transfer_orders').length;
   const result = create({ type: 'Storehouse → Project', priority: 'Urgent', fromWarehouseId: 'warehouse-main', siteId: 'site-river', notes: 'Header spools' });
   const order = 'record' in result ? result.record! : null as never;
-  assert.equal(s.list('transfer_orders').length, before + 1); assert.equal(order.status, 'Open'); assert.equal(order.priority, 'Urgent'); assert.match(String(order.number), /^TO-\d{4}-\d{4}$/);
+  assert.equal(s.list('transfer_orders').length, before + 1); assert.equal(order.status, 'Requested'); assert.equal(order.priority, 'Urgent'); assert.match(String(order.number), /^TO-\d{4}-\d{4}$/);
   assert.equal(s.list('transfer_order_items').filter(i => i.orderId === order.id).length, 1);
   assert.equal(create({ type: 'Storehouse → Storehouse', fromWarehouseId: 'warehouse-main', toWarehouseId: 'warehouse-field', siteId: 'site-river' }).resource, 'transfer_orders');
   assert.equal(s.list('transfer_orders').find(o => o.type === 'Storehouse → Storehouse' && o.notes === '')!.siteId, '', 'a storehouse move keeps no project');
@@ -282,7 +286,7 @@ test('completing a transfer order applies its movements; totals are conserved an
   const order = 'record' in created ? created.record! : null as never;
   const stockBefore = Number(line(s, 'warehouse-main', 'material-1').quantity);
   assert.equal(Number(line(s, 'warehouse-main', 'material-1').quantity), stockBefore, 'creating an order moves nothing');
-  run(s, 'transfer-order-complete', { orderId: order.id });
+  completeAll(s, order.id);
   assert.equal(Number(line(s, 'warehouse-main', 'material-1').quantity), stockBefore - 7.5);
   assert.equal(Number(line(s, 'warehouse-field', 'material-1').quantity), 7.5);
   assert.equal(s.get('transfer_orders', order.id).status, 'Completed'); assert.ok(s.get('transfer_orders', order.id).completedDate);
@@ -299,11 +303,12 @@ test('an order that cannot be fully supplied stays open and moves nothing', () =
   const order = 'record' in created ? created.record! : null as never;
   // Someone adjusts the storehouse after the order was planned: the completion finds it short.
   for (const row of s.list('stock').filter(row => row.locationKind !== 'site' && row.warehouseId === 'warehouse-main' && row.materialId === 'material-3' && Number(row.quantity) > 0)) run(s, 'stock-adjust', { stockId: row.id, quantity: Number(row.quantity) - 1, reason: 'Loss' });
+  pickAll(s, order.id);
   const snapshot = JSON.stringify([s.list('stock'), s.list('movements', true), s.get('transfer_orders', order.id)]);
   assert.throws(() => run(s, 'transfer-order-complete', { orderId: order.id }), refused(409, /Not enough CS-F150/));
   assert.equal(JSON.stringify([s.list('stock'), s.list('movements', true), s.get('transfer_orders', order.id)]), snapshot);
-  assert.equal(s.get('transfer_orders', order.id).status, 'Open');
-  run(s, 'transfer-order-cancel', { orderId: order.id, note: 'Replaced by a purchase' });
+  assert.equal(s.get('transfer_orders', order.id).status, 'In progress');
+  run(s, 'transfer-order-cancel', { orderId: order.id, reason: 'Replaced by a purchase' });
   assert.equal(s.get('transfer_orders', order.id).status, 'Cancelled'); assert.match(String(s.get('transfer_orders', order.id).notes), /Replaced by a purchase/);
   assert.throws(() => run(s, 'transfer-order-complete', { orderId: order.id }), refused(409, /already cancelled/));
 });
@@ -311,7 +316,7 @@ test('an order that cannot be fully supplied stays open and moves nothing', () =
 test('inventory orders take from the active site\'s inventory; Return → Inventory takes from a storehouse into the active site; totals are conserved', () => {
   const s = fixture(), before = total(s);
   const order = (data: Record<string, unknown>) => { const created = run(s, 'transfer-order-create', data); return ('record' in created ? created.record! : null as never); };
-  const complete = (o: Row) => run(s, 'transfer-order-complete', { orderId: o.id });
+  const complete = (o: Row) => completeAll(s, o.id);
   // 5 Inventory - Project: North → Riverside, 6 m of CS-P060 (North holds 16 H-1042 + 14 H-2207 = 30, taken in charge order).
   const northPipe = onSite(s, 'site-north', 'material-1'), riverPipe = onSite(s, 'site-river', 'material-1');
   const toRiver = order({ type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-river', items: [{ materialNo: 'CS-P060', quantity: 6, uom: 'M' }] });
@@ -344,7 +349,7 @@ test('the seed gives every screen realistic data: shared storehouses, site inven
   const s = fixture();
   assert.deepEqual(s.list('warehouses').map(w => w.name).sort(), ['Field stores', 'Main warehouse', 'Prefab yard store']);
   assert.ok(s.list('warehouses').every(w => w.description && w.location && !w.siteId), 'company storehouses with a location and no project site');
-  assert.deepEqual([...new Set(s.list('transfer_orders').map(o => o.status))].sort(), ['Completed', 'Open']);
+  assert.deepEqual([...new Set(s.list('transfer_orders').map(o => o.status))].sort(), ['Assigned', 'Completed', 'Requested']);
   assert.ok(s.list('transfer_orders').some(o => o.priority === 'Urgent'));
   assert.ok(s.list('stock').some(row => row.corrected === true));
   assert.deepEqual(unmigratedHoldings(all(s)), []);
@@ -441,7 +446,7 @@ test('the hosted profile delivers storehouses, inventory, transfer orders and th
   assert.equal(pilotItemPath(mto.find(item => item.label === 'Storehouses')!), '/workspace/warehouses');
   assert.equal(pilotItemPath(mto.find(item => item.label === 'Material inventory')!), '/materials/stock');
   assert.equal(pilotItemPath(mto.find(item => item.label === 'Materials list')!), '/materials/materials-list');
-  assert.equal(pilotItemPath(mto.find(item => item.label === 'Transfer orders')!), '/materials/transfer_orders');
+  assert.equal(mto.some(item => item.label === 'Transfer orders'), false, 'transfer orders open from Storehouses and the bell (mto-procurement-stock-010)');
   assert.ok(PILOT_MAP.weld.groups.flatMap(group => group.items).every(item => !['Material inventory', 'Materials list', 'Transfer orders'].includes(item.label)));
 });
 
@@ -502,6 +507,9 @@ test('HTTP: the MTO pilot operates the inventory, Weld Pilot and read-only accou
   // Transfer order over HTTP, with the audit trail visible in the hosted profile.
   const created = await f.request('/api/actions/transfer-order-create', 'POST', { type: 'Storehouse → Project', fromWarehouseId: 'warehouse-main', siteId: 'site-river', items: [{ materialNo: 'SS-P114', quantity: 1, uom: 'M' }], date: '2026-11-02' });
   assert.equal(created.status, 201); const order = (await created.json()).record as Row;
+  assert.equal((await f.request('/api/actions/transfer-order-assign', 'POST', { orderId: order.id })).status, 201);
+  const picked = s.list('transfer_order_items').filter(item => item.orderId === order.id).map(item => ({ itemId: item.id, qtyPicked: Number(item.quantity), lineStatus: 'Picked' }));
+  assert.equal((await f.request('/api/actions/transfer-order-pick', 'POST', { orderId: order.id, items: picked })).status, 201);
   assert.equal((await f.request('/api/actions/transfer-order-complete', 'POST', { orderId: order.id, date: '2026-11-03' })).status, 201);
   const history = await (await f.request(`/api/history/transfer_orders/${order.id}`)).json() as { events: { action: string }[] };
   assert.ok(history.events.some(event => event.action === 'completed'));
@@ -601,7 +609,7 @@ test('mto-procurement-stock-012: Correction removes a quantity with a reason; Ad
   assert.equal(Number(s.get('stock', target.id).quantity), 2);
   assert.throws(() => run(s, 'stock-remove', { stockId: target.id, reason: 'No longer held' }), refused(409, /open transfer order blocks removal/));
   assert.equal(s.get('stock', target.id)._archived, false);
-  run(s, 'transfer-order-cancel', { orderId: order.id });
+  run(s, 'transfer-order-cancel', { orderId: order.id, reason: 'Count first' });
   run(s, 'stock-remove', { stockId: target.id, reason: 'No longer held', reasonText: 'Sold on' });
   assert.equal(s.get('stock', target.id, true)._archived, true);
   assert.ok(s.list('movements').some(item => item.type === 'Removal' && item.reason === 'No longer held' && item.reasonText === 'Sold on'));
@@ -631,11 +639,11 @@ test('mto-procurement-stock-008: the New Transfer Order opens with the full bala
   const order = 'record' in created ? created.record! : null as never;
   assert.deepEqual(itemCertIds(s.list('transfer_order_items').find(item => item.orderId === order.id)!), ['certificate-1'], 'the item keeps its certificate ids');
   assert.equal(s.list('certifications').some(cert => cert.siteId === 'site-river' && cert.name === 'ATT-26-1184'), false);
-  run(s, 'transfer-order-complete', { orderId: order.id });
+  completeAll(s, order.id);
   assert.ok(s.list('certifications').some(cert => cert.siteId === 'site-river' && cert.name === 'ATT-26-1184'), 'copied to the destination project site');
   // An item with no ticked certificate copies none.
   const plain = run(s, 'transfer-order-create', { type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-river', items: [{ materialNo: 'SS-P114', quantity: 1, uom: 'M', certIds: [] }] });
-  const before = s.list('certifications').length; run(s, 'transfer-order-complete', { orderId: ('record' in plain ? plain.record! : null as never).id });
+  const before = s.list('certifications').length; completeAll(s, ('record' in plain ? plain.record! : null as never).id);
   assert.equal(s.list('certifications').length, before);
 });
 
@@ -661,7 +669,7 @@ test('mto-procurement-stock-032: the Material log lists Date, Action, reference,
   const s = fixture();
   run(s, 'stock-add', { siteId: 'site-river', materialId: 'material-8', quantity: 4, date: '2026-11-01' });
   const out = run(s, 'transfer-order-create', { type: 'Inventory - Storehouse', fromSiteId: 'site-river', toWarehouseId: 'warehouse-field', items: [{ materialNo: stockDetails(all(s), s.list('stock').find(row => row.materialId === 'material-8')!).materialNo, quantity: 1, uom: 'EA' }], date: '2026-11-02' });
-  run(s, 'transfer-order-complete', { orderId: ('record' in out ? out.record! : null as never).id, date: '2026-11-03' });
+  completeAll(s, ('record' in out ? out.record! : null as never).id, { date: '2026-11-03' });
   run(s, 'inventory-remove', { siteId: 'site-river', materialId: 'material-8', quantity: 1, comment: 'Lost on site', date: '2026-11-04' });
   const log = siteMaterialLog(screens(s), 'site-river', 'catalog:material-8');
   const added = log.filter(row => row.action === 'Added to inventory'), sent = log.find(row => /^Sent to storehouse/.test(row.action))!;
@@ -717,7 +725,7 @@ test('mto-procurement-stock-R2: one transfer is one transaction with one five-di
   assert.ok(Number(move.reportNo) > Number(transfer.reportNo), 'the sequence counts up');
   // Completing an order is one transaction too, named after the order's type.
   const created = run(s, 'transfer-order-create', { type: 'Storehouse → Storehouse', fromWarehouseId: 'warehouse-main', toWarehouseId: 'warehouse-field', items: [{ materialNo: 'CS-P060', quantity: 1 }, { materialNo: 'SS-P114', quantity: 1 }] });
-  run(s, 'transfer-order-complete', { orderId: ('record' in created ? created.record! : null as never).id });
+  completeAll(s, ('record' in created ? created.record! : null as never).id);
   const completed = storehouseTransactions(screens(s))[0];
   assert.deepEqual([completed.type, completed.items], ['Storehouse → Storehouse', 2]);
   // Movements written before report numbers existed are listed one by one and without a number.

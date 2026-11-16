@@ -51,6 +51,7 @@ export const NOT_IN_BOOK: Record<string, string> = {
   'weld-cards': 'Weld cards are cut out and handed to the welders; the book has no Weld card part.',
   'weld-labels': 'Weld labels are stuck on the spools; the book\'s Flange labels part is a different label and is deferred.',
   'material-labels': 'Material labels are stuck on stock; they belong to the inventory, not to an isometric.',
+  'pick-sheet': 'A pick sheet is the handler\'s list of one transfer order between storehouses and project sites; it belongs to no isometric.',
   'flange-labels': 'Flange labels are printed for the flanges ticked on the Flange Management page; the book\'s Flange labels part stays deferred.',
   'hydrotest-request': 'A hydrotest request covers a test system of several isometrics; the book has no Hydrotest part.',
   'reserved-materials': 'Reserved materials lists the reservations of every isometric on the execution board; the book has no part for it.',  'order-materials': 'An order of materials covers the checked materials of several isometrics; the book has no order part.',

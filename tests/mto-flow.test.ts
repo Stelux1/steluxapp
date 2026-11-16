@@ -73,6 +73,10 @@ test('MTO Pilot end to end: order, take in, transfer, reserve, start and take a 
 
   // 3. Transfer order Inventory - Storehouse: two elbows leave the site's inventory for the Main warehouse, so Inv. is 6.
   const transfer = (await json<{ record: Row }>(await f.request('/api/actions/transfer-order-create', 'POST', { type: 'Inventory - Storehouse', fromSiteId: 'site-river', toWarehouseId: 'warehouse-main', date, items: [{ materialNo: 'SS-E114-90', quantity: 2, uom: 'EA' }] }))).record;
+  // The order's lifecycle: Assign to me, Save pick results (picked in full), Complete transfer.
+  await json(await f.request('/api/actions/transfer-order-assign', 'POST', { orderId: transfer.id }));
+  const transferLines = (await json<{ rows: Row[] }>(await f.request('/api/records/transfer_order_items'), 200)).rows.filter(item => item.orderId === transfer.id);
+  await json(await f.request('/api/actions/transfer-order-pick', 'POST', { orderId: transfer.id, items: transferLines.map(item => ({ itemId: item.id, qtyPicked: Number(item.quantity), lineStatus: 'Picked' })) }));
   await json(await f.request('/api/actions/transfer-order-complete', 'POST', { orderId: transfer.id, date }));
   state = await row();
   assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 6, 0], 'transferred to a storehouse: Inv. 6');
@@ -114,7 +118,7 @@ test('the MTO Pilot menu has one item per page, in the reference group order', (
     'Service request': labels['Service request'], 'Service req. - Materials': labels['Service req. - Materials'], 'Request archive': labels['Request archive'],
   }, {
     'Order materials': '/materials/order-materials', 'Pending order': '/materials/pending-orders', 'Material take in': '/materials/take-in', 'Order archive': '/materials/order-archive',
-    'Material inventory': '/materials/stock', Storehouses: '/workspace/warehouses', 'Transfer orders': '/materials/transfer_orders', 'Materials list': '/materials/materials-list',
+    'Material inventory': '/materials/stock', Storehouses: '/workspace/warehouses', 'Transfer orders': undefined, 'Materials list': '/materials/materials-list',
     'Isometric materials': undefined, 'Isometric execution': '/materials/iso-execution', 'Pick List archive': '/materials/picklists',
     'Service request': '/materials/service-spools', 'Service req. - Materials': '/materials/service-materials', 'Request archive': '/materials/service_requests',
   });

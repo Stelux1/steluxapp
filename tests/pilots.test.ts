@@ -70,8 +70,8 @@ test('every menu item resolves to a real page and resource items use resourcePat
   // Calculation lines and cut list open inside "MTO & calculations";
   // inspection requests open as the request archives of the NDT/PWHT Manager; isometric materials are edited on the
   // isometric itself (the reference's Order / Take in menu has no Isometric materials, mto-procurement-stock-011).
-  // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025).
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025). Transfer orders open from the Transfer Orders button on Storehouses and from the bell (mto-procurement-stock-010).
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'transfer_orders'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
   assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
@@ -238,4 +238,12 @@ test('read-only welding never writes a shared catalog and detailed permission pr
   assert.equal((await f.request('/api/records/welds')).status, 200);
   assert.equal((await f.request('/api/records/certifications')).status, 403);
   assert.equal((await f.request('/api/records/spools')).status, 403);
+});
+
+test('mto-procurement-stock-010: MTO Order / Take in has the seven reference items and no Transfer orders; the list keeps its page in MTO Pilot', () => {
+  const items = PILOT_MAP.mto.groups.find(group => group.title === 'Order / Take in')!.items.map(item => item.label);
+  assert.deepEqual(items, ['Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
+  assert.equal(PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items)).some(item => item.label === 'Transfer orders'), false);
+  assert.equal(pageAvailable(hosted, '/mto/materials/transfer_orders', RESOURCES), true, 'opened from the Transfer Orders button on Storehouses and from the bell');
+  assert.deepEqual(pagePilots('/materials/transfer_orders'), ['mto']);
 });

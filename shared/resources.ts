@@ -248,6 +248,8 @@ const pilotAccess = (key: 'weld' | 'mto', title: string): Field[] => [
   r(`${key}ProfileId`, `${title} profile`, 'profiles', { section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Leave empty to use the permission profile above.' }),
   // Access per project site (shared/site-scope.ts); the chosen sites are the user_sites links of this pilot.
   s(siteScopeField(key), siteScopeLabel(key), SITE_SCOPE_OPTIONS, { default: SITE_SCOPE_ALL, section: APPLICATIONS, hidden: true, showIf: [`${key}Enabled`, true], hint: 'Specific project site(s): the account sees and changes only the main projects ticked below.' }),
+  // MTO Pilot only (reference #chkStorehouseMgr, delta-I2b-005): receives the transfer-order notifications and may adjust storehouse quantities.
+  ...(key === 'mto' ? [b('storehouseManager', 'Storehouse manager', { section: APPLICATIONS, hidden: true, showIf: ['mtoEnabled', true], hint: 'Receives notifications for transfer orders.' })] : []),
   // The profile per ticked project site, {siteId: profileId} as JSON text; edited in the per-site table of the user form (client/user-site-profiles.tsx).
   t(siteProfilesField(key), `${title} profiles per project site`, { type: 'textarea', hidden: true }),
 ];
@@ -268,7 +270,7 @@ resources.push(...FLANGE_RECORD_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);
 /** Fields above that only the pilots profile shows. */
-export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'], sites: ['archived'] };
+export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope', 'storehouseManager'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'], sites: ['archived'] };
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {

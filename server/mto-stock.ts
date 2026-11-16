@@ -1,5 +1,5 @@
 import type { Express } from 'express';
-import { scopeRows } from './site-scope.ts';
+import { currentSiteScope, scopeRows } from './site-scope.ts';
 import { AppError, SYSTEM, qty, today, validDate, type Actor, type Store } from './store.ts';
 import { materialIdentity } from '../shared/materials.ts';
 import { canResource, canScope } from '../shared/permissions.ts';
@@ -7,7 +7,7 @@ import { reportCsv, type Report } from '../shared/reports.ts';
 import { reportWorkbook } from './report-export.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { AuthRequest } from './auth.ts';
-import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, isSiteStock, isStorehouseLine, itemCertIds, lineCertificates, materialsList, reservedOnOpenOrders, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity } from '../shared/mto-stock.ts';
+import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, isSiteStock, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
 import { nextSiteIndexNumber } from '../shared/welder-data.ts';
 
 type Input = Record<string, unknown>;
@@ -97,6 +97,20 @@ export function migrateProjectHoldings(store: Store, options: { dryRun: boolean 
   });
   return { holdings: holdings.length, quantity };
 }
+
+/**
+ * The main project the request works in: the one chosen for the session (an account that reaches every main project) or
+ * the only one a limited account reaches here; '' outside a request or when none is chosen.
+ */
+export function activeMainProject(): string {
+  const scope = currentSiteScope();
+  if (!scope) return '';
+  if (scope.focus) return scope.focus;
+  return scope.allowed !== 'all' && scope.allowed.size === 1 ? [...scope.allowed][0] : '';
+}
+/** The value of a rule's step, or the refusal as an AppError. */
+const must = <T>(step: Step<T>): T => { if (!step.ok) throw new AppError(step.status, step.message); return step.value; };
+const now = () => new Date().toISOString();
 
 /** Every state-changing operation of the inventories, the storehouses and the transfer orders; one transaction each (the caller opens it). */
 export function runMtoStock(store: Store, key: string, data: Input, actor: Actor): Result {
@@ -220,17 +234,18 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
   }
 
   if (key === 'stock-return') {
-    const row = line(data.stockId), target = site(data.siteId);
-    const all = asBoolean(data.all, 'Return all');
-    const amount = all ? qty(row.quantity) : positiveQuantity(data.quantity, 'Quantity to return');
-    if (amount <= 0) throw new AppError(422, 'There is nothing to return.');
-    const updated = change(row, -amount);
-    changeSiteStock(store, actor, target.id, refsOf(row), String(row.chargeNo || ''), amount, copyWording(row));
-    const from = store.get('warehouses', row.warehouseId).name;
-    movement('Return to inventory', row, { warehouseId: String(row.warehouseId), siteId: target.id }, -amount, { note: note || `To the inventory of ${target.name}` });
-    movement('Return to inventory', row, { siteId: target.id }, amount, { note: note || `From ${from}` });
-    audit(row, 'returned', `Returned ${describe(amount, row)} of ${nameOf(row)} from ${from} to the inventory of ${target.name}`);
-    return { resource: 'stock', record: updated };
+    // Return to inventory (reference returnFromLagerToInventory): from a storehouse line into the free-pool inventory of the
+    // main project the user works in. The dialog completes a 'Return → Inventory' transfer order at once (picked in full).
+    const row = line(data.stockId);
+    const targetId = activeMainProject() || text(data.siteId);
+    if (!targetId) throw new AppError(422, 'Choose the main project you work in first: the material returns to its inventory.');
+    const target = site(targetId);
+    const amount = must(returnToInventoryPlan(row, { quantity: data.quantity, all: asBoolean(data.all, 'Return all') }));
+    const details = stockDetails(catalog(), row);
+    const order = store.create('transfer_orders', { number: store.next('TO'), type: 'Return → Inventory', priority: 'Normal', status: 'Assigned', fromWarehouseId: String(row.warehouseId), fromSiteId: '', siteId: target.id, toWarehouseId: '', date, notes: '', createdByName: actor.name, assignedTo: actor.id, assignedName: actor.name, assignedAt: now() }, actor);
+    store.create('transfer_order_items', { orderId: order.id, materialNo: details.materialNo || 'material', description: details.description, quantity: amount, uom: details.uom, stockId: row.id, certIds: '', qtyPicked: amount, lineStatus: 'Picked' }, actor);
+    store.audit('transfer_orders', order.id, 'created', `Return to inventory ${order.number}: ${describe(amount, row)} of ${nameOf(row)} from ${store.get('warehouses', row.warehouseId).name} to the inventory of ${target.name}`, actor);
+    return completeOrder(order.id);
   }
 
   if (key === 'stock-correction') {
@@ -296,14 +311,38 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
   }
 
   if (key === 'transfer-order-create') return createOrder();
-  if (key === 'transfer-order-complete') return completeOrder();
-  if (key === 'transfer-order-cancel') {
-    const order = store.get('transfer_orders', data.orderId);
-    if (order.status !== 'Open') throw new AppError(409, `This transfer order is already ${String(order.status).toLowerCase()}.`);
-    const updated = store.update('transfer_orders', order.id, { status: 'Cancelled', notes: [order.notes, note && `Cancelled: ${note}`].filter(Boolean).join('\n') }, order._version, actor);
-    store.audit('transfer_orders', order.id, 'cancelled', `Cancelled transfer order ${order.number}`, actor);
+  if (key === 'transfer-order-complete') return completeOrder(data.orderId);
+  if (key === 'transfer-order-assign') {
+    const order = store.get('transfer_orders', data.orderId), status = must(canAssign(order, actor.id));
+    const updated = store.update('transfer_orders', order.id, { status, assignedTo: actor.id, assignedName: actor.name, assignedAt: now() }, order._version, actor);
+    store.audit('transfer_orders', order.id, 'assigned', `Assigned transfer order ${order.number} to ${actor.name}`, actor);
     return { resource: 'transfer_orders', record: updated };
   }
+  if (key === 'transfer-order-pick') {
+    const order = store.get('transfer_orders', data.orderId), status = must(nextStatus(order, 'pick'));
+    const items = orderItems(order.id), input = Array.isArray(data.items) ? data.items as Input[] : [];
+    if (!input.length || input.length > 200 || input.some(entry => !entry || typeof entry !== 'object')) throw new AppError(422, 'Enter the pick results of the order lines.');
+    const seen = new Set<string>();
+    const results = input.map(entry => {
+      const item = items.find(row => row.id === entry.itemId);
+      if (!item) throw new AppError(422, 'A pick result names a line that is not on this transfer order.');
+      if (seen.has(item.id)) throw new AppError(422, 'Each order line can appear only once.');
+      seen.add(item.id);
+      return { item, result: must(pickLine(item, entry)) };
+    });
+    const records = results.map(({ item, result }) => store.update('transfer_order_items', item.id, result, item._version, actor));
+    const updated = store.update('transfer_orders', order.id, { status }, order._version, actor);
+    store.audit('transfer_orders', order.id, 'picked', `Saved pick results of ${order.number}: ${results.map(({ item, result }) => `${item.materialNo} ${result.qtyPicked} (${result.lineStatus})`).join(', ')}`, actor);
+    return { resource: 'transfer_orders', record: updated, records };
+  }
+  if (key === 'transfer-order-cancel') {
+    const order = store.get('transfer_orders', data.orderId), status = must(nextStatus(order, 'cancel'));
+    const reason = limited(data.reason, 'Reason', MAX_LENGTHS.reasonText, true, 'reason');
+    const updated = store.update('transfer_orders', order.id, { status, cancelReason: reason, notes: [order.notes, `Cancelled: ${reason}`].filter(Boolean).join('\n') }, order._version, actor);
+    store.audit('transfer_orders', order.id, 'cancelled', `Cancelled transfer order ${order.number} (${reason})`, actor);
+    return { resource: 'transfer_orders', record: updated };
+  }
+  if (key === 'transfer-order-reverse') return reverseOrder();
   throw new AppError(404, 'This action does not exist.');
 
   function createOrder(): Result {
@@ -355,25 +394,37 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
         quantity: amount, uom: limited(item?.uom ?? details?.uom, `${number}: UOM`, MAX_LENGTHS.uom), stockId: source?.id || '', certIds: certificateIds(item?.certIds, materialNo, number),
       };
     });
-    const order = store.create('transfer_orders', { number: store.next('TO'), type, priority, status: 'Open', fromWarehouseId: fromId, fromSiteId, siteId, toWarehouseId: toId, date, notes: limited(data.notes, 'Notes', 2000) }, actor);
+    // To project site lists only active project sites (MTO manual): an archived destination is refused.
+    if (siteId && route.to === 'site' && store.get('sites', siteId).archived === true) throw new AppError(422, 'Choose an active project site.', { siteId: 'This project site is archived.' });
+    const order = store.create('transfer_orders', { number: store.next('TO'), type, priority, status: 'Requested', fromWarehouseId: fromId, fromSiteId, siteId, toWarehouseId: toId, date, notes: limited(data.notes, 'Notes', 2000), createdByName: actor.name }, actor);
     for (const item of prepared) store.create('transfer_order_items', { orderId: order.id, ...item }, actor);
     return { resource: 'transfer_orders', record: order };
   }
 
-  function completeOrder(): Result {
-    const order = store.get('transfer_orders', data.orderId);
-    if (order.status !== 'Open') throw new AppError(409, `This transfer order is already ${String(order.status).toLowerCase()}.`);
+  function orderItems(orderId: string) { return store.list('transfer_order_items').filter(item => item.orderId === orderId).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)) || a.id.localeCompare(b.id)); }
+  /**
+   * Complete transfer: only the picked quantity of each line moves (completePlan); the order ends Completed or Partial. A
+   * quantity above the source's balance or a destination that can no longer receive material refuses the whole completion.
+   */
+  function completeOrder(orderId: unknown): Result {
+    const order = store.get('transfer_orders', orderId);
+    must(nextStatus(order, 'complete'));
     const route = transferRoute(String(order.type))!;
-    const items = store.list('transfer_order_items').filter(item => item.orderId === order.id).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)));
+    const items = orderItems(order.id);
+    const plan = must(completePlan(items));
+    const picked = new Map(plan.moves.map(move => [move.item.id, move.quantity]));
     const replan = () => new AppError(409, 'This transfer order was planned before project site inventories existed. Cancel it and create it again.');
     if (route.from === 'inventory' && !order.fromSiteId) throw replan();
     if (route.from === 'storehouse' && !order.fromWarehouseId && items.some(item => !item.stockId)) throw replan();
     if ((route.to === 'site' || route.to === 'inventory') && !order.siteId) throw replan();
     const rows = catalog();
     const sameNo = (row: Row, materialNo: string) => stockDetails(rows, row).materialNo.trim().toLowerCase() === materialNo.trim().toLowerCase();
-    const label = (id: unknown) => String(store.get('warehouses', id).name);
     const siteName = (id: unknown) => String(store.get('sites', id).name);
     const orderFields = { transferOrder: String(order.number) };
+    // The destination must still be able to receive material (MTO manual: "STO not completable: destination invalid").
+    const invalid = () => new AppError(409, 'The destination of this transfer order is no longer valid. Cancel it and create a new one.');
+    if (route.to === 'storehouse') { const to = store.list('warehouses', true).find(row => row.id === order.toWarehouseId); if (!to || to._archived || to.use === 'Tools') throw invalid(); }
+    else { const to = store.list('sites', true).find(row => row.id === order.siteId); if (!to || to._archived || (route.to === 'site' && to.archived === true)) throw invalid(); }
     const deliveredTo = route.to === 'storehouse' ? label(order.toWarehouseId) : `the inventory of ${siteName(order.siteId)}`;
     /** Deliver one taken part to the order's destination with the movement of the receiving side. */
     const deliver = (source: Row, take: number, type: string, certIds: string[] = []) => {
@@ -386,7 +437,8 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
       }
     };
     for (const item of items) {
-      let remaining = qty(item.quantity);
+      if (!picked.has(item.id)) continue;
+      let remaining = qty(picked.get(item.id));
       if (route.from === 'inventory') {
         const from = String(order.fromSiteId);
         const candidates = item.stockId ? [store.get('stock', item.stockId)] : siteStock({ stock: store.list('stock'), ...rows }, from).filter(row => sameNo(row, String(item.materialNo)) && Number(row.quantity) > 0);
@@ -420,10 +472,33 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
         if (remaining > 0) throw new AppError(409, `Not enough ${item.materialNo} in ${from ? label(from) : 'its storehouse'}. Missing: ${remaining}.`);
       }
     }
-    const updated = store.update('transfer_orders', order.id, { status: 'Completed', completedDate: date, notes: [order.notes, note && `Completed: ${note}`].filter(Boolean).join('\n') }, order._version, actor);
-    store.audit('transfer_orders', order.id, 'completed', `Completed transfer order ${order.number}`, actor);
+    const current = store.get('transfer_orders', order.id);
+    const updated = store.update('transfer_orders', order.id, { status: plan.outcome, completedDate: date, completedAt: now(), notes: [order.notes, note && `Completed: ${note}`].filter(Boolean).join('\n') }, current._version, actor);
+    store.audit('transfer_orders', order.id, 'completed', `${plan.outcome === 'Completed' ? 'Completed' : 'Partly completed'} transfer order ${order.number}: ${plan.moves.map(move => `${move.item.materialNo} ${move.quantity}`).join(', ')}`, actor);
     return { resource: 'transfer_orders', record: updated };
   }
+
+  /** Reverse order: compensating movements restore every balance the completion changed; the original movements stay. */
+  function reverseOrder(): Result {
+    const order = store.get('transfer_orders', data.orderId);
+    must(nextStatus(order, 'reverse'));
+    const entries = must(reversePlan(order, store.list('movements', true)));
+    for (const entry of entries) {
+      const move = entry.move, refs = refsOf(move), chargeNo = String(move.chargeNo || '');
+      if ('warehouseId' in entry.place) {
+        const identity = identityOf(refs), warehouseId = entry.place.warehouseId;
+        const existing = store.list('stock').find(row => isStorehouseLine(row) && row.warehouseId === warehouseId && materialIdentity(row) === identity && String(row.chargeNo || '') === chargeNo);
+        if (existing) change(existing, entry.quantity);
+        else if (entry.quantity > 0) receiving(move, warehouseId, entry.quantity, chargeNo);
+        else throw new AppError(409, `Insufficient stock of ${nameOf(move)} in ${label(warehouseId)} to reverse this order.`);
+      } else changeSiteStock(store, actor, entry.place.siteId, refs, chargeNo, entry.quantity);
+      movement('Reversal', move, 'warehouseId' in entry.place ? { warehouseId: entry.place.warehouseId, ...(move.siteId ? { siteId: String(move.siteId) } : {}) } : { siteId: entry.place.siteId }, entry.quantity, { transferOrder: String(order.number), note: `Reversal of ${order.number}` });
+    }
+    const updated = store.update('transfer_orders', order.id, { reversedAt: now(), reversedBy: actor.name }, order._version, actor);
+    store.audit('transfer_orders', order.id, 'reversed', `Reversed transfer order ${order.number}`, actor);
+    return { resource: 'transfer_orders', record: updated };
+  }
+  function label(id: unknown) { return String(store.get('warehouses', id, true).name); }
 }
 
 /** The Materials list: every material of the active main project with ordered, inventory and picked quantities, computed on each request. */

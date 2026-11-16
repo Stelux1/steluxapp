@@ -29,7 +29,11 @@ export function seedMtoStock(store: Store, actor: Actor) {
   run('stock-adjust', { stockId: line('warehouse-main', 'material-6', 'H-1042').id, quantity: 50, reason: 'Count correction', reasonText: 'Two gate valves rejected at the cycle count.', date: '2026-10-22' });
   const order = (data: Input) => run('transfer-order-create', { date: '2026-10-22', ...data }).record!;
   order({ type: 'Storehouse → Storehouse', priority: 'Urgent', fromWarehouseId: 'warehouse-main', toWarehouseId: 'warehouse-field', notes: 'Fittings for the riverside steam network.', items: [{ materialNo: 'SS-E114', description: '90° elbow, stainless steel 316L', quantity: 10, uom: 'EA' }, { materialNo: 'CS-E090', description: '90° long radius elbow', quantity: 4, uom: 'EA' }] });
-  order({ type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-river', notes: 'Pipe for the first hydrotest loop.', items: [{ materialNo: 'CS-P060', description: 'Seamless carbon steel pipe', quantity: 2, uom: 'M' }] });
+  const assigned = order({ type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-river', notes: 'Pipe for the first hydrotest loop.', items: [{ materialNo: 'CS-P060', description: 'Seamless carbon steel pipe', quantity: 2, uom: 'M' }] });
+  run('transfer-order-assign', { orderId: assigned.id });
+  // The lifecycle of a handled order: Assign to me, Save pick results (every line picked), Complete transfer.
   const done = order({ type: 'Storehouse → Project', fromWarehouseId: 'warehouse-main', siteId: 'site-north', notes: 'Elbows for the cooling loop.', items: [{ materialNo: 'CS-E090', description: '90° long radius elbow', quantity: 3, uom: 'EA' }] });
+  run('transfer-order-assign', { orderId: done.id });
+  run('transfer-order-pick', { orderId: done.id, items: store.list('transfer_order_items').filter(item => item.orderId === done.id).map(item => ({ itemId: item.id, qtyPicked: Number(item.quantity), lineStatus: 'Picked' })) });
   run('transfer-order-complete', { orderId: done.id, date: '2026-10-23' });
 }

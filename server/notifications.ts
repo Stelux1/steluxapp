@@ -1,6 +1,7 @@
 import { NOTIFICATION_LIMIT, notificationView, safeNotificationLink, unreadNotifications, visibleNotifications } from '../shared/notifications.ts';
 import type { PilotKey } from '../shared/release.ts';
 import type { Row } from '../shared/types.ts';
+import { TRANSFER_NOTIFICATIONS, storehouseManagers, transferOrderPath, transferTypeLabel, type TransferNotification } from '../shared/mto-stock.ts';
 import { AppError, SYSTEM, type Store } from './store.ts';
 
 /**
@@ -10,6 +11,17 @@ import { AppError, SYSTEM, type Store } from './store.ts';
 export interface NotificationInput { userId: string; pilot: PilotKey; kind: string; title: string; message?: string; link?: string; siteId?: string; resource?: string; recordId?: string }
 export function addNotification(store: Store, input: NotificationInput) {
   return store.create('notifications', { ...input, link: safeNotificationLink(input.link), message: input.message ?? '', siteId: input.siteId ?? '', resource: input.resource ?? '', recordId: input.recordId ?? '', read: false, readAt: '' }, SYSTEM);
+}
+
+/**
+ * Transfer-order notifications (sto_new, sto_completed, sto_reversed): to every account in `candidates` (those that may open
+ * the order: enabled in MTO Pilot, Show on transfer orders, its main project in reach; never the actor) that is ticked as
+ * Storehouse manager. Each opens the order's detail.
+ */
+export function notifyTransferOrder(store: Store, event: TransferNotification, order: Row, candidates: string[]) {
+  const site = String(order.siteId || order.fromSiteId || '');
+  const message = `${transferTypeLabel(order.type)} · ${order.priority || 'Normal'} priority`;
+  for (const userId of storehouseManagers(store.list('users'), candidates)) addNotification(store, { userId, pilot: 'mto', kind: 'transfer-order', title: `${TRANSFER_NOTIFICATIONS[event]} ${order.number}`, message, link: transferOrderPath(order.id), siteId: site, resource: 'transfer_orders', recordId: order.id });
 }
 
 export interface Viewer { id: string; pilot: string; canSee: (row: Row) => boolean }

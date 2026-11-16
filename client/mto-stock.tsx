@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowRightLeft, ChevronDown, Download, FileText, History, Loader2, MoreHorizontal, PackagePlus, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Trash2, Truck, X } from 'lucide-react';
+import { AlertCircle, ArrowRightLeft, ChevronDown, ClipboardList, Download, FileText, History, Loader2, MoreHorizontal, PackagePlus, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Trash2, Truck, X } from 'lucide-react';
 import { api, apiUrl, ApiError, formatDate, formatNumber, post } from './api.ts';
 import { Badge, Dropdown, EmptyState, FieldInput, FormError, Modal, SearchInput, TableScroll } from './components.tsx';
 import { activeRows, useWorkspace } from './context.tsx';
 import type { AuditEvent } from '../shared/types.ts';
 import { TablePage } from './records.tsx';
-import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, REMOVE_REASONS, SEARCH_LIMIT, TRANSFER_PRIORITIES, INVENTORY_ROW_OPTIONS, defaultTransferType, inventoryLog, inventoryRows, lineCertificates, materialLogRows, prefilledOrderItems, reservedOnOpenOrders, searchHasTerm, searchLocations, searchStock, siteMaterialLog, stockDetails, storehouseRows, storehouseTransactions, transferAmountDefault, transferOrderFields, transferRoute, transferTypesFor, validQuantity, type InventoryRow, type MaterialLogRow, type SearchFilters, type Transaction, type TransferContext } from '../shared/mto-stock.ts';
+import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, REMOVE_REASONS, SEARCH_LIMIT, TRANSFER_PRIORITIES, INVENTORY_ROW_OPTIONS, defaultTransferType, inventoryLog, inventoryRows, lineCertificates, materialLogRows, prefilledOrderItems, reservedOnOpenOrders, returnToInventoryPlan, searchHasTerm, searchLocations, searchStock, siteMaterialLog, stockDetails, storehouseRows, storehouseTransactions, transferAmountDefault, transferOrderFields, transferRoute, transferTypesFor, validQuantity, type InventoryRow, type MaterialLogRow, type SearchFilters, type Transaction, type TransferContext } from '../shared/mto-stock.ts';
 import { certificateFile } from './certifications.tsx';
 import type { Row } from '../shared/types.ts';
 
@@ -20,15 +20,15 @@ const labelsHref = (materialNos: string[]) => apiUrl(`/pdf/material-labels?mater
 type FieldErrors = Record<string, string>;
 
 /** A labelled native control; the label is tied to the control and errors are announced. */
-function Control({ label, error, hint, required, children, wide }: { label: string; error?: string; hint?: string; required?: boolean; children: (id: string, props: Record<string, unknown>) => ReactNode; wide?: boolean }) {
+export function Control({ label, error, hint, required, children, wide }: { label: string; error?: string; hint?: string; required?: boolean; children: (id: string, props: Record<string, unknown>) => ReactNode; wide?: boolean }) {
   const id = useId().replaceAll(':', '');
   const props = { id, required, 'aria-invalid': Boolean(error), 'aria-describedby': error ? `${id}-error` : hint ? `${id}-hint` : undefined };
   return <div className={`field ${wide ? 'full-width' : ''}`}><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label>{children(id, props)}{hint && <small id={`${id}-hint`} className="field-hint">{hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;
 }
-function Choice({ label, value, onChange, options, error, required, blank = 'Choose…', hint, noBlank }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; error?: string; required?: boolean; blank?: string; hint?: string; noBlank?: boolean }) {
+export function Choice({ label, value, onChange, options, error, required, blank = 'Choose…', hint, noBlank }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; error?: string; required?: boolean; blank?: string; hint?: string; noBlank?: boolean }) {
   return <Control label={label} error={error} required={required} hint={hint}>{(_, props) => <div className="select-wrap"><select {...props} value={value} onChange={event => onChange(event.target.value)}>{!noBlank && <option value="">{blank}</option>}{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div>}</Control>;
 }
-function Text({ label, value, onChange, error, required, max, area, hint, placeholder }: { label: string; value: string; onChange: (value: string) => void; error?: string; required?: boolean; max?: number; area?: boolean; hint?: string; placeholder?: string }) {
+export function Text({ label, value, onChange, error, required, max, area, hint, placeholder }: { label: string; value: string; onChange: (value: string) => void; error?: string; required?: boolean; max?: number; area?: boolean; hint?: string; placeholder?: string }) {
   return <Control label={label} error={error} required={required} hint={hint} wide={area}>{(_, props) => area ? <textarea {...props} rows={3} maxLength={max} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)}/> : <input {...props} type="text" maxLength={max} placeholder={placeholder} autoComplete="off" value={value} onChange={event => onChange(event.target.value)}/>}</Control>;
 }
 function QuantityInput({ label = 'Quantity', value, onChange, error, required = true, max, min = 0.01, disabled }: { label?: string; value: string; onChange: (value: string) => void; error?: string; required?: boolean; max?: number; min?: number; disabled?: boolean }) {
@@ -36,7 +36,7 @@ function QuantityInput({ label = 'Quantity', value, onChange, error, required = 
 }
 
 /** A dialog around one server action: busy state, the server's message and field errors, success message. */
-function ActionDialog({ title, subtitle, submit, onSubmit, onClose, children, wide = false }: { title: string; subtitle?: string; submit: string; onSubmit: () => Promise<string>; onClose: () => void; children: (errors: FieldErrors) => ReactNode; wide?: boolean }) {
+export function ActionDialog({ title, subtitle, submit, onSubmit, onClose, children, wide = false }: { title: string; subtitle?: string; submit: string; onSubmit: () => Promise<string>; onClose: () => void; children: (errors: FieldErrors) => ReactNode; wide?: boolean }) {
   const { refresh, notify } = useWorkspace();
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [errors, setErrors] = useState<FieldErrors>({});
   async function send(event: FormEvent) {
@@ -105,17 +105,25 @@ function MoveDialog({ line, onClose }: { line: Row; onClose: () => void }) {
     <Choice label="Destination storehouse" required noBlank value={to} onChange={setTo} options={others.map(w => ({ value: w.id, label: String(w.name) }))} error={errors.toWarehouseId}/></>}</ActionDialog>;
 }
 
-/** Return to inventory: from a storehouse line into the Material inventory of the project site (the dialog names no destination). */
+/**
+ * Return to inventory (reference #returnFromLager): Material, Storehouse, Available, Quantity to return (more than 0, at most
+ * the available balance) and Return all. The server books it into the main project the user works in, as a completed
+ * 'Return → Inventory' transfer order; a project site is asked only where the workspace shows every site.
+ */
 function ReturnDialog({ line, siteId, onClose }: { line: Row; siteId: string; onClose: () => void }) {
-  const { rows, allRows } = useWorkspace(); const details = stockDetails(rows, line);
-  const [target, setTarget] = useState(siteId), [amount, setAmount] = useState(''), [all, setAll] = useState(false), [date, setDate] = useState(today()), [note, setNote] = useState('');
-  return <ActionDialog title="Return to inventory" subtitle={`${details.materialNo}${line.chargeNo ? ` · ${line.chargeNo}` : ''} · Storehouse: ${storehouseName(rows, line)} · Available: ${formatNumber(line.quantity, 3)} ${details.uom}`} submit="Return" onClose={onClose}
-    onSubmit={async () => { if (!target) throw new Error('Choose the project site whose inventory receives the material.'); if (!all && !validQuantity(Number(amount))) throw new Error('Enter a quantity of at least 0.01, in steps of 0.01.'); await post('/actions/stock-return', { stockId: line.id, siteId: target, ...(all ? { all: true } : { quantity: Number(amount) }), date, note }); return 'Material returned to the inventory.'; }}>{errors => <>
+  const { rows, allRows, label } = useWorkspace(); const details = stockDetails(rows, line);
+  const [target, setTarget] = useState(siteId), [amount, setAmount] = useState(''), [all, setAll] = useState(false);
+  const balance = Number(line.quantity);
+  return <ActionDialog title="Return to inventory" subtitle={siteId ? `Into the Material inventory of ${label('sites', siteId)}.` : undefined} submit="Return" onClose={onClose}
+    onSubmit={async () => {
+      if (!target) throw new Error('Choose the project site whose inventory receives the material.');
+      const plan = returnToInventoryPlan(line, all ? { all: true } : { quantity: amount === '' ? NaN : Number(amount) }); if (!plan.ok) throw new Error(plan.message);
+      await post('/actions/stock-return', { stockId: line.id, siteId: target, ...(all ? { all: true } : { quantity: Number(amount) }) }); return 'Material returned to the inventory.';
+    }}>{errors => <>
+    <dl className="field full-width return-facts"><div><dt>Material:</dt><dd>{details.materialNo}{line.chargeNo ? ` · ${line.chargeNo}` : ''}</dd></div><div><dt>Storehouse:</dt><dd>{storehouseName(rows, line)}</dd></div><div><dt>Available:</dt><dd>{formatNumber(balance, 3)} {details.uom}</dd></div></dl>
     {!siteId && <Choice label="Project site" required value={target} onChange={setTarget} options={sitesOf(allRows)} error={errors.siteId} hint="The workspace shows every project site: choose whose inventory receives the material."/>}
-    <QuantityInput label="Quantity to return" value={amount} onChange={setAmount} max={Number(line.quantity)} disabled={all} error={errors.quantity}/>
-    <div className="field checkbox-field"><label><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)}/><span>Return all ({formatNumber(line.quantity, 3)} {details.uom})</span></label></div>
-    <Control label="Date" required>{(_, props) => <input {...props} type="date" value={date} onChange={event => setDate(event.target.value)}/>}</Control>
-    <Text label="Notes" area value={note} onChange={setNote} max={2000}/></>}</ActionDialog>;
+    <QuantityInput label="Quantity to return" value={all ? String(balance) : amount} onChange={setAmount} max={balance} disabled={all} error={errors.quantity}/>
+    <div className="field checkbox-field"><label><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)}/><span>Return all</span></label></div></>}</ActionDialog>;
 }
 
 /** Correction (reference #correctLagerEntry): remove a quantity from a storehouse line, with a reason. */
@@ -236,7 +244,7 @@ const blankItem = (): ItemDraft => ({ materialNo: '', description: '', quantity:
  * Transfer orders page. The types offered and the location fields follow the context and the type exactly as the reference
  * handler (transferTypesFor, transferOrderFields); every prefilled quantity is capped at its balance.
  */
-function OrderDialog({ context, inventory = [], lines = [], siteId, onClose }: { context: TransferContext; inventory?: InventoryRow[]; lines?: Row[]; siteId: string; onClose: () => void }) {
+export function OrderDialog({ context, inventory = [], lines = [], siteId, onClose }: { context: TransferContext; inventory?: InventoryRow[]; lines?: Row[]; siteId: string; onClose: () => void }) {
   const { rows, allRows, label } = useWorkspace();
   const [type, setType] = useState<string>(defaultTransferType(context)), [priority, setPriority] = useState('Normal');
   const [from, setFrom] = useState(''), [toSite, setToSite] = useState(''), [to, setTo] = useState(''), [notes, setNotes] = useState(''), [site, setSite] = useState(siteId);
@@ -263,7 +271,7 @@ function OrderDialog({ context, inventory = [], lines = [], siteId, onClose }: {
     {needsSite && !siteId && <Choice label={route?.from === 'inventory' ? 'From project site' : 'Project site'} required value={site} onChange={setSite} options={sitesOf(allRows)} error={errors.fromSiteId || errors.siteId} hint="The workspace shows every project site: choose whose inventory the order uses."/>}
     {needsSite && siteId && <p className="field full-width muted">{route?.from === 'inventory' ? 'From' : 'Into'} the inventory of {label('sites', siteId)}.</p>}
     {show.fromStorehouse && <Choice label="From storehouse" required value={from} onChange={setFrom} blank="- Select -" options={warehouses} error={errors.fromWarehouseId}/>}
-    {show.toSite && <Choice label="To project site" required value={toSite} onChange={setToSite} blank="- Select -" options={sitesOf(allRows).filter(option => route?.from !== 'inventory' || option.value !== site)} error={errors.siteId}/>}
+    {show.toSite && <Choice label="To project site" required value={toSite} onChange={setToSite} blank="- Select -" options={sitesOf(allRows).filter(option => (route?.from !== 'inventory' || option.value !== site) && allRows.sites?.find(row => row.id === option.value)?.archived !== true)} error={errors.siteId}/>}
     {show.toStorehouse && <Choice label="To storehouse" required value={to} onChange={setTo} blank="- Select -" options={warehouses.filter(w => w.value !== from)} error={errors.toWarehouseId}/>}
     <Text label="Notes (optional)" area value={notes} onChange={setNotes} max={2000} placeholder="Notes & actions"/>
     <div className="field full-width"><span className="field-title">Order items</span><ul className="order-items">{items.map((item, index) => <li key={index}>
@@ -386,8 +394,8 @@ export function Storehouses() {
     <section className="panel storehouse-lines" aria-label="Storehouse lines">
     <div className="page-heading"><div><h2>Storehouse lines</h2><p>Material held in the storehouses. Transfer it to a project site's inventory, move it, or correct a line.</p></div>
       <div className="heading-actions">
-        {/* Mount point of the Transfer Orders button (wave 4, w4-transfer-orders). */}
-        <span data-mount="transfer-orders-button"/>
+        {/* The Transfer Orders list opens from here and from the bell (MTO manual), not from the Order / Take in menu. */}
+        {canRecord('transfer_orders') && <Link className="btn" to="/materials/transfer_orders"><ClipboardList size={16}/>Transfer Orders</Link>}
         {canRun('stock-to-project') && <button className="btn" disabled={!selected.length} onClick={() => setDialog({ kind: 'project', lines: selected })}><Truck size={16}/>Transfer to project ({selected.length})</button>}
         {canRun('transfer-order-create') && <button className="btn primary" disabled={!selected.length} onClick={() => setDialog({ kind: 'order', lines: selected })}>New Transfer Order ({selected.length})</button>}
         {labels && (selected.length ? <a className="btn" href={labelsHref(selected.map(line => stockDetails(rows, line).materialNo))} target="_blank" rel="noreferrer"><QrCode size={16}/>Print labels ({selected.length})</a> : <button className="btn" disabled><QrCode size={16}/>Print labels (0)</button>)}
@@ -420,35 +428,6 @@ export function Storehouses() {
     {dialog?.kind === 'audit' && <AuditTrailDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'certificates' && <CertificatesDialog title={describeLine(rows, dialog.line)} certificates={lineCertificates(rows, dialog.line)} onClose={close}/>}
     {dialog?.kind === 'project' && <TransferToProject lines={dialog.lines} defaultSite={siteId} onClose={close}/>}{dialog?.kind === 'order' && <OrderDialog context="store" lines={dialog.lines} siteId={siteId} onClose={close}/>}
   </>;
-}
-
-/** Transfer orders: planned moves, completed or cancelled here. */
-export function TransferOrders() {
-  const { rows, label, canRecord, canRun, siteId } = useWorkspace();
-  const [status, setStatus] = useState('Open'), [dialog, setDialog] = useState<{ kind: 'new' } | { kind: 'items' | 'complete' | 'cancel'; order: Row } | null>(null);
-  if (!canRecord('transfer_orders')) return <EmptyState title="No access to transfer orders" description="Your permission profile does not include the material inventory."/>;
-  const orders = activeRows(rows, 'transfer_orders').filter(order => !status || order.status === status).sort((a, b) => String(b.number).localeCompare(String(a.number)));
-  const items = (order: Row) => activeRows(rows, 'transfer_order_items').filter(item => item.orderId === order.id);
-  const destination = (order: Row) => { const route = transferRoute(String(order.type)); return route?.to === 'storehouse' ? label('warehouses', order.toWarehouseId) : order.siteId ? `Inventory · ${label('sites', order.siteId)}` : '—'; };
-  const origin = (order: Row) => { const route = transferRoute(String(order.type)); return route?.from === 'inventory' ? (order.fromSiteId ? `Inventory · ${label('sites', order.fromSiteId)}` : '—') : order.fromWarehouseId ? label('warehouses', order.fromWarehouseId) : 'Storehouse of each item'; };
-  return <div className="page mto-stock-page"><div className="page-heading"><div><div className="eyebrow">MATERIALS · ORDER / TAKE IN</div><h1>Transfer orders</h1><p>Plan moves between project site inventories and storehouses, then complete them to apply the movements.</p></div>
-    <div className="heading-actions">{canRun('transfer-order-create') && <button className="btn primary" onClick={() => setDialog({ kind: 'new' })}><Plus size={16}/>New transfer order</button>}</div></div>
-    <section className="panel"><div className="inventory-filters"><Choice label="Status" value={status} onChange={setStatus} blank="All statuses" options={['Open', 'Completed', 'Cancelled'].map(value => ({ value, label: value }))}/></div>
-      {orders.length ? <TableScroll><table className="data-table"><thead><tr><th>Transfer order</th><th>Type</th><th>Priority</th><th>Status</th><th>From</th><th>To</th><th>Date</th><th className="numeric">Items</th><th>Options</th></tr></thead><tbody>{orders.map(order => <tr key={order.id}>
-        <td><button className="record-link" onClick={() => setDialog({ kind: 'items', order })}>{String(order.number)}</button></td><td>{String(order.type)}</td><td><Badge color={order.priority === 'Urgent' ? 'red' : undefined}>{String(order.priority)}</Badge></td><td><Badge>{String(order.status)}</Badge></td><td>{origin(order)}</td><td>{destination(order)}</td><td>{formatDate(order.date)}</td><td className="numeric">{items(order).length}</td>
-        <td>{order.status === 'Open' ? <span className="row-buttons">{canRun('transfer-order-complete') && <button className="btn small primary" onClick={() => setDialog({ kind: 'complete', order })}>Complete</button>}{canRun('transfer-order-cancel') && <button className="btn small" onClick={() => setDialog({ kind: 'cancel', order })}>Cancel</button>}</span> : <span className="muted">—</span>}</td></tr>)}</tbody></table></TableScroll>
-        : <EmptyState title={status ? `No ${status.toLowerCase()} transfer orders` : 'No transfer orders yet'} description="Check materials in the Material inventory or lines on the Storehouses page and choose New Transfer Order, or create an order here."/>}
-      <div className="table-footer"><span>{orders.length} transfer order{orders.length === 1 ? '' : 's'}</span></div></section>
-    {dialog?.kind === 'new' && <OrderDialog context="page" siteId={siteId} onClose={() => setDialog(null)}/>}
-    {dialog?.kind === 'items' && <Modal title={`Transfer order ${dialog.order.number}`} subtitle={`${dialog.order.type} · ${dialog.order.priority}${dialog.order.notes ? ` · ${dialog.order.notes}` : ''}`} onClose={() => setDialog(null)} wide><div className="modal-body"><TableScroll><table className="data-table"><thead><tr><th>Material no.</th><th>Description</th><th className="numeric">Quantity</th><th>UOM</th></tr></thead><tbody>{items(dialog.order).map(item => <tr key={item.id}><td>{String(item.materialNo)}</td><td>{String(item.description || '—')}</td><td className="numeric">{formatNumber(item.quantity, 2)}</td><td>{String(item.uom || '—')}</td></tr>)}</tbody></table></TableScroll></div><div className="modal-footer"><button className="btn primary" onClick={() => setDialog(null)}>Close</button></div></Modal>}
-    {dialog?.kind === 'complete' && <OrderStatusDialog order={dialog.order} complete onClose={() => setDialog(null)}/>}{dialog?.kind === 'cancel' && <OrderStatusDialog order={dialog.order} onClose={() => setDialog(null)}/>}
-  </div>;
-}
-function OrderStatusDialog({ order, complete = false, onClose }: { order: Row; complete?: boolean; onClose: () => void }) {
-  const [date, setDate] = useState(today()), [note, setNote] = useState('');
-  return <ActionDialog title={`${complete ? 'Complete' : 'Cancel'} transfer order ${order.number}`} subtitle={complete ? 'The movements of every item are applied now. If any item is short, nothing moves.' : 'No stock moves. The order stays in the list as cancelled.'} submit={complete ? 'Complete' : 'Cancel order'} onClose={onClose}
-    onSubmit={async () => { await post(`/actions/transfer-order-${complete ? 'complete' : 'cancel'}`, { orderId: order.id, date, note }); return complete ? 'Transfer order completed.' : 'Transfer order cancelled.'; }}>{() => <>
-    {complete && <Control label="Date" required>{(_, props) => <input {...props} type="date" value={date} onChange={event => setDate(event.target.value)}/>}</Control>}<Text label="Notes" area value={note} onChange={setNote} max={2000}/></>}</ActionDialog>;
 }
 
 interface ListData { rows: { id: string; values: Record<string, string | number> }[]; generatedAt: string }
