@@ -39,6 +39,7 @@ import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate
 import { reportWorkbook } from './report-export.ts';
 import { SPOOL_EXPORT_COLUMNS, spoolExportLines } from '../shared/mto-logistics.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
+import { assertRequestFileKept, assertRequestFileUpload, registerServiceRequestRoutes, storeServiceRequestDocuments } from './service-requests.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { assignIrn } from './iso-pages.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
@@ -274,6 +275,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly) throw new AppError(405, 'Transaction history cannot be archived.');
     access.archive(resource.key, access.record(resource.key,String(req.params.id),true));
     if (pilots) assertItpDeletable(store, resource.key, String(req.params.id));
+    if (pilots) assertRequestFileKept(store, resource.key, String(req.params.id));
     if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id), true));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
@@ -286,7 +288,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     checkResourcePermission(req, 'welds', 'show', access.record('welds', query.weldId));
     res.json({ proposal: inspectionRules(store, actorOf(req)).proposal(query) });
   });
-  app.post('/api/actions/:key', (req, res) => {
+  app.post('/api/actions/:key', async (req, res) => {
     const action = ACTIONS[String(req.params.key)]; if (!action || (availability && !availability.actions[action.key])) throw new AppError(404, 'This action does not exist.');
     access.input(action.key, req.body, true);
     const permissionData={...req.body};if(action.key==='inspection-result')permissionData.type=access.record('inspection_requests',req.body.requestId).type;
@@ -299,6 +301,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && action.key === 'duplicate-site') { const parts = duplicateParts(req.body.parts ?? []); if (parts) for (const resource of duplicateReadResources(parts)) checkResourcePermission(req, resource); }
     const done = runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')), hosted: Boolean(availability?.features.includes('pilots')) });
     if (pilots) announce((req as unknown as AuthRequest).user.id, action.key, done);
+    // Confirm of a Service request stores its ServiceRequest and CoatingRelease PDFs; when that fails the request stays and Print builds them.
+    if (pilots && action.key === 'service' && done.records?.length) await storeServiceRequestDocuments(store, documents, done.records, actorOf(req), options.publicOrigin || `${req.protocol}://${req.get('host')}`).catch(error => console.error('Service request documents could not be stored:', error));
     res.status(201).json(access.result(done));
   });
   app.post('/api/bulk/:resource', (req, res) => {
@@ -413,6 +417,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
   // ITPs page: Add ITP with its PDF, Upload revision, Link ITP / Unlink, Import from isometrics (server/itps.ts).
   if (pilots) registerItpRoutes(app, { store, documents, access, upload: disk });
+  // Request archive: Print, Print (Coating release), Sign online, Upload and Download of service requests (server/service-requests.ts).
+  if (pilots) registerServiceRequestRoutes(app, { store, documents, access, upload: disk, publicOrigin: options.publicOrigin });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
   if (pilots) registerWpsRoutes(app, { store, access });
   if (pilots) registerMaterialDbRoutes(app, { store, access });
@@ -421,6 +427,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);
       if (!req.file) throw new AppError(422, 'Choose a file.');
       if (pilots && key === 'punchlists') assertPunchFileAllowed(store, target, req.body.documentType);
+      if (pilots) assertRequestFileUpload(key, req.body.documentType);
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);

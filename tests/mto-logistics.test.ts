@@ -14,8 +14,9 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, pageAvailable, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { PILOTS, pilotItemPath } from '../shared/pilots.ts';
 import { planHostedSchema } from '../server/hosted-schema.ts';
-import { archiveDefaultRange, isoStatuses, laydownContent, laydownHistory, materialStatus, nextRequestNumber, operationPhaseGroup, percentBand, pickListReports, planReserve, planStart, requestArchive, spoolExportLines, spoolHistory, spoolLocation, spoolRows, startedReports } from '../shared/mto-logistics.ts';
+import { archiveDefaultRange, drawnSignature, isoStatuses, laydownContent, laydownHistory, materialRequestNumber, materialStatus, nextRequestNumber, requestKind, signOffComplete, operationPhaseGroup, percentBand, pickListReports, planReserve, planStart, requestArchive, spoolExportLines, spoolHistory, spoolLocation, spoolRows, startedReports } from '../shared/mto-logistics.ts';
 import { ACTIONS } from '../shared/actions.ts';
+import { materialLocations } from '../shared/material-logistics.ts';
 import type { Row } from '../shared/types.ts';
 
 const actor = { id: 'mto-test', name: 'MTO test operator' };
@@ -326,7 +327,12 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
     const response = await request('/api/auth/login', 'POST', { email: user.email, password }); assert.equal(response.status, 200);
   };
-  return { store, request, signIn, usePilot: (key: string) => { pilot = key; }, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Pilot admin', email: 'pilot-admin@example.test', password })).status, 201) };
+  /** A multipart upload (one file) as the browser sends it. */
+  const upload = async (path: string, file: { name: string; type: string; bytes: Uint8Array }) => {
+    const body = new FormData(); body.set('file', new Blob([Buffer.from(file.bytes)], { type: file.type }), file.name);
+    return fetch(origin + path, { method: 'POST', headers: { 'X-Stelux-Request': '1', 'X-Stelux-Pilot': pilot, Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body });
+  };
+  return { store, request, upload, signIn, usePilot: (key: string) => { pilot = key; }, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Pilot admin', email: 'pilot-admin@example.test', password })).status, 201) };
 }
 const FULL = { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write' };
 
@@ -414,4 +420,131 @@ test('read-only and partial permission profiles cannot reserve, start or take, a
   assert.equal((await f.request('/api/records/service_companies', 'POST', { name: 'Harbour Coatings', address: '5 Quay Street' })).status, 409);
   assert.equal((await f.request('/api/records/laydowns', 'POST', { name: 'Laydown D — Hydrotest' })).status, 201);
   assert.equal((await f.request('/api/records/material_laydowns', 'POST', { name: 'Flange shelf' })).status, 201);
+});
+
+// ---- Service request documents, signing and the materials archive (w3-service-request-docs) ---------------------------
+
+const PNG_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const SIGNED = { contractorName: 'Ivo Contractor', contractorDate: '2026-11-12', contractorMethod: 'Draw', contractorSignature: PNG_URL, clientName: 'Ana Client', clientDate: '2026-11-12', clientSignature: PNG_URL, noboName: 'Nora NoBo', noboDate: '2026-11-13', noboSignature: PNG_URL };
+const SCAN = { name: 'scan.pdf', type: 'application/pdf', bytes: Buffer.from('%PDF-1.4\n%%EOF') };
+
+test('mto-logistics-005: Sign & save needs every name and signature; a drawn signature must be a PNG; a saved one must exist', () => {
+  assert.deepEqual(signOffComplete(SIGNED), {});
+  const { noboSignature: _nobo, ...withoutNobo } = SIGNED;
+  assert.deepEqual(Object.keys(signOffComplete(withoutNobo)), ['noboSignature']);
+  assert.deepEqual(Object.keys(signOffComplete({ ...SIGNED, contractorName: ' ', clientName: '', noboName: '' })).sort(), ['clientName', 'contractorName', 'noboName']);
+  assert.ok(signOffComplete({ ...SIGNED, contractorMethod: 'Signature' }).contractorSignature, 'no saved signature');
+  assert.deepEqual(signOffComplete({ ...SIGNED, contractorMethod: 'Initials', contractorSignature: '' }, { Signature: false, Initials: true }), {});
+  assert.ok(signOffComplete({ ...SIGNED, clientDate: '12.11.2026' }).clientDate);
+  assert.ok(drawnSignature(PNG_URL)); assert.equal(drawnSignature('data:image/png;base64,AAAA'), null); assert.equal(drawnSignature('data:image/jpeg;base64,/9j/'), null); assert.equal(drawnSignature(42), null);
+});
+
+test('mto-logistics-023: material requests count their own Report No. per main project, apart from the spool requests', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM);
+  const rows = () => Object.fromEntries(['service_requests', 'iso_materials', 'spools', 'isometrics', 'projects'].map(key => [key, store.list(key, true)])) as Record<string, Row[]>;
+  // The sample: spool requests 00001-00003, and one material request 00001 on the North yard.
+  assert.equal(materialRequestNumber(rows(), 'site-north'), '00002'); assert.equal(materialRequestNumber(rows(), 'site-river'), '00001');
+  const spool = runAction(store, 'service', { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-11-02' }, actor).records![0];
+  assert.equal(spool.number, '00004', 'the spool sequence ignores the material numbers');
+  assert.equal(materialRequestNumber(rows(), 'site-north'), '00002', 'and a spool request does not move the material sequence');
+  runAction(store, 'move-materials', { requirementIds: ['requirement-1', 'requirement-4'], laydownId: 'mlaydown-rack-1', date: '2026-11-01' }, actor);
+  const north = runAction(store, 'service-materials', { requirementIds: ['requirement-1'], companyId: 'service-blast', date: '2026-11-03' }, actor).records![0];
+  const river = runAction(store, 'service-materials', { requirementIds: ['requirement-4'], companyId: 'service-blast', date: '2026-11-04' }, actor).records![0];
+  assert.deepEqual([north.number, river.number], ['00002', '00001']);
+  runAction(store, 'move-materials', { requirementIds: ['requirement-2', 'requirement-5'], laydownId: 'mlaydown-rack-1', date: '2026-11-01' }, actor);
+  assert.throws(() => runAction(store, 'service-materials', { requirementIds: ['requirement-2', 'requirement-5'], companyId: 'service-blast' }, actor), /one main project/);
+  // The archive keeps same-numbered requests of the two kinds and of two main projects apart.
+  const materials = requestArchive(rowsOf(store), { kind: 'Material' });
+  assert.ok(materials.every(request => request.kind === 'Material' && requestKind(store.get('service_requests', request.headId)) === 'Material'));
+  assert.deepEqual(materials.map(request => request.number), ['00001', '00002', '00001'], 'newest first');
+  assert.deepEqual(requestArchive(rowsOf(store), { kind: 'Material', sort: 'asc' }).map(request => request.date), ['2026-10-25', '2026-11-03', '2026-11-04']);
+  assert.equal(new Set(materials.map(request => request.key)).size, 3);
+  assert.ok(requestArchive(rowsOf(store), { kind: 'Spool' }).every(request => request.kind === 'Spool' && !request.items.some(item => item.startsWith('Unavailable'))));
+  // Old numbers stay as stored and do not count.
+  store.create('service_requests', { number: 'SR-2026-0009', requirementId: 'requirement-2', companyId: 'service-blast', date: '2026-01-02', status: 'Completed' }, actor);
+  assert.equal(materialRequestNumber(rows(), 'site-north'), '00003');
+});
+
+test('mto-logistics-011: Service req. - Materials lists one row per isometric material line of the group with its whole quantity', t => {
+  const store = bare(t); seedMtoLogistics(store, SYSTEM); const rows = rowsOf(store);
+  const group = String(store.get('materials', 'material-9').materialGroup);
+  const expected = store.list('iso_materials').filter(line => line.materialId && store.get('materials', String(line.materialId)).materialGroup === group);
+  assert.ok(expected.length > 0);
+  const lines = materialLocations(rows, { group });
+  assert.deepEqual(lines.map(entry => entry.requirement.id).sort(), expected.map(line => line.id).sort());
+  assert.ok(lines.every(entry => entry.requirement.quantity === expected.find(line => line.id === entry.requirement.id)!.quantity));
+  assert.equal(ACTIONS['service-materials'].fields.some(field => field.type === 'number'), false, 'no part quantity: a line moves whole');
+});
+
+test('mto-logistics-004 / -005: Confirm stores both documents; Sign online signs the Release note once, never moves a spool, and Upload attaches a signed scan', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  await f.signIn('Logistics signer', FULL);
+  const service = await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-1', 'spool-7'], companyId: 'service-pwht', note: 'Two projects' }); assert.equal(service.status, 201);
+  const head = (await service.json() as { records: Row[] }).records[0];
+  const files = () => f.store.list('attachments').filter(row => row.entityType === 'service_requests' && row.entityId === head.id);
+  assert.deepEqual(files().map(row => row.documentType).sort(), ['CoatingRelease', 'ServiceRequest']);
+  assert.ok(files().every(row => /^\d{8}_S\d+_R\d{5}-(ServiceRequest|CoatingRelease)\.pdf$/.test(String(row.name)) && String(row.name).includes(`_R${head.number}-`)));
+  for (const kind of ['service-request', 'coating-release']) { const response = await f.request(`/api/service-requests/${head.id}/document/${kind}`); assert.equal(response.status, 200, kind); assert.equal(response.headers.get('content-type'), 'application/pdf'); }
+  assert.equal((await f.request(`/api/service-requests/${head.id}/document/signed`)).status, 404, 'nothing signed yet');
+  // A request of the sample (made before documents were stored) prints a fresh build.
+  const old = f.store.list('service_requests').find(row => row.spoolId === 'spool-2')!;
+  assert.equal((await f.request(`/api/service-requests/${old.id}/document/service-request`)).status, 200);
+
+  const spoolState = () => ['spool-1', 'spool-7'].map(id => { const spool = f.store.get('spools', id); return [spool.laydownId, spool.serviceCompanyId, spool._version]; });
+  const spoolsBefore = spoolState(); const movesBefore = f.store.list('spool_moves').length;
+  const sign = (data: Record<string, unknown>) => f.request(`/api/service-requests/${head.id}/sign`, 'POST', data);
+  // Refused: no NoBo signature; a saved signature the account does not have (another user's never counts); a drawing that is no PNG; fields that are not on the form.
+  const { noboSignature: _nobo, ...withoutNobo } = SIGNED;
+  const refused = await sign(withoutNobo); assert.equal(refused.status, 422); assert.ok((await refused.json() as { fields: Record<string, string> }).fields.noboSignature);
+  const someone = f.store.list('users')[0];
+  const other = f.store.create('signatures', { name: String(someone.name), userId: someone.id, kind: 'Full signature' });
+  f.store.create('attachments', { name: 'other.png', entityType: 'signatures', entityId: other.id, documentType: 'Full signature', mime: 'image/png', size: 10 });
+  assert.equal((await sign({ ...SIGNED, contractorMethod: 'Signature', contractorSignature: '' })).status, 422);
+  assert.equal((await sign({ ...SIGNED, clientSignature: 'data:image/png;base64,AAAA' })).status, 422);
+  assert.equal((await sign({ ...SIGNED, signedBy: 'Forged' })).status, 404);
+  assert.equal(f.store.get('service_requests', head.id).signedAt, '');
+  // Signed: every record of the request, the note as changed, the signed Release note stored.
+  const signed = await sign({ ...SIGNED, note: 'Collected Thursday' }); assert.equal(signed.status, 201);
+  const records = f.store.list('service_requests').filter(row => row.number === head.number && row.spoolId); assert.equal(records.length, 2);
+  for (const record of records) { assert.ok(record.signedAt); assert.equal(record.signedBy, 'Logistics signer'); assert.equal(record.signedVia, 'Online'); assert.equal(record.noboName, 'Nora NoBo'); assert.equal(record.note, 'Collected Thursday'); }
+  const stored = files().find(row => row.documentType === 'Signed release note')!; assert.match(String(stored.name), /-CoatingRelease-signed\.pdf$/);
+  const download = await f.request(`/api/service-requests/${head.id}/document/signed`); assert.equal(download.status, 200);
+  assert.equal(Buffer.from(await download.arrayBuffer()).subarray(0, 5).toString('latin1'), '%PDF-');
+  // The spools have not moved.
+  assert.deepEqual(spoolState(), spoolsBefore); assert.equal(f.store.list('spool_moves').length, movesBefore);
+  // Read-only afterwards: no second signing, no upload, no record edit, no deleting its files.
+  assert.equal((await sign(SIGNED)).status, 409);
+  assert.equal((await f.upload(`/api/service-requests/${head.id}/upload`, SCAN)).status, 409);
+  assert.notEqual((await f.request(`/api/records/service_requests/${head.id}`, 'PUT', { noboName: 'Changed', _version: f.store.get('service_requests', head.id)._version })).status, 200);
+  assert.equal(f.store.get('service_requests', head.id).noboName, 'Nora NoBo');
+  assert.notEqual((await f.request(`/api/records/attachments/${stored.id}/archive`, 'POST', { _version: stored._version })).status, 200);
+  assert.equal(f.store.get('attachments', stored.id, true)._archived, false);
+
+  // Upload signed doc on another request: a PDF only; the request is then signed (via Upload) and read-only.
+  const second = await f.request('/api/actions/service', 'POST', { spoolIds: ['spool-5'], companyId: 'service-blast' }); assert.equal(second.status, 201);
+  const request = (await second.json() as { records: Row[] }).records[0];
+  assert.equal((await f.upload(`/api/service-requests/${request.id}/upload`, { name: 'scan.png', type: 'image/png', bytes: Buffer.from(PNG_URL.split(',')[1], 'base64') })).status, 422);
+  assert.equal((await f.upload(`/api/service-requests/${request.id}/upload`, SCAN)).status, 201);
+  assert.equal(f.store.get('service_requests', request.id).signedVia, 'Upload');
+  assert.equal((await f.request(`/api/service-requests/${request.id}/sign`, 'POST', SIGNED)).status, 409);
+  assert.equal((await f.request(`/api/service-requests/${request.id}/document/signed`)).status, 200);
+  // The archive row carries the documents and the sign-off.
+  const archive = requestArchive(rowsOf(f.store), { kind: 'Spool' });
+  const row = archive.find(entry => entry.headId === head.id)!;
+  assert.ok(row.files.serviceRequest && row.files.coatingRelease && row.files.signed); assert.equal(row.signOff?.via, 'Online'); assert.deepEqual(row.documents, []);
+  assert.equal(archive.find(entry => entry.headId === request.id)!.signOff?.via, 'Upload');
+});
+
+test('mto-logistics-005: read-only accounts may print but not sign or upload, and Weld Pilot reaches none of it', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const id = f.store.list('service_requests').find(row => row.spoolId === 'spool-2')!.id;
+  await f.signIn('Logistics viewer', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'No access' });
+  assert.equal((await f.request(`/api/service-requests/${id}/document/coating-release`)).status, 200);
+  assert.equal((await f.request(`/api/service-requests/${id}/sign`, 'POST', SIGNED)).status, 403);
+  assert.equal((await f.upload(`/api/service-requests/${id}/upload`, SCAN)).status, 403);
+  f.usePilot('weld');
+  assert.equal((await f.request(`/api/service-requests/${id}/document/coating-release`)).status, 403);
+  f.usePilot('mto');
+  const material = f.store.list('service_requests').find(row => row.requirementId)!;
+  assert.equal((await f.request(`/api/service-requests/${material.id}/document/service-request`)).status, 404, 'material requests have no spool documents');
 });
