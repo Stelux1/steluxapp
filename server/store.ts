@@ -25,7 +25,10 @@ import { pqrNumber } from '../shared/wps.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
+  /** `conflict`: a version conflict or a blocked delete (hosted answers use the generic sentence); `duplicate`: a key that exists, the sentence names it. */
+  kind?: 'conflict' | 'duplicate';
 }
+const conflict = (message: string) => Object.assign(new AppError(409, message), { kind: 'conflict' as const });
 export interface Actor {
   id: string; name: string;
   /** Requests only: whether the account may add records to a resource. Asked where a write adds a record on the side (a new reusable value typed into a form field); system code has no limit. */
@@ -119,10 +122,23 @@ export class Store {
     const message = error instanceof Error ? error.message : String(error);
     const code = (error as { code?: string })?.code;
     if (code === '23505') return new AppError(409, 'A record with these identifying fields already exists.');
-    if (code === '23503') return new AppError(409, 'A related record is missing or still in use.');
+    if (code === '23503') return conflict('A related record is missing or still in use.');
     if (message.includes('UNIQUE constraint failed')) return new AppError(409, 'A record with these identifying fields already exists.');
-    if (message.includes('FOREIGN KEY constraint failed')) return new AppError(409, 'A related record is missing or still in use.');
+    if (message.includes('FOREIGN KEY constraint failed')) return conflict('A related record is missing or still in use.');
     return error;
+  }
+  /** A unique-key violation of a write becomes a sentence naming the field and the value the user typed; anything else is returned as it was. */
+  duplicate(key: string, data: Record<string, unknown>, id: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if ((error as { code?: string })?.code !== '23505' && !message.includes('UNIQUE constraint failed')) return error;
+    const def = RESOURCE_MAP[key]; if (!def) return error;
+    const same = (a: unknown, b: unknown) => String(a ?? '') === String(b ?? '');
+    const others = this.list(key).filter(row => row.id !== id);
+    const keys = (def.unique || []).find(names => others.some(row => names.every(name => same(row[name], data[name]))));
+    const field = keys && [...keys].reverse().map(name => def.fields.find(f => f.name === name)).find(f => f && !f.ref);
+    const value = field && String(data[field.name] ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80);
+    if (!field || !value) return this.translate(error);
+    return Object.assign(new AppError(409, `${field.label} ${value} already exists.`, { [field.name]: 'This value is already in use.' }), { kind: 'duplicate' as const });
   }
   resource(key: string): Resource { const def = RESOURCE_MAP[key]; if (!def) throw new AppError(404, 'This record type does not exist.'); return def; }
   list(key: string, includeArchived = false): Row[] {
@@ -261,7 +277,7 @@ export class Store {
     return this.transaction(() => {
       const data = this.validate(key, input,undefined,actor);
       const now = new Date().toISOString();
-      this.db.prepare(`INSERT INTO ${table(key)}(id,data,created_at,updated_at) VALUES (?,?,?,?)`).run(id, JSON.stringify(data), now, now);
+      try { this.db.prepare(`INSERT INTO ${table(key)}(id,data,created_at,updated_at) VALUES (?,?,?,?)`).run(id, JSON.stringify(data), now, now); } catch (error) { throw this.duplicate(key, data, id, error); }
       const result = this.get(key, id);
       this.audit(key, id, 'created', `Created ${this.resource(key).singular} ${this.display(key, result)}`, actor);
       this.syncRelations(key,id,input,actor);
@@ -272,10 +288,10 @@ export class Store {
   update(key: string, id: string, input: Record<string, unknown>, expectedVersion: number, actor: Actor = SYSTEM,quantityChange?:{revisionId:string;date:string;note:string}): Row {
     return this.transaction(() => {
       const existing = this.get(key, id);
-      if (existing._version !== expectedVersion) throw new AppError(409, 'This record changed since you opened it. Refresh and try again.');
+      if (existing._version !== expectedVersion) throw conflict('This record changed since you opened it. Refresh and try again.');
       this.guardStandardCode(key, existing, actor, Object.keys(input).some(name => name !== '_version' && !ENABLEMENT_INPUT.includes(name)));
       const data = this.validate(key, input, existing,actor);
-      this.db.prepare(`UPDATE ${table(key)} SET data=?,version=version+1,updated_at=? WHERE id=? AND version=?`).run(JSON.stringify(data), new Date().toISOString(), id, expectedVersion);
+      try { this.db.prepare(`UPDATE ${table(key)} SET data=?,version=version+1,updated_at=? WHERE id=? AND version=?`).run(JSON.stringify(data), new Date().toISOString(), id, expectedVersion); } catch (error) { throw this.duplicate(key, data, id, error); }
       if(key==='iso_materials'&&Number(existing.quantity)!==Number(data.quantity)){
         const sequence=this.list('material_quantity_changes',true).filter(r=>r.requirementId===id).reduce((max,r)=>Math.max(max,Number(r.sequence)||0),0)+1;
         this.create('material_quantity_changes',{requirementId:id,sequence,type:quantityChange?'Revision removal':'Edit',revisionId:quantityChange?.revisionId||'',previousQuantity:existing.quantity,quantity:qty(Number(data.quantity)-Number(existing.quantity)),newQuantity:data.quantity,date:quantityChange?.date||today(),note:quantityChange?.note||''},actor);
@@ -291,22 +307,22 @@ export class Store {
   archive(key: string, id: string, version: number, actor: Actor) {
     return this.transaction(() => {
       const row = this.get(key, id, true);
-      if (row._version !== version) throw new AppError(409, 'This record changed. Refresh and try again.');
+      if (row._version !== version) throw conflict('This record changed. Refresh and try again.');
       this.guardTestSystem(key, row);
       if (this.hostedRules && key === 'roles' && isWelderRole(row) && !row._archived) throw new AppError(422, 'The Welder role cannot be deleted.');
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       this.guardStandardCode(key, row, actor, true);
       if (!row._archived) {
-        if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');
+        if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw conflict('Return outstanding rentals before archiving this article.');
         if(this.hostedRules&&key==='welders')archiveWelderQualifications(this,id,actor);
         for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource).filter(l=>l[relation.ownerKey]===id)){const marked=this.update(relation.resource,link.id,{ownerArchived:true},link._version,actor);this.archive(relation.resource,marked.id,marked._version,actor);}
         // Hosted: a PQR attribute value can be removed from its dropdown while PQRs keep showing it (shared/wps.ts).
         if (!(this.hostedRules && key === 'qualification_options')) for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
           const dependent = this.db.prepare(`SELECT id FROM ${table(resource.key)} WHERE "${f.name}"=? AND archived=0 LIMIT 1`).get(id);
-          if (dependent) throw new AppError(409, `This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
+          if (dependent) throw conflict(`This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
         }
       }
-      this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id);
+      try { this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id); } catch (error) { throw this.duplicate(key, row, id, error); }
       if(row._archived&&this.hostedRules&&key==='welders')restoreWelderQualifications(this,id,actor);
       if(row._archived)for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource,true).filter(l=>l[relation.ownerKey]===id&&l._archived&&l.ownerArchived)){this.get(relation.target,link[relation.targetKey]);const restored=this.archive(relation.resource,link.id,link._version,actor);this.update(relation.resource,restored.id,{ownerArchived:false},restored._version,actor);}
       this.audit(key, id, row._archived ? 'restored' : 'archived', `${row._archived ? 'Restored' : 'Archived'} ${this.resource(key).singular} ${this.display(key, row)}`, actor);
