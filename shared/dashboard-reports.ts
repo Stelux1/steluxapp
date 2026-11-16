@@ -1,6 +1,8 @@
 import type { Row } from './types.ts';
-import { share, weldWelderIds, isWelded, isTracerWeld, isNdtCompleted, isNdtRejected, weldTypeLabel, type DashboardFilters } from './weld-dashboard.ts';
-import { isoItpId } from './itp-dashboard.ts';
+import { share, weldWelderIds, isWelded, isTracerWeld, isNdtCompleted, isRepairedWeld, weldTypeLabel, type DashboardFilters } from './weld-dashboard.ts';
+import { weldItpId } from './itp-dashboard.ts';
+import { notAccepted } from './inspections.ts';
+import { isNonWeldCode } from './weld-codes.ts';
 import { newest } from './iso-status.ts';
 import { repairPerformanceLimit } from './site-settings.ts';
 import { hydrotestState } from './hydrotest.ts';
@@ -181,25 +183,27 @@ export function reportData(rows: Record<string, Row[]>, filters: ReportScopeFilt
   const projects = new Map(live(rows.projects).map(row => [row.id, row]));
   const welders = new Map(live(rows.welders).map(row => [row.id, row]));
   const types = new Map(live(rows.weld_types).map(row => [row.id, row]));
-  const requests = live(rows.inspection_requests).filter(row => text(row.type) === 'NDT');
-  const all = live(rows.welds).filter(weld => isos.has(text(weld.isoId))).map((weld): ReportWeld => {
-    const iso = isos.get(text(weld.isoId)), welderIds = weldWelderIds(weld);
+  const requests = live(rows.inspection_requests).filter(row => text(row.type) === 'NDT'), itps = live(rows.itps);
+  // As the dashboard: weld numbers coded GAP, SP, E or B are no welds (shared/weld-codes.ts).
+  const all = live(rows.welds).filter(weld => isos.has(text(weld.isoId)) && !isNonWeldCode(weld.weldNo)).map((weld): ReportWeld => {
+    const iso = isos.get(text(weld.isoId)), welderIds = weldWelderIds(weld), location = text(types.get(text(weld.typeId))?.location);
     return {
-      weld, iso, project: projects.get(text(iso?.projectId)), welderIds, wpsId: text(weld.wpsId), itpId: isoItpId(iso),
-      // The dashboard takes the company of the first welder.
-      companyIds: welderIds.length ? [text(welders.get(welderIds[0])?.companyId)] : [],
-      location: text(types.get(text(weld.typeId))?.location), typeId: text(weld.typeId),
+      // As the dashboard: a Field weld takes ITP No 2 (weldItpId); the company filter matches any of the weld's welders.
+      weld, iso, project: projects.get(text(iso?.projectId)), welderIds, wpsId: text(weld.wpsId), itpId: weldItpId(iso, location, itps),
+      companyIds: welderIds.map(id => text(welders.get(id)?.companyId)).filter(Boolean),
+      location, typeId: text(weld.typeId),
       processIds: new Set(requests.filter(request => request.weldId === weld.id).map(request => text(request.processId)).filter(Boolean)),
     };
   });
   const has = (name: string) => (filters[name] || []).length > 0, one = (name: string, value: string) => !has(name) || filters[name].includes(value);
   const plain = (item: ReportWeld) => one('project', text(item.iso?.projectId)) && (!has('welder') || item.welderIds.some(id => filters.welder.includes(id)))
-    && one('company', item.companyIds[0] ?? '') && one('weldType', item.location) && one('itp', item.itpId) && one('pipingClass', text(item.iso?.pipingClass))
+    && (!has('company') || item.companyIds.some(id => filters.company.includes(id))) && one('weldType', item.location) && one('itp', item.itpId) && one('pipingClass', text(item.iso?.pipingClass))
     && one('irn', text(item.iso?.irn)) && one('ped', text(item.iso?.ped)) && one('material', text(item.iso?.material)) && one('wps', item.wpsId)
     && (!has('ndt') || filters.ndt.some(id => item.processIds.has(id))) && one('testSystemFilter', text(item.iso?.testSystemId))
     && (!has('tracer') || isTracerWeld(item.weld) === (filters.tracer[0] === '1'));
   const from = (filters.from || [])[0] ?? '', to = (filters.to || [])[0] ?? '';
-  const dated = (item: ReportWeld) => { const date = text(item.weld.date); return !(from || to) || Boolean(date) && (!from || date >= from) && (!to || date <= to); };
+  // As the dashboard: a weld without a weld date (not welded yet) stays in scope under From / To.
+  const dated = (item: ReportWeld) => { const date = text(item.weld.date); return !date || (!from || date >= from) && (!to || date.slice(0, 10) <= to); };
   const undated = all.filter(plain);
   return { rows, welds: undated.filter(dated), undated, site };
 }
@@ -219,11 +223,16 @@ export interface Totals {
   welds: number; welded: number; examined: number; examinedPercent: number; examinedMm: number;
   accepted: number; rejected: number; repaired: number; repairRate: number; repairedMm: number;
 }
-/** Figures of a set of welds with the dashboard's predicates: welded = a welder is recorded; examined = a completed NDT result. */
+/** The dashboard's Examined: welded, not a tracer, and NDT completed (shared/weld-dashboard.ts). */
+const examinedWeld = (item: ReportWeld, results: Row[]) => isWelded(item.weld) && !isTracerWeld(item.weld) && isNdtCompleted(results, item.weld);
+/**
+ * Figures of a set of welds with the dashboard's predicates: welded = a welder is recorded; examined = welded, no tracer,
+ * NDT completed; rejected = examined and the latest NDT outcome is not accepted (the dashboard's notAccepted).
+ */
 export function totals(items: ReportWeld[], rows: Record<string, Row[]>): Totals {
   const results = rows.inspection_results || [];
-  const welded = items.filter(item => isWelded(item.weld)), examined = welded.filter(item => isNdtCompleted(results, item.weld.id));
-  const rejected = examined.filter(item => isNdtRejected(results, item.weld.id)).length, repaired = welded.filter(item => item.weld.repair === true);
+  const welded = items.filter(item => isWelded(item.weld)), examined = welded.filter(item => examinedWeld(item, results));
+  const rejected = examined.filter(item => notAccepted(item.weld, results)).length, repaired = welded.filter(item => isRepairedWeld(item.weld));
   const mm = (list: ReportWeld[]) => round(list.reduce((sum, item) => sum + weldLength(item.weld, rows), 0));
   return {
     welds: items.length, welded: welded.length, examined: examined.length, examinedPercent: share(examined.length, items.length), examinedMm: mm(examined),
@@ -348,10 +357,11 @@ export function wdiTrackingV2(data: ReportData, view: 'welds' | 'length' = 'weld
   const { rows } = data, results = rows.inspection_results || [], types = byId(rows.weld_types);
   const weight = (items: ReportWeld[]) => view === 'length' ? round(items.reduce((sum, item) => sum + weldLength(item.weld, rows), 0)) : items.length;
   const figures = (items: ReportWeld[]) => {
-    const welded = items.filter(item => isWelded(item.weld)), examined = welded.filter(item => isNdtCompleted(results, item.weld.id)), repaired = welded.filter(item => item.weld.repair === true);
+    const welded = items.filter(item => isWelded(item.weld)), examined = welded.filter(item => examinedWeld(item, results)), repaired = welded.filter(item => isRepairedWeld(item.weld));
     return { total: weight(items), welded: weight(welded), examined: weight(examined), repaired: weight(repaired) };
   };
-  const all = figures(data.welds), limit = repairPerformanceLimit(data.site), repairRate = share(all.repaired, all.welded);
+  // Repair rate as the dashboard: repaired / welded, in the length view repaired mm / examined mm.
+  const all = figures(data.welds), limit = repairPerformanceLimit(data.site), repairRate = view === 'length' ? share(all.repaired, all.examined) : share(all.repaired, all.welded);
   const rewelded = data.welds.filter(item => live(results).some(row => row.weldId === item.weld.id && row.reweld === true));
   const labels = [...new Set(data.welds.map(item => weldTypeLabel(types.get(item.typeId))))].sort(naturally);
   return {
@@ -377,8 +387,8 @@ export function welderTracer(data: ReportData, filters: ReportScopeFilters): { g
     const mine = data.welds.filter(item => item.welderIds.includes(welderId) && isWelded(item.weld));
     for (const wpsId of [...new Set(mine.map(item => item.wpsId))]) {
       const pair = mine.filter(item => item.wpsId === wpsId), plain = pair.filter(item => !isTracerWeld(item.weld)), tracers = pair.filter(item => isTracerWeld(item.weld));
-      const examined = plain.filter(item => isNdtCompleted(results, item.weld.id)).length, rejected = plain.filter(item => isNdtRejected(results, item.weld.id)).length;
-      const open = tracers.filter(item => !isNdtCompleted(results, item.weld.id)).length;
+      const done = plain.filter(item => examinedWeld(item, results)), examined = done.length, rejected = done.filter(item => notAccepted(item.weld, results)).length;
+      const open = tracers.filter(item => !isNdtCompleted(results, item.weld)).length;
       // Every rejected weld wants a tracer; tracers still without a result are open.
       const status = !rejected && !tracers.length ? '-' : tracers.length < rejected ? `${rejected - tracers.length} tracer${rejected - tracers.length === 1 ? '' : 's'} missing` : open ? `${open} open` : 'Complete';
       groups.push({ welder: welderName(welders.get(welderId)), wps: text(wps.get(wpsId)?.name) || 'No WPS', welds: plain.length, examined, rejected, tracers: tracers.length, status });
@@ -403,7 +413,7 @@ export function ndtTracking(data: ReportData, filters: ReportScopeFilters, optio
       const welder = welderName(welders.get(welderId)), method = text(wps.get(wpsId)?.name) || 'No WPS';
       groups.push({ welder, wps: method, welds: sums.welds, total: sums.examined, percent: sums.examinedPercent, good: sums.accepted, rejected: sums.rejected });
       for (const item of pair) {
-        const done = isNdtCompleted(results, item.weld.id);
+        const done = isNdtCompleted(results, item.weld);
         if (done && !options.examinedWelds) continue;
         if (!options.testPressured && pressured(item.iso)) continue;
         welds.push({ project: text(item.project?.internnumber), iso: text(item.iso?.isoNo), diameter: text(diameters.get(text(item.weld.diameterId))?.diameter), weld: text(item.weld.weldNo), welder, wps: method, examined: done ? resultText(latestNdt(rows, item.weld.id)) : '' });

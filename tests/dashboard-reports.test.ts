@@ -12,6 +12,7 @@ import { HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.t
 import { RESOURCES } from '../shared/resources.ts';
 import { projectScope } from '../shared/project-scope.ts';
 import { NO_DASHBOARD_FILTERS, weldDashboard, type DashboardFilters } from '../shared/weld-dashboard.ts';
+import { isNonWeldCode } from '../shared/weld-codes.ts';
 import {
   DASHBOARD_REPORTS, DASHBOARD_REPORT_MAP, NDT_REQUIRED, RANGE_TOO_LONG, WELDER_REQUIRED, dialogDefaults, ndtTracking, reportData, reportQuery, reportRefusal, reportRows,
   scopeFilters, totals, wdiTracking, wdiTrackingV2, welderReport, welderTracer, welderTracking,
@@ -71,7 +72,7 @@ test('Reports ▾ lists the ten reference entries in the reference order, with t
 });
 
 test('each dialog sends the dashboard filters it carries, its fixed values and its own fields', () => {
-  const TODAY = '2026-11-16', applied = filters({ welderId: 'welder-1', location: 'Shop', to: TODAY, projectId: 'project-cooling', wpsId: 'wps-1', companyId: 'company-north' });
+  const TODAY = '2026-11-16', applied = filters({ welderIds: ['welder-1'], location: 'Shop', to: TODAY, projectIds: ['project-cooling'], wpsIds: ['wps-1'], companyId: 'company-north' });
   // Open welds: welder fixed 0, its own Weld type instead of the dashboard's, To left out while it is the untouched default, the project site.
   const open = reportQuery(report('dashboard-open-welds'), applied, { weldType: 'weld-type-3' }, { defaultTo: TODAY, siteId: SITE });
   assert.deepEqual(open, { project: 'project-cooling', welder: '0', projectSite: SITE, weldType: 'weld-type-3' });
@@ -93,7 +94,7 @@ test('each dialog sends the dashboard filters it carries, its fixed values and i
   const tracer = reportQuery(report('dashboard-tracer-report'), applied, {}, { siteId: SITE });
   assert.equal(tracer.projectSite, SITE); assert.equal(tracer.welder, 'welder-1');
   // Multi-select dashboard filters (lists) are sent comma-separated.
-  assert.equal(reportQuery(report('dashboard-tracer-report'), { ...applied, welderId: ['w-1', 'w-2'] as unknown as string }).welder, 'w-1,w-2');
+  assert.equal(reportQuery(report('dashboard-tracer-report'), { ...applied, welderIds: ['w-1', 'w-2'] }).welder, 'w-1,w-2');
 });
 
 test('the dialog rules: welder required, NDT process for a single NDT process, at most 6 months for All sites', () => {
@@ -118,47 +119,83 @@ test('the report figures equal the dashboard figures of the same welds', () => {
   const { dir, store } = fixtureStore();
   try {
     const rows = rowsOf(store), { welderId, from, to } = sample(rows);
-    for (const f of [filters(), filters({ welderId }), filters({ from, to }), filters({ location: 'Shop' }), filters({ welderId, from, to })]) {
+    for (const f of [filters(), filters({ welderIds: [welderId] }), filters({ from, to }), filters({ location: 'Shop' }), filters({ welderIds: [welderId], from, to })]) {
       const board = dashboard(rows, f), { data } = dataFor(rows, 'dashboard-tracer-report', f);
       assert.equal(data.welds.length, board.scopeWelds, `scope ${JSON.stringify(f)}`);
       const sums = totals(data.welds, data.rows);
       assert.deepEqual([sums.welds, sums.welded, sums.examined, sums.examinedPercent, sums.repaired, sums.repairRate], [board.kpis.totalWelds, board.kpis.welded, board.kpis.examined, board.kpis.examinedPercent, board.kpis.repaired, board.kpis.repairRate]);
       // WDI tracking V2 prints the dashboard's key figures.
       // WDI tracking V2 carries no project, welder or WPS: it is compared with the dashboard without them.
-      const v2 = wdiTrackingV2(dataFor(rows, 'dashboard-wdi-tracking-v2', f).data), wide = dashboard(rows, { ...f, welderId: '', projectId: '', wpsId: '' });
+      const v2 = wdiTrackingV2(dataFor(rows, 'dashboard-wdi-tracking-v2', f).data), wide = dashboard(rows, { ...f, welderIds: [], projectIds: [], wpsIds: [] });
       assert.deepEqual([v2.total, v2.welded, v2.examined, v2.examinedPercent, v2.repaired, v2.repairRate, v2.limit, v2.aboveLimit], [wide.kpis.totalWelds, wide.kpis.welded, wide.kpis.examined, wide.kpis.examinedPercent, wide.kpis.repaired, wide.kpis.repairRate, wide.kpis.repairPerformance.limit, wide.kpis.repairPerformance.aboveLimit]);
       assert.equal(v2.byType.reduce((sum, line) => sum + line.total, 0), wide.kpis.totalWelds);
     }
     assert.ok(dashboard(rows, filters()).kpis.examined > 0 && dashboard(rows, filters()).kpis.totalWelds > 0, 'the fixture has examined welds');
     // Welder report: the summary of the filtered welder is the dashboard of that welder.
-    const board = dashboard(rows, filters({ welderId })), { data, filters: parsed } = dataFor(rows, 'dashboard-welder-report', filters({ welderId }));
+    const board = dashboard(rows, filters({ welderIds: [welderId] })), { data, filters: parsed } = dataFor(rows, 'dashboard-welder-report', filters({ welderIds: [welderId] }));
     const [section] = welderReport(data, parsed);
     assert.equal(section.welderId, welderId);
     assert.deepEqual([section.totals.welded, section.totals.examined, section.totals.repaired, section.totals.repairRate], [board.kpis.welded, board.kpis.examined, board.kpis.repaired, board.kpis.repairRate]);
     assert.equal(section.lines.length, board.kpis.totalWelds, 'one line per weld of the welder');
     // All sites: by default only accepted results; ticking both boxes lists every weld of the welder (over every site).
-    const all = dataFor(rows, 'dashboard-welder-report-all-sites', filters({ welderId }), { na: true, includeWithoutNdt: true });
+    const all = dataFor(rows, 'dashboard-welder-report-all-sites', filters({ welderIds: [welderId] }), { na: true, includeWithoutNdt: true });
     const allSection = welderReport(all.data, all.filters, { allSites: true, na: true, withoutNdt: true })[0];
     assert.ok(allSection.lines.length >= section.lines.length);
     const accepted = welderReport(all.data, all.filters, { allSites: true })[0];
     assert.ok(accepted.lines.every(line => line[10] === 'A'), 'only accepted results without the boxes');
     // Welder tracking: grouped rows of one welder / WPS never examine more welds than the group has; examined welds match the dashboard.
-    const tracking = dataFor(rows, 'dashboard-welder-tracking', filters({ welderId }));
+    const tracking = dataFor(rows, 'dashboard-welder-tracking', filters({ welderIds: [welderId] }));
     for (const line of welderTracking(tracking.data, tracking.filters, null)) assert.ok(line.examined <= line.welds && line.accepted + line.rejected === line.examined);
-    // WDI tracking without dates: completed + open = every weld of the dashboard; with dates the completed welds are the dashboard's scope.
+    // WDI tracking: completed + open = every weld of the dashboard, with and without dates (the dashboard keeps welds without
+    // a weld date under From / To); with dates the completed welds are the dated welds of the dashboard's scope.
     assert.equal(wdiTracking(dataFor(rows, 'dashboard-wdi-tracking', filters()).data).total.total, dashboard(rows, filters()).kpis.totalWelds);
-    assert.equal(wdiTracking(dataFor(rows, 'dashboard-wdi-tracking', filters({ from, to })).data).total.completed, dashboard(rows, filters({ from, to })).kpis.totalWelds);
+    const datedWdi = wdiTracking(dataFor(rows, 'dashboard-wdi-tracking', filters({ from, to })).data).total;
+    assert.equal(datedWdi.total, dashboard(rows, filters({ from, to })).kpis.totalWelds);
+    assert.equal(datedWdi.completed, sample(rows).welds.filter(weld => { const date = String(weld.date ?? '').slice(0, 10); return date && date >= from && date <= to && !isNonWeldCode(weld.weldNo); }).length);
     // With tracer: the plain welds of the groups add up to the dashboard's compliance welds (tracers left out).
-    const tracer = dataFor(rows, 'dashboard-welder-tracer', filters({ welderId }));
+    const tracer = dataFor(rows, 'dashboard-welder-tracer', filters({ welderIds: [welderId] }));
     const groups = welderTracer(tracer.data, tracer.filters).groups, compliance = board.compliance.filter(group => group.welderId === welderId);
     assert.equal(groups.reduce((sum, group) => sum + group.welds, 0), compliance.reduce((sum, group) => sum + group.total, 0));
     // NDT tracking at 100 % lists every welder / WPS group; Good + Rejected = Total examined.
-    const ndt = dataFor(rows, 'dashboard-welder-ndt-tracking', filters({ welderId }));
+    const ndt = dataFor(rows, 'dashboard-welder-ndt-tracking', filters({ welderIds: [welderId] }));
     const tracked = ndtTracking(ndt.data, ndt.filters, { percent: 100.1, examinedWelds: true, testPressured: true });
     assert.equal(tracked.groups.reduce((sum, group) => sum + group.total, 0), compliance.reduce((sum, group) => sum + group.examined, 0));
     for (const group of tracked.groups) assert.equal(group.good + group.rejected, group.total);
     assert.equal(tracked.welds.length, tracked.groups.reduce((sum, group) => sum + group.welds, 0), 'with examined and test pressured welds every weld of the groups is listed');
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('merge of wave 4: the reports count with the dashboard rules (undated welds, GAP/SP/E/B numbers, tracers, Field ITP No 2, any welder\'s company)', () => {
+  const rows = {
+    projects: [{ id: 'p1', internnumber: 'P1' }], isometrics: [{ id: 'i1', projectId: 'p1', isoNo: '0001', itpId: 'itp-shop', itp2Id: 'itp-field' }],
+    weld_types: [{ id: 'ws', abbreviation: 'WS', location: 'Shop' }, { id: 'fw', abbreviation: 'FW', location: 'Field' }],
+    welders: [{ id: 'w1', number: 'W01', companyId: 'c1' }, { id: 'w2', number: 'W02', companyId: 'c2' }],
+    itps: [{ id: 'itp-shop', number: 'S', ndtPercent: 10 }, { id: 'itp-field', number: 'F', ndtPercent: 20 }],
+    welds: [
+      { id: 'a', isoId: 'i1', weldNo: '001', typeId: 'ws', welder1Id: 'w1', date: '2026-03-01' },
+      { id: 'b', isoId: 'i1', weldNo: '002', typeId: 'fw', welder1Id: 'w1', welder2Id: 'w2' },
+      { id: 'c', isoId: 'i1', weldNo: '003', typeId: 'fw', welder1Id: 'w2', date: '2026-05-01', repair: true },
+      { id: 'd', isoId: 'i1', weldNo: '12GAP', typeId: 'ws', welder1Id: 'w1', date: '2026-03-02' },
+      { id: 't', isoId: 'i1', weldNo: '004', typeId: 'ws', welder1Id: 'w1', date: '2026-03-03', tracer: true },
+    ],
+    inspection_requests: [], inspection_results: [
+      { id: 'r1', weldId: 'a', type: 'NDT', result: 'Accepted', date: '2026-03-05' }, { id: 'r2', weldId: 't', type: 'NDT', result: 'Accepted', date: '2026-03-06' },
+      { id: 'r3', weldId: 'c', type: 'NDT', result: 'Rejected', date: '2026-05-02' },
+    ],
+  } as unknown as Record<string, Row[]>;
+  const board = (f: DashboardFilters) => weldDashboard({ welds: rows.welds, isometrics: rows.isometrics, projects: rows.projects, weldTypes: rows.weld_types, welders: rows.welders, wps: [], itps: rows.itps, ndtProcesses: [], requests: [], results: rows.inspection_results }, f);
+  const definition = report('dashboard-tracer-report');
+  for (const f of [filters(), filters({ from: '2026-02-01', to: '2026-04-01' }), filters({ companyId: 'c2' }), filters({ itpId: 'itp-field' }), filters({ welderIds: ['w2'] })]) {
+    const data = reportData(rows, scopeFilters(definition, reportQuery(definition, f))), sums = totals(data.welds, rows), kpis = board(f).kpis;
+    assert.deepEqual([sums.welds, sums.welded, sums.examined, sums.examinedPercent, sums.repaired, sums.repairRate], [kpis.totalWelds, kpis.welded, kpis.examined, kpis.examinedPercent, kpis.repaired, kpis.repairRate], JSON.stringify(f));
+  }
+  // Hand-counted: no filter = a, b, c, t (12GAP is no weld); the tracer t is not examined; examined a and c (c rejected) = 2 of 4 = 50 %.
+  const all = totals(reportData(rows, scopeFilters(definition, reportQuery(definition, filters()))).welds, rows);
+  assert.deepEqual([all.welds, all.examined, all.examinedPercent, all.rejected], [4, 2, 50, 1]);
+  // From 1 Feb to 1 Apr keeps the undated b with a and t; Field ITP No 2 selects b and c; company c2 is welder 2 of b too.
+  assert.deepEqual(reportData(rows, scopeFilters(definition, reportQuery(definition, filters({ from: '2026-02-01', to: '2026-04-01' })))).welds.map(item => item.weld.id), ['a', 'b', 't']);
+  assert.deepEqual(reportData(rows, scopeFilters(definition, reportQuery(definition, filters({ itpId: 'itp-field' })))).welds.map(item => item.weld.id), ['b', 'c']);
+  assert.deepEqual(reportData(rows, scopeFilters(definition, reportQuery(definition, filters({ companyId: 'c2' })))).welds.map(item => item.weld.id), ['b', 'c']);
 });
 
 type Options = { method?: string; pilot?: string; data?: unknown };
@@ -202,7 +239,7 @@ test('the server refuses a Welder report without a welder (400) and an All sites
 
 test('each of the ten reports returns a PDF for the dashboard filters, and prints the dashboard figures', async t => {
   const { store, admin } = await server(t), rows = rowsOf(store), { welderId } = sample(rows);
-  const applied = filters({ welderId }), board = dashboard(rows, applied);
+  const applied = filters({ welderIds: [welderId] }), board = dashboard(rows, applied);
   for (const entry of DASHBOARD_REPORTS) {
     const values = entry.key === 'dashboard-welder-tracking' ? { single: 'yes', ndt: String(rows.ndt_processes.find(row => !row._archived)!.id) } : dialogDefaults(entry);
     const text = await pdfText(await get(admin, entry.key, reportQuery(entry, applied, values, { siteId: SITE })));
