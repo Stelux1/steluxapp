@@ -249,6 +249,8 @@ test('rule (d) through HTTP: Prefab / Field complete lock their welds and the in
   const location = (weld: Row) => f.store.get('weld_types', String(weld.typeId)).location;
   const welds = f.store.list('welds').filter(weld => weld.isoId === 'iso-1');
   const shop = welds.find(weld => location(weld) === 'Shop')!, field = welds.find(weld => location(weld) === 'Field')!;
+  // A VT report on the field weld, generated before the phases are completed.
+  const vt = runAction(f.store, 'visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: [field.id] }, SYSTEM).record!;
   // Marked complete without any release record (the sample's open NDT is skipped by the system actor).
   runAction(f.store, 'complete-phase', { isoId: 'iso-1', type: 'Prefab' }, SYSTEM);
   runAction(f.store, 'complete-phase', { isoId: 'iso-1', type: 'Field' }, SYSTEM);
@@ -266,6 +268,12 @@ test('rule (d) through HTTP: Prefab / Field complete lock their welds and the in
   }
   assert.equal((await f.act('pwht-upload', { weldIds: [shop.id], reportNo: 'PW-1', date: '2026-11-02' })).status, 423);
   assert.equal((await f.act('visual-inspection', { weldIds: [field.id], accepted: [field.id], reportNo: 'VT-1', date: '2026-11-02' })).status, 423);
+  // The VT report operations of the Visual inspection hub, and the NDT dialog, are refused on locked welds too.
+  assert.equal((await f.act('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: [shop.id] })).status, 423, 'VT generate');
+  assert.equal((await f.act('visual-inspection', { op: 'marks', reportId: vt.id, accepted: [field.id], date: '2026-11-02' })).status, 423, 'VT A/NA');
+  assert.equal((await f.act('visual-inspection', { op: 'delete', reportIds: [vt.id] })).status, 423, 'VT delete takes the results of locked welds');
+  assert.equal(f.store.get('visual_reports', vt.id)._archived, false);
+  assert.equal((await f.act('ndt-weld', { weldId: shop.id, type: 'NDT' })).status, 423, 'NDT dialog');
   assert.equal(JSON.stringify(f.store.list('inspection_results').filter(row => row.weldId === shop.id || row.weldId === field.id)), before);
   // The completion fields cannot be written through the record routes.
   const iso = f.store.get('isometrics', 'iso-1');

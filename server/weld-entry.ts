@@ -44,7 +44,11 @@ export function assertInspectionUnlocked(store: Store, key: string, data: Values
   let weldIds: string[] = [];
   if (key === 'ndt-weld') weldIds = ids(data.weldId);
   else if (key === 'inspection-upload' || key === 'pwht-upload') weldIds = ids(data.weldIds);
-  else if (key === 'visual-inspection') weldIds = [...ids(data.weldIds), ...ids(data.accepted), ...ids(data.notAccepted), ...ids(data.notApplicable)];
+  else if (key === 'visual-inspection') {
+    weldIds = [...ids(data.weldIds), ...ids(data.accepted), ...ids(data.notAccepted), ...ids(data.notApplicable)];
+    // Deleting a VT report takes the visual results of its welds with it, so its welds must be unlocked too.
+    if (data.op === 'delete') for (const reportId of ids(data.reportIds)) { try { weldIds.push(...String(store.get('visual_reports', reportId, true).weldIds ?? '').split(',').filter(Boolean)); } catch { /* the action reports it */ } }
+  }
   else if (key === 'inspection-result') { try { weldIds = ids(store.get('inspection_requests', data.requestId, true).weldId); } catch { return; } }
   else return;
   const context = lockContextOf(store);
