@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../server/store.ts';
@@ -15,7 +15,10 @@ import {
   PUNCH_CATEGORIES, PUNCH_MESSAGES, PUNCH_PROGRESS_OPTIONS, SIGNER_TYPES, canTransition, finishSummary, hasPunchProgress, isBlockingCategory, isOverdue, matchesPunchKpi, nextPunchNumber, punchAddRefusal,
   punchBlocking, punchCategory, punchCounts, punchDeadlineSoon, punchFinishErrors, punchInputErrors, punchKind, punchKpis, punchPhasePassed, punchProgress, punchProgressLabel, punchStatus, punchWriteError,
   withPunchPhases, PUNCH_FORM_FIELDS, punchFormDefaults,
+  EMPTY_PUNCH_FILTERS, PUNCH_DEFAULT_PAGE_SIZE, PUNCH_HEIC_MESSAGE, PUNCH_KPI_FILTERS, PUNCH_LETTERS, PUNCH_LIST_PATH, PUNCH_PAGE_SIZES, PUNCH_PRINT_OPTIONS, comparePunchRows, matchesPunchFilters, punchDialogWarnings, punchFileProblem,
+  punchFiltersFromParams, punchFiltersToParams, punchKpiActive, punchListLink, punchPhaseWarning, punchPrintHint, punchProjectLabel, punchReportPassedRefusal, punchResizeTarget, punchRowClass,
 } from '../shared/punch.ts';
+import { punchListOptions } from '../shared/pdf-lists.ts';
 import type { Row, User } from '../shared/types.ts';
 
 const TODAY = '2026-11-16';
@@ -61,7 +64,7 @@ test('the eight key figures count and filter the same items', () => {
 test('counts of an isometric: open and finished pre-punch and punch, overdue and blocking', () => {
   const items = [row('1', { punchType: 'Pre-punch', category: A, dueDate: '2026-11-01' }), row('2', { punchType: 'Pre-punch', category: C, status: 'Finished' }), row('3', { category: B }), row('4', { category: D, status: 'Finished' }), row('5', { category: C, status: 'Passed' }), row('6', { status: 'Removed' })];
   // Item 5 was stored as Passed by the earlier version and has no isometric: it reads Finished (Passed needs an isometric).
-  assert.deepEqual(punchCounts(items, TODAY), { prePunchOpen: 1, prePunchFinished: 1, punchOpen: 1, punchFinished: 2, overdue: 1, blocking: 2 });
+  assert.deepEqual(punchCounts(items, TODAY), { prePunchOpen: 1, prePunchFinished: 1, punchOpen: 1, punchFinished: 2, overdue: 1, blocking: 2, prePunchPassed: false, punchPassed: false, prePunchWarn: 1, punchWarn: 1 });
 });
 
 test('punch progress options read 0% … 100% (default 0%); earlier labels with a space still read', () => {
@@ -81,7 +84,7 @@ test('the isometric blockers and the punch driver of the progress read these fun
   const input = (punch: Row[] | null, iso: Row = row('iso')): IsoStatusInput => ({ iso, site, welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch });
   const punch = [row('1', { isoId: 'iso', category: A }), row('2', { isoId: 'iso', category: C }), row('3', { isoId: 'iso', category: B, status: 'Finished' }), row('4', { isoId: 'other', category: A })];
   const blockers = isoBlockers(input(punch));
-  assert.equal(blockers.total, 1); assert.equal(blockers.groups[0].key, 'punch'); assert.equal(blockers.groups[0].items[0].message, '1 open punch item in category A or B.');
+  assert.equal(blockers.total, 1); assert.equal(blockers.groups[0].key, 'punch'); assert.equal(blockers.groups[0].items[0].message, '1 open punch');
   assert.equal(isoBlockers(input([row('c', { isoId: 'iso', category: D })])).total, 0, 'non-blocking categories do not block');
   const driver = (iso: Row, extra: Partial<IsoStatusInput> = {}) => isoProgress({ ...input([], iso), ...extra }).phases[1].drivers.find(item => item.key === 'punch')!;
   assert.equal(driver(row('iso')).inScope, false, 'out of scope until a punch progress is entered');
@@ -481,4 +484,167 @@ test('hosted Add item labels follow the capture: the category is "Type" and the 
   assert.equal(label(HOSTED_RELEASE_PROFILE, 'isoId'), 'ISO');
   assert.equal(label('full', 'category'), 'Category');
   assert.equal(label('full', 'isoId'), 'Isometric');
+});
+
+// ----- wave 3: punch list views, filters, the isometric card and the punch dialog -----------------------------------
+
+const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('the list opens on the Open view; Finished, Passed and Removed are separate views', () => {
+  const items = withPunchPhases([
+    row('o', { isoId: 'i1', category: C }), row('f', { isoId: 'i2', category: C, status: 'Finished' }), row('r', { isoId: 'i3', category: C, status: 'Removed' }),
+    row('p', { isoId: 'i4', category: A, status: 'Finished', clientApproved: true }), row('n', { isoId: 'i1', category: A, status: 'Finished', clientApproved: true }),
+  ]);
+  const ids = (address: string) => items.filter(item => matchesPunchFilters(item, punchFiltersFromParams(new URLSearchParams(address)), TODAY)).map(item => item.id);
+  assert.deepEqual(ids(''), ['o'], 'no card chosen: only Open items');
+  assert.deepEqual(ids('viewT=finished'), ['f']);
+  assert.deepEqual(ids('viewT=passed'), ['p', 'n'], 'Finished and approved items of a passed phase');
+  assert.deepEqual(ids('viewT=removed'), ['r']);
+  assert.equal(punchFiltersFromParams(new URLSearchParams('viewT=nonsense')).view, 'open', 'an unknown view falls back to Open');
+});
+
+test('the filters live in the address with the reference names, and the cards set view, punch type and due filter', () => {
+  const filters = punchFiltersFromParams(new URLSearchParams('iso_id=iso-1&project_id=project-1&punch_type=prepunch&viewT=finished&due_filter=overdue&item_type=b'));
+  assert.deepEqual(filters, { view: 'finished', projectId: 'project-1', isoId: 'iso-1', punchType: 'Pre-punch', letter: 'B', due: 'overdue' });
+  assert.equal(punchFiltersToParams(filters).toString(), 'iso_id=iso-1&project_id=project-1&punch_type=prepunch&item_type=B&viewT=finished&due_filter=overdue');
+  assert.equal(punchFiltersToParams(EMPTY_PUNCH_FILTERS).toString(), '', 'the Open view with no filters writes nothing');
+  assert.equal(punchListLink({ isoId: 'iso-1', projectId: 'project-1', punchType: 'Pre-punch' }), `${PUNCH_LIST_PATH}?iso_id=iso-1&project_id=project-1&punch_type=prepunch`);
+  for (const [key, card] of Object.entries(PUNCH_KPI_FILTERS)) { assert.equal(punchKpiActive(key as keyof typeof PUNCH_KPI_FILTERS, { ...EMPTY_PUNCH_FILTERS, ...card, letter: '', isoId: '', projectId: '' }), true, key); }
+  assert.equal(punchKpiActive('open', EMPTY_PUNCH_FILTERS), true); assert.equal(punchKpiActive('finished', EMPTY_PUNCH_FILTERS), false);
+});
+
+test('filter and table details: Type options A to D, Status ascending, page sizes 10 to 500 with 20 as default, Project option text', () => {
+  assert.deepEqual(PUNCH_LETTERS, ['A', 'B', 'C', 'D']);
+  assert.deepEqual(PUNCH_PAGE_SIZES, [10, 20, 50, 100, 500]); assert.equal(PUNCH_DEFAULT_PAGE_SIZE, 20);
+  const rowsInOrder = [row('r', { status: 'Removed', number: '9' }), row('p', { status: 'Passed', number: '8' }), row('f', { status: 'Finished', number: '7' }), row('o1', { number: '1' }), row('o2', { number: '2' })];
+  assert.deepEqual([...rowsInOrder].sort(comparePunchRows).map(item => item.id), ['o2', 'o1', 'f', 'p', 'r'], 'Status ascending (Open first), the newest number first inside a status');
+  assert.equal(punchProjectLabel(row('x', { internnumber: '20240101', description: 'Template project' })), '20240101 — Template project');
+  const source = read('client/punch.tsx');
+  assert.match(source, /<option key=\{value\} value=\{value\}>\{value\}<\/option>\)\}<\/select><\/div>\s*<button type="button" className="btn small primary" onClick=\{\(\) => apply\(\{ letter/, 'short Type labels, then Apply');
+  assert.match(source, />Apply<\/button>/); assert.match(source, />Reset<\/button>/); assert.match(source, /<option value="">All<\/option>/);
+  assert.doesNotMatch(source, /Clear filters/, 'Apply and Reset replace Clear filters');
+});
+
+test('overdue rows are marked as a row, not with a badge; the Isometric cell links to the isometric in a new tab', () => {
+  assert.equal(punchRowClass(row('x', { dueDate: '2024-03-21' }), TODAY), 'overdue');
+  assert.equal(punchRowClass(row('x', { dueDate: '2026-11-19' }), TODAY), 'due-soon');
+  assert.equal(punchRowClass(row('x', { dueDate: '2024-03-21', status: 'Finished' }), TODAY), '');
+  const source = read('client/punch.tsx');
+  assert.match(source, /to=\{`\/workspace\/isometrics\/\$\{row\.isoId\}`\} target="_blank"/);
+  assert.doesNotMatch(source, /<Badge color="red">Overdue<\/Badge>/);
+  assert.match(source, /punch-row-\$\{punchRowClass/);
+});
+
+test('the Print dialog is one button; selected rows print on their own and the drawing option is offered', () => {
+  assert.equal(punchPrintHint(0), 'All items matching the current filter'); assert.equal(punchPrintHint(2), 'Selected punch items (2)');
+  assert.deepEqual(Object.values(PUNCH_PRINT_OPTIONS), ['Punch document (Document column / download)', 'Isometric drawing (imported PDF per isometric)']);
+  const source = read('client/punch.tsx'), pdf = read('client/pdf-documents.tsx');
+  assert.doesNotMatch(source, /window\.print/); assert.doesNotMatch(source, /Print PDF/);
+  assert.match(pdf, /label="Print" title="Print" subtitle=\{punchPrintHint\(selected\.length\)\}/);
+  assert.match(pdf, /name: 'isoDrawing'/); assert.match(pdf, /ids: selected\.join\(','\)/);
+  const options = punchListOptions({ ids: 'a,b,a', isoDrawing: '1', view: 'open' }).options;
+  assert.deepEqual(options.ids, ['a', 'b']); assert.equal(options.isoDrawing, true); assert.equal(punchListOptions({ view: 'nonsense' }).error, 'Choose Open, Finished, Passed or Removed.');
+});
+
+test('photos: images and PDF only, HEIC has its own sentence, large photos are scaled to 1280 px', () => {
+  assert.equal(punchFileProblem('IMG_1.heic', 'image/heic'), 'HEIC format is not supported. Use "Choose file" or save as JPEG.');
+  assert.equal(punchFileProblem('IMG_2.HEIF'), PUNCH_HEIC_MESSAGE);
+  assert.ok(punchFileProblem('list.xlsx'), 'a spreadsheet is refused'); assert.ok(punchFileProblem('notes.txt', 'text/plain'));
+  assert.equal(punchFileProblem('a.jpg', 'image/jpeg'), ''); assert.equal(punchFileProblem('b.pdf', 'application/pdf'), ''); assert.equal(punchFileProblem('c.PNG'), '');
+  assert.deepEqual(punchResizeTarget(4032, 3024), { width: 1280, height: 960 });
+  assert.deepEqual(punchResizeTarget(3024, 4032), { width: 960, height: 1280 });
+  assert.deepEqual(punchResizeTarget(800, 600), { width: 800, height: 600 }); assert.deepEqual(punchResizeTarget(1280, 1000), { width: 1280, height: 1000 });
+});
+
+test('per-phase badges, counts and warnings of the isometric status card', () => {
+  // A Pre-punch A item that is Finished but not yet approved: the old blocking count drops it, the phase warning does not.
+  const items = [row('1', { isoId: 'iso', punchType: 'Pre-punch', category: A, status: 'Finished' }), row('2', { isoId: 'iso', punchType: 'Punch', category: C })];
+  assert.equal(punchBlocking(items).length, 0);
+  const counts = punchCounts(items, TODAY);
+  assert.equal(counts.prePunchWarn, 1); assert.equal(counts.punchWarn, 0); assert.equal(counts.prePunchPassed, false); assert.equal(counts.punchPassed, false);
+  assert.equal(punchPhaseWarning('Pre-punch', counts.prePunchWarn), 'Pre-punch: 1 A/B still need Finished + approval.');
+  assert.equal(punchPhaseWarning('Punch', counts.punchWarn), null);
+  // Approved: the Pre-punch phase reads Passed and the warning goes.
+  const passed = punchCounts([{ ...items[0], clientApproved: true }, items[1]], TODAY);
+  assert.equal(passed.prePunchPassed, true); assert.equal(passed.prePunchWarn, 0); assert.equal(passed.prePunchFinished, 0, 'a passed item is not counted as finished');
+  const source = read('client/punch.tsx');
+  assert.match(source, />Punch list<\/Link>/); assert.match(source, /<Plus size=\{13\} aria-hidden="true"\/>Item<\/button>/); assert.match(source, /\{phase\.passed \? 'Passed' : 'Open'\}/);
+  assert.match(source, /stat\(`\$\{phase\.open\} open`, \{ punchType: phase\.kind \}\)/); assert.match(source, /view: 'finished'/); assert.match(source, /due: 'overdue'/);
+});
+
+test('the punch dialog of an isometric: warnings, the shell of the reference, and the sign-off list of the phase', () => {
+  const iso = row('iso', { testSystemId: '' });
+  const items = [row('1', { isoId: 'iso', punchType: 'Pre-punch', category: A }), row('2', { isoId: 'iso', punchType: 'Pre-punch', category: B, status: 'Finished' })];
+  assert.deepEqual(punchDialogWarnings(iso, items).map(warning => [warning.type, warning.message]), [
+    ['ab_items_open', 'There are still 2 A/B items that must be Finished and approved before this phase can be Passed.'],
+    ['hydro_not_required', 'No test system linked — hydrotest is not applicable.'],
+  ]);
+  assert.deepEqual(punchDialogWarnings(row('iso', { testSystemId: 'ts' }), []), []);
+  const source = read('client/punch.tsx');
+  assert.match(source, /<Modal title="Punch lists" onClose=\{onClose\} wide>/);
+  assert.match(source, /Manage items and view lists on the punch list page\. This modal is for quick add and passed reporting only\./);
+  assert.match(source, />Open punch list<\/Link>/); assert.match(source, />Passed overview<\/Link>/); assert.match(source, /punchListLink\(\{ view: 'passed' \}\)/);
+  assert.match(source, /isoId \? 'Complete punch & Sign-off' : 'Report passed'/); assert.match(source, /<p className="panel-section-title">New item<\/p>/);
+  assert.match(source, /Add<\/button>\s*<\/form>/); assert.doesNotMatch(source, /Add punch item/);
+  for (const text of ['Select punch items', 'Select all', 'Finish \\+ Sign-off', 'Select one or more open items from this isometric to mark complete with sign-off\\.']) assert.match(source, new RegExp(text));
+  assert.equal(PUNCH_MESSAGES.select, 'Select one or more items first.');
+});
+
+test('Edit punchlist item: title, fields, approval button, activity log and Save / Close', () => {
+  const source = read('client/punch.tsx');
+  const edit = source.slice(source.indexOf('function PunchEditDialog'), source.indexOf('// ----- actions'));
+  assert.match(edit, /title="Edit punchlist item"/);
+  for (const name of ['category', 'description', 'dueDate', 'contractorId', 'reportedDate', 'reportedById']) assert.match(edit, new RegExp(`input\\('${name}'`), name);
+  for (const gone of ["input('projectId'", "input('isoId'", "input('name'"]) assert.doesNotMatch(edit, new RegExp(gone.replace(/[()']/g, '\\$&')), `${gone} is not in Edit`);
+  assert.match(edit, /Mark as Client approved/); assert.match(edit, /<RecordHistory resource=\{RESOURCE\} id=\{record\.id\}\/>/);
+  assert.match(edit, />Close<\/button><button className="btn primary" disabled=\{busy\}>.*Save<\/button>/);
+  assert.doesNotMatch(edit, /accept=/, 'Edit keeps one plain Choose file');
+});
+
+test('Register passed is refused without an isometric or while the phase still has open A/B items', () => {
+  const items = [row('1', { isoId: 'iso', punchType: 'Pre-punch', category: A }), row('2', { isoId: 'other', punchType: 'Pre-punch', category: C })];
+  assert.equal(punchReportPassedRefusal('', 'Pre-punch', items), 'Please select an isometric (Passed requires an isometric).');
+  assert.match(punchReportPassedRefusal('iso', 'Pre-punch', items)!, /There are still 1 A\/B items/);
+  assert.match(punchReportPassedRefusal('iso', 'Punch', items)!, /There are still 1 A\/B/, 'Punch waits for the Pre-punch A/B items too');
+  assert.equal(punchReportPassedRefusal('other', 'Pre-punch', items), null);
+  assert.equal(punchReportPassedRefusal('other', 'Sometimes', items), PUNCH_MESSAGES.kind);
+});
+
+test('the punch blocker line reads "<n> open pre-punch" and links to the filtered Punch lists page', () => {
+  const punch = [row('1', { isoId: 'iso', punchType: 'Pre-punch', category: A }), row('2', { isoId: 'iso', punchType: 'Punch', category: B }), row('3', { isoId: 'iso', punchType: 'Punch', category: C })];
+  const iso = row('iso', { projectId: 'project-1' });
+  const blockers = isoBlockers({ iso, site: row('site'), welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch });
+  assert.equal(blockers.total, 2);
+  assert.deepEqual(blockers.groups[0].items, [
+    { message: '1 open pre-punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=prepunch' },
+    { message: '1 open punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=punch' },
+  ]);
+  assert.match(read('client/iso-header.tsx'), /item\.href && canRecord\('punchlists'\)/);
+});
+
+test('Report passed over HTTP: needs an isometric, waits for open A/B items, shows in the Passed view and takes its evidence', async t => {
+  const f = await fixture(t);
+  const report = (data: Record<string, unknown>, as = f.worker, pilot = 'weld') => as('/actions/punch-report-passed', { method: 'POST', data, pilot });
+  assert.equal((await report({ punchType: 'Pre-punch' })).status, 422, 'an isometric is required');
+  assert.equal((await report({ isoId: 'iso-6', punchType: 'Sometimes' })).status, 422);
+  assert.equal((await report({ isoId: 'iso-6', punchType: 'Pre-punch' }, f.viewer)).status, 403);
+  assert.equal((await report({ isoId: 'iso-6', punchType: 'Pre-punch' }, f.worker, 'mto')).status, 403);
+  const open = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, isoId: 'iso-6', category: A } }))).record;
+  const refused = await report({ isoId: 'iso-6', punchType: 'Pre-punch' }); assert.equal(refused.status, 422); assert.match((await json<{ error: string }>(refused)).error, /still 1 A\/B items/);
+  // A non-blocking open item does not hold the phase back.
+  assert.equal((await f.worker('/actions/punch-remove', { method: 'POST', data: { punchId: open.id } })).status, 201);
+  const minor = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, isoId: 'iso-6', category: C } }))).record;
+  const done = await report({ isoId: 'iso-6', punchType: 'Pre-punch', reportedDate: '2026-11-16' }); assert.equal(done.status, 201, await done.clone().text());
+  const marker = (await json<{ record: Row }>(done)).record;
+  assert.equal(marker.reportPassed, true); assert.equal(marker.isoId, 'iso-6'); assert.equal(marker.punchType, 'Pre-punch');
+  const view = withPunchPhases(f.store.list('punchlists'));
+  assert.equal(punchStatus(view.find(item => item.id === marker.id)!), 'Passed'); assert.equal(punchStatus(view.find(item => item.id === minor.id)!), 'Open', 'the open C item stays Open');
+  assert.ok(view.filter(item => matchesPunchFilters(item, { ...EMPTY_PUNCH_FILTERS, view: 'passed' }, TODAY)).some(item => item.id === marker.id));
+  assert.equal((await report({ isoId: 'iso-6', punchType: 'Pre-punch' })).status, 422, 'not twice');
+  // The evidence of a passed report can still be attached; any other passed item stays locked.
+  assert.equal((await f.worker('/files', { method: 'POST', data: f.form({ entityType: 'punchlists', entityId: marker.id, documentType: 'Punch photo' }, { name: 'round.png', type: 'image/png', bytes: PNG }) })).status, 201);
+  assert.equal((await report({ isoId: 'iso-6', punchType: 'Punch' })).status, 201, 'Punch can follow once the Pre-punch A/B items are done');
+  assert.equal((await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, isoId: 'iso-6', punchType: 'Pre-punch' } })).status, 422, 'Punch is Passed: no more Pre-punch items');
+  // Ordinary writes cannot forge the marker.
+  assert.equal((await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, reportPassed: true } })).status, 422);
 });

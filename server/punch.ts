@@ -11,7 +11,7 @@ import { isAdministrator } from '../shared/permissions.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
 import {
   PASSED_REFUSAL, PUNCH_FILE_LIMIT, PUNCH_FILE_TYPES, PUNCH_MESSAGES, PUNCH_SIGN_OFF_DOCUMENT, TRANSITION_REFUSALS, canTransition, punchAddRefusal, punchApproved, punchFinishErrors,
-  punchPhaseStatus, type PunchTransition,
+  PUNCH_CATEGORIES, punchPassedDescription, punchPhaseStatus, punchReportPassedRefusal, type PunchTransition, type PunchType,
 } from '../shared/punch.ts';
 import type { Row, User } from '../shared/types.ts';
 
@@ -55,6 +55,7 @@ function audited(store: Store, row: Row, changes: Input, event: string, summary:
  * activity log (server/release-access.ts).
  */
 export function runPunchAction(store: Store, key: string, data: Input, actor: Actor): { resource: string; record: Row; records?: undefined } {
+  if (key === 'punch-report-passed') return { resource: 'punchlists', record: reportPassed(store, data, actor) };
   const row = store.get('punchlists', data.punchId);
   if (key === 'punch-finish') {
     allowed(store, row, 'finish');
@@ -79,6 +80,25 @@ export function runPunchAction(store: Store, key: string, data: Input, actor: Ac
   throw new AppError(404, 'This action does not exist.');
 }
 
+/**
+ * Report passed: records that the Pre-punch or Punch phase of an isometric is complete. It adds one item, already Finished and
+ * client approved (category C, so it blocks nothing), which makes the phase read Passed and shows in the Passed view. Refused
+ * without an isometric and while the phase still has A/B items to finish and approve (shared/punch.ts `punchReportPassedRefusal`).
+ */
+function reportPassed(store: Store, data: Input, actor: Actor): Row {
+  const refusal = punchReportPassedRefusal(data.isoId, data.punchType, store.list('punchlists'));
+  if (refusal) throw new AppError(422, refusal, { isoId: refusal });
+  const iso = store.get('isometrics', data.isoId), kind = str(data.punchType) as PunchType, date = data.reportedDate ? validDate(data.reportedDate) : today();
+  const contractor = str(data.contractorId) ? store.get('companies', data.contractorId) : undefined, reporter = str(data.reportedById) ? store.get('welders', data.reportedById) : undefined;
+  const record = store.create('punchlists', {
+    isoId: iso.id, projectId: iso.projectId, punchType: kind, category: PUNCH_CATEGORIES[2], description: punchPassedDescription(kind), status: 'Finished', reportPassed: true,
+    contractorId: contractor?.id ?? '', reportedDate: date, reportedById: reporter?.id ?? '', reportedBy: reporter ? store.display('welders', reporter) : '',
+    finishedAt: date, finishedBy: actor.name, clientApproved: true, approvedAt: date, approvedBy: actor.name,
+  }, actor);
+  store.audit('punchlists', record.id, 'passed', `Reported ${kind} passed for isometric ${store.display('isometrics', iso)}`, actor);
+  return record;
+}
+
 /** First bytes of an uploaded file, from memory (database storage) or from its temporary file (disk storage). */
 function head(file: Express.Multer.File, length = 8): Uint8Array {
   if (file.buffer) return file.buffer.subarray(0, length);
@@ -97,7 +117,8 @@ export function assertSignOffFile(file: Express.Multer.File, method: string) {
 
 /** Photos and documents of a punch item: at most two, none on a passed item, and never a forged sign-off. */
 export function assertPunchFileAllowed(store: Store, item: Row, documentType: unknown) {
-  if (punchView(store, item).status === 'Passed') throw new AppError(422, 'A passed punch item cannot be edited.');
+  // The item of a passed report keeps taking its evidence (photos, documents); every other passed item is locked.
+  if (punchView(store, item).status === 'Passed' && item.reportPassed !== true) throw new AppError(422, 'A passed punch item cannot be edited.');
   const kind = str(documentType) || PUNCH_FILE_TYPES[1];
   if (!PUNCH_FILE_TYPES.includes(kind)) throw new AppError(422, 'Choose a punch photo or a punch document.');
   const held = store.list('attachments').filter(row => row.entityType === 'punchlists' && row.entityId === item.id && row.documentType !== PUNCH_SIGN_OFF_DOCUMENT).length;

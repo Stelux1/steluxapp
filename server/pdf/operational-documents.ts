@@ -6,6 +6,7 @@ import type { BookRun, PdfDocumentDefinition, PdfScopedDefinition } from './docu
 import { requestPdf, visualPdf } from './operational-requests.ts';
 import { releasePdf } from './operational-release.ts';
 import { hydrotestPdf } from './hydrotest-book.ts';
+import { currentDrawingFile } from './iso-book-parts.ts';
 import { blankPunchPdf, flangeLabelsPdf, flangePdf, pickListPdf, punchPdf, reservedMaterialsPdf } from './operational-lists.ts';
 import {
   REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
@@ -25,7 +26,7 @@ import type { Row } from '../../shared/types.ts';
  *   GET /api/pdf/visual-report?reportNo=…
  *   GET /api/pdf/prefab-release?releaseId=…         GET /api/pdf/field-release?releaseId=…
  *   GET /api/pdf/hydrotest-request?requestId=…[&isometrics=0|1]   (the Pressure Test Plan / hydrotest book of a hydrotest release)
- *   GET /api/pdf/punch-list?[projectId|isoId|punchType|category|kpi|q|documents=0|1]
+ *   GET /api/pdf/punch-list?[projectId|isoId|punchType|category|view|due|kpi|q|ids=id,id|documents=0|1|isoDrawing=0|1]
  *   GET /api/pdf/punch-list-blank?isoId=…
  *   GET /api/pdf/flange-report?isoId=… | projectId=…[&finished=Yes|No][&q=…]
  *   GET /api/pdf/pick-list?reportNo=…
@@ -121,7 +122,9 @@ const punchList: PdfScopedDefinition = {
     if (options.isoId && !isoIds.has(options.isoId)) throw notFound('This isometric');
     if (options.projectId && !projectIds.has(options.projectId)) throw notFound('This project');
     const model = punchListModel(rows, options, isoIds, projectIds, isoDate(now));
-    const { bytes } = await punchPdf({ model, company: companyForDocuments(store, documents), generatedAt: now, rows });
+    // The isometric drawing option: the current ISO file of each listed isometric (readable ones only).
+    const drawings = model.drawings.map(iso => { const file = currentDrawingFile(rows, iso, 'ISO'); return { iso: text(iso.isoNo), bytes: file ? documents.read(file.id) : null }; });
+    const { bytes } = await punchPdf({ model, company: companyForDocuments(store, documents), generatedAt: now, rows, drawings });
     return { bytes, fileName: `${isoDate(now)}-${projectNumber(rows, model.context.isometrics[0], model.context.project)}-Punch-list` };
   },
 };

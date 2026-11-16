@@ -201,7 +201,7 @@ test('blockers: Punch counts open items of this isometric; groups come in the fi
   const blockers = isoBlockers(everything);
   assert.deepEqual(blockers.groups.map(group => group.key), ['release', 'welds', 'ndt', 'repair', 'punch']);
   assert.deepEqual(blockers.groups.map(group => group.count), [2, 1, 1, 1, 2]);
-  assert.equal(blockers.groups[4].items[0].message, '2 open punch items in category A or B.');
+  assert.equal(blockers.groups[4].items[0].message, '2 open punch');
   assert.equal(blockers.total, 7);
   assert.equal(isoBlockers(base({ punch, iso: done })).total, 2);
   assert.equal(isoBlockers(base({ punch: null, iso: done })).total, 0);

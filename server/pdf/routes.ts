@@ -40,7 +40,7 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
     const user = (req as unknown as AuthRequest).user;
     if (!canDocument(user, definition)) throw new AppError(403, 'Your permission profile does not allow this document.');
     // Query values are short, except the list of chosen welds and the note of a request document.
-    const query = Object.fromEntries(Object.entries(req.query).filter((entry): entry is [string, string] => typeof entry[1] === 'string').map(([key, value]) => [key, value.slice(0, key === 'welds' ? 8000 : 2100)]));
+    const query = Object.fromEntries(Object.entries(req.query).filter((entry): entry is [string, string] => typeof entry[1] === 'string').map(([key, value]) => [key, value.slice(0, key === 'welds' || key === 'ids' ? 8000 : 2100)]));
     const readable = (primary: string[]) => Object.fromEntries(RESOURCES.filter(resource => canResource(user, resource.key)).map(resource => [resource.key, readableRows(req, resource.key, true).filter(row => !primary.includes(resource.key) || canResource(user, resource.key, 'export', row))]));
     const now = new Date(), origin = publicOrigin || `${req.protocol}://${req.get('host')}`;
     let result: PdfResult;

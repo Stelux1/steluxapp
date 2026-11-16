@@ -123,7 +123,8 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       <div className="modal-body iso-blockers">{status.blockers.groups.map(group => <section key={group.key} aria-label={group.title}>
         <h3>{group.title}<span className="count-pill">{group.count}</span></h3>
         <ul>{group.items.map((item, index) => <li key={`${item.weldId || 'iso'}-${index}`}>{item.weldId && canRecord('welds')
-          ? <button className="text-link" onClick={() => { setBlockers(false); onOpenWeld(item.weldId!); }}>{item.message}</button> : item.message}</li>)}</ul>
+          ? <button className="text-link" onClick={() => { setBlockers(false); onOpenWeld(item.weldId!); }}>{item.message}</button>
+          : item.href && canRecord('punchlists') && pilot?.pilot.key === 'weld' ? <Link className="text-link" to={item.href} target="_blank" rel="noreferrer">{item.message}</Link> : item.message}</li>)}</ul>
       </section>)}</div>
       <div className="modal-footer"><button className="btn" onClick={() => setBlockers(false)}>Close</button></div>
     </Modal>}

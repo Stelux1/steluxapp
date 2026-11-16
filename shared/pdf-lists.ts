@@ -1,7 +1,7 @@
 import type { Row } from './types.ts';
 import { printDate, type LabelValueItem } from './pdf-lisl.ts';
 import { naturalCompare, pdfText as text, projectContext, projectItems, type ProjectContext } from './pdf-documents.ts';
-import { PUNCH_FILE_TYPES, PUNCH_KPIS, PUNCH_LETTERS, PUNCH_SIGN_OFF_DOCUMENT, PUNCH_TYPES, isOverdue, matchesPunchKpi, punchCategory, punchKind, punchKpis, punchStatus, punchToday, type PunchKpiKey } from './punch.ts';
+import { PUNCH_FILE_TYPES, PUNCH_KPIS, PUNCH_LETTERS, PUNCH_SIGN_OFF_DOCUMENT, PUNCH_TYPES, PUNCH_VIEWS, comparePunchRows, isOverdue, matchesPunchKpi, punchCategory, punchDeadlineSoon, punchKind, punchKpis, punchStatus, punchToday, punchViewOf, withPunchPhases, type PunchKpiKey } from './punch.ts';
 import { filterFlanges, flangeAssetTag, flangeItems, selectedFlanges, type FlangeItem } from './flanges.ts';
 import { flangeStandard } from './site-settings.ts';
 import { pickListReports, type PickListReport } from './mto-logistics.ts';
@@ -20,7 +20,12 @@ const number = (value: unknown) => { const raw = text(value); if (!raw) return '
 
 // ----- punch list ----------------------------------------------------------------------------------------------------------
 
-export interface PunchListOptions { projectId: string; isoId: string; punchType: string; category: string; kpi: PunchKpiKey | ''; q: string; /** The Document column. */ documents: boolean }
+export interface PunchListOptions {
+  projectId: string; isoId: string; punchType: string; category: string; kpi: PunchKpiKey | ''; q: string; /** The Document column. */ documents: boolean;
+  /** The page's view (open, finished, passed, removed); empty prints every status (the ISO book). */ view: string; /** The page's due filter: overdue or due_soon. */ due: string;
+  /** Ticked rows: only these items are printed, whatever the filters say. */ ids: string[];
+  /** Append the imported isometric drawing (PDF) of each printed isometric. */ isoDrawing: boolean;
+}
 /**
  * Options of the Punch list print from the query (the page's filters: `projectId`, `punchType`, `category` A to D, `kpi`, `q`;
  * plus `isoId`, and `documents=1|0`). Returns the first problem as `error`.
@@ -29,41 +34,50 @@ export interface PunchListOptions { projectId: string; isoId: string; punchType:
  * column that names the files attached to each item (photos, documents and the sign-off), as the page's Document column does.
  */
 export function punchListOptions(query: Record<string, string>): { options: PunchListOptions; error?: string } {
-  const options: PunchListOptions = { projectId: text(query.projectId), isoId: text(query.isoId), punchType: text(query.punchType), category: text(query.category).toUpperCase(), kpi: text(query.kpi) as PunchKpiKey | '', q: text(query.q).toLowerCase(), documents: flag(query.documents, true) };
+  const options: PunchListOptions = { projectId: text(query.projectId), isoId: text(query.isoId), punchType: text(query.punchType), category: text(query.category).toUpperCase(), kpi: text(query.kpi) as PunchKpiKey | '', q: text(query.q).toLowerCase(), documents: flag(query.documents, true),
+    view: text(query.view).toLowerCase(), due: text(query.due).toLowerCase(), ids: [...new Set(text(query.ids).split(',').map(text).filter(Boolean))].slice(0, 500), isoDrawing: flag(query.isoDrawing, false) };
   let error: string | undefined;
   if (options.punchType && !(PUNCH_TYPES as readonly string[]).includes(options.punchType)) error = 'Choose Pre-punch or Punch.';
   else if (options.category && !(PUNCH_LETTERS as string[]).includes(options.category)) error = 'Choose a type from A to D.';
   else if (options.kpi && !PUNCH_KPIS.some(card => card.key === options.kpi)) error = 'Choose one of the key figures of the page.';
+  else if (options.view && !(PUNCH_VIEWS as readonly string[]).includes(options.view)) error = 'Choose Open, Finished, Passed or Removed.';
+  else if (options.due && !['overdue', 'due_soon'].includes(options.due)) error = 'Choose overdue or due within 7 days.';
   return { options, ...(error ? { error } : {}) };
 }
 export interface PunchListLine { item: Row; number: string; project: string; iso: string; category: string; description: string; due: string; contractor: string; kind: string; status: string; documents: string[] }
-export interface PunchListModel { options: PunchListOptions; lines: PunchListLine[]; kpis: { label: string; count: number }[]; filters: string[]; context: ProjectContext; today: string }
+/** `drawings`: the isometrics whose imported drawing is appended (empty unless the option is ticked). */
+export interface PunchListModel { options: PunchListOptions; lines: PunchListLine[]; drawings: Row[]; kpis: { label: string; count: number }[]; filters: string[]; context: ProjectContext; today: string }
 const projectOf = (item: Row, rows: Rows) => text(item.projectId) || text(find(rows, 'isometrics', item.isoId)?.projectId);
 const punchDocuments = (rows: Rows, item: Row) => live(rows.attachments).filter(file => file.entityType === 'punchlists' && file.entityId === item.id).sort((a, b) => a._createdAt.localeCompare(b._createdAt))
   .map(file => `${file.documentType === PUNCH_SIGN_OFF_DOCUMENT ? 'Sign-off' : file.documentType === PUNCH_FILE_TYPES[0] ? 'Photo' : 'Document'}: ${text(file.name)}`);
 /**
  * The punch items of the page as printed: items of visible isometrics, and project-related items of projects enabled in the pilot,
  * narrowed by the same filters as the Punch lists page (project, punch type, type, search, then the chosen key figure) and in the
- * page's order (newest number first).
+ * page's order (Status, then newest number first). Items are read through their phases, so Passed is as the page shows it.
+ * Ticked rows (`ids`) are printed on their own; the isometric drawings follow when asked for.
  */
 export function punchListModel(rows: Rows, options: PunchListOptions, isoIds: Set<string>, projectIds: Set<string>, today = punchToday()): PunchListModel {
   const iso = (item: Row) => find(rows, 'isometrics', item.isoId);
   const contractor = (item: Row) => item.contractorId ? text(find(rows, 'companies', item.contractorId)?.name) : text(item.assignedTo);
-  const reachable = live(rows.punchlists).filter(item => item.isoId ? isoIds.has(text(item.isoId)) : projectIds.has(projectOf(item, rows)));
+  const phased = withPunchPhases(live(rows.punchlists));
+  const reachable = phased.filter(item => item.isoId ? isoIds.has(text(item.isoId)) : projectIds.has(projectOf(item, rows)));
   const scoped = reachable.filter(row => (!options.projectId || projectOf(row, rows) === options.projectId) && (!options.isoId || row.isoId === options.isoId) && (!options.punchType || punchKind(row) === options.punchType) && (!options.category || punchCategory(row.category) === options.category)
     && (!options.q || [row.description, row.name, row.reportedBy, row.number, iso(row)?.isoNo, contractor(row)].some(value => text(value).toLowerCase().includes(options.q))));
-  const filtered = scoped.filter(row => !options.kpi || matchesPunchKpi(row, options.kpi, today)).sort((a, b) => (Number(b.number) || 0) - (Number(a.number) || 0) || b._createdAt.localeCompare(a._createdAt));
+  const chosen = new Set(options.ids);
+  const filtered = (options.ids.length ? reachable.filter(row => chosen.has(row.id))
+    : scoped.filter(row => (!options.kpi || matchesPunchKpi(row, options.kpi, today)) && (!options.view || punchViewOf(row) === options.view) && (options.due !== 'overdue' || isOverdue(row, today)) && (options.due !== 'due_soon' || punchDeadlineSoon(row, today)))).sort(comparePunchRows);
   const label = (key: string, id: unknown) => text(find(rows, key, id)?.[key === 'projects' ? 'internnumber' : 'isoNo']);
   const lines = filtered.map((item): PunchListLine => ({
     item, number: text(item.number), project: label('projects', projectOf(item, rows)), iso: item.isoId ? label('isometrics', item.isoId) : 'Project related', category: punchCategory(item.category), description: text(item.description),
     due: printDate(item.dueDate), contractor: contractor(item), kind: punchKind(item), status: `${punchStatus(item)}${isOverdue(item, today) ? ' (overdue)' : ''}`, documents: punchDocuments(rows, item),
   }));
   const filters = [options.projectId && `Project ${label('projects', options.projectId) || '-'}`, options.isoId && `Isometric ${label('isometrics', options.isoId) || '-'}`, options.punchType && `Punch type ${options.punchType}`, options.category && `Type ${options.category}`,
-    options.kpi && `Key figure ${PUNCH_KPIS.find(card => card.key === options.kpi)?.label}`, options.q && `Search "${options.q}"`].filter(Boolean) as string[];
+    options.view && `View ${options.view.charAt(0).toUpperCase()}${options.view.slice(1)}`, options.due && `Due ${options.due === 'overdue' ? 'overdue' : 'within 7 days'}`, options.kpi && `Key figure ${PUNCH_KPIS.find(card => card.key === options.kpi)?.label}`, options.ids.length && `Selected items (${options.ids.length})`, options.q && `Search "${options.q}"`].filter(Boolean) as string[];
   const isometrics = [...new Set(lines.map(line => text(line.item.isoId)).filter(Boolean))].map(id => find(rows, 'isometrics', id)!).filter(Boolean);
   const context = options.isoId ? projectContext(rows, isometrics.length ? isometrics : [find(rows, 'isometrics', options.isoId)!].filter(Boolean)) : { ...projectContext(rows, []), project: find(rows, 'projects', options.projectId), isometrics: [] };
   const project = context.project ?? (options.projectId ? find(rows, 'projects', options.projectId) : undefined);
-  return { options, lines, kpis: punchKpis(scoped, today).map(card => ({ label: card.label, count: card.count })), filters, context: { ...context, project, site: context.site ?? find(rows, 'sites', project?.siteId), client: context.client || text(find(rows, 'companies', project?.companyId)?.name) }, today };
+  const drawings = options.isoDrawing ? [...isometrics].sort((a, b) => naturalCompare(text(a.isoNo), text(b.isoNo))) : [];
+  return { options, lines, drawings, kpis: punchKpis(scoped, today).map(card => ({ label: card.label, count: card.count })), filters, context: { ...context, project, site: context.site ?? find(rows, 'sites', project?.siteId), client: context.client || text(find(rows, 'companies', project?.companyId)?.name) }, today };
 }
 export const punchColumns = (documents: boolean) => ['#', 'Project', 'Isometric', 'Type', 'Description', 'Due date', 'Contractor', 'Punch', ...(documents ? ['Document'] : []), 'Status'];
 export const punchRowCells = (line: PunchListLine, documents: boolean) => [line.number, line.project, line.iso, line.category, line.description, line.due, line.contractor, line.kind, ...(documents ? [line.documents.length ? line.documents : ['-']] : []), line.status];

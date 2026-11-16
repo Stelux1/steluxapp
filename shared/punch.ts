@@ -52,7 +52,7 @@ export const SIGN_METHODS = ['Drawn', 'Uploaded PDF', 'Saved signature'];
 export const PUNCH_DEADLINE_DAYS = 7;
 
 /** Fields only the actions write (sign-off, approval, promote, remove) and the system numbering. */
-export const PUNCH_PROTECTED_FIELDS = ['number', 'status', 'finishedAt', 'finishedBy', 'signerType', 'signName', 'signCompany', 'signFunction', 'signInspector', 'signInspectorId', 'signRemarks', 'signMethod', 'signAttachmentId', 'clientApproved', 'approvedAt', 'approvedBy', 'passedAt', 'passedBy', 'passRemarks', 'removedAt', 'removedBy', 'removeReason'];
+export const PUNCH_PROTECTED_FIELDS = ['number', 'status', 'finishedAt', 'finishedBy', 'signerType', 'signName', 'signCompany', 'signFunction', 'signInspector', 'signInspectorId', 'signRemarks', 'signMethod', 'signAttachmentId', 'clientApproved', 'approvedAt', 'approvedBy', 'passedAt', 'passedBy', 'passRemarks', 'removedAt', 'removedBy', 'removeReason', 'reportPassed'];
 
 /** Texts of the reference (punch lists page scripts). */
 export const PUNCH_MESSAGES = {
@@ -169,17 +169,28 @@ export const hasPunchProgress = (iso: Row) => progressPercent(iso) !== null;
 /** The option label of the stored punch progress ('50 %' of an earlier version reads '50%'), or '' while none is entered. */
 export const punchProgressLabel = (iso: Row) => { const percent = progressPercent(iso); return percent === null ? '' : `${percent}%`; };
 
-export interface PunchCounts { prePunchOpen: number; prePunchFinished: number; punchOpen: number; punchFinished: number; overdue: number; blocking: number; }
+export interface PunchCounts {
+  prePunchOpen: number; prePunchFinished: number; punchOpen: number; punchFinished: number; overdue: number; blocking: number;
+  /** Whether the phase is Passed (derived, see `punchPhasePassed`). */
+  prePunchPassed: boolean; punchPassed: boolean;
+  /** A/B items of the phase that are not yet Finished and approved. */
+  prePunchWarn: number; punchWarn: number;
+}
 /** Counts of the items of one isometric for its status card. Passed (derived over these items) and removed items are not counted. */
 export function punchCounts(items: Row[], today = punchToday()): PunchCounts {
-  const counts: PunchCounts = { prePunchOpen: 0, prePunchFinished: 0, punchOpen: 0, punchFinished: 0, overdue: 0, blocking: 0 };
+  const counts: PunchCounts = { prePunchOpen: 0, prePunchFinished: 0, punchOpen: 0, punchFinished: 0, overdue: 0, blocking: 0, prePunchPassed: false, punchPassed: false, prePunchWarn: 0, punchWarn: 0 };
   for (const row of live(withPunchPhases(items))) {
     const status = punchStatus(row), pre = punchKind(row) === 'Pre-punch';
     if (status === 'Open') { if (pre) counts.prePunchOpen++; else counts.punchOpen++; if (isOverdue(row, today)) counts.overdue++; if (isBlockingCategory(row.category)) counts.blocking++; }
     else if (status === 'Finished') { if (pre) counts.prePunchFinished++; else counts.punchFinished++; }
   }
+  const isoId = live(items).map(row => text(row.isoId)).find(Boolean) ?? '';
+  counts.prePunchPassed = punchPhasePassed(items, isoId, 'Pre-punch'); counts.punchPassed = punchPhasePassed(items, isoId, 'Punch');
+  counts.prePunchWarn = punchPhaseOutstanding(items, 'Pre-punch'); counts.punchWarn = punchPhaseOutstanding(items, 'Punch');
   return counts;
 }
+/** A/B items of one phase that still need Finished + approval (removed items do not count). Pass the items of one isometric. */
+export const punchPhaseOutstanding = (items: Row[], kind: PunchType) => counted(items).filter(row => punchKind(row) === kind && isBlockingCategory(row.category) && !done(row)).length;
 
 // ----- the page's key figures ---------------------------------------------------------------------------------
 
@@ -308,3 +319,135 @@ export function punchFinishErrors(input: FinishInput, signed: boolean, savedSign
   for (const name of ['clientName', 'company', 'function', 'note'] as const) if (text(input[name]).length > (name === 'note' ? 2000 : 200)) errors[name] = 'This is too long.';
   return errors;
 }
+
+// ----- the Punch lists page: views, filters and the link addresses ----------------------------------------------
+
+/** The four views of the page. The list opens on Open; Finished, Passed and Removed are separate views. */
+export const PUNCH_VIEWS = ['open', 'finished', 'passed', 'removed'] as const;
+export type PunchView = typeof PUNCH_VIEWS[number];
+/** The view an item belongs to (read the row through `withPunchPhases` first, so Passed is derived). */
+export const punchViewOf = (row: Row): PunchView => punchStatus(row).toLowerCase() as PunchView;
+
+export type PunchDueFilter = '' | 'overdue' | 'due_soon';
+export interface PunchFilters { view: PunchView; projectId: string; isoId: string; punchType: '' | PunchType; letter: '' | PunchLetter; due: PunchDueFilter }
+export const EMPTY_PUNCH_FILTERS: PunchFilters = { view: 'open', projectId: '', isoId: '', punchType: '', letter: '', due: '' };
+
+/** Page sizes of the table; the default is 20. */
+export const PUNCH_PAGE_SIZES = [10, 20, 50, 100, 500];
+export const PUNCH_DEFAULT_PAGE_SIZE = 20;
+/** Order of the Status column, ascending: Open first. Equal statuses keep the newest number first. */
+const PUNCH_STATUS_ORDER: PunchStatus[] = ['Open', 'Finished', 'Passed', 'Removed'];
+export const comparePunchRows = (a: Row, b: Row) =>
+  PUNCH_STATUS_ORDER.indexOf(punchStatus(a)) - PUNCH_STATUS_ORDER.indexOf(punchStatus(b)) || (Number(b.number) || 0) - (Number(a.number) || 0) || text(b._createdAt).localeCompare(text(a._createdAt));
+
+/** Option text of the Project filter: "<number> — <description>". */
+export const punchProjectLabel = (project: Row) => [text(project.internnumber), text(project.description)].filter(Boolean).join(' — ') || text(project.id);
+
+/** The filters of the page from an address (`iso_id`, `project_id`, `punch_type`, `item_type`, `viewT`, `due_filter`); unknown values are ignored. */
+export function punchFiltersFromParams(params: URLSearchParams | Record<string, string | undefined>): PunchFilters {
+  const get = (name: string) => text(params instanceof URLSearchParams ? params.get(name) : params[name]);
+  const view = get('viewT').toLowerCase(), type = (get('punch_type') || get('type')).toLowerCase(), letter = get('item_type').toUpperCase(), due = get('due_filter').toLowerCase();
+  return {
+    view: (PUNCH_VIEWS as readonly string[]).includes(view) ? view as PunchView : 'open', projectId: get('project_id'), isoId: get('iso_id') || get('iso'),
+    punchType: type === 'prepunch' || type === 'pre-punch' ? 'Pre-punch' : type === 'punch' ? 'Punch' : '', letter: (PUNCH_LETTERS as string[]).includes(letter) ? letter as PunchLetter : '',
+    due: due === 'overdue' || due === 'due_soon' ? due : '',
+  };
+}
+/** The address parameters of the filters; the Open view and empty filters write nothing. */
+export function punchFiltersToParams(filters: PunchFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.isoId) params.set('iso_id', filters.isoId);
+  if (filters.projectId) params.set('project_id', filters.projectId);
+  if (filters.punchType) params.set('punch_type', filters.punchType === 'Pre-punch' ? 'prepunch' : 'punch');
+  if (filters.letter) params.set('item_type', filters.letter);
+  if (filters.view !== 'open') params.set('viewT', filters.view);
+  if (filters.due) params.set('due_filter', filters.due);
+  return params;
+}
+/** Where the Punch lists page lives in the Weld Pilot (Releases menu). */
+export const PUNCH_LIST_PATH = '/welding/punchlists';
+/** Address of the Punch lists page with some filters, as the links of the isometric status card and the blocker line use. */
+export function punchListLink(filters: Partial<PunchFilters>): string {
+  const query = punchFiltersToParams({ ...EMPTY_PUNCH_FILTERS, ...filters }).toString();
+  return `${PUNCH_LIST_PATH}${query ? `?${query}` : ''}`;
+}
+
+/** What each key figure card sets: the view, the punch type and the due filter (the reference's data attributes). */
+export const PUNCH_KPI_FILTERS: Record<PunchKpiKey, { view: PunchView; punchType: '' | PunchType; due: PunchDueFilter }> = {
+  open: { view: 'open', punchType: '', due: '' }, prePunch: { view: 'open', punchType: 'Pre-punch', due: '' }, punch: { view: 'open', punchType: 'Punch', due: '' },
+  overdue: { view: 'open', punchType: '', due: 'overdue' }, deadline: { view: 'open', punchType: '', due: 'due_soon' },
+  finished: { view: 'finished', punchType: '', due: '' }, passed: { view: 'passed', punchType: '', due: '' }, removed: { view: 'removed', punchType: '', due: '' },
+};
+/** The card that is pressed for the filters: the one whose view, punch type and due filter equal them. */
+export const punchKpiActive = (key: PunchKpiKey, filters: PunchFilters) => { const card = PUNCH_KPI_FILTERS[key]; return card.view === filters.view && card.punchType === filters.punchType && card.due === filters.due; };
+/**
+ * Whether an item shows under the view, punch type, type and due filter (project, isometric and search are matched by the
+ * page, which knows the isometrics). Pass rows read through `withPunchPhases`.
+ */
+export function matchesPunchFilters(row: Row, filters: PunchFilters, today = punchToday()): boolean {
+  if (punchViewOf(row) !== filters.view) return false;
+  if (filters.punchType && punchKind(row) !== filters.punchType) return false;
+  if (filters.letter && punchCategory(row.category) !== filters.letter) return false;
+  if (filters.due === 'overdue') return isOverdue(row, today);
+  if (filters.due === 'due_soon') return punchDeadlineSoon(row, today);
+  return true;
+}
+
+/** Row class of the table: an open item past its due date is "overdue", one due within seven days is "due-soon". */
+export const punchRowClass = (row: Row, today = punchToday()): '' | 'overdue' | 'due-soon' => isOverdue(row, today) ? 'overdue' : punchDeadlineSoon(row, today) ? 'due-soon' : '';
+
+// ----- the Print dialog ---------------------------------------------------------------------------------------------
+
+/** Hint of the Print dialog: the selected rows, else the current filter. */
+export const punchPrintHint = (selected: number) => selected > 0 ? `Selected punch items (${selected})` : 'All items matching the current filter';
+export const PUNCH_PRINT_OPTIONS = { documents: 'Punch document (Document column / download)', isoDrawing: 'Isometric drawing (imported PDF per isometric)' } as const;
+
+// ----- photos and documents of the Add item and Report passed forms -------------------------------------------------
+
+export const PUNCH_HEIC_MESSAGE = 'HEIC format is not supported. Use "Choose file" or save as JPEG.';
+export const PUNCH_FILE_MESSAGE = 'Choose a photo or a PDF.';
+/** Longest side of a photo after the browser scales it, in pixels. */
+export const PUNCH_PHOTO_MAX = 1280;
+/** Why a file cannot be added in Add item or Report passed (images and PDF only; HEIC has its own sentence), or '' when it can. */
+export function punchFileProblem(name: string, type = ''): string {
+  const extension = /\.([A-Za-z0-9]+)$/.exec(name.trim())?.[1]?.toLowerCase() ?? '', mime = type.toLowerCase();
+  if (['heic', 'heif'].includes(extension) || /^image\/hei[cf]/.test(mime)) return PUNCH_HEIC_MESSAGE;
+  if (extension === 'pdf' || mime === 'application/pdf' || ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(extension) || /^image\/(png|jpeg|webp|gif|bmp)$/.test(mime)) return '';
+  return PUNCH_FILE_MESSAGE;
+}
+/** The size a photo is scaled to: the long side at most 1280 px, the shape kept; a smaller photo stays as it is. */
+export function punchResizeTarget(width: number, height: number, max = PUNCH_PHOTO_MAX): { width: number; height: number } {
+  const longest = Math.max(width, height);
+  if (!(longest > max)) return { width, height };
+  const scale = max / longest;
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+}
+
+// ----- the isometric's punch card and dialog ------------------------------------------------------------------------
+
+/** Warning line of the status card for a phase that still has A/B items to finish and approve, or null. */
+export const punchPhaseWarning = (kind: PunchType, count: number) => count > 0 ? `${kind}: ${count} A/B still need Finished + approval.` : null;
+export interface PunchWarning { type: 'ab_items_open' | 'hydro_not_required'; message: string; severity: 'warning' | 'info' }
+/** Warnings of the punch dialog of an isometric: A/B items still to be finished and approved, and no test system linked. Pass the isometric's items. */
+export function punchDialogWarnings(iso: Row, items: Row[]): PunchWarning[] {
+  const open = punchPhaseOutstanding(items, 'Pre-punch') + punchPhaseOutstanding(items, 'Punch'), warnings: PunchWarning[] = [];
+  if (open > 0) warnings.push({ type: 'ab_items_open', message: `There are still ${open} A/B items that must be Finished and approved before this phase can be Passed.`, severity: 'warning' });
+  if (!text(iso.testSystemId)) warnings.push({ type: 'hydro_not_required', message: 'No test system linked — hydrotest is not applicable.', severity: 'info' });
+  return warnings;
+}
+export const PUNCH_PASSED_NEEDS_ISO = 'Please select an isometric (Passed requires an isometric).';
+/**
+ * Why "Register passed" is refused for an isometric and phase, or null. INFERRED (the capture does not show what saving does):
+ * a phase can be reported passed only when it can pass, that is when no A/B item of it (for Punch also of the Pre-punch) is
+ * still open or unapproved, and it is not Passed yet.
+ */
+export function punchReportPassedRefusal(isoId: unknown, kind: unknown, items: Row[]): string | null {
+  if (!text(isoId)) return PUNCH_PASSED_NEEDS_ISO;
+  if (!(PUNCH_TYPES as readonly string[]).includes(text(kind))) return PUNCH_MESSAGES.kind;
+  const mine = items.filter(row => text(row.isoId) === text(isoId)), phase = kind as PunchType;
+  if (punchPhasePassed(mine, isoId, phase)) return `${phase} is already Passed for this isometric.`;
+  const open = punchPhaseOutstanding(mine, phase) + (phase === 'Punch' ? punchPhaseOutstanding(mine, 'Pre-punch') : 0);
+  return open > 0 ? `There are still ${open} A/B items that must be Finished and approved before this phase can be Passed.` : null;
+}
+/** The description of the item a passed report leaves in the list. */
+export const punchPassedDescription = (kind: PunchType) => `${kind} passed (reported)`;
