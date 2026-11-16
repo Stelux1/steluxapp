@@ -1,0 +1,51 @@
+/* Pilot menu collapsed to icons: the menu becomes a narrow rail, the page takes its width, a group opens as a panel beside the rail. */
+.nav-group-title { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.nav-group-title > svg { flex-shrink: 0; opacity: .85; }
+.sidebar-collapse { display: none; }
+.breadcrumb-site { max-width: 30ch; overflow: hidden; text-overflow: ellipsis; }
+
+@media screen and (min-width: 761px) {
+  /* The toggle sits on the menu's right edge, level with the top bar. */
+  .sidebar-collapse { position: absolute; top: 20px; right: -13px; z-index: 2; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; box-shadow: 0 1px 4px #061b4229; }
+  .sidebar-collapse:hover { background: var(--surface-blue); border-color: var(--border-strong); }
+  .sidebar-collapse:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .sidebar { transition: width .16s ease; }
+  .main-shell { transition: margin-left .16s ease, width .16s ease; }
+
+  .app-shell.sidebar-collapsed { --nav-width: 72px; }
+  .sidebar-collapsed .sidebar-brand { justify-content: center; }
+  .sidebar-collapsed .brand-link { padding: 22px 0 18px; }
+  .sidebar-collapsed .sidebar .wordmark { width: auto; }
+  .sidebar-collapsed .sidebar .wordmark-name,
+  .sidebar-collapsed .workspace-switch,
+  .sidebar-collapsed .nav-label,
+  .sidebar-collapsed .pilot-nav-note,
+  .sidebar-collapsed .pilot-badge strong,
+  .sidebar-collapsed .pilot-badge-switch > span,
+  .sidebar-collapsed .nav-item .nav-text,
+  .sidebar-collapsed .sample-indicator > span:not(.live-dot),
+  .sidebar-collapsed .sidebar-user > div { display: none; }
+
+  .sidebar-collapsed .pilot-badge { flex-direction: column; gap: 8px; margin: 0 12px 14px; padding: 10px 0; border-left: 0; border-top: 3px solid var(--module-color); }
+  .sidebar-collapsed .pilot-badge-switch { width: 32px; min-height: 32px; padding: 0; justify-content: center; }
+  .sidebar-collapsed .nav-scroll { padding-inline: 12px; }
+  .sidebar-collapsed .nav-item { justify-content: center; padding-inline: 0; }
+
+  .nav-rail-group { display: flex; justify-content: center; margin-bottom: 4px; }
+  .nav-rail-button { display: grid; place-items: center; width: 48px; height: 42px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--nav-muted); cursor: pointer; }
+  .nav-rail-button:hover, .nav-rail-group.open .nav-rail-button { background: var(--navy-raised); color: #fff; }
+  .nav-rail-button.active { background: var(--nav-active); color: #fff; box-shadow: inset 3px 0 var(--cyan); }
+  .nav-rail-button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* The open group: a panel beside the rail, placed at its icon (the top comes from the component). */
+  .nav-flyout { position: fixed; left: calc(var(--nav-width) + 8px); width: 236px; max-height: calc(100vh - 24px); overflow: auto; padding: 8px 8px 10px; background: var(--navy); border: 1px solid #ffffff24; border-radius: 8px; box-shadow: 0 14px 34px #061b4261; z-index: 40; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+  .nav-flyout-title { display: block; padding: 6px 10px 8px; font-size: 11px; font-weight: 500; letter-spacing: .6px; text-transform: uppercase; color: var(--nav-muted); }
+  .nav-flyout .sub-nav-item { margin: 1px 0; padding: 8px 10px; border-left: 0; border-radius: 5px; }
+  .nav-flyout .sub-nav-item:hover, .nav-flyout .sub-nav-item.active { border-radius: 5px; }
+  .nav-flyout .pilot-nav-button { width: 100%; }
+
+  .sidebar-collapsed .sidebar-bottom { padding-inline: 12px; }
+  .sidebar-collapsed .sample-indicator { justify-content: center; padding-inline: 0; }
+  .sidebar-collapsed .sidebar-user { flex-direction: column; gap: 8px; padding-inline: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar, .main-shell { transition: none; } }

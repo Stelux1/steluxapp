@@ -1,7 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Boxes, ChevronDown, LayoutGrid, Loader2, LogOut, ScanLine, ShieldAlert } from 'lucide-react';
-import { PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemResources, splitPilotPath, type Pilot, type PilotItem, type PilotKey } from '../shared/pilots.ts';
+import { ArrowRight, BadgeCheck, Boxes, Building2, Calculator, ChevronDown, ClipboardList, Flame, FolderKanban, HardHat, Layers3, LayoutDashboard, LayoutGrid, Loader2, LogOut, ScanLine, ScanSearch, Settings2, ShieldAlert, ShoppingCart, Truck } from 'lucide-react';
+import { PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemResources, splitPilotPath, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey } from '../shared/pilots.ts';
 import { pageAvailable } from '../shared/release.ts';
 import type { User } from '../shared/types.ts';
 import { RESOURCES, RESOURCE_MAP } from './catalog.ts';
@@ -27,6 +27,11 @@ const PilotContext = createContext<PilotState | null>(null);
 export const usePilot = () => useContext(PilotContext);
 
 const ICONS: Record<PilotKey, typeof ScanLine> = { weld: ScanLine, mto: Boxes };
+/** Icons of the menu groups: beside the group title, and alone when the menu is collapsed to icons. */
+const GROUP_ICONS: Record<PilotGroupIcon, typeof ScanLine> = {
+  general: Building2, start: LayoutDashboard, welders: HardHat, weld: Flame, material: Layers3, ndt: ScanSearch, welding: ClipboardList, releases: BadgeCheck,
+  materials: Boxes, orders: ShoppingCart, projects: FolderKanban, logistics: Truck, calculations: Calculator, system: Settings2,
+};
 
 /**
  * Hosted entry: `/` is the selector, `/weld/...` and `/mto/...` mount the existing route table under a
@@ -83,10 +88,34 @@ export function PilotSelector({ user, pilots, onOpen, onLogout }: { user: User; 
 const pathOnly = (path: string) => path.split('?')[0];
 const queryOf = (path: string) => path.includes('?') ? path.slice(path.indexOf('?')) : '';
 
-/** Sidebar of the current pilot, rendered from `shared/pilots.ts`. Items appear only where their page is available. */
-export function PilotNavigation({ onPassword }: { onPassword: () => void }) {
+/**
+ * Sidebar of the current pilot, rendered from `shared/pilots.ts`. Items appear only where their page is available.
+ * `collapsed`: the menu is reduced to one icon per group; a group opens as a panel beside the icons.
+ */
+export function PilotNavigation({ onPassword, collapsed = false }: { onPassword: () => void; collapsed?: boolean }) {
   const state = usePilot()!; const { user, canRecord, canReadReport } = useWorkspace(); const location = useLocation();
   const [searching, setSearching] = useState(false);
+  // Collapsed menu: the group whose panel is open, and where the panel starts (the top of its icon).
+  const [panel, setPanel] = useState<{ title: string; top: number } | null>(null);
+  const panelGroup = useRef<HTMLDivElement>(null), panelBox = useRef<HTMLDivElement>(null), panelButton = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => { setPanel(null); }, [collapsed, location.pathname, location.search]);
+  useEffect(() => {
+    if (!panel) return;
+    const inside = (target: EventTarget | null, box: HTMLElement | null) => target instanceof Node && Boolean(box?.contains(target));
+    const outside = (event: Event) => { if (!inside(event.target, panelGroup.current)) setPanel(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { setPanel(null); panelButton.current?.focus(); } };
+    // The panel is placed beside its icon: once the icons scroll or the window changes, it no longer is.
+    const moved = (event: Event) => { if (!inside(event.target, panelBox.current)) setPanel(null); };
+    document.addEventListener('mousedown', outside); document.addEventListener('focusin', outside); document.addEventListener('keydown', key);
+    document.addEventListener('scroll', moved, true); window.addEventListener('resize', moved);
+    return () => { document.removeEventListener('mousedown', outside); document.removeEventListener('focusin', outside); document.removeEventListener('keydown', key); document.removeEventListener('scroll', moved, true); window.removeEventListener('resize', moved); };
+  }, [panel]);
+  // Keep the whole panel on screen: a group low in the menu opens upwards as far as needed.
+  useLayoutEffect(() => {
+    const box = panelBox.current; if (!box || !panel) return;
+    const over = box.getBoundingClientRect().bottom - (window.innerHeight - 12);
+    if (over > 1) setPanel({ ...panel, top: Math.max(12, panel.top - over) });
+  }, [panel]);
   const target = (item: PilotItem) => item.resource && RESOURCE_MAP[item.resource] && !item.path ? resourcePath(item.resource) : pilotItemPath(item);
   const visible = (item: PilotItem) => {
     if (item.action) return pilotItemResources(item).every(key => canRecord(key));
@@ -99,12 +128,24 @@ export function PilotNavigation({ onPassword }: { onPassword: () => void }) {
   const here = (item: PilotItem) => { const to = target(item); return Boolean(to) && pathOnly(to!) === location.pathname; };
   const active = items.find(item => here(item) && queryOf(target(item)!) && queryOf(target(item)!) === location.search) || items.find(item => here(item) && !queryOf(target(item)!));
   if (!state.entered) return <p className="pilot-nav-note">{state.pilot.title} is not included in your permission profile.</p>;
-  return <>{groups.map(group => <details key={state.pilot.key + group.title} className="nav-group pilot-nav-group" open={group.items.includes(active!)}>
-    <summary>{group.title}<ChevronDown size={13}/></summary>
-    {group.items.map(item => item.action
-      ? <button key={item.label} type="button" className="sub-nav-item pilot-nav-button" onClick={item.action === 'password' ? onPassword : () => setSearching(true)}>{item.label}</button>
-      : <Link key={item.label} to={target(item)!} className={`sub-nav-item${item === active ? ' active' : ''}`} aria-current={item === active ? 'page' : undefined}>{item.label}</Link>)}
-  </details>)}{searching && <ProjectSearch onClose={() => setSearching(false)}/>}</>;
+  const entry = (item: PilotItem) => item.action
+    ? <button key={item.label} type="button" className="sub-nav-item pilot-nav-button" onClick={() => { setPanel(null); if (item.action === 'password') onPassword(); else setSearching(true); }}>{item.label}</button>
+    : <Link key={item.label} to={target(item)!} className={`sub-nav-item${item === active ? ' active' : ''}`} aria-current={item === active ? 'page' : undefined} onClick={() => setPanel(null)}>{item.label}</Link>;
+  const search = searching && <ProjectSearch onClose={() => setSearching(false)}/>;
+  if (collapsed) return <>{groups.map(group => {
+    const Icon = GROUP_ICONS[group.icon], current = group.items.includes(active!), open = panel?.title === group.title, only = group.items.length === 1 && !group.items[0].action ? group.items[0] : null;
+    // A group of one page (Start → Dashboard) opens that page directly.
+    if (only) return <div key={state.pilot.key + group.title} className="nav-rail-group"><Link to={target(only)!} className={`nav-rail-button${current ? ' active' : ''}`} aria-label={only.label} title={only.label} aria-current={current ? 'page' : undefined}><Icon size={18}/></Link></div>;
+    return <div key={state.pilot.key + group.title} ref={open ? panelGroup : undefined} className={`nav-rail-group${open ? ' open' : ''}`}>
+      <button type="button" className={`nav-rail-button${current ? ' active' : ''}`} aria-label={group.title} title={open ? undefined : group.title} aria-haspopup="true" aria-expanded={open}
+        onClick={event => { panelButton.current = event.currentTarget; setPanel(open ? null : { title: group.title, top: event.currentTarget.getBoundingClientRect().top }); }}><Icon size={18}/></button>
+      {open && <div ref={panelBox} className="nav-flyout" role="group" aria-label={group.title} style={{ top: panel!.top }}><strong className="nav-flyout-title">{group.title}</strong>{group.items.map(entry)}</div>}
+    </div>;
+  })}{search}</>;
+  return <>{groups.map(group => { const Icon = GROUP_ICONS[group.icon]; return <details key={state.pilot.key + group.title} className="nav-group pilot-nav-group" open={group.items.includes(active!)}>
+    <summary><span className="nav-group-title"><Icon size={15}/>{group.title}</span><ChevronDown size={13}/></summary>
+    {group.items.map(entry)}
+  </details>; })}{search}</>;
 }
 
 const projectLabel = (project: Record<string, unknown>) => [project.internnumber, project.description].map(value => String(value ?? '').trim()).filter(Boolean).join(' - ') || 'Unnamed project';
@@ -137,7 +178,7 @@ function ProjectSearch({ onClose }: { onClose: () => void }) {
 /** The pilot block in the sidebar: title in the pilot colour and the way back to the selector. */
 export function PilotBadge() {
   const state = usePilot(); if (!state) return null; const Icon = ICONS[state.pilot.key];
-  return <div className="pilot-badge"><span className="pilot-badge-icon"><Icon size={16}/></span><strong>{state.pilot.title}</strong>{state.allowed.length > 1 && <button type="button" className="pilot-badge-switch" onClick={state.selectPilot} aria-label="Select application workspace"><LayoutGrid size={14}/>Switch</button>}</div>;
+  return <div className="pilot-badge" title={state.pilot.title}><span className="pilot-badge-icon"><Icon size={16}/></span><strong>{state.pilot.title}</strong>{state.allowed.length > 1 && <button type="button" className="pilot-badge-switch" onClick={state.selectPilot} aria-label="Select application workspace" title="Select application workspace"><LayoutGrid size={14}/><span>Switch</span></button>}</div>;
 }
 
 /** Whether the current page must be replaced by the no-access state in this pilot. */

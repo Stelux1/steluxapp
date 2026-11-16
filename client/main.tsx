@@ -12,6 +12,7 @@ import './data-lisl.css';
 import './project-workspace.css';
 import './iso-header.css';
 import './pilots.css';
+import './nav-collapse.css';
 import './signatures.css';
 import './hydrotest.css';
 import './flanges.css';
