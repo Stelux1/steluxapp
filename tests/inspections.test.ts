@@ -562,3 +562,10 @@ test('VT delivery and access: the hosted profile delivers the report record and 
   assert.equal(deleted.status, 201); assert.equal(f.store.list('visual_reports').length, 0);
   assert.equal((await reader.request('/actions/visual-inspection', 'POST', 'weld', { op: 'delete', reportIds: [report.id] })).status, 403);
 });
+
+test('NDT dialog defect type options show the defect name only, with the reference blank option', async () => {
+  const { defectOptionLabel, DEFECT_EMPTY_OPTION } = await import('../shared/inspections.ts');
+  assert.equal(defectOptionLabel({ code: '301', english: 'Slag inclusion' }), 'Slag inclusion');
+  assert.equal(defectOptionLabel({ code: '999', english: '' }), '999', 'a code without a name shows the code');
+  assert.equal(DEFECT_EMPTY_OPTION, '-----------------');
+});

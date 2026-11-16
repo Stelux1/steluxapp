@@ -164,10 +164,11 @@ test('Visual inspection report: ITP, activity, engineer with stamp, VT fields of
   const f = await fixture(t);
   const path = 'visual-report?reportNo=VT-2026-014';
   const text = await get(f, path);
-  for (const label of ['Visual inspection report', 'Report VT-2026-014', 'ITP', 'ITP 1', 'Activity no.', '4.2', 'Custom no.', 'NFY-VT-07', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Inspection date', 'Rev.No.', 'VT-NFY-01 rev B', 'VT Procedure No.', 'PR-VT-004', 'VT type 2 order No', 'PO-44017', 'Accepted', 'applicable', 'Weld no.', 'Reviewed by']) assert.ok(text.includes(label), label);
+  for (const label of ['Visual inspection report', 'Report VT-2026-014', 'ITP', 'ITP 1', 'Activity no.', '4.2', 'Custom no.', 'NFY-VT-07', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Inspection date', 'VT type 2 order No', 'PO-44017', 'VT 2 prefix', 'VT2', 'Accepted', 'applicable', 'Weld no.', 'Reviewed by']) assert.ok(text.includes(label), label);
   for (const id of ['weld-1', 'weld-10', 'weld-19']) assert.ok(text.includes(weldNo(f.store, id)), id);
   assert.equal(text.filter(line => line === 'X').length, 3, 'one mark per weld');
   assert.ok(text.includes('15.06.2026'), 'VT type 2 date prints as dd.mm.yyyy');
+  assert.ok(!text.includes('VT-NFY-01 rev B') && !text.includes('PR-VT-004'), 'a version 2 report prints no version 1 lines');
   assert.equal((await f.admin.request('/pdf/visual-report?reportNo=NOPE', { pilot: 'weld' })).status, 404);
   const before = await pdf(await f.admin.request(`/pdf/${path}`, { pilot: 'weld' }));
   assert.ok(!hasImage(before), 'no signature when the engineer has none');
@@ -554,4 +555,17 @@ test('every operational document has an access key that names a resource, and no
   assert.deepEqual(new Set(operational.map(item => item.key)).size, operational.length, 'unique keys');
   const nobody = { id: 'u', name: 'n', email: 'e', profileId: '', permissions: { general: 2, materials: 2, welding: 2, tools: 0, settings: 0 } } as never;
   assert.equal(canReport(nobody, 'pdf-punch', 'export'), true, 'without an availability (full profile) the key follows the resource');
+});
+
+test('Visual inspection report: the main project switch Visual Inspection Ver 2 decides the header lines (version 1: Doc.No. & Rev.No. and Procedure No.; version 2: VT type 2 lines and the VT 2 prefix)', async t => {
+  const f = await fixture(t);
+  const site = f.store.list('sites')[0];
+  const off = f.store.update('sites', site.id, { vt2Enabled: false }, site._version, SYSTEM);
+  const v1 = await get(f, 'visual-report?reportNo=VT-2026-014');
+  for (const label of ['VT-NFY-01 rev B', 'VT Procedure No.', 'PR-VT-004']) assert.ok(v1.includes(label), label);
+  for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix']) assert.ok(!v1.includes(label), `${label} stays off a version 1 report`);
+  f.store.update('sites', site.id, { vt2Enabled: true }, off._version, SYSTEM);
+  const v2 = await get(f, 'visual-report?reportNo=VT-2026-014');
+  for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix', 'VT2']) assert.ok(v2.includes(label), label);
+  assert.ok(!v2.includes('VT Procedure No.') && !v2.includes('PR-VT-004'));
 });

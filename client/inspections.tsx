@@ -4,7 +4,7 @@ import type { Row } from '../shared/types.ts';
 import {
   KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
   locationField, managerColumns, managerRequests, managerWelds, processField, roundErrors, roundLabel,
-  weldResults, type InspectionKind, type ManagerTab, type RoundInput,
+  weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type InspectionKind, type ManagerTab, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
   vtEligibleWelds, vtGenerateError, vtMarks, vtMissingMessage, vtOpenReports, vtResultRows, vtSeq, vtUploadReports, vtWeldIds,
   TRACER_DETAIL_TEXTS, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_NO_CANDIDATES, TRACER_PANEL_NOTE, TRACER_REMOVABLE_HINT, TRACER_SELECT_TEXT, autoReweld, naBlockErrors,
@@ -123,7 +123,7 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
   const documents = (rows.attachments || []).filter(file => !file._archived && file.entityType === 'inspection_requests' && file.entityId === request?.id);
   // Defect codes enabled on the weld's main project and matching its defect norm (weld catalogs); a stored value is kept.
   const site = rows.sites?.find(row => row.id === context.project?.siteId) ?? allRows.sites?.find(row => row.id === context.project?.siteId);
-  const defects = selectableDefectCodes(rows, site, String(context.project?.siteId || ''), naResult?.defectType).map(code => ({ value: String(code.code), label: [code.code, code.english].filter(Boolean).join(' — ') }));
+  const defects = selectableDefectCodes(rows, site, String(context.project?.siteId || ''), naResult?.defectType).map(code => ({ value: String(code.code), label: defectOptionLabel(code) }));
   if (na.defectType && !defects.some(option => option.value === na.defectType)) defects.unshift({ value: na.defectType, label: na.defectType });
   const ownWelders = weldWelderIds(weld).map(id => rows.welders?.find(row => row.id === id)).filter((row): row is Row => Boolean(row)).map(row => ({ value: row.id, label: [row.welderCode || row.number, row.name].filter(Boolean).map(String).join(', ') }));
   if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing NDT results"/>;
@@ -170,7 +170,7 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
       <div className="form-grid ndt-na-block">
         <div className="field"><label htmlFor="ndt-na-length">NA length</label><input id="ndt-na-length" inputMode="numeric" placeholder="mm" value={pre ? '' : na.naLength} disabled={pre || naDisabled} onChange={e => setNa({ ...na, naLength: e.target.value.replace(/\D/g, '') })}/></div>
         {!pre && <>
-          <Select id="ndt-defect" label="Defect type" value={na.defectType} onChange={value => setNa({ ...na, defectType: value })} options={defects} disabled={naDisabled}/>
+          <Select id="ndt-defect" label="Defect type" value={na.defectType} onChange={value => setNa({ ...na, defectType: value })} options={defects} disabled={naDisabled} empty={DEFECT_EMPTY_OPTION}/>
           <Select id="ndt-welder-error" label="Welder for error" value={na.welderForErrorId} onChange={value => setNa({ ...na, welderForErrorId: value })} options={ownWelders} disabled={naDisabled}/>
           <div className="field checkbox-field"><label htmlFor="ndt-reweld"><input id="ndt-reweld" type="checkbox" checked={na.reweld} disabled={naDisabled} onChange={e => setNa({ ...na, reweld: e.target.checked })}/><span>ReWeld?</span></label></div>
         </>}
