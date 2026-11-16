@@ -451,9 +451,9 @@ test('documents, the ISO Book and the MTO dashboard inputs follow project site a
   const files = f.store.list('attachments').length;
   assert.equal(await status(north.as, '/pdf/ndt-request?requestNo=R-2026-0004', 'weld', { method: 'POST' }), 404, 'attach to a request of the other main project');
   assert.equal(f.store.list('attachments').length, files, 'nothing was attached');
-  // Sample pick lists are PL-2026-0001 (North) and 0002 (Riverside): punch numbers no longer use the PL counter.
-  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00009', 'mto'), 404, 'pick list of North');
-  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00010', 'mto'), 200, 'pick list of Riverside');
+  // Sample pick lists are 00001 (North) and 00002 (Riverside): five digits (w2-mto-stock-core), and punch items have a counter of their own.
+  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00001', 'mto'), 404, 'pick list of North');
+  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00002', 'mto'), 200, 'pick list of Riverside');
   assert.equal(await status(river.as, '/pdf/mto-report?isoId=iso-1', 'mto'), 403);
 
   // ISO Book: the isometrics of the other main project are refused (403), also next to an allowed one.
