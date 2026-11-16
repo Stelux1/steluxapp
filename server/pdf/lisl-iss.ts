@@ -3,7 +3,7 @@ import { renderDocument } from './document.ts';
 import type { CompanyForDocuments } from './company.ts';
 import { bilingual, checkBox, formHeader, infoGrid, measurer, type HeaderCell, type InfoCell } from './form-header.ts';
 import { NDT_STANDARD_OPTIONS, type IssModel } from '../../shared/pdf-lisl-iss-wq.ts';
-import { ISS_METHOD_COLUMNS } from '../../shared/pdf-ndt-columns-iss-wq.ts';
+import { NDT_FORM_COLUMNS } from '../../shared/pdf-ndt-columns.ts';
 
 export interface IssPdfInput { model: IssModel; company: CompanyForDocuments | null; generatedAt: Date }
 const MM = 72 / 25.4;
@@ -94,19 +94,19 @@ export async function issPdf(input: IssPdfInput) {
       let page = 0;
       const compose = (n: number) => stack([top, spacer(5), infoGrid(headerItems(model, n, total), 4), spacer(6)]);
       const header: Block = { height: (width, metrics) => compose(1).height(width, metrics), draw(canvas, x, y, width) { page++; compose(page).draw(canvas, x, y, width); } };
-      const relative = [...LEADING.map(item => item.width), ...ISS_METHOD_COLUMNS.map(() => METHOD_WIDTH), COMMENTS_WIDTH];
+      const relative = [...LEADING.map(item => item.width), ...NDT_FORM_COLUMNS.iss.map(() => METHOD_WIDTH), COMMENTS_WIDTH];
       const cells: HeaderCell[] = [
         ...LEADING.map((item, col): HeaderCell => ({ col, tier: 0, rows: 2, lines: item.labels.flatMap(([german, english]) => bilingual(german, english)) })),
-        ...ISS_METHOD_COLUMNS.flatMap((method, i): HeaderCell[] => [
-          { col: LEADING.length + i, tier: 0, lines: [{ text: issMethodHeading(method.label, model.percent[method.key]), font: 'bold', size: 6.5 }] },
+        ...NDT_FORM_COLUMNS.iss.flatMap((method, i): HeaderCell[] => [
+          { col: LEADING.length + i, tier: 0, lines: [{ text: issMethodHeading(method.label, model.percent[method.id]), font: 'bold', size: 6.5 }] },
           { col: LEADING.length + i, tier: 1, lines: [...bilingual('Prüfbericht Nr.', 'Report No.', 5.6), ...bilingual('Prüfdatum', 'Test date', 5.6)] },
         ]),
-        { col: LEADING.length + ISS_METHOD_COLUMNS.length, tier: 0, rows: 2, lines: bilingual('Bemerkungen', 'Comments') },
+        { col: LEADING.length + NDT_FORM_COLUMNS.iss.length, tier: 0, rows: 2, lines: bilingual('Bemerkungen', 'Comments') },
       ];
       const { header: customHeader } = formHeader(cells, relative, pdf.contentWidth, m);
       const rows = model.welds.map(weld => [
         [weld.weldNo, weld.weldType], weld.description, weld.diameter, weld.certificate, weld.wps, weld.filler, weld.welder,
-        ...ISS_METHOD_COLUMNS.map(method => weld.methods[method.key] ?? []), weld.comments,
+        ...NDT_FORM_COLUMNS.iss.map(method => weld.methods[method.id] ?? []), weld.comments,
       ]);
       const table: TableSpec = { columns: relative.map(width => ({ header: '', width })), rows, size: 6, fit: 'wrap', minLines: 4, padding: 2.5, customHeader };
       return { header, table, footerBlock: signatureBoxes(model) };

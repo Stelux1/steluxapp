@@ -14,7 +14,7 @@ import { dnOfInch, lislGuPdf, ownerModel, wrapCell, type OwnerFormInput } from '
 import { lislMvPdf } from '../server/pdf/lisl-mv.ts';
 import { isometricUrl, lislGuRevPdf } from '../server/pdf/lisl-gu-rev.ts';
 import { qrMatrix } from '../server/pdf/engine.ts';
-import { COLUMN_TABLE, NDT_FORM_COLUMNS, ndtColumnCells, ndtColumnOf, ndtMethodOf } from '../shared/pdf-ndt-columns.ts';
+import { COLUMN_TABLE, GU_FAMILY_COLUMNS, NDT_FORM_COLUMNS, ndtColumnOf, ndtFormCells, ndtMethodOf } from '../shared/pdf-ndt-columns.ts';
 import { OWNER_FORM_SETTINGS, ownerFormTexts } from '../shared/site-settings.ts';
 import { PDF_MENU } from '../client/pdf-reports.tsx';
 import type { Row } from '../shared/types.ts';
@@ -71,7 +71,7 @@ test('the four documents are in the registry and the Reports menu with the same 
 });
 
 test('NDT column mapping: one table from request type and method (process name or process group) to the form columns', () => {
-  assert.deepEqual(['RT', 'rt 100%', 'Radiography', 'UT', 'Ultrasonic testing', 'TOFD', 'Phased array UT', 'PAUT', 'MT', 'Magnetic particle', 'PT', 'Liquid penetrant', 'PMI', 'VT', 'Visual', 'Hydro'].map(ndtMethodOf), ['RT', 'RT', 'RT', 'UT', 'UT', 'TOFD', 'PA', 'PA', 'MT', 'MT', 'PT', 'PT', 'PMI', 'VT', 'VT', null]);
+  assert.deepEqual(['RT', 'rt 100%', 'Radiography', 'UT', 'Ultrasonic testing', 'TOFD', 'Phased array UT', 'PAUT', 'MT', 'Magnetic particle', 'PT', 'Liquid penetrant', 'PMI', 'VT', 'Visual', 'Hydro'].map(name => ndtMethodOf(name)), ['RT', 'RT', 'RT', 'UT', 'UT', 'TOFD', 'PA', 'PA', 'MT', 'MT', 'PT', 'PT', 'PMI', 'VT', 'VT', null]);
   const request = (type: string) => ({ id: 'r', type, ...stamp }) as Row;
   const column = (type: string, process: string, group = '') => ndtColumnOf(request(type), { process, group });
   assert.equal(column('NDT', 'RT'), 'RT'); assert.equal(column('NDT', 'UT'), 'US'); assert.equal(column('NDT', 'TOFD'), 'TOFD'); assert.equal(column('NDT', 'PAUT'), 'PA');
@@ -92,16 +92,16 @@ test('ndtColumnCells prints A or NA with the report number, the latest result pe
   const result = (id: string, requestId: string, value: string, reportNo: string, date: string) => ({ id, requestId, weldId: 'w1', result: value, reportNo, date, ...stamp }) as Row;
   const requests = [request('a', 'NDT', 'RT'), request('b', 'NDT', 'RT', { date: '2026-01-20' }), request('c', 'NDT', 'MT'), request('d', 'NDT PRE', 'MT'), request('e', 'NDT', 'UT'), request('f', 'PWHT', ''), request('g', 'NDT', 'TOFD', { status: 'Cancelled' }), { ...request('h', 'NDT', 'PMI'), weldId: 'other' } as Row];
   const results = [result('x1', 'a', 'Rejected', 'RT-1', '2026-02-01'), result('x2', 'b', 'Accepted', 'RT-2', '2026-02-10'), result('x3', 'c', 'Rejected', 'MT-1', '2026-02-01'), result('x4', 'd', 'Accepted', 'MTB-1', '2026-01-15'), result('x5', 'f', 'Accepted', 'HT-1', '2026-02-02'), result('x6', 'g', 'Accepted', 'TF-1', '2026-02-02'), result('x7', 'h', 'Accepted', 'PMI-1', '2026-02-02')];
-  const names = (item: Row) => ({ process: String(item.processId ?? ''), group: '' });
-  const cells = ndtColumnCells(weld, results, requests, names);
-  assert.deepEqual(cells.RT, { result: 'A', report: 'RT-2' }, 'a later accepted examination replaces the earlier rejected one');
-  assert.deepEqual(cells.MTPT, { result: 'NA', report: 'MT-1' });
-  assert.deepEqual(cells.MTPT_PRE, { result: 'A', report: 'MTB-1' });
-  assert.deepEqual(cells.US, { result: '', report: '' }, 'requested, no result: empty');
-  assert.deepEqual(cells.PWHT, { result: 'A', report: 'HT-1' });
-  assert.deepEqual(cells.TOFD, { result: '', report: '' }, 'cancelled request');
-  assert.deepEqual(cells.PMI, { result: '', report: '' }, 'another weld');
-  assert.deepEqual(cells.VT, { result: '', report: '' });
+  const processes = ['RT', 'MT', 'UT', 'TOFD', 'PMI'].map(name => ({ id: name, name, groupId: 'g', ...stamp })) as Row[];
+  const cells = ndtFormCells(GU_FAMILY_COLUMNS, weld, { results, requests, processes, groups: [{ id: 'g', name: 'Group', ...stamp }] as Row[] });
+  assert.deepEqual(cells.RT, { result: 'A', report: 'RT-2', date: '2026-02-10' }, 'a later accepted examination replaces the earlier rejected one');
+  assert.deepEqual(cells.MTPT, { result: 'NA', report: 'MT-1', date: '2026-02-01' });
+  assert.deepEqual(cells.MTPT_PRE, { result: 'A', report: 'MTB-1', date: '2026-01-15' });
+  assert.deepEqual(cells.US, { result: '', report: '', date: '' }, 'requested, no result: empty');
+  assert.deepEqual(cells.PWHT, { result: 'A', report: 'HT-1', date: '2026-02-02' });
+  assert.deepEqual(cells.TOFD, { result: '', report: '', date: '' }, 'cancelled request');
+  assert.deepEqual(cells.PMI, { result: '', report: '', date: '' }, 'another weld');
+  assert.deepEqual(cells.VT, { result: '', report: '', date: '' });
 });
 
 test('DN follows the nominal size in inches and the cell wrapper breaks report numbers at their hyphens', () => {

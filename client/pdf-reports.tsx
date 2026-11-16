@@ -12,7 +12,7 @@ export type PdfPilot = 'weld' | 'mto';
 /** Where an entry is offered: the Reports menu of the isometric page, the Certifications page or the materials of an isometric (MTO Pilot). */
 export type PdfPage = 'isometric' | 'certifications' | 'materials';
 /**
- * One entry of the Reports menu. Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
+ * One entry of the Reports menu (the order of the reference: LISL Report, A3, [GU], [MV], [ISS], [WQ], [WQ ver 2], [GU Rev 2], [GU Rev 3], Blank LISL template, Weld card, Weld labels). Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
  * `pilots` and `page` say where it belongs (default: the isometric page of Weld Pilot); `scope: 'project'` entries are about a
  * project instead of one isometric; `resource` is the resource whose read permission shows the entry instead of a report.
  */
@@ -20,14 +20,14 @@ export interface PdfMenuItem { key: string; label: string; options: Option[]; /*
 export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl', label: 'LISL Report', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-a3', label: 'LISL Report (A3)', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
-  { key: 'lisl-blank', label: 'Blank LISL template', options: ['signature'], report: 'lisl' },
   { key: 'lisl-gu', label: 'LISL Report [GU]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-mv', label: 'LISL Report [MV]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
-  { key: 'lisl-gu-rev2', label: 'LISL Report [GU Rev 2]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
-  { key: 'lisl-gu-rev3', label: 'LISL Report [GU Rev 3]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-iss', label: 'LISL Report [ISS]', options: [], report: 'lisl' },
   { key: 'lisl-wq', label: 'LISL Report [WQ]', options: [], report: 'lisl' },
   { key: 'lisl-wq2', label: 'LISL Report [WQ ver 2]', options: [], report: 'lisl' },
+  { key: 'lisl-gu-rev2', label: 'LISL Report [GU Rev 2]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
+  { key: 'lisl-gu-rev3', label: 'LISL Report [GU Rev 3]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
+  { key: 'lisl-blank', label: 'Blank LISL template', options: ['signature'], report: 'lisl' },
   { key: 'weld-cards', label: 'Weld card', options: ['welds', 'perPage'], report: 'weld-cards', pilots: ['weld'], page: 'isometric' },
   { key: 'weld-labels', label: 'Weld labels', options: ['welds', 'labelGrid'], report: 'weld-cards', pilots: ['weld'], page: 'isometric' },
   { key: 'mto-report', label: 'MTO report', options: ['phase'], report: 'mto', pilots: ['mto'], page: 'materials' },

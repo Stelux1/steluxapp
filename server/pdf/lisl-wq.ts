@@ -4,7 +4,7 @@ import type { CompanyForDocuments } from './company.ts';
 import { formHeader, measurer, type HeaderCell, type HeaderLine } from './form-header.ts';
 import { printDate } from '../../shared/pdf-lisl.ts';
 import type { WqModel } from '../../shared/pdf-lisl-iss-wq.ts';
-import { WQ_NDT_COLUMNS } from '../../shared/pdf-ndt-columns-iss-wq.ts';
+import { NDT_FORM_COLUMNS } from '../../shared/pdf-ndt-columns.ts';
 
 /** `v1` = [WQ] (header lists the visual inspection reports); `v2` = [WQ ver 2] (no such line, VT-no. filled per weld). */
 export type WqVersion = 'v1' | 'v2';
@@ -17,13 +17,13 @@ const COLUMN_WIDTHS = [
   38, 22, // identification mark: pipe or heat no., B.B. no.
   22, 24, 34, // Diam. DN, Wall thk., Material
   40, 36, // Pipe: coating, installed length
-  50, 20, 28, 28, 52, // Description, POS, Weld no., Welder, WPS no.
+  46, 20, 28, 34, 62, // Description, POS, Weld no., Welder, WPS no.
   26, 40, // fixed points: KM, VT-no.
-  ...WQ_NDT_COLUMNS.flatMap(() => [16, 40]), // NDT pairs
+  ...NDT_FORM_COLUMNS.wq.flatMap(() => [16, 40]), // NDT pairs
   34, // weld coating
   46, 32, // insulation: electrofusion shrink sleeve, QA/QC approval
 ];
-const NDT_START = 14, LAST_START = NDT_START + 2 * WQ_NDT_COLUMNS.length;
+const NDT_START = 14, LAST_START = NDT_START + 2 * NDT_FORM_COLUMNS.wq.length;
 
 const line = (text: string, size = 5.8, font: HeaderLine['font'] = 'bold'): HeaderLine[] => [{ text, size, font }];
 /** The three-tier heading of the table (English only, as in the capture). */
@@ -35,8 +35,8 @@ function headingCells(): HeaderCell[] {
     { col: 5, span: 2, tier: 0, lines: line('Pipe') }, { col: 5, tier: 1, rows: 2, lines: line('Coating') }, { col: 6, tier: 1, rows: 2, lines: line('Installed length') },
     leaf(7, 'Description'), leaf(8, 'POS'), leaf(9, 'Weld no.'), leaf(10, 'Welder'), leaf(11, 'WPS no.'),
     { col: 12, span: 2, tier: 0, lines: line('Fixed points on route map') }, { col: 12, tier: 1, rows: 2, lines: line('KM') }, { col: 13, tier: 1, rows: 2, lines: line('VT-no.') },
-    { col: NDT_START, span: 2 * WQ_NDT_COLUMNS.length, tier: 0, lines: line('Non-destructive testing') },
-    ...WQ_NDT_COLUMNS.flatMap((method, i): HeaderCell[] => [
+    { col: NDT_START, span: 2 * NDT_FORM_COLUMNS.wq.length, tier: 0, lines: line('Non-destructive testing') },
+    ...NDT_FORM_COLUMNS.wq.flatMap((method, i): HeaderCell[] => [
       { col: NDT_START + 2 * i, span: 2, tier: 1, lines: line(method.label) }, { col: NDT_START + 2 * i, tier: 2, lines: line('A / NA') }, { col: NDT_START + 2 * i + 1, tier: 2, lines: line('Rep. No.') },
     ]),
     leaf(LAST_START, 'Weld coating'),
@@ -128,8 +128,8 @@ export async function wqPdf(input: WqPdfInput) {
       const header: Block = { height: (width, metrics) => compose(1).height(width, metrics), draw(canvas, x, y, width) { page++; compose(page).draw(canvas, x, y, width); } };
       const { header: customHeader } = formHeader(headingCells(), COLUMN_WIDTHS, pdf.contentWidth, m);
       const rows = model.welds.map(weld => [
-        weld.heat, '', weld.dn, weld.wall, weld.material, weld.coating, '', weld.description, weld.pos, weld.weldNo, weld.welder, weld.wps, weld.km, v2 ? weld.vt : '',
-        ...WQ_NDT_COLUMNS.flatMap(method => [weld.ndt[method.key]?.result ?? '', weld.ndt[method.key]?.report ?? '']),
+        weld.heat, '', weld.dn, weld.wall, weld.material, weld.coating, weld.installed, weld.description, weld.pos, weld.weldNo, weld.welder, weld.wps, weld.km, v2 ? weld.vt : '',
+        ...NDT_FORM_COLUMNS.wq.flatMap(method => [weld.ndt[method.id]?.result ?? '', weld.ndt[method.id]?.report ?? '']),
         weld.weldCoating, weld.sleeve, '',
       ]);
       const table: TableSpec = { columns: COLUMN_WIDTHS.map(width => ({ header: '', width })), rows, size: 5.6, fit: 'wrap', minLines: 2, padding: 2, customHeader };

@@ -11,7 +11,8 @@ import { passwordHash } from '../server/auth.ts';
 import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import { OWNER_SETTING_NAMES, dnOfInch, issModel, ownerSettings, wqModel } from '../shared/pdf-lisl-iss-wq.ts';
-import { ISS_METHOD_COLUMNS, WQ_NDT_COLUMNS, methodCells, ndtKindOf } from '../shared/pdf-ndt-columns-iss-wq.ts';
+import { NDT_FORM_COLUMNS, ndtFormCells, ndtMethodOf } from '../shared/pdf-ndt-columns.ts';
+const ISS_METHOD_COLUMNS = NDT_FORM_COLUMNS.iss, WQ_NDT_COLUMNS = NDT_FORM_COLUMNS.wq;
 import { issPdf } from '../server/pdf/lisl-iss.ts';
 import { wqPdf } from '../server/pdf/lisl-wq.ts';
 import { pdfText } from '../server/pdf/text.ts';
@@ -89,19 +90,19 @@ test('the Reports menu lists the three owner-specific forms with the exact label
 });
 
 test('method columns: technique by process name, then by group name; one small table per form', () => {
-  assert.equal(ndtKindOf('RT'), 'rt'); assert.equal(ndtKindOf('Radiography'), 'rt'); assert.equal(ndtKindOf('X-Ray'), 'rt');
-  assert.equal(ndtKindOf('UT'), 'ut'); assert.equal(ndtKindOf('Ultrasonic testing'), 'ut');
-  assert.equal(ndtKindOf('UT phased array'), 'aut'); assert.equal(ndtKindOf('PAUT'), 'aut'); assert.equal(ndtKindOf('UT ToFD'), 'tofd');
-  assert.equal(ndtKindOf('MT bevel'), 'mt'); assert.equal(ndtKindOf('MT cap'), 'mt'); assert.equal(ndtKindOf('PT'), 'pt');
-  assert.equal(ndtKindOf('PMI'), 'pmi'); assert.equal(ndtKindOf('Ferrite number'), 'fn'); assert.equal(ndtKindOf('HV hardness'), 'hv'); assert.equal(ndtKindOf('VT'), 'vt');
-  assert.equal(ndtKindOf('Process 7', 'Radiography group'), 'rt', 'the group name decides when the process name says nothing');
-  assert.equal(ndtKindOf('Process 7', 'Volumetric examination'), null);
-  assert.equal(ndtKindOf('Custom', ''), null);
+  assert.equal(ndtMethodOf('RT'), 'RT'); assert.equal(ndtMethodOf('Radiography'), 'RT'); assert.equal(ndtMethodOf('X-Ray'), 'RT');
+  assert.equal(ndtMethodOf('UT'), 'UT'); assert.equal(ndtMethodOf('Ultrasonic testing'), 'UT');
+  assert.equal(ndtMethodOf('UT phased array'), 'PA'); assert.equal(ndtMethodOf('PAUT'), 'PA'); assert.equal(ndtMethodOf('UT ToFD'), 'TOFD');
+  assert.equal(ndtMethodOf('MT bevel'), 'MT'); assert.equal(ndtMethodOf('MT cap'), 'MT'); assert.equal(ndtMethodOf('PT'), 'PT');
+  assert.equal(ndtMethodOf('PMI'), 'PMI'); assert.equal(ndtMethodOf('Ferrite number'), 'FN'); assert.equal(ndtMethodOf('HV hardness'), 'HV'); assert.equal(ndtMethodOf('VT'), 'VT');
+  assert.equal(ndtMethodOf('Process 7', 'Radiography group'), 'RT', 'the group name decides when the process name says nothing');
+  assert.equal(ndtMethodOf('Process 7', 'Volumetric examination'), null);
+  assert.equal(ndtMethodOf('Custom', ''), null);
   assert.deepEqual(ISS_METHOD_COLUMNS.map(column => column.label), ['VT', 'RT', 'PT / MT', 'UT', 'PMI', 'FN', 'HV']);
   assert.deepEqual(WQ_NDT_COLUMNS.map(column => column.label), ['AUT / Phased Array', 'Radiography', 'US las', 'ToFD', 'MT cap / MT bevel']);
 });
 
-test('methodCells: A / NA with report number and date, newest result per column, cancelled / archived / PWHT ignored', () => {
+test('ndtFormCells: A / NA with report number and date, newest result per column, cancelled / archived / PWHT ignored', () => {
   const weld = { id: 'w1', weldNo: 'W1', ...stamp } as Row;
   const processes = ['RT', 'UT', 'PT', 'MT', 'VT', 'PAUT', 'ToFD', 'Custom'].map(name => ({ id: `p-${name}`, name, groupId: 'g', ...stamp })) as Row[];
   const groups = [{ id: 'g', name: 'Volumetric', ...stamp }] as Row[];
@@ -113,16 +114,16 @@ test('methodCells: A / NA with report number and date, newest result per column,
     result('x5', 'r5', 'Accepted', 'MT-1', '2026-02-05', { _archived: true }), result('x6', 'r6', 'Accepted', 'VI-1', '2026-02-06', { type: 'VI' }), result('x7', 'r7', 'Accepted', 'PA-1', '2026-02-07'), result('x8', 'r8', 'Accepted', 'TF-1', '2026-02-08'),
     result('x9', 'r9', 'Accepted', 'CU-1', '2026-02-09'), result('y1', 'h1', 'Accepted', 'HT-1', '2026-02-11', { type: 'PWHT' }), { ...result('z1', 'r1', 'Accepted', 'OTHER', '2026-03-01'), weldId: 'other' } as Row,
   ];
-  const iss = methodCells(ISS_METHOD_COLUMNS, weld, results, requests, processes, groups);
+  const iss = ndtFormCells(ISS_METHOD_COLUMNS, weld, { results, requests, processes, groups });
   assert.deepEqual(iss.rt, { result: 'A', report: 'RT-2', date: '2026-02-10' }, 'the repeat examination replaces the rejected one');
   assert.deepEqual(iss.ut, { result: 'A', report: 'PA-1', date: '2026-02-07' }, 'all ultrasonic techniques print in UT, the newest counts');
   assert.deepEqual(iss.ptmt, { result: 'NA', report: 'PT-1', date: '2026-02-04' }, 'the archived MT result is ignored, PT remains');
   assert.deepEqual(iss.vt, { result: 'A', report: 'VI-1', date: '2026-02-06' }, 'a visual inspection result fills VT');
-  assert.equal(iss.pmi, undefined); assert.equal(iss.fn, undefined); assert.equal(iss.hv, undefined);
-  const wq = methodCells(WQ_NDT_COLUMNS, weld, results, requests, processes, groups);
+  for (const id of ['pmi', 'fn', 'hv']) assert.equal(iss[id].result, '', id);
+  const wq = ndtFormCells(WQ_NDT_COLUMNS, weld, { results, requests, processes, groups });
   assert.deepEqual(wq.rt, iss.rt); assert.deepEqual(wq.ut, { result: 'A', report: 'UT-1', date: '2026-02-03' }, 'US las is plain UT only');
   assert.deepEqual(wq.aut, { result: 'A', report: 'PA-1', date: '2026-02-07' });
-  assert.equal(wq.tofd, undefined, 'a cancelled request is ignored'); assert.equal(wq.mt, undefined);
+  assert.equal(wq.tofd.result, '', 'a cancelled request is ignored'); assert.equal(wq.mt.result, '');
   assert.equal(JSON.stringify(wq).includes('HT-1') || JSON.stringify(wq).includes('CU-1') || JSON.stringify(wq).includes('PT-1'), false, 'PWHT, unmapped processes and PT never print on the [WQ] form');
 });
 

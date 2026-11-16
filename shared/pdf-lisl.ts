@@ -143,6 +143,9 @@ export function lislModel(rows: Record<string, Row[]>, isoId: string, type: Lisl
     return type === 'All' || location === type;
   }).sort((a, b) => natural(text(a.weldNo), text(b.weldNo))).map((weld): LislEntry => {
     const values = Object.fromEntries(Object.entries(lislValues(weld, rows)).map(([key, value]) => [key, text(value)]));
+    // The weld's own process (weld entry) is the one printed; the WPS method is the fallback of the register.
+    const weldProcess = text(find('weld_processes', weld.processId)?.name);
+    if (weldProcess) values['Welding Process'] = weldProcess;
     const attest = [1, 2].map(side => text(find('certifications', weld[`certificate${side}Id`])?.name)) as [string, string];
     return { weld, values, weldType: find('weld_types', weld.typeId), ndt: lislNdtCells(weld, rows.inspection_results || [], rows.inspection_requests || [], processName), attest };
   });

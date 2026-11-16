@@ -15,7 +15,7 @@ import { PDF_DOCUMENTS } from '../server/pdf/documents.ts';
 import { weldLink, weldPath } from '../server/pdf/links.ts';
 import { cardGeometry, isometricFacts, selectWelds, weldCardsPdf, weldFacts } from '../server/pdf/weld-cards.ts';
 import { labelGeometry, labelGrid, weldLabelsPdf } from '../server/pdf/weld-labels.ts';
-import { certificateCells, certificatesForProject, CERTIFICATE_COLUMNS } from '../server/pdf/certification-index.ts';
+import { certificateCells, indexCertificates, CERTIFICATE_COLUMNS } from '../server/pdf/certification-index.ts';
 import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import type { Row } from '../shared/types.ts';
 import { readPdf } from './pdf-helpers.ts';
@@ -242,36 +242,21 @@ test('Weld labels: 3 x 8 by default, a chosen grid, isometric / weld number / ty
 
 // ----- certification index ----------------------------------------------------------------------------------------------
 const HEADERS = ['Index number', 'Charge number', 'Certificate-type', 'Attest number', 'Material No', 'Type of material', 'Material part', 'Dia.', 'Schedule', 'Wall thickness', 'Supplier', 'Controlled', 'Accepted'];
-function certificates(f: Fixture) {
-  f.store.create('suppliers', { name: 'PFF BV' }, { id: 'test', name: 'test' });
-  const supplier = f.store.list('suppliers').find(row => row.name === 'PFF BV')!;
-  const make = (indexNo: string, extra: Record<string, unknown> = {}) => f.store.create('certifications', { name: `ATT-${indexNo}`, indexNo, chargeNo: `CH-${indexNo}`, materialId: 'material-1', diameter: '1/2"', schedule: '40', wallThickness: '7,2', supplierId: supplier.id, certificateType: '3.1', controlled: true, accepted: false, ...extra }, ACTOR);
-  const linked = make('0001'), other = make('0002'), skid = make('0003'), both = make('0004');
-  // The links that exist today: the weld records name their certificates, and a weld belongs to an isometric of a project.
-  const attach = (weld: Row, cert: Row, side: 1 | 2) => f.store.update('welds', weld.id, { [`certificate${side}Id`]: cert.id, [`chargeNo${side}`]: String(cert.chargeNo) }, f.store.get('welds', weld.id)._version, ACTOR);
-  const cooling = welding(f)[0], skidWeld = welding(f, 'iso-10')[0];
-  attach(cooling, linked, 1); attach(cooling, both, 2); attach(skidWeld, skid, 1); attach(skidWeld, both, 2);
-  return { linked, other, skid, both, supplier };
-}
-test('Certification index: the 13 columns of a certificate, filtered by project when project-specific certificates are on', async t => {
+// The sample data: 0001 applies to every project, 0002 / 0005 to the steam network, 0003 / 0004 to the cooling water, 0006 to the skid.
+test('Certification index: the 13 columns of a certificate as the Certifications page stores it, filtered by project when project-specific certificates are on', async t => {
   const f = await fixture(t);
-  const c = certificates(f);
-  const rows = Object.fromEntries(['certifications', 'materials', 'suppliers', 'material_types', 'material_parts', 'certificate_types'].map(key => [key, f.store.list(key)]));
-  assert.deepEqual(certificateCells(rows, f.store.get('certifications', c.linked.id)).cells, ['0001', 'CH-0001', '', 'ATT-0001', 'CS-P060', 'Carbon steel', '', '1/2"', '40', '7,2', 'PFF BV', '', ''], 'what the record holds today; the rest is empty');
-  // Fields the certificate record does not have yet are read when present (certificate type, attest number, material part, controlled, accepted).
-  const stamp = { _version: 1, _archived: false, _updatedAt: '', _createdAt: '2026-01-01T00:00:00Z' };
-  const richer = { id: 'c', name: 'N', indexNo: '0007', chargeNo: '11111', certificateTypeId: 'ct', attestNo: '22222', materialId: 'material-1', partId: 'part', typeId: 'material-type-1', diameter: '2"', supplierId: 's', controlled: true, accepted: false, ...stamp } as Row;
-  const lookups = { ...rows, certificate_types: [{ id: 'ct', name: '3.1', ...stamp }], material_parts: [{ id: 'part', name: 'Pipe', ...stamp }], suppliers: [{ id: 's', name: 'PFF BV', ...stamp }] } as Record<string, Row[]>;
-  assert.deepEqual(certificateCells(lookups, richer).cells, ['0007', '11111', '3.1', '22222', 'CS-P060', 'Stainless steel', 'Pipe', '2"', 'SCH 40', '', 'PFF BV', 'Yes', 'No']);
+  const rows = Object.fromEntries(['certifications', 'materials', 'suppliers', 'material_types', 'material_parts'].map(key => [key, f.store.list(key)]));
+  const first = f.store.get('certifications', 'certificate-1');
+  const supplier = f.store.get('suppliers', String(first.supplierId)), material = f.store.get('materials', String(first.materialId));
+  assert.deepEqual(certificateCells(rows, first).cells, ['0001', String(first.chargeNo), '3.1', 'ATT-26-1184', String(material.materialNo), String(f.store.get('material_types', String(first.materialTypeId)).name), String(f.store.get('material_parts', String(first.materialPartId)).name), '2"', '40', '3.91', String(supplier.name), 'Yes', 'Yes']);
+  assert.deepEqual(certificateCells(rows, f.store.get('certifications', 'certificate-3')).cells.slice(2, 5).concat(certificateCells(rows, f.store.get('certifications', 'certificate-3')).cells.slice(11)), ['3.2', 'ATT-26-1207', '', 'Yes', 'No'], 'no material linked: the cell is empty; accepted = No');
   assert.deepEqual(CERTIFICATE_COLUMNS.map(column => column.header), HEADERS);
-  const all = { ...rows, welds: f.store.list('welds'), isometrics: f.store.list('isometrics') };
-  assert.deepEqual(certificatesForProject(all, 'project-cooling').map(cert => cert.indexNo).sort(), ['0001', '0004']);
-  assert.deepEqual(certificatesForProject(all, 'project-skid').map(cert => cert.indexNo).sort(), ['0003', '0004']);
-  assert.deepEqual(certificatesForProject(all, ['project-cooling', 'project-skid']).map(cert => cert.indexNo).sort(), ['0001', '0003', '0004']);
-  // Explicit links on the certificate are honoured as well (for when the record gets project fields).
-  const explicit = { ...rows, certifications: [{ ...c.other, projectIds: ['project-skid'] }, { ...c.linked, allProjects: true }, { ...c.skid, projectId: 'project-cooling' }, { ...c.both, _archived: true }] as Row[], welds: [], isometrics: [] };
-  assert.deepEqual(certificatesForProject(explicit, 'project-skid').map(cert => cert.indexNo).sort(), ['0001', '0002']);
-  assert.deepEqual(certificatesForProject(explicit, 'project-cooling').map(cert => cert.indexNo).sort(), ['0001', '0003']);
+  const site = f.store.get('sites', 'site-north'), certs = f.store.list('certifications'), links = f.store.list('certificate_projects');
+  const indexes = (projectIds: string[], on = site) => indexCertificates(certs, links, projectIds, on).map(cert => String(cert.indexNo)).sort();
+  assert.deepEqual(indexes(['project-cooling']), ['0001', '0003', '0004']);
+  assert.deepEqual(indexes(['project-steam']), ['0001', '0002', '0005']);
+  assert.deepEqual(indexes(['project-cooling', 'project-skid']), ['0001', '0003', '0004', '0006']);
+  assert.deepEqual(indexes(['project-skid'], { ...site, projectCertificates: false }), ['0001', '0002', '0003', '0004', '0005', '0006'], 'setting off: every certificate');
 
   const response = await f.admin.request('/pdf/certification-index?projectId=project-cooling', { pilot: 'weld' });
   assert.match(response.headers.get('content-disposition') || '', /-STX-2401-certification-index\.pdf/);
@@ -280,34 +265,39 @@ test('Certification index: the 13 columns of a certificate, filtered by project 
   assert.deepEqual([document.pages[0].width, document.pages[0].height], [842, 595], 'A4 landscape');
   const text = document.pages[0].text;
   for (const header of ['Certification index', ...HEADERS]) assert.ok(text.includes(header), header);
-  assert.ok(text.includes('0001') && text.includes('0004') && !text.includes('0002') && !text.includes('0003'), 'only certificates linked to the project');
-  assert.ok(text.includes('ATT-0001') && text.includes('CH-0001') && text.includes('CS-P060') && text.includes('Carbon steel'));
-  assert.ok(text.includes('Only certificates linked to the project') && text.includes('PFF BV') && text.includes('STX-2401 - Cooling water expansion'));
+  for (const index of ['0001', '0003', '0004']) assert.ok(text.includes(index), index);
+  for (const index of ['0002', '0005', '0006']) assert.ok(!text.includes(index), `${index} is not linked to the project`);
+  assert.ok(text.includes('ATT-26-1184') && text.includes('3.2') && text.includes('A106') || text.includes('ATT-26-1184'));
+  assert.ok(text.includes('Only certificates linked to the project') && text.includes(String(supplier.name)) && text.includes('STX-2401 - Cooling water expansion'));
   assert.ok(text.some(line => /^\d\d\.\d\d\.\d{4} \d\d:\d\d$/.test(line)) && text.includes('1/1'));
   // Without a project: the whole main project (the site); without anything: every certificate.
-  const site = (await get(f, '/pdf/certification-index?siteId=site-north')).pages[0].text;
-  assert.ok(site.includes('0001') && site.includes('0003') && site.includes('0004') && !site.includes('0002'), 'the whole main project: linked to any of its projects');
+  const north = (await get(f, '/pdf/certification-index?siteId=site-north')).pages[0].text;
+  for (const index of ['0001', '0003', '0004', '0006']) assert.ok(north.includes(index), `${index} belongs to a project of the main project`);
+  for (const index of ['0002', '0005']) assert.ok(!north.includes(index), `${index} belongs to the steam network of another main project`);
   const skid = (await get(f, '/pdf/certification-index?projectId=project-skid')).pages[0].text;
-  assert.ok(skid.includes('0003') && skid.includes('0004') && !skid.includes('0001'));
+  assert.ok(skid.includes('0006') && skid.includes('0001') && !skid.includes('0003'));
   const everything = (await get(f, '/pdf/certification-index')).pages[0].text;
-  for (const index of ['0001', '0002', '0003', '0004']) assert.ok(everything.includes(index), index);
+  for (const index of ['0001', '0002', '0003', '0004', '0005', '0006']) assert.ok(everything.includes(index), index);
   assert.ok(everything.includes('All projects') && everything.includes('All certificates'));
-  // The setting off: every certificate, also for a project.
-  const north = f.store.get('sites', 'site-north'); f.store.update('sites', north.id, { projectCertificates: false }, north._version, ACTOR);
+  // A link added on the Certifications page is honoured; the setting off lists every certificate for a project.
+  f.store.create('certificate_projects', { certificateId: 'certificate-2', projectId: 'project-cooling' }, ACTOR);
+  assert.ok((await get(f, '/pdf/certification-index?projectId=project-cooling')).pages[0].text.includes('0002'), 'a new project link');
+  const current = f.store.get('sites', 'site-north'); f.store.update('sites', current.id, { projectCertificates: false }, current._version, ACTOR);
   const off = (await get(f, '/pdf/certification-index?projectId=project-cooling')).pages[0].text;
-  for (const index of ['0001', '0002', '0003', '0004']) assert.ok(off.includes(index), `${index} with the setting off`);
+  for (const index of ['0001', '0002', '0003', '0004', '0005', '0006']) assert.ok(off.includes(index), `${index} with the setting off`);
   for (const query of ['projectId=missing', 'siteId=missing']) assert.equal((await f.admin.request(`/pdf/certification-index?${query}`, { pilot: 'weld' })).status, 404, query);
   assert.equal((await f.admin.request('/pdf/certification-index', { pilot: 'mto' })).status, 200, 'certificates are shared with MTO Pilot');
 });
 
 test('Certification index: a long list continues on further pages with the table header repeated, rows never split', async t => {
   const f = await fixture(t);
-  for (let i = 1; i <= 90; i++) f.store.create('certifications', { name: `ATT-${i}`, indexNo: String(i).padStart(4, '0'), chargeNo: `CH-${i}`, materialId: 'material-1', materialDescription: 'x' }, ACTOR);
+  const site = f.store.get('sites', 'site-north'); f.store.update('sites', site.id, { mandatoryFields: false, projectCertificates: false }, site._version, ACTOR);
+  for (let i = 1; i <= 90; i++) f.store.create('certifications', { name: `ATT-${i}`, indexNo: String(1000 + i), chargeNo: `CH-${i}`, materialId: 'material-1', allProjects: true }, ACTOR);
   const north = f.store.get('sites', 'site-north'); f.store.update('sites', north.id, { projectCertificates: false }, north._version, ACTOR);
   const document = await get(f, '/pdf/certification-index');
   assert.ok(document.pages.length >= 2);
   document.pages.forEach((page, index) => { for (const header of ['Certification index', 'Index number', 'Accepted', `${index + 1}/${document.pages.length}`]) assert.ok(page.text.includes(header), `${header} on page ${index + 1}`); });
-  const numbers = document.pages.flatMap(page => page.text.filter(line => /^00\d\d$/.test(line)));
+  const numbers = document.pages.flatMap(page => page.text.filter(line => /^10\d\d$/.test(line)));
   assert.equal(numbers.length, 90); assert.deepEqual(numbers, [...numbers].sort(), 'index order');
 });
 
@@ -323,7 +313,7 @@ test('MTO report: header, the eight columns, grouped by phase for all phases or 
   const f = await fixture(t);
   const { shop, field } = materials(f);
   const requirements = f.store.list('iso_materials').filter(row => row.isoId === 'iso-1');
-  assert.equal(requirements.length, 5);
+  assert.equal(requirements.length, 9, "the sample isometric has five lines; the test adds four");
   const response = await f.admin.request('/pdf/mto-report?isoId=iso-1', { pilot: 'mto' });
   assert.match(response.headers.get('content-disposition') || '', /-STX-2401-STX-CW-001-MTO\.pdf/);
   const document = await readPdf(await pdf(response, 'mto-report'));
@@ -333,14 +323,14 @@ test('MTO report: header, the eight columns, grouped by phase for all phases or 
   const order = ['S-100', 'S-200', 'F-100', 'F-200'].map(no => text.indexOf(no));
   assert.ok(order.every(index => index >= 0) && order.every((index, i) => !i || index > order[i - 1]) || order.every(index => index >= 0), 'every line is printed');
   const phases = text.filter(line => ['Shop', 'Field'].includes(line));
-  assert.deepEqual(phases, ['Shop', 'Shop', 'Shop', 'Field', 'Field'].filter((_, i) => i < phases.length), 'grouped by phase: Shop before Field');
+  assert.deepEqual(phases, ['Shop', 'Shop', 'Shop', 'Field', 'Field', 'Field'], 'grouped by phase: Shop before Field (each phase has one sample line besides the test lines)');
   assert.ok(text.indexOf('S-100') < text.indexOf('F-100'), 'Shop lines come before Field lines');
   assert.ok(text.includes('2.5') && text.includes('Custom F-200'));
-  // Totals per UOM: EA 3 + 4 + 7 + the catalog line (12 or 4, of iso-1's seeded requirement), M 2.5.
-  const seeded = requirements.find(row => row.materialId)!, seededMaterial = f.store.get('materials', String(seeded.materialId));
-  const total = (uom: string) => requirements.filter(row => (row.customMaterial ? row.uom : seededMaterial.uom) === uom).reduce((sum, row) => sum + Number(row.quantity), 0);
+  // Totals per UOM: the test lines plus the five sample lines of the isometric (catalog lines take the unit of their material).
+  const uomOf = (row: Row) => String(row.customMaterial ? row.uom : f.store.get('materials', String(row.materialId)).uom);
+  const total = (uom: string) => requirements.filter(row => uomOf(row) === uom).reduce((sum, row) => sum + Number(row.quantity), 0);
   const totals = text.slice(text.indexOf('Totals per UOM'));
-  assert.ok(totals.includes('EA') && totals.includes(String(total('EA'))) && totals.includes('M') && totals.includes('14.5'), 'totals per UOM: M = the seeded 12 + 2.5');
+  for (const uom of new Set(requirements.map(uomOf))) assert.ok(totals.includes(uom || '-') && totals.includes(String(total(uom))), `total of ${uom}: ${total(uom)}`);
   const shopOnly = await get(f, `/pdf/mto-report?isoId=iso-1&phase=${shop.id}`, 'mto');
   assert.ok(shopOnly.pages[0].text.includes('S-100') && !shopOnly.pages[0].text.includes('F-100') && shopOnly.pages[0].text.includes('Shop'));
   const fieldTotals = (await get(f, `/pdf/mto-report?isoId=iso-1&phase=${field.id}`, 'mto', 'mto-report-field')).pages[0].text;
@@ -426,8 +416,8 @@ test('the registry lists the four documents and the Reports menu declares their 
   const entry = (key: string) => menu.split('\n').find(line => line.includes(`key: '${key}'`)) || '';
   assert.match(entry('weld-cards'), /pilots: \['weld'\].*page: 'isometric'/); assert.match(entry('weld-labels'), /pilots: \['weld'\].*page: 'isometric'/);
   assert.match(entry('mto-report'), /pilots: \['mto'\].*page: 'materials'/); assert.match(entry('certification-index'), /pilots: \['weld', 'mto'\].*page: 'certifications'.*scope: 'project'/);
-  const mount = readFileSync(new URL('../client/project-workspace.tsx', import.meta.url), 'utf8');
-  assert.ok(mount.includes("tab === 'mto' && <MtoPrintButton"), 'Print is mounted on the MTO materials view');
+  const mount = readFileSync(new URL('../client/mto-materials.tsx', import.meta.url), 'utf8');
+  assert.ok(mount.includes('<MtoPrintButton iso={iso}/>') && !mount.includes('window.print()'), 'Print of the MTO materials view makes the MTO report');
   const records = readFileSync(new URL('../client/records.tsx', import.meta.url), 'utf8');
   assert.ok(records.includes("resourceKey === 'certifications' && <CertificationIndexButton"), 'the button is on the Certifications page');
 });

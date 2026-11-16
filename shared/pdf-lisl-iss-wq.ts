@@ -1,7 +1,7 @@
 import type { Row } from './types.ts';
 import { ISS_NDT_STANDARDS } from './site-settings.ts';
 import { lislModel, printDate, type LislEntry, type LislModel } from './pdf-lisl.ts';
-import { ISS_METHOD_COLUMNS, WQ_NDT_COLUMNS, methodCells, type MethodCell } from './pdf-ndt-columns-iss-wq.ts';
+import { NDT_FORM_COLUMNS, VT_COLUMN, ndtFormCells, ndtLookups, type NdtCell, type NdtFormColumn } from './pdf-ndt-columns.ts';
 
 /**
  * Data side of the owner-specific LISL forms: [ISS] Inspection Summary Sheet and [WQ] / [WQ ver 2] Line
@@ -34,8 +34,7 @@ function formBase(rows: Record<string, Row[]>, isoId: string): FormBase | null {
   const base = lislModel(rows, isoId, 'All');
   return base ? { base, owner: ownerSettings(base.site), rows } : null;
 }
-const cellsOf = (columns: typeof ISS_METHOD_COLUMNS, entry: LislEntry, rows: Record<string, Row[]>) =>
-  methodCells(columns, entry.weld, rows.inspection_results || [], rows.inspection_requests || [], rows.ndt_processes || [], rows.ndt_groups || []);
+const cellsOf = (columns: NdtFormColumn[], entry: LislEntry, rows: Record<string, Row[]>) => ndtFormCells(columns, entry.weld, ndtLookups(rows));
 
 // ----- [ISS] ---------------------------------------------------------------------------------------------------
 export const NDT_STANDARD_OPTIONS = ISS_NDT_STANDARDS;
@@ -43,7 +42,7 @@ export interface IssRow {
   weldNo: string; weldType: string;
   /** Material of each side. */
   description: string[]; diameter: string[]; certificate: string[]; wps: string[]; filler: string[]; welder: string[];
-  /** Printed lines of each method column (key of `ISS_METHOD_COLUMNS`); a method without a result has none. */
+  /** Printed lines of each method column (key of `NDT_FORM_COLUMNS.iss`); a method without a result has none. */
   methods: Record<string, string[]>;
   comments: string;
 }
@@ -55,7 +54,7 @@ export interface IssModel extends FormBase {
   percent: Record<string, string>;
   welds: IssRow[];
 }
-export const issMethodLines = (cell: MethodCell | undefined): string[] => cell ? lines(cell.result, cell.report, printDate(cell.date)) : [];
+export const issMethodLines = (cell: NdtCell | undefined): string[] => cell?.result ? lines(cell.result, cell.report, printDate(cell.date)) : [];
 const percentOf = (value: unknown) => { const raw = text(value).replace('%', '').trim(); return /^\d+([.,]\d+)?$/.test(raw) ? raw.replace(',', '.') : ''; };
 
 export function issModel(rows: Record<string, Row[]>, isoId: string, companyName = ''): IssModel | null {
@@ -68,7 +67,7 @@ export function issModel(rows: Record<string, Row[]>, isoId: string, companyName
     const v = entry.values, wps = find(rows, 'wps', entry.weld.wpsId), pqr = find(rows, 'pqr', wps?.pqrId);
     const wires = [1, 2].map(side => find(rows, 'welding_wires', entry.weld[`wire${side}Id`])).map(wire => text(wire?.chargeNo) || text(find(rows, 'certifications', wire?.certificateId)?.chargeNo));
     const sides = [1, 2].map(side => ({ cert: entry.attest[side - 1], heat: v[`Charge No ${side}`] ?? '', wall: v[`Wall thickness ${side}`] ?? '', material: v[`Material ${side}`] ?? '' }));
-    const methods = Object.fromEntries(Object.entries(cellsOf(ISS_METHOD_COLUMNS, entry, rows)).map(([key, cell]) => [key, issMethodLines(cell)]));
+    const methods = Object.fromEntries(Object.entries(cellsOf(NDT_FORM_COLUMNS.iss, entry, rows)).map(([key, cell]) => [key, issMethodLines(cell)]));
     return {
       weldNo: text(entry.weld.weldNo), weldType: text(entry.weldType?.abbreviation || entry.weldType?.name),
       description: lines(...sides.map(side => side.material)),
@@ -93,8 +92,8 @@ export function issModel(rows: Record<string, Row[]>, isoId: string, companyName
 // ----- [WQ] / [WQ ver 2] ------------------------------------------------------------------------------------------
 export interface WqRow {
   weldNo: string; heat: string[]; dn: string; wall: string[]; material: string; coating: string; description: string[]; pos: string[];
-  welder: string; wps: string; km: string; vt: string; weldCoating: string; sleeve: string;
-  /** `A` / `NA` and the report number per NDT pair (key of `WQ_NDT_COLUMNS`). */
+  welder: string; wps: string; km: string; /** Insertion length of side 1 and 2 (weld entry). */ installed: string[]; vt: string; weldCoating: string; sleeve: string;
+  /** `A` / `NA` and the report number per NDT pair (key of `NDT_FORM_COLUMNS.wq`). */
   ndt: Record<string, { result: string; report: string }>;
 }
 export interface WqModel extends FormBase {
@@ -107,17 +106,16 @@ export function wqModel(rows: Record<string, Row[]>, isoId: string): WqModel | n
   const form = formBase(rows, isoId);
   if (!form) return null;
   const { base } = form, iso = base.iso;
-  const vtColumn = [{ key: 'vt', label: 'VT', kinds: ['vt' as const] }];
-  const vtOf = (entry: LislEntry) => cellsOf(vtColumn, entry, rows).vt?.report ?? '';
+  const vtOf = (entry: LislEntry) => cellsOf([VT_COLUMN], entry, rows)[VT_COLUMN.id]?.report ?? '';
   const welds = base.entries.map((entry): WqRow => {
-    const v = entry.values, cells = cellsOf(WQ_NDT_COLUMNS, entry, rows);
-    const coating = find(rows, 'coatings', entry.weld.coating2Id);
+    const v = entry.values, cells = cellsOf(NDT_FORM_COLUMNS.wq, entry, rows);
+    const coating = find(rows, 'coatings', entry.weld.coatingWeldId);
     return {
       weldNo: text(entry.weld.weldNo), heat: lines(v['Charge No 1'] ?? '', v['Charge No 2'] ?? ''), dn: dnOfInch(v['Diameter (inch)']),
       wall: lines(v['Wall thickness 1'] ?? '', v['Wall thickness 2'] ?? ''), material: text(iso.material), coating: v['Coating 1'] ?? '',
       description: [1, 2].map(side => lines(v[`Article no ${side}`] ?? '', v[`Material ${side}`] ?? '').join(' ')).filter(Boolean),
       pos: lines(v['Pos 1'] ?? '', v['Pos 2'] ?? ''), welder: welderCodes(entry), wps: v['WPS No'] ?? '',
-      km: text(entry.weld.kr) || text(entry.weld.fp), vt: vtOf(entry), weldCoating: text(coating?.name), sleeve: text(entry.weld.sleeve),
+      km: text(entry.weld.kr) || text(entry.weld.fp), installed: lines(text(entry.weld.insLength), text(entry.weld.insLength2)), vt: vtOf(entry), weldCoating: text(coating?.name), sleeve: text(entry.weld.sleeve),
       ndt: Object.fromEntries(Object.entries(cells).map(([key, cell]) => [key, { result: cell.result, report: cell.report }])),
     };
   });

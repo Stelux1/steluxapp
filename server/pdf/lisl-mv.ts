@@ -13,7 +13,7 @@ const MV_PAGE: PageSetup = { ...OWNER_PAGE, size: 'A3' };
 export function lislMvPdf(input: OwnerFormInput) {
   const { model } = input, texts = ownerFormTexts(model.site, 'mv');
   const record = (on: boolean, value: string) => on ? value : '';
-  const welder = (i: number): OwnerColumn => ({ header: ['Welder', String(i + 1)], weight: 22, cell: (weld, on) => record(on, weld.welders[i] ?? '') });
+  const welder = (i: number): OwnerColumn => ({ header: ['Welder', String(i + 1)], weight: 24, cell: (weld, on) => record(on, weld.welders[i] ?? '') });
   const right: OwnerColumn[] = [
     { header: ['Weld', 'No.'], weight: 28, cell: weld => [weld.weldNo, weld.typeName].filter(Boolean).join('\n') },
     { header: ['Location'], weight: 28, cell: weld => weld.location },
@@ -21,9 +21,9 @@ export function lislMvPdf(input: OwnerFormInput) {
     ...[0, 1, 2, 3].map(welder),
     { header: ['Date'], weight: 30, cell: (weld, on) => record(on, weld.date) },
     { header: ['WPS'], weight: 34, cell: (weld, on) => record(on, weld.wps) },
-    { header: ['Wire 1'], weight: 28, cell: (weld, on) => record(on, weld.wires[0].name) },
+    { header: ['Wire 1'], weight: 24, cell: (weld, on) => record(on, weld.wires[0].name) },
     { header: ['mm'], weight: 12, cell: (weld, on) => record(on, weld.wires[0].mm) },
-    { header: ['Wire 2'], weight: 28, cell: (weld, on) => record(on, weld.wires[1].name) },
+    { header: ['Wire 2'], weight: 24, cell: (weld, on) => record(on, weld.wires[1].name) },
     { header: ['mm'], weight: 12, cell: (weld, on) => record(on, weld.wires[1].mm) },
     { header: ['Fit-up', 'date'], weight: 30, cell: (weld, on) => record(on, weld.fitup) },
     ...ndtPairColumns('mv', 14, 34),

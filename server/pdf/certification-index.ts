@@ -3,6 +3,7 @@ import { renderDocument } from './document.ts';
 import type { PdfProjectDocumentDefinition } from './documents.ts';
 import { fileDay, fileSafe, naturalCompare } from './links.ts';
 import { projectCertificates } from '../../shared/site-settings.ts';
+import { certificatesForProject } from '../../shared/welder-data.ts';
 import type { Row } from '../../shared/types.ts';
 
 /**
@@ -15,42 +16,35 @@ import type { Row } from '../../shared/types.ts';
 type Rows = Record<string, Row[]>;
 const text = (value: unknown) => String(value ?? '').trim();
 const find = (rows: Rows, key: string, id: unknown) => id ? (rows[key] || []).find(row => row.id === id) : undefined;
-const ids = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : typeof value === 'string' && value ? value.split(',').map(item => item.trim()).filter(Boolean) : [];
-
-/**
- * The certificates linked to any of the projects. NOTE: `shared/` has no such helper yet and the certificate
- * record has no project field in this version, so the link is read locally from what exists: an explicit
- * `projectIds` / `projectId` / `allProjects` on the certificate (for when those fields are added), and the weld
- * records that name the certificate on one of their sides, via the weld's isometric. Welds and isometrics are
- * only used to find the link; the caller decides which certificates may be shown.
- */
-export function certificatesForProject(rows: Rows, projectIds: string | string[]): Row[] {
-  const wanted = new Set(Array.isArray(projectIds) ? projectIds : [projectIds]);
-  const isoProject = new Map((rows.isometrics || []).map(iso => [iso.id, String(iso.projectId)]));
-  const used = new Set<string>();
-  for (const weld of rows.welds || []) {
-    if (weld._archived || !wanted.has(isoProject.get(String(weld.isoId)) ?? '')) continue;
-    for (const side of [1, 2]) if (weld[`certificate${side}Id`]) used.add(String(weld[`certificate${side}Id`]));
-  }
-  return (rows.certifications || []).filter(cert => !cert._archived && (cert.allProjects === true || used.has(cert.id) || wanted.has(String(cert.projectId ?? '')) || ids(cert.projectIds).some(id => wanted.has(id))));
-}
-
 export interface CertificateLine { cells: string[]; indexNo: string; name: string }
-/** The 13 printed cells of a certificate. Cells the certificate record does not hold fall back to the linked material, or stay empty. */
+/**
+ * The 13 printed cells of a certificate, read from the certificate as the Certifications page stores it: Index number,
+ * Charge number, Certificate-type (`certType`), Attest number (`name`), Material No (the linked material's number),
+ * Type of material and Material part (their catalogs), Dia. (`diameter`), Schedule, Wall thickness, Supplier,
+ * Controlled and Accepted.
+ */
 export function certificateCells(rows: Rows, cert: Row): CertificateLine {
   const material = find(rows, 'materials', cert.materialId);
-  const named = (key: string, ...refs: unknown[]) => { for (const ref of refs) { const row = find(rows, key, ref); if (row) return text(row.abbreviation) || text(row.name); } return ''; };
-  const yes = (value: unknown) => value === true ? 'Yes' : value === false ? 'No' : '';
+  const named = (key: string, id: unknown) => text(find(rows, key, id)?.name);
+  const yes = (value: unknown) => value === true ? 'Yes' : 'No';
   const indexNo = text(cert.indexNo);
   return {
     indexNo, name: text(cert.name),
     cells: [
-      indexNo, text(cert.chargeNo), named('certificate_types', cert.certificateTypeId) || text(cert.certificateType), text(cert.attestNo) || text(cert.name),
-      text(material?.materialNo) || text(cert.materialCode), named('material_types', cert.typeId, cert.materialTypeId, material?.typeId) || text(cert.typeOfMaterial), named('material_parts', cert.partId, cert.materialPartId, material?.partId),
-      text(cert.diameter) || text(material?.dia), text(cert.schedule) || text(material?.lbs), text(cert.wallThickness) || text(material?.wallThickness),
-      named('suppliers', cert.supplierId), yes(cert.controlled), yes(cert.accepted),
+      indexNo, text(cert.chargeNo), text(cert.certType), text(cert.name), text(material?.materialNo), named('material_types', cert.materialTypeId), named('material_parts', cert.materialPartId),
+      text(cert.diameter), text(cert.schedule), text(cert.wallThickness), named('suppliers', cert.supplierId), yes(cert.controlled), yes(cert.accepted),
     ],
   };
+}
+/**
+ * The certificates of a project or main project: with "Project-specific Material Certificates" on for the main project, only the
+ * certificates linked to the project (or to all projects), the rule of the weld form (`certificatesForProject` in
+ * `shared/welder-data.ts`); a main project lists the certificates of any of its projects.
+ */
+export function indexCertificates(certificates: Row[], links: Row[], projectIds: string[], site: Row | null): Row[] {
+  const wanted = new Set<string>();
+  for (const projectId of projectIds) for (const certificate of certificatesForProject({ certificates, links, projectId, site: site ?? undefined })) wanted.add(certificate.id);
+  return certificates.filter(certificate => wanted.has(certificate.id));
 }
 export const CERTIFICATE_COLUMNS: { header: string; width: number; align?: 'center' }[] = [
   { header: 'Index number', width: 7 }, { header: 'Charge number', width: 10 }, { header: 'Certificate-type', width: 8 }, { header: 'Attest number', width: 10 }, { header: 'Material No', width: 11 },
@@ -86,14 +80,10 @@ export const certificationIndexDocument: PdfProjectDocumentDefinition = {
     // The setting belongs to the main project; the links come from the full records, the certificates from what the account may read.
     const limited = Boolean(site) && projectCertificates(site);
     let certificates = (rows.certifications || []).filter(cert => !cert._archived);
-    if (limited) {
-      const scope = project ? [project.id] : store.list('projects').filter(row => row.siteId === site!.id).map(row => row.id);
-      const linked = new Set(certificatesForProject({ certifications: certificates, welds: store.list('welds'), isometrics: store.list('isometrics') }, scope).map(cert => cert.id));
-      certificates = certificates.filter(cert => linked.has(cert.id));
-    }
+    if (limited) certificates = indexCertificates(certificates, store.list('certificate_projects'), project ? [project.id] : store.list('projects').filter(row => row.siteId === site!.id).map(row => row.id), site);
     // The certificate decides what the account may see; the printed cells come from the stored record and the catalogs it names
     // (supplier, material, type of material...), which a pilot's own field list would otherwise hide from this document.
-    const lookups: Rows = Object.fromEntries(['materials', 'material_types', 'material_parts', 'suppliers', 'certificate_types'].map(key => [key, store.list(key)]));
+    const lookups: Rows = Object.fromEntries(['materials', 'material_types', 'material_parts', 'suppliers'].map(key => [key, store.list(key)]));
     const stored = new Map(store.list('certifications').map(cert => [cert.id, cert]));
     const { bytes } = await certificationIndexPdf({ rows: lookups, certificates: certificates.map(cert => stored.get(cert.id) ?? cert), generatedAt: now, limited, project: project ? [text(project.internnumber), text(project.description)].filter(Boolean).join(' - ') : 'All projects', mainProject: text(site?.name) });
     return { bytes, fileName: `${fileDay(now)}-${fileSafe(project?.internnumber ?? site?.name, 'all-projects')}-certification-index` };

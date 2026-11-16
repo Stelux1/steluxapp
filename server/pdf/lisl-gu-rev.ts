@@ -59,16 +59,16 @@ export function lislGuRevPdf(input: OwnerFormInput, revision: 2 | 3) {
     { header: ['Wall', 'thk.', 'mm'], weight: 22, side: true, cell: weld => [weld.sides[0].wt, weld.sides[1].wt] },
     { header: ['Material', 'Type /', 'quality'], weight: 42, side: true, cell: weld => [weld.sides[0].type, weld.sides[1].type] },
     { header: ['Coating'], weight: 38, side: true, cell: weld => [weld.sides[0].coating, weld.sides[1].coating] },
-    { header: ['Installed', 'length'], weight: 28, side: true, cell: () => ['', ''] },
+    { header: ['Installed', 'length'], weight: 28, side: true, cell: weld => [weld.sides[0].installed, weld.sides[1].installed] },
     { header: ['Description'], weight: 46, side: true, cell: weld => [weld.sides[0].description, weld.sides[1].description] },
     { header: ['POS'], weight: 16, side: true, cell: weld => [weld.sides[0].pos, weld.sides[1].pos] },
     { header: ['Weld no.'], weight: 28, cell: weld => [weld.weldNo, weld.typeName].filter(Boolean).join('\n') },
     { header: ['Welder'], weight: 30, cell: (weld, record) => on(record, weld.welders.filter(Boolean).join(', ')) },
     { header: ['WPS no.'], weight: 40, cell: (weld, record) => on(record, weld.wps) },
-    { header: ['KM'], weight: 18, cell: () => '' },
+    { header: ['KM'], weight: 18, cell: weld => weld.km },
     { header: ['VT-no.'], weight: 34, cell: (weld, record) => on(record, weld.ndt.VT.report) },
     ...ndtPairColumns('rev', 14, 40),
-    { header: ['Weld', 'coating'], weight: 28, cell: () => '' },
+    { header: ['Weld', 'coating'], weight: 28, cell: weld => weld.weldCoating },
   ];
   const first = 14, ndtEnd = first + 2 * NDT_FORM_COLUMNS.rev.length - 1;
   const bands: Span[][] = [[{ label: 'Identification mark', from: 0, to: 1 }, { label: 'Pipe', from: 5, to: 6 }, { label: 'Fixed points', from: 12, to: 13 }, { label: 'Non-destructive testing', from: first, to: ndtEnd }], ndtMethodBand('rev', first)];

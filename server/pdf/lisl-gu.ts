@@ -7,7 +7,7 @@ import { AppError } from '../store.ts';
 import type { PdfRequest, PdfResult } from './documents.ts';
 import { currentSignature } from '../signatures.ts';
 import { lislModel, printDate, type LislModel, type LislOptions } from '../../shared/pdf-lisl.ts';
-import { NDT_FORM_COLUMNS, ndtColumnCells, type NdtColumnCells, type NdtForm } from '../../shared/pdf-ndt-columns.ts';
+import { GU_FAMILY_COLUMNS, NDT_FORM_COLUMNS, ndtFormCells, ndtLookups, type NdtColumnCells, type NdtForm } from '../../shared/pdf-ndt-columns.ts';
 import { ownerFormTexts, type OwnerFormTexts } from '../../shared/site-settings.ts';
 import type { Row } from '../../shared/types.ts';
 
@@ -33,13 +33,14 @@ export function textMeasure(): Promise<Measure> {
 
 // ----- data model ------------------------------------------------------------------------------------------------------
 /** One material side of a weld. */
-export interface OwnerSide { index: string; charge: string; item: string; dn: string; wt: string; type: string; coating: string; description: string; pos: string }
+export interface OwnerSide { index: string; charge: string; item: string; dn: string; wt: string; type: string; coating: string; /** Insertion length of the side (weld entry). */ installed: string; description: string; pos: string }
 export interface OwnerWire { name: string; mm: string }
 export interface OwnerWeld {
   weldNo: string; typeName: string; location: string; joint: string;
   /** Welder codes 1 to 4 (empty when not set). */
   welders: string[];
   date: string; fitup: string; wps: string;
+  /** KR, else FP, of the weld (weld entry). */ km: string; /** Coating weld (weld entry). */ weldCoating: string;
   sides: [OwnerSide, OwnerSide]; wires: [OwnerWire, OwnerWire]; ndt: NdtColumnCells;
 }
 export interface OwnerModel {
@@ -72,9 +73,7 @@ export function ownerModel(rows: Record<string, Row[]>, isoId: string, type: Lis
   const find = (key: string, id: unknown) => (rows[key] || []).find(row => row.id === id);
   const text = (value: unknown) => String(value ?? '').trim();
   const site = base.site ?? fallbackSite;
-  const processes = new Map((rows.ndt_processes || []).map(row => [row.id, row]));
-  const groups = new Map((rows.ndt_groups || []).map(row => [row.id, row]));
-  const names = (request: Row) => { const process = processes.get(String(request.processId)); return { process: text(process?.name), group: text(groups.get(String(process?.groupId))?.name) }; };
+  const lookups = ndtLookups(rows);
   const welds = base.entries.map((entry): OwnerWeld => {
     const { weld, values } = entry;
     const side = (i: 1 | 2): OwnerSide => {
@@ -82,8 +81,8 @@ export function ownerModel(rows: Record<string, Row[]>, isoId: string, type: Lis
       const present = Boolean(certificate || material);
       return {
         index: values[`Index No ${i}`] ?? '', charge: values[`Charge No ${i}`] ?? '', item: text(material?.materialNo), dn: dnOfInch(certificate?.diameter || material?.dia),
-        wt: values[`Wall thickness ${i}`] ?? '', type: present ? [text(find('material_types', material?.typeId)?.name), text(base.iso.material)].filter(Boolean).join(' ') : '',
-        coating: text(find('coatings', weld[`coating${i}Id`])?.name), description: values[`Material ${i}`] ?? '', pos: values[`Pos ${i}`] ?? '',
+        wt: values[`Wall thickness ${i}`] ?? '', type: present ? [text(find('material_types', certificate?.materialTypeId || material?.typeId)?.name), text(base.iso.material)].filter(Boolean).join(' ') : '',
+        coating: text(find('coatings', weld[`coating${i}Id`])?.name), installed: text(weld[i === 1 ? 'insLength' : 'insLength2']), description: values[`Material ${i}`] ?? '', pos: values[`Pos ${i}`] ?? '',
       };
     };
     const wire = (i: 1 | 2): OwnerWire => ({ name: values[`Wire ${i}`] ?? '', mm: text(find('welding_wires', weld[`wire${i}Id`])?.diameter) });
@@ -91,8 +90,8 @@ export function ownerModel(rows: Record<string, Row[]>, isoId: string, type: Lis
     return {
       weldNo: text(weld.weldNo), typeName: text(entry.weldType?.abbreviation || entry.weldType?.name), location: text(entry.weldType?.location), joint: values['Joint type'] ?? '',
       welders: [values.Welder, values['Welder 2'], values['Welder 3'], values['Welder 4']].map(code), date: printDate(values['Weld date']), fitup: printDate(values['Fitup date']),
-      wps: values['WPS No'] ?? '', sides: [side(1), side(2)], wires: [wire(1), wire(2)],
-      ndt: ndtColumnCells(weld, rows.inspection_results || [], rows.inspection_requests || [], names),
+      wps: values['WPS No'] ?? '', km: text(weld.kr) || text(weld.fp), weldCoating: text(find('coatings', weld.coatingWeldId)?.name), sides: [side(1), side(2)], wires: [wire(1), wire(2)],
+      ndt: ndtFormCells(GU_FAMILY_COLUMNS, weld, lookups),
     };
   });
   const usedWps = [...new Set(base.entries.map(entry => text(entry.weld.wpsId)).filter(Boolean))].map(id => find('wps', id)).filter((row): row is Row => Boolean(row));
@@ -371,7 +370,7 @@ export function lislGuPdf(input: OwnerFormInput) {
     { header: ['Date'], weight: 36, cell: (weld, record) => recorded(record, weld.date) },
     { header: ['WPS'], weight: 48, cell: (weld, record) => recorded(record, weld.wps) },
     ...ndtPairColumns('gu', 14, 40),
-    { header: ['Field', 'coating', 'weld'], weight: 30, cell: () => '' },
+    { header: ['Field', 'coating', 'weld'], weight: 30, cell: weld => weld.weldCoating },
   ];
   const columns = [...materialColumns(), ...right], first = 9 + 4;
   const ndtEnd = first + 2 * NDT_FORM_COLUMNS.gu.length - 1;

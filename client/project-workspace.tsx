@@ -15,7 +15,6 @@ import { WdiProgress } from './wdi-progress.tsx';
 import { MtoDashboardPlaceholder, WeldDashboard } from './itp-dashboard.tsx';
 import { IsometricHeader } from './iso-header.tsx';
 import { PdfReportsMenu } from './pdf-reports.tsx';
-import { MtoPrintButton } from './pdf-mto-print.tsx';
 import { ArchiveRecordButton, ArchiveRecordDialog } from './archive-record.tsx';
 const PlanningRegister = lazy(() => import('./project-planning.tsx').then(module => ({ default: module.PlanningRegister })));
 import { api, formatDate, formatNumber, apiUrl } from './api.ts';
@@ -133,7 +132,6 @@ export function IsometricWorkspace() {
     <div role="tabpanel" id={`iso-panel-${isoId}`} aria-labelledby={`iso-tab-${tab}`}>
       {tab === 'welds' && pilot && <WeldsPanel key={isoId} iso={iso} canAttachments={tabs.some(([key]) => key === 'documents')} canSetPhase={canRun('phases', { isoIds: [iso.id] })} onAttachments={() => { setTab('documents'); requestAnimationFrame(() => document.getElementById('iso-tab-documents')?.scrollIntoView({ block: 'nearest' })); }} onAuditTrail={() => setAuditing(true)} onSetPhase={() => setPhasing(true)}/>}
       {tab === 'welds' && !pilot && (canReadReport('lisl') ? <DataLisl key={isoId} scopeIsoId={isoId} scopeProjectId={String(iso.projectId)} embedded/> : <EmptyState title="Weld register restricted" description="Your permission profile does not include the LISL register."/>)}
-      {tab === 'mto' && <MtoPrintButton iso={iso}/>}
       {pilot && tab === 'mto' && <IsoMaterialsPanel key={isoId} iso={iso} onAttachments={() => { setTab('documents'); requestAnimationFrame(() => document.getElementById(`iso-tab-documents`)?.scrollIntoView({ block: 'nearest' })); }} onAudit={() => setAuditing(true)} onPhase={() => setPhasing(true)}/>}
       {(['mto', 'calculation', 'cut-list'] as const).filter(mode => !(pilot && mode === 'mto')).map(mode => tab === mode && <Suspense key={mode + isoId} fallback={<p role="status">Opening register…</p>}><PlanningRegister mode={mode} scopeIsoId={isoId} scopeProjectId={String(iso.projectId)}/></Suspense>)}
       {tab === 'spools' && <section className="panel"><div className="panel-heading"><h2>Spools</h2>{canRecord('spools', 'insert') && <button className="btn primary" onClick={() => { setEditingSpool(undefined); setEditor('spools'); }}><Plus size={16}/>Add spool</button>}</div><TableScroll><table className="data-table"><thead><tr><th>Spool</th><th>Diameter</th><th>Welds</th><th/></tr></thead><tbody>{spools.map(spool => <tr key={spool.id}><td><button className="record-link" onClick={() => openRecord('spools', spool.id)}>{String(spool.name)}</button></td><td>{String(spool.diameter || '—')}</td><td>{welds.filter(weld => weld.spoolId === spool.id).length}</td><td>{canRecord('spools', 'edit', spool) && <button className="icon-btn" aria-label={`Edit spool ${spool.name}`} onClick={() => { setEditingSpool(spool); setEditor('spools'); }}><Pencil size={16}/></button>}</td></tr>)}</tbody></table></TableScroll>{!spools.length && <EmptyState title="No spools in this isometric" description="Add a spool, then assign it when adding or editing a weld."/>}</section>}
