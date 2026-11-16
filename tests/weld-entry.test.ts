@@ -975,3 +975,11 @@ test('save-weld through HTTP with Validation on WPS: a welder not on a valid qua
   // Setting off (Riverside): the same welder is accepted.
   assert.equal((await f.act('save-weld', { ...complete, isoId: 'iso-5', weldNo: 'W073', welder1Id: unlisted.id, diameterId: 'diameter-9' })).status, 201);
 });
+
+test('the weld form defines its check box labels before the fields that use them while rendering (Add / Edit weld opened on a blank page)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../client/weld-entry.tsx', import.meta.url), 'utf8');
+  const defined = source.indexOf('const flagLabel ='), used = source.indexOf('label={flagLabel(name)}');
+  assert.ok(defined > 0 && used > 0, 'both are present');
+  assert.ok(defined < used, 'flagLabel is a const arrow function: calling it above its definition throws while the dialog renders');
+});
