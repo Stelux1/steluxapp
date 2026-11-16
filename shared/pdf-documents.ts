@@ -147,10 +147,12 @@ export function visualReportModel(rows: Rows, reportNo: string, isoIds: Set<stri
   if (!number) return null;
   const welds = new Map(live(rows.welds).filter(weld => isoIds.has(text(weld.isoId))).map(weld => [weld.id, weld]));
   const results = live(rows.inspection_results).filter(row => row.type === 'VI' && text(row.reportNo) === number && welds.has(text(row.weldId)));
-  if (!results.length) return null;
-  const oldest = [...results].sort((a, b) => text(a.date).localeCompare(text(b.date)) || a._createdAt.localeCompare(b._createdAt) || a.id.localeCompare(b.id))[0];
+  // A generated VT report lists its welds before any result is marked (the report row carries them).
+  const generated = live(rows.visual_reports).find(row => text(row.number) === number && welds.has(text(text(row.weldIds).split(',')[0])));
+  if (!results.length && !generated) return null;
+  const oldest = [...results].sort((a, b) => text(a.date).localeCompare(text(b.date)) || a._createdAt.localeCompare(b._createdAt) || a.id.localeCompare(b.id))[0] ?? { ...generated!, date: generated!.date };
   const newest = (weldId: string) => results.filter(row => row.weldId === weldId).sort((a, b) => text(b.date).localeCompare(text(a.date)) || b._createdAt.localeCompare(a._createdAt) || b.id.localeCompare(a.id))[0];
-  const lines = sortWeldLines(unique(results.map(row => text(row.weldId))).map(id => ({ ...weldLine(welds.get(id)!, rows), result: text(newest(id).result) })).map(line => ({ ...line, accepted: line.result === 'Accepted', notApplicable: line.result === 'Not applicable' }))) as VisualReportModel['lines'];
+  const lines = sortWeldLines(unique([...results.map(row => text(row.weldId)), ...(generated ? text(generated.weldIds).split(',').filter(id => welds.has(id)) : [])]).map(id => ({ ...weldLine(welds.get(id)!, rows), result: text(newest(id)?.result) })).map(line => ({ ...line, accepted: line.result === 'Accepted', notApplicable: line.result === 'Not applicable' }))) as VisualReportModel['lines'];
   const context = projectContext(rows, unique(lines.map(line => text(line.iso?.id))).map(id => find(rows, 'isometrics', id)!).filter(Boolean));
   const vtFields = VT_SETTINGS.map(([name, label]) => ({ label, value: name === 'vtType2Date' ? printDate(context.site?.[name]) : text(context.site?.[name]) })).filter(item => item.value);
   return { reportNo: number, itp: text(oldest.itp), activityNo: text(oldest.activityNo), customNo: text(oldest.customNo), date: text(oldest.date).slice(0, 10), engineer: find(rows, 'qa_engineers', oldest.engineerId), resultIds: results.map(row => row.id), lines, context, vtFields };

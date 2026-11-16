@@ -1,13 +1,14 @@
 import { useMemo, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ClipboardCheck, FileText, Loader2, Printer, Upload } from 'lucide-react';
+import { AlertCircle, ClipboardCheck, FileText, Loader2, Pencil, Printer, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
   KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows, isTracer,
   locationField, managerColumns, managerRequests, managerWelds, processField, requestNumberError, resultLabel, roundErrors, roundLabel, tracerError, tracerSummary,
   weldResults, type InspectionKind, type ManagerTab, type RoundInput,
-  VISUAL_NO_CHOICE,
+  VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
+  vtEligibleWelds, vtGenerateError, vtMarks, vtMissingMessage, vtOpenReports, vtResultRows, vtSeq, vtUploadReports, vtWeldIds,
 } from '../shared/inspections.ts';
-import { api, post, ApiError, apiUrl, formatDate } from './api.ts';
+import { api, apiBlob, post, ApiError, apiUrl, formatDate } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { Badge, EmptyState, Modal, TableScroll } from './components.tsx';
@@ -291,63 +292,157 @@ export function UploadPwhtDialog({ isoId, weldIds, onClose }: MassProps) {
 
 // ----- visual inspection hub ---------------------------------------------------------------------------------
 
-type VisualChoice = 'Accepted' | 'Not accepted' | 'Not applicable';
-const VISUAL_CHOICES: VisualChoice[] = ['Accepted', 'Not accepted', 'Not applicable'];
+/** What the Wdr column of the weld pickers shows: the welders' stamp and name, "------" without a welder. */
+const vtWelders = (rows: Rows, weld: Row) => weldersOf(rows, weld).map(row => [row.welderCode || row.number, row.name].filter(Boolean).join(' ')).filter(Boolean).join(', ') || '------';
+const vtType = (rows: Rows, weld: Row) => String(rows.weld_types?.find(row => row.id === weld.typeId)?.name || '-');
+/** One weld per row of the New and Upload tabs: WN, Type (full name of the weld type) and Wdr (stamp and name). */
+function vtWeldCells(rows: Rows, weld: Row) { return <><td>{weldName(weld)}</td><td>{vtType(rows, weld)}</td><td>{vtWelders(rows, weld)}</td></>; }
+type VtTab = 'new' | 'upload' | 'archive';
 
-/** Options → Visual inspection: New upload (one VI report to several welds) and the Visual reports archive. */
+/** Options → Visual inspection: New (generate a numbered VT report), Upload (A / NA per weld, PDF) and the Visual reports archive. */
 export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
-  const { rows, canRun, canRecord, label, siteId } = useWorkspace();
-  const pool = scopeWelds(rows, isoId).filter(weld => weld.welder1Id || weld.welder2Id || weld.welder3Id || weld.welder4Id || weldIds?.includes(weld.id));
-  const [tab, setTab] = useState<'new' | 'archive'>('new');
-  const [filter, setFilter] = useState(weldIds?.length ? 'select' : 'all');
-  const [selected, setSelected] = useState<string[]>(weldIds?.length ? weldIds : []);
-  // Every listed weld starts without a result; only the welds given one are sent (PARITY "Visual inspection hub").
-  const [outcome, setOutcome] = useState<Record<string, VisualChoice>>({});
-  const [itp, setItp] = useState(''), [activityNo, setActivity] = useState(''), [engineerId, setEngineer] = useState(''), [customNo, setCustom] = useState(''), [reportNo, setReport] = useState(''), [date, setDate] = useState(today()), [files, setFiles] = useState<File[]>([]);
-  const { busy, error, setError, run } = useSubmit(onClose);
-  const chosen = filter === 'all' ? pool.map(weld => weld.id) : selected;
-  const reports = useMemo(() => { const groups = new Map<string, Row[]>(); for (const row of (rows.inspection_results || []).filter(row => !row._archived && row.type === 'VI' && (!isoId || rows.welds?.find(weld => weld.id === row.weldId)?.isoId === isoId))) { const key = String(row.reportNo || '—'); groups.set(key, [...(groups.get(key) || []), row]); } return [...groups.entries()].sort((a, b) => String(b[1][0].date).localeCompare(String(a[1][0].date))); }, [rows, isoId]);
-  const knownReports = [...new Set((rows.inspection_results || []).filter(row => row.type === 'VI' && row.reportNo).map(row => String(row.reportNo)))];
+  const { rows, canRun, canRecord, label, siteId, refresh, notify } = useWorkspace();
+  const reports = activeRows(rows, 'visual_reports').filter(report => !isoId || report.isoId === isoId);
+  const eligible = vtEligibleWelds(rows.welds, rows.visual_reports, rows.inspection_results, isoId);
+  const openReports = vtOpenReports(reports, rows.inspection_results, isoId);
+  // A weld opened from its VI cell that already sits on an open report goes straight to that report.
+  const uploadReports = vtUploadReports(reports, isoId);
+  const cellReport = weldIds?.length === 1 ? uploadReports.find(report => vtWeldIds(report).includes(weldIds[0])) : undefined;
+  const [tab, setTab] = useState<VtTab>(cellReport ? 'upload' : 'new');
+  const [reportId, setReportId] = useState(cellReport?.id || '');
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const editable = canRun('visual-inspection');
+  const legacy = useMemo(() => { const numbers = new Set(reports.map(report => String(report.number))); const groups = new Map<string, Row[]>(); for (const row of (rows.inspection_results || []).filter(row => !row._archived && row.type === 'VI' && row.reportNo && !numbers.has(String(row.reportNo)) && (!isoId || rows.welds?.find(weld => weld.id === row.weldId)?.isoId === isoId))) groups.set(String(row.reportNo), [...(groups.get(String(row.reportNo)) || []), row]); return [...groups.entries()].sort((a, b) => String(b[1][0].date).localeCompare(String(a[1][0].date))); }, [rows, isoId, reports]);
   if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing visual inspections"/>;
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!chosen.length) { setError('Select at least one weld.'); return; }
-    if (!reportNo.trim()) { setError('Enter the report number.'); return; }
-    const pick = (value: VisualChoice) => chosen.filter(id => outcome[id] === value);
-    const accepted = pick('Accepted'), notAccepted = pick('Not accepted'), notApplicable = pick('Not applicable'), count = accepted.length + notAccepted.length + notApplicable.length;
-    if (!count) { setError(VISUAL_NO_CHOICE); return; }
-    void run(async () => {
-      const saved = await post<{ records: Row[] }>('/actions/visual-inspection', { weldIds: chosen, accepted, notAccepted, notApplicable, itp, activityNo, engineerId, customNo, reportNo: reportNo.trim(), date });
-      const failed = files.length && saved.records[0] ? await uploadFiles('inspection_results', saved.records[0].id, files, 'Visual inspection report') : 0;
-      return failed ? `Visual report saved; ${failed} file${failed === 1 ? '' : 's'} could not be uploaded.` : `Visual report ${reportNo.trim()} saved for ${count} weld${count === 1 ? '' : 's'}.`;
-    });
+  /** Runs one VT operation; the hub stays open so the next step can follow. */
+  async function act(work: () => Promise<string>, then?: () => void) {
+    setBusy(true); setError('');
+    try { const message = await work(); await refresh(); notify(message); then?.(); }
+    catch (failure) { setError((failure as ApiError).message || 'Saving failed.'); }
+    finally { setBusy(false); }
   }
-  const files_ = (ids: string[]) => (rows.attachments || []).filter(file => !file._archived && file.entityType === 'inspection_results' && ids.includes(String(file.entityId)));
+  const tabs: [VtTab, string][] = [['new', VT_TABS.new], ['upload', VT_TABS.upload], ['archive', VT_TABS.archive]];
+  const readOnly = <div className="modal-body"><EmptyState title="Read only" description="Your profile does not allow recording visual inspections. The archive stays available."/></div>;
   return <Modal wide title="Visual inspection" subtitle={isoId ? `Isometric ${label('isometrics', isoId)}` : 'Visual inspection of welds'} onClose={onClose}>
-    <div className="table-tabs inspection-tabs" role="tablist" aria-label="Visual inspection">{([['new', 'New upload'], ['archive', 'Visual reports archive']] as const).map(([key, title]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'selected' : ''} onClick={() => setTab(key)}>{title}{key === 'archive' && <span className="count-pill">{reports.length}</span>}</button>)}</div>
-    {tab === 'new' ? editable ? <form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
-      <div className="form-grid">
-        <Select id="vi-filter" label="Welds" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All welds' }, { value: 'select', label: 'Select specific welds' }]} empty={null}/>
-        <Select id="vi-itp" label="ITP" value={itp} onChange={setItp} options={[{ value: 'ITP 1', label: 'ITP 1' }, { value: 'ITP 2', label: 'ITP 2' }]} empty="Select ITP"/>
-        <Text id="vi-activity" label="Activity No." value={activityNo} onChange={setActivity}/>
-        <Select id="vi-engineer" label="QA/QC engineer" value={engineerId} onChange={setEngineer} options={options(enabledRows(rows, 'qa_engineers', siteId, engineerId))} empty="Select QA/QC engineer"/>
-        <Text id="vi-custom" label="Custom No." value={customNo} onChange={setCustom}/>
-        <Text id="vi-report" label="Report No." value={reportNo} onChange={setReport} required list="vi-reports"/><datalist id="vi-reports">{knownReports.map(value => <option key={value} value={value}/>)}</datalist>
-        <Text id="vi-date" label="Inspection date" type="date" value={date} onChange={setDate} required/>
-      </div>
-      {filter === 'select' && <WeldPicker welds={pool} value={selected} onChange={setSelected}/>}
-      {chosen.length ? <>
-        <div className="logistics-actions"><button type="button" className="btn small" onClick={() => setOutcome(current => ({ ...current, ...Object.fromEntries(chosen.map(id => [id, 'Accepted' as const])) }))}>Set all to Accepted</button><button type="button" className="btn small" onClick={() => setOutcome({})}>Clear all</button></div>
-        <TableScroll><table className="data-table"><thead><tr><th scope="col">Weld</th><th scope="col">No result</th>{VISUAL_CHOICES.map(value => <th key={value} scope="col">{value}</th>)}</tr></thead><tbody>{chosen.map(id => { const weld = rows.welds?.find(row => row.id === id); return <tr key={id}><th scope="row">{weldName(weld)}</th>{(['', ...VISUAL_CHOICES] as const).map(value => <td key={value || 'none'}><input type="radio" name={`vi-${id}`} aria-label={`${value || 'No result'}: weld ${weldName(weld)}`} checked={(outcome[id] || '') === value} onChange={() => setOutcome(current => { const next = { ...current }; if (value) next[id] = value; else delete next[id]; return next; })}/></td>)}</tr>; })}</tbody></table></TableScroll>
-        <small className="field-hint">Only welds with a result are saved; the others keep their earlier visual inspection.</small>
-      </> : <EmptyState title="No welds to inspect" description="Welds appear here once a welder is recorded on them."/>}
-      <FilePicker id="vi-files" label="Files" files={files} onChange={setFiles}/>
-    </div><Footer busy={busy} onClose={onClose} submit="Save visual report" disabled={!chosen.length}/></form>
-      : <div className="modal-body"><EmptyState title="Read only" description="Your profile does not allow recording visual inspections. The archive stays available."/></div>
-      : <div className="modal-body">{reports.length ? <TableScroll><table className="data-table"><thead><tr><th scope="col">Report No.</th><th scope="col">Inspection date</th><th scope="col">ITP</th><th scope="col">Activity No.</th><th scope="col">QA/QC engineer</th><th scope="col">Custom No.</th><th scope="col">Welds</th><th scope="col">Files</th><th scope="col"><span className="sr-only">Report PDF</span></th></tr></thead><tbody>{reports.map(([number, list]) => <tr key={number}><td>{number}</td><td>{formatDate(list[0].date)}</td><td>{String(list[0].itp || '—')}</td><td>{String(list[0].activityNo || '—')}</td><td>{list[0].engineerId ? label('qa_engineers', list[0].engineerId) : '—'}</td><td>{String(list[0].customNo || '—')}</td><td>{list.map(row => `${label('welds', row.weldId)}${row.result === 'Not applicable' ? ' (n/a)' : row.result === 'Rejected' ? ' (not accepted)' : ''}`).join(', ')}</td><td><FileLinks files={files_(list.map(row => row.id))}/></td><td><VisualReportPdfButton reportNo={number}/></td></tr>)}</tbody></table></TableScroll> : <EmptyState title="No visual reports yet" description="Saved visual reports are listed here."/>}</div>}
-    {tab === 'archive' && <Footer busy={false} onClose={onClose}/>}
+    <div className="table-tabs inspection-tabs" role="tablist" aria-label="Visual inspection">{tabs.map(([key, title]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'selected' : ''} onClick={() => { setTab(key); setError(''); }}>{title}{key === 'archive' && <span className="count-pill">{reports.length + legacy.length}</span>}</button>)}</div>
+    {tab === 'new' && (editable ? <VtNewTab isoId={isoId} weldIds={weldIds} eligible={eligible} openReports={openReports} siteId={siteId} busy={busy} error={error} setError={setError} act={act} onFill={id => { setReportId(id); setTab('upload'); setError(''); }} onClose={onClose}/> : readOnly)}
+    {tab === 'upload' && (editable ? <VtUploadTab openReports={uploadReports} reportId={reportId} setReportId={setReportId} busy={busy} error={error} setError={setError} act={act} onClose={onClose}/> : readOnly)}
+    {tab === 'archive' && <VtArchiveTab reports={reports} legacy={legacy} editable={editable} busy={busy} error={error} setError={setError} act={act} onClose={onClose}/>}
   </Modal>;
+}
+type VtAct = (work: () => Promise<string>, then?: () => void) => Promise<void>;
+interface VtTabProps { busy: boolean; error: string; setError: (message: string) => void; act: VtAct; onClose: () => void; }
+
+function VtNewTab({ isoId, weldIds, eligible, openReports, siteId, busy, error, setError, act, onFill, onClose }: VtTabProps & { isoId?: string; weldIds?: string[]; eligible: Row[]; openReports: Row[]; siteId: unknown; onFill: (reportId: string) => void }) {
+  const { rows } = useWorkspace();
+  const preselected = (weldIds || []).filter(id => eligible.some(weld => weld.id === id));
+  const [filter, setFilter] = useState(preselected.length ? 'select' : 'all'), [selected, setSelected] = useState<string[]>(preselected);
+  const engineers = enabledRows(rows, 'qa_engineers', siteId);
+  const [itp, setItp] = useState(VT_ITPS[0]), [activityNo, setActivity] = useState(''), [engineerId, setEngineer] = useState(String(engineers[0]?.id || '')), [customNo, setCustom] = useState('');
+  const [choosing, setChoosing] = useState(false);
+  const chosen = filter === 'all' ? eligible.map(weld => weld.id) : selected;
+  function generate(event: FormEvent) {
+    event.preventDefault();
+    const problem = vtGenerateError(chosen, rows.welds || [], rows.visual_reports, rows.inspection_results, String(isoId || eligible[0]?.isoId || ''));
+    if (problem) { setError(problem); return; }
+    void act(async () => {
+      const saved = await post<{ record: Row }>('/actions/visual-inspection', { op: 'generate', mode: 'Go (PDF)', isoId: isoId || eligible[0]?.isoId, weldIds: chosen, itp, activityNo, engineerId, customNo });
+      const number = String(saved.record.number);
+      try {
+        const blob = await apiBlob(`/pdf/visual-report?${new URLSearchParams({ reportNo: number })}`);
+        const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `Visual-inspection-report-${number.replace(/[^A-Za-z0-9._-]+/g, '-')}.pdf`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return `Report ${number} created for ${chosen.length} weld${chosen.length === 1 ? '' : 's'}; its PDF was downloaded.`;
+      } catch { return `Report ${number} created for ${chosen.length} weld${chosen.length === 1 ? '' : 's'}. Open its PDF in the Visual reports archive.`; }
+    }, () => { setSelected([]); setFilter('all'); });
+  }
+  function fill() {
+    setError('');
+    if (!openReports.length) { setError(VT_NO_OPEN_REPORT); return; }
+    if (openReports.length === 1) { onFill(openReports[0].id); return; }
+    setChoosing(true);
+  }
+  if (choosing) return <div className="modal-body"><p>{VT_CHOOSE_REPORT}</p><div className="logistics-actions">{openReports.map(report => <button key={report.id} type="button" className="btn small" onClick={() => { setChoosing(false); onFill(report.id); }}>{String(report.number)}</button>)}</div><div className="modal-footer"><button type="button" className="btn" onClick={() => setChoosing(false)}>Cancel</button></div></div>;
+  return <form onSubmit={generate}><div className="modal-body"><Alert message={error}/>
+    <div className="form-grid">
+      <Select id="vi-filter" label={VT_NEW_LABELS.filter} value={filter} onChange={setFilter} options={VT_FILTERS} empty={null}/>
+      <Select id="vi-itp" label={VT_NEW_LABELS.itp} value={itp} onChange={setItp} options={VT_ITPS.map(value => ({ value, label: value }))} empty={null}/>
+      <Text id="vi-activity" label={VT_NEW_LABELS.activityNo} value={activityNo} onChange={setActivity}/>
+      <Select id="vi-engineer" label={VT_NEW_LABELS.engineer} value={engineerId} onChange={setEngineer} options={options(engineers)} empty={engineers.length ? null : '—'}/>
+      <Text id="vi-custom" label={VT_NEW_LABELS.customNo} value={customNo} onChange={setCustom}/>
+    </div>
+    {filter === 'select' && (eligible.length ? <TableScroll><table className="data-table" aria-label="Welds for the new report"><thead><tr>{VT_PICKER_COLUMNS.map(column => <th key={column} scope="col">{column === 'C' ? <input type="checkbox" aria-label="Select all welds" checked={eligible.every(weld => selected.includes(weld.id))} onChange={e => setSelected(e.target.checked ? eligible.map(weld => weld.id) : [])}/> : column}</th>)}</tr></thead><tbody>{eligible.map(weld => <tr key={weld.id}><td><input type="checkbox" aria-label={`Select weld ${weldName(weld)}`} checked={selected.includes(weld.id)} onChange={e => setSelected(e.target.checked ? [...selected, weld.id] : selected.filter(id => id !== weld.id))}/></td>{vtWeldCells(rows, weld)}</tr>)}</tbody></table></TableScroll> : null)}
+    {!eligible.length && <EmptyState title="No welds to put on a report" description="Every weld of this isometric is already on a visual report."/>}
+  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn" onClick={fill} disabled={busy}><Pencil size={15}/>Digital fill-in</button><button className="btn primary" disabled={busy || !eligible.length}>{busy && <Loader2 size={15} className="spin"/>}Go (PDF)</button></div></form>;
+}
+
+function VtUploadTab({ openReports, reportId, setReportId, busy, error, setError, act, onClose }: VtTabProps & { openReports: Row[]; reportId: string; setReportId: (id: string) => void }) {
+  const { rows } = useWorkspace();
+  const report = openReports.find(item => item.id === reportId) || openReports[0];
+  const saved = useMemo(() => report ? vtMarks(report, rows.inspection_results) : new Map<string, string>(), [report, rows.inspection_results]);
+  const [date, setDate] = useState(today()), [files, setFiles] = useState<File[]>([]);
+  const [ticks, setTicks] = useState<Record<string, string>>({});
+  if (!report) return <div className="modal-body"><EmptyState title="No report to fill in" description="Generate a report on the New tab first. Reports with an uploaded PDF are in the archive."/></div>;
+  const welds = vtWeldIds(report).map(id => rows.welds?.find(weld => weld.id === id)).filter((weld): weld is Row => Boolean(weld));
+  const mark = (id: string) => ticks[id] ?? saved.get(id) ?? '';
+  const set = (id: string, value: string) => { setTicks(current => ({ ...current, [id]: mark(id) === value ? '' : value })); setError(''); };
+  const changed = (value: string) => welds.filter(weld => mark(weld.id) === value && saved.get(weld.id) !== value).map(weld => weld.id);
+  const stillOpen = () => welds.filter(weld => !mark(weld.id));
+  const pick = (id: string) => { setReportId(id); setTicks({}); setFiles([]); setError(''); };
+  const saveMarks = () => post('/actions/visual-inspection', { op: 'marks', reportId: report.id, date, accepted: changed('Accepted'), notAccepted: changed('Rejected') });
+  function save() {
+    if (!welds.some(weld => mark(weld.id))) { setError(VT_TICK_ONE); return; }
+    if (!changed('Accepted').length && !changed('Rejected').length) { setError(''); return; }
+    void act(async () => { await saveMarks(); const open = welds.filter(weld => !mark(weld.id)); return open.length ? `Results saved. Still open: ${open.map(weldName).join(', ')}` : 'Results saved.'; }, () => setTicks({}));
+  }
+  function upload() {
+    const open = stillOpen(); if (open.length) { setError(vtMissingMessage(open.map(weldName))); return; }
+    if (!files.length) { setError('Choose at least one PDF file to upload.'); return; }
+    if (files.some(file => !/\.pdf$/i.test(file.name))) { setError('VI documents must be PDF files.'); return; }
+    void act(async () => {
+      if (changed('Accepted').length || changed('Rejected').length) await saveMarks();
+      const failed = await uploadFiles('visual_reports', report.id, files, VT_DOCUMENT);
+      if (failed) throw new ApiError(`${failed} file${failed === 1 ? '' : 's'} could not be uploaded. Try again.`, 422);
+      await post('/actions/visual-inspection', { op: 'upload', reportId: report.id });
+      return `Report ${report.number} uploaded.`;
+    }, () => { setTicks({}); setFiles([]); });
+  }
+  return <form onSubmit={event => { event.preventDefault(); upload(); }}><div className="modal-body"><Alert message={error}/>
+    <div className="form-grid">
+      <Select id="vt-report" label="Select report" value={report.id} onChange={pick} options={openReports.map(item => ({ value: String(item.id), label: String(item.number) }))} empty={null}/>
+      <Text id="vt-date" label="Inspection date" type="date" value={date} onChange={setDate}/>
+    </div>
+    <TableScroll><table className="data-table" aria-label={`Welds of report ${report.number}`}><thead><tr>{VT_UPLOAD_COLUMNS.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody>{welds.map(weld => <tr key={weld.id}>
+      <td><input type="checkbox" aria-label={`A (accepted): weld ${weldName(weld)}`} checked={mark(weld.id) === 'Accepted'} onChange={() => set(weld.id, 'Accepted')}/></td>
+      <td><input type="checkbox" aria-label={`NA (not accepted): weld ${weldName(weld)}`} checked={mark(weld.id) === 'Rejected'} onChange={() => set(weld.id, 'Rejected')}/></td>{vtWeldCells(rows, weld)}</tr>)}</tbody></table></TableScroll>
+    <small className="field-hint">{VT_UPLOAD_HELP}</small>
+    <FilePicker id="vt-files" label="VI document(s) (Hold CTRL for multiple files upload) Only PDFs are allowed" files={files} onChange={setFiles} pdf/>
+  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn" onClick={save} disabled={busy}>Save A/NA</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Upload</button></div></form>;
+}
+
+function VtArchiveTab({ reports, legacy, editable, busy, error, setError, act, onClose }: VtTabProps & { reports: Row[]; legacy: [string, Row[]][]; editable: boolean }) {
+  const { rows, label } = useWorkspace();
+  const [marked, setMarked] = useState<string[]>([]), [confirming, setConfirming] = useState(false);
+  const generated = [...reports].sort((a, b) => vtSeq(b) - vtSeq(a));
+  const uploaded = generated.filter(report => report.uploaded === true);
+  const filesOf = (entityType: string, ids: string[]) => (rows.attachments || []).filter(file => !file._archived && file.entityType === entityType && ids.includes(String(file.entityId)));
+  function remove() {
+    if (!marked.length) { setError(VT_NOTHING_TO_DELETE); setConfirming(false); return; }
+    void act(async () => { await post('/actions/visual-inspection', { op: 'delete', reportIds: marked }); return `${marked.length} VT report${marked.length === 1 ? '' : 's'} deleted.`; }, () => { setMarked([]); setConfirming(false); });
+  }
+  if (!generated.length && !legacy.length) return <><div className="modal-body"><EmptyState title="No visual reports yet" description="Reports generated on the New tab are listed here."/></div><Footer busy={false} onClose={onClose}/></>;
+  return <form onSubmit={event => { event.preventDefault(); if (!marked.length) { setError(VT_NOTHING_TO_DELETE); return; } setError(''); setConfirming(true); }}><div className="modal-body"><Alert message={error}/>
+    <h4>Generated reports</h4>
+    {generated.length ? <TableScroll><table className="data-table" aria-label="Generated reports"><tbody>{generated.map(report => <tr key={report.id}>
+      {editable && <td><input type="checkbox" aria-label={`Delete ${report.number}`} checked={marked.includes(report.id)} onChange={e => setMarked(e.target.checked ? [...marked, report.id] : marked.filter(id => id !== report.id))}/></td>}
+      <td><VisualReportPdfButton reportNo={String(report.number)} label={String(report.number)}/></td></tr>)}</tbody></table></TableScroll> : <p className="muted">No generated reports.</p>}
+    <h4>Uploaded reports</h4>
+    {uploaded.length || legacy.length ? <TableScroll><table className="data-table" aria-label="Uploaded reports"><thead><tr><th scope="col">Report</th><th scope="col">Inspection date</th><th scope="col">Welds</th><th scope="col">Files</th></tr></thead><tbody>
+      {uploaded.map(report => <tr key={report.id}><td><VisualReportPdfButton reportNo={String(report.number)} label={String(report.number)}/></td><td>{formatDate(vtResultRows(report, rows.inspection_results)[0]?.date || report.date)}</td><td>{vtWeldIds(report).map(id => label('welds', id)).join(', ')}</td><td><FileLinks files={filesOf('visual_reports', [report.id])}/></td></tr>)}
+      {legacy.map(([number, list]) => <tr key={number}><td><VisualReportPdfButton reportNo={number} label={number}/></td><td>{formatDate(list[0].date)}</td><td>{list.map(row => `${label('welds', row.weldId)}${row.result === 'Not applicable' ? ' (n/a)' : row.result === 'Rejected' ? ' (NA)' : ''}`).join(', ')}</td><td><FileLinks files={filesOf('inspection_results', list.map(row => row.id))}/></td></tr>)}
+    </tbody></table></TableScroll> : <p className="muted">No uploaded reports.</p>}
+    {editable && generated.length > 0 && <p className="muted">Check for delete</p>}
+    {confirming && <div className="alert" role="alertdialog" aria-label="Delete reports"><span>{VT_DELETE_CONFIRM}</span><div className="logistics-actions"><button type="button" className="btn small danger" onClick={remove} disabled={busy}>Delete</button><button type="button" className="btn small" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button></div></div>}
+  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>{editable && generated.length > 0 && !confirming && <button className="btn primary" disabled={busy}>Delete</button>}</div></form>;
 }
 
 // ----- the cell's dialog and the isometric Options menu -------------------------------------------------------

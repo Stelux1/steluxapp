@@ -6,7 +6,7 @@
  */
 export const PDF_REPORT_RESOURCES: Record<string, string[]> = {
   'pdf-ndt-request': ['inspection_requests'],
-  'pdf-visual-report': ['inspection_results'],
+  'pdf-visual-report': ['inspection_results', 'visual_reports'],
   'pdf-release': ['releases'],
   'pdf-hydrotest': ['hydrotest_requests'],
   'pdf-punch': ['punchlists'],

@@ -3,6 +3,7 @@ import type { Row } from '../shared/types.ts';
 import {
   NDT_ROUNDS, NDT_TYPES, REPAIR_COPY_FIELDS, REQUEST_PREFIX, EXTRA_RESULT_OPTION, VISUAL_NO_CHOICE, currentRequest, locationField, nextRepairNumber,
   processField, repairDue, requestNumberError, roundErrors, tracerError, tracersOf, type RoundInput,
+  VT_DOCUMENT, VT_ITPS, VT_MODES, VT_NO_WELDS, VT_TICK_ONE, nextVtSeq, vtGenerateError, vtMarks, vtMissingMessage, vtNumber, vtOpenWeldIds, vtWeldIds,
 } from '../shared/inspections.ts';
 
 /**
@@ -93,6 +94,69 @@ export function inspectionRules(store: Store, actor: Actor) {
     return list;
   }
 
+
+  /** Visual (VT) report operations; they run under the "visual-inspection" action so the permission of visual inspection decides. */
+  function visualReportOp(data: Input, date: string): { resource: string; record?: Row; records?: Row[] } {
+    const op = str(data.op);
+    const report = (id: unknown) => { const row = store.get('visual_reports', id); return row; };
+    if (op === 'generate') {
+      const iso = store.get('isometrics', data.isoId);
+      const weldIds = ids(data.weldIds, 'weld');
+      const mode = str(data.mode) || 'Go (PDF)'; if (!(VT_MODES as readonly string[]).includes(mode)) throw new AppError(422, 'Choose Digital fill-in or Go (PDF).');
+      const problem = vtGenerateError(weldIds, welds(), store.list('visual_reports'), results(), iso.id); if (problem) throw new AppError(422, problem, { weldIds: problem });
+      const itp = short(data.itp, 'ITP') || VT_ITPS[0]; if (!VT_ITPS.includes(itp)) throw new AppError(422, 'Choose ITP 1 or ITP 2.');
+      const engineerId = short(data.engineerId, 'QAQC Engineer'); if (engineerId) store.get('qa_engineers', engineerId);
+      const siteId = str(iso.projectId) ? str(store.get('projects', iso.projectId, true).siteId) : '';
+      const seq = nextVtSeq(store.list('visual_reports', true), siteId);
+      const created = store.create('visual_reports', { number: vtNumber(seq), seq, siteId, isoId: iso.id, date, mode, weldIds: weldIds.join(','), itp, activityNo: short(data.activityNo, 'Activity No'), engineerId, customNo: short(data.customNo, 'Custom Report No', 80), uploaded: false }, actor);
+      store.audit('visual_reports', created.id, 'created', `${created.number} generated for ${weldIds.length} weld${weldIds.length === 1 ? '' : 's'}`, actor);
+      return { resource: 'visual_reports', record: created };
+    }
+    if (op === 'marks') {
+      const row = report(data.reportId), wanted = vtWeldIds(row);
+      const accepted = optionalIds(data.accepted, 'weld'), notAccepted = optionalIds(data.notAccepted, 'weld');
+      if (!accepted.length && !notAccepted.length) throw new AppError(422, VT_TICK_ONE);
+      if (accepted.some(id => notAccepted.includes(id))) throw new AppError(422, 'Choose A or NA per weld, not both.');
+      if ([...accepted, ...notAccepted].some(id => !wanted.includes(id))) throw new AppError(422, 'A result was chosen for a weld that is not on this report.');
+      const inspectionDate = validDate(data.date, 'Inspection date');
+      const written: Row[] = [];
+      for (const [list, result] of [[accepted, 'Accepted'], [notAccepted, 'Rejected']] as const) for (const id of list) {
+        const weld = store.get('welds', id);
+        const previous = store.list('inspection_results').find(item => item.weldId === id && item.type === 'VI' && item.reportNo === row.number);
+        const request = previous ? store.get('inspection_requests', previous.requestId) : requestFor(weld, 'VI');
+        const values = { requestId: request.id, weldId: id, type: 'VI', round: 'Initial', result, reportNo: row.number, date: inspectionDate, examinedLength: weldLengthMm(store, weld), itp: row.itp ?? '', activityNo: row.activityNo ?? '', engineerId: row.engineerId ?? '', customNo: row.customNo ?? '' };
+        written.push(previous ? store.update('inspection_results', previous.id, values, previous._version, actor) : store.create('inspection_results', { ...values, note: '' }, actor));
+        patch('inspection_requests', store.get('inspection_requests', request.id), { status: result });
+        store.audit('welds', id, 'inspected', `VI ${result === 'Rejected' ? 'not accepted' : 'accepted'} · ${row.number}`, actor);
+      }
+      return { resource: 'inspection_results', records: written };
+    }
+    if (op === 'upload') {
+      const row = report(data.reportId);
+      const open = vtOpenWeldIds(row, results());
+      if (open.length) throw new AppError(422, vtMissingMessage(open.map(id => String(store.get('welds', id, true).weldNo))));
+      const files = store.list('attachments').filter(file => file.entityType === 'visual_reports' && file.entityId === row.id && file.documentType === VT_DOCUMENT);
+      if (!files.length) throw new AppError(422, 'Choose at least one PDF file to upload.');
+      if (files.some(file => !/\.pdf$/i.test(str(file.name)))) throw new AppError(422, 'VI documents must be PDF files.');
+      return { resource: 'visual_reports', record: patch('visual_reports', row, { uploaded: true }) };
+    }
+    if (op === 'delete') {
+      const removed: Row[] = [];
+      for (const id of ids(data.reportIds, 'report')) {
+        const row = report(id);
+        const marked = store.list('inspection_results').filter(item => item.type === 'VI' && item.reportNo === row.number && vtWeldIds(row).includes(String(item.weldId)));
+        for (const item of marked) store.archive('inspection_results', item.id, item._version, actor);
+        // A visual request that no longer has a result is dropped with them.
+        for (const requestId of new Set(marked.map(item => String(item.requestId)))) if (!store.list('inspection_results').some(item => item.requestId === requestId)) { const request = store.get('inspection_requests', requestId, true); if (!request._archived) store.archive('inspection_requests', request.id, request._version, actor); }
+        store.archive('visual_reports', row.id, row._version, actor);
+        store.audit('visual_reports', row.id, 'deleted', `${row.number} deleted`, actor);
+        removed.push(row);
+      }
+      return { resource: 'visual_reports', records: removed };
+    }
+    throw new AppError(422, 'This visual report operation is not available.');
+  }
+
   return {
     ensureRepair,
     run(key: string, data: Input): { resource: string; record?: Row; records?: Row[] } {
@@ -164,6 +228,7 @@ export function inspectionRules(store: Store, actor: Actor) {
         return { resource: 'inspection_results', records: written };
       }
       if (key === 'visual-inspection') {
+        if (data.op !== undefined) return visualReportOp(data, date);
         const reportNo = short(data.reportNo, 'Report No.'); if (!reportNo) throw new AppError(422, 'Enter the report number.', { reportNo: 'Enter the report number.' });
         const inspectionDate = validDate(data.date, 'Inspection date');
         const itp = short(data.itp, 'ITP'); if (itp && !['ITP 1', 'ITP 2'].includes(itp)) throw new AppError(422, 'Choose ITP 1 or ITP 2.');

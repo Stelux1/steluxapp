@@ -226,3 +226,28 @@ test('preparation rolls back when a pre-existing record changes and refuses conf
   assert.throws(() => verifyHostedSchema(db), /Resolve manually first/);
   assert.equal(fingerprint(), conflicted); assert.deepEqual(rows(), { ...records, users: rows(['users']).users });
 });
+
+test('the visual reports resource (VT reports) is part of the hosted schema: references and one number per main project', () => {
+  const reports = RESOURCE_MAP.visual_reports;
+  assert.ok(reports, 'visual_reports is a record type');
+  assert.deepEqual(reports.fields.filter(field => field.type === 'ref').map(field => `${field.name} → ${field.ref}`), ['siteId → sites', 'isoId → isometrics', 'engineerId → qa_engineers']);
+  for (const name of ['number', 'seq', 'date', 'mode', 'weldIds', 'uploaded']) assert.ok(reports.fields.some(field => field.name === name), name);
+  assert.deepEqual(reports.unique, [['siteId', 'number']]);
+});
+
+test('an older hosted database gets the visual reports table from the preparation step, once, without touching records', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  const store = workspace();
+  assert.equal(count('visual_reports'), 0);
+  db.exec('DROP TABLE stelux."visual_reports" CASCADE');
+  const records = rows();
+  assert.throws(() => verifyHostedSchema(db), /visual_reports/);
+  const result = prepareHostedSchema(db);
+  assert.ok(result.created.tables.includes('visual_reports')); assert.ok(result.created.rowLevelSecurity.includes('visual_reports'));
+  verifyHostedSchema(db);
+  assert.deepEqual(rows(Object.keys(records)), records);
+  assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
+  const report = store.create('visual_reports', { number: 'VT 1', seq: 1, siteId: store.list('sites')[0].id, isoId: 'iso-1', weldIds: 'weld-1,weld-10', mode: 'Go (PDF)' });
+  assert.equal(count('visual_reports'), 1);
+  assert.throws(() => store.create('visual_reports', { number: 'VT 1', seq: 1, siteId: report.siteId, isoId: 'iso-1' }), error => (error as { status?: number }).status === 409);
+});
