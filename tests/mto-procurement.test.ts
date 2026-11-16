@@ -309,7 +309,7 @@ test('mto-procurement-stock-033/011: Order materials rows are sorted by Material
   assert.deepEqual(groups, [...groups].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })));
   assert.ok(groups.indexOf('BOLTS A320-L7') < groups.indexOf('BOLTS B16') && groups.indexOf('BOLTS B16') < groups.indexOf('PIPE 316'));
   const items = PILOT_MAP.mto.groups.find(g => g.title === 'Order / Take in')!.items.map(item => item.label);
-  assert.deepEqual(items, ['Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Transfer orders', 'Materials list', 'Order archive', 'Certifications']);
+  assert.deepEqual(items, ['Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
   // The full profile keeps the generic Isometric materials page that Material execution links to.
   assert.equal(pageAvailable(availabilityFor('full'), '/materials/iso_materials', RESOURCES), true);
 });

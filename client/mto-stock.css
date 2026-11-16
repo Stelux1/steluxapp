@@ -25,3 +25,10 @@
 @media(max-width:760px){.stock-lines>li{grid-template-columns:1fr}.order-items>li{grid-template-columns:1fr 1fr}.order-items>li>.icon-btn{justify-self:start}.mto-stock-page .inventory-filters{padding:14px 14px 4px}.mto-stock-page .inventory-filters>.field{max-width:none;flex-basis:100%}}
 @media(max-width:420px){.order-items>li{grid-template-columns:1fr}}
 @media print{.mto-stock-page .heading-actions,.mto-stock-page .inventory-filters,.mto-stock-page .select-cell{display:none!important}}
+/* Transfer Orders (client/transfer-orders.tsx) and the Return to inventory dialog. */
+.return-facts{display:grid;gap:4px;margin:0}.return-facts>div{display:flex;gap:8px;flex-wrap:wrap}.return-facts dt{font-weight:600;margin:0}.return-facts dd{margin:0;overflow-wrap:anywhere}
+.order-facts{margin-bottom:22px;padding:16px 20px}.order-facts dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 22px;margin:0}
+.order-facts dl>div{min-width:0}.order-facts dl>div.wide{grid-column:1/-1}.order-facts dt{font-size:10px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:0 0 2px}.order-facts dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
+.pick-table input[type=number]{width:96px;max-width:100%;text-align:right}.pick-table .select-wrap{min-width:120px}
+.transfer-order-detail .table-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.transfer-order-detail .page-heading p{display:flex;align-items:center;gap:6px;flex-wrap:wrap}

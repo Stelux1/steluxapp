@@ -269,16 +269,16 @@ test('notifications: pure rules — own account and pilot only, newest first, un
   assert.equal(NOTIFICATION_LIMIT, 15); assert.equal(NO_NOTIFICATIONS, 'No notifications');
   assert.equal(safeNotificationLink('/materials/transfer_orders'), '/materials/transfer_orders'); assert.equal(safeNotificationLink('//evil.example'), ''); assert.equal(safeNotificationLink('https://evil.example'), ''); assert.equal(safeNotificationLink('/a b'), '');
 });
-test('notifications: a new transfer order notifies the other accounts that may open it — never another account, never a main project outside the account', async t => {
+test('notifications: a new transfer order notifies the other storehouse managers that may open it — never another account, never a main project outside the account', async t => {
   const f = await fixture(t);
   const planner = f.profile('MTO planner', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });
-  const north = await f.account('North planner', { profileId: planner, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
-  const river = await f.account('River planner', { profileId: planner, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [RIVER] });
-  const free = await f.account('Free planner', { profileId: planner, weldEnabled: false });
+  const north = await f.account('North planner', { profileId: planner, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC, storehouseManager: true }, { mto: [NORTH] });
+  const river = await f.account('River planner', { profileId: planner, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC, storehouseManager: true }, { mto: [RIVER] });
+  const free = await f.account('Free planner', { profileId: planner, weldEnabled: false, storehouseManager: true });
   const bell = async (who: { as: { request: (path: string, method?: string, data?: unknown, pilot?: string | null) => Promise<Response> } }, pilot = 'mto') => json<Bell>(await who.as.request('/notifications', 'GET', undefined, pilot));
   assert.equal((await f.admin.request('/actions/transfer-order-create', 'POST', order(RIVER), 'mto')).status, 201);
   const mine = await bell(river), theirs = await bell(north), open = await bell(free);
-  assert.equal(mine.unread, 1); assert.match(mine.notifications[0].title, /^New transfer order TO-/);
+  assert.equal(mine.unread, 1); assert.match(mine.notifications[0].title, /^New Transfer Order TO-/);
   assert.equal(theirs.unread, 0, 'a main project outside the account never reaches it'); assert.deepEqual(theirs.notifications, []);
   assert.equal(open.unread, 1, 'an account with every main project sees it');
   assert.equal((await json<Bell>(await f.admin.request('/notifications', 'GET', undefined, 'mto'))).unread, 0, 'the account that made the order is not told about it');

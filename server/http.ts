@@ -16,7 +16,7 @@ import { ACTIONS } from '../shared/actions.ts';
 import { refusalBody } from '../shared/refusal.ts';
 import { RELATIONS,relationFields } from '../shared/welding.ts';
 import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/reports.ts';
-import { canResource,canReport,canScope,REPORT_RESOURCES } from '../shared/permissions.ts';
+import { canResource,canReport,canScope,isAdministrator,REPORT_RESOURCES } from '../shared/permissions.ts';
 import type { Row, Module } from '../shared/types.ts';
 import { pilotProfileErrors, withNewUserDefaults } from '../shared/access-ui.ts';
 import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, endSession, ensureAdministrator, hashToken, newSession, assertPasswordStrength, passwordHash, passwordMatches, sessionCookie, signInLimiter, sessionSite, setSessionSite, setTokenSite, type AuthRequest } from './auth.ts';
@@ -36,7 +36,8 @@ import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
 import { FLAG_BULK_RESOURCES, flagBulkAllowed } from '../shared/welder-data.ts';
 import { withLegacyValues } from './welder-data.ts';
-import { addNotification, bellOf, markAllRead, markRead, type Viewer } from './notifications.ts';
+import { addNotification, bellOf, markAllRead, markRead, notifyTransferOrder, type Viewer } from './notifications.ts';
+import { ADJUST_REFUSED, TRANSFER_ORDER_EVENTS, mayAdjustQuantity } from '../shared/mto-stock.ts';
 import { siteOfRecord } from './weld-catalogs.ts';
 import { weldEditHistory } from './weld-entry.ts';
 import { companyForDocuments } from './pdf/company.ts';
@@ -230,11 +231,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   /** Tell the other accounts that may open a new record about it. A notification never fails the action that caused it. */
   function announce(actorId: string, key: string, result: ReturnType<typeof runAction>) {
     try {
-      const order = key === 'transfer-order-create' ? result.record : undefined;
-      if (order) {
-        const site = String(order.siteId || '') || [order.toWarehouseId, order.fromWarehouseId].map(id => id ? String(store.get('warehouses', id, true).siteId || '') : '').find(Boolean) || '';
-        for (const userId of access.recipients('transfer_orders', order, 'mto', actorId)) addNotification(store, { userId, pilot: 'mto', kind: 'transfer-order', title: `New transfer order ${order.number}`, message: `${order.type} · ${order.priority} priority`, link: '/materials/transfer_orders', siteId: site, resource: 'transfer_orders', recordId: order.id });
-      }
+      // Transfer orders: new, completed (also a Return to inventory) and reversed, to the storehouse managers that may open the order.
+      const event = TRANSFER_ORDER_EVENTS[key], order = event && result.resource === 'transfer_orders' ? result.record : undefined;
+      if (event && order) notifyTransferOrder(store, event, order, access.recipients('transfer_orders', order, 'mto', actorId));
       const releases = key === 'release' ? result.records : undefined;
       if (releases?.length) {
         const first = releases[0], type = String(first.type);
@@ -347,6 +346,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const copyAcross=pilots&&(action.key==='copy-isometrics'||action.key==='add-new-isometric');
     if(copyAcross)for(const part of ['copyWelds','copyMaterials','copyCalculations'] as const)delete permissionData[part];
     checkActionPermission(req,action.key,permissionData);
+    // Adjust quantity on a storehouse line: an administrator or an account ticked as Storehouse manager, on top of the area right.
+    if (pilots && action.key === 'stock-adjust') { const adjuster = (req as unknown as AuthRequest).user; if (!mayAdjustQuantity(isAdministrator(adjuster), store.get('users', adjuster.id, true))) throw new AppError(403, ADJUST_REFUSED); }
     if(copyAcross)assertCopyInScope(store,store.get('users',(req as unknown as AuthRequest).user.id),req.body);
     // The add right of each part is that of the profile of the main project copied in (sec1-005): the request's own, else the target project's.
     if(copyAcross){const copyUser=(req as unknown as AuthRequest).user;let copySite=copyUser.siteId;if(!copySite){try{copySite=String(store.get('projects',req.body.projectId).siteId||'')||undefined;}catch{copySite=undefined;}}const parts=access.copyParts(copyUser.id,copySite);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}

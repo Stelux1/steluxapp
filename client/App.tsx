@@ -48,7 +48,8 @@ import { PQR_IMPORT_PATH } from '../shared/wps.ts';
 import { MATERIAL_IMPORT_PATH } from '../shared/material-db.ts';
 import { MaterialImportPage } from './mto-material-import.tsx';
 import { FieldPackagesPage, ReleasesPage } from './releases.tsx';
-import { MaterialInventory, MaterialsList, Storehouses, TransferOrders } from './mto-stock.tsx';
+import { MaterialInventory, MaterialsList, Storehouses } from './mto-stock.tsx';
+import { TransferOrders } from './transfer-orders.tsx';
 
 function Authentication({ setup, focused = false, pilots = false, sampleWorkspace = true, sessionEnded = false, onLogin }: {setup: boolean; focused?: boolean; pilots?: boolean; sampleWorkspace?: boolean; sessionEnded?: boolean; onLogin: (u: User) => void}) {
   const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);

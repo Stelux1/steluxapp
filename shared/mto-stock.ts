@@ -21,8 +21,163 @@ export const MIN_QUANTITY = 0.01;
 export const TRANSFER_TYPES = ['Inventory - Project', 'Inventory - Storehouse', 'Storehouse → Project', 'Storehouse → Storehouse', 'Return → Inventory'] as const;
 export type TransferType = typeof TRANSFER_TYPES[number];
 export const TRANSFER_PRIORITIES = ['Normal', 'Urgent'] as const;
-/** The reference's statuses are not known: an order is open until it is completed (movements applied) or cancelled. */
-export const TRANSFER_STATUSES = ['Open', 'Completed', 'Cancelled'] as const;
+/**
+ * The statuses of a transfer order (MTO manual, Transfer Orders list): Requested when created, Assigned once a handler
+ * takes it, In progress once pick results are saved, then Completed (every line picked in full), Partial (some lines
+ * short or not found) or Cancelled. Orders written before these statuses existed store 'Open', which reads as Requested.
+ */
+export const TRANSFER_STATUSES = ['Requested', 'Assigned', 'In progress', 'Completed', 'Partial', 'Cancelled'] as const;
+export type TransferStatus = typeof TRANSFER_STATUSES[number];
+export const LEGACY_TRANSFER_STATUSES: Record<string, TransferStatus> = { Open: 'Requested' };
+/** The statuses in which an order still waits for its material (it reserves its lines, it may be cancelled). */
+export const OPEN_TRANSFER_STATUSES: readonly TransferStatus[] = ['Requested', 'Assigned', 'In progress'];
+/** The status of an order as every reader shows it (a stored 'Open', or none, reads as Requested). */
+export function orderStatus(order: Row): TransferStatus {
+  const stored = String(order.status ?? '');
+  if ((TRANSFER_STATUSES as readonly string[]).includes(stored)) return stored as TransferStatus;
+  return LEGACY_TRANSFER_STATUSES[stored] ?? 'Requested';
+}
+export const isOpenOrder = (order: Row) => OPEN_TRANSFER_STATUSES.includes(orderStatus(order));
+/** The line status of an order item (MTO manual, Transfer Order detail); an item without one is Pending. */
+export const LINE_STATUSES = ['Pending', 'Picked', 'Not found', 'Partial'] as const;
+export type LineStatus = typeof LINE_STATUSES[number];
+export const lineStatus = (item: Row): LineStatus => (LINE_STATUSES as readonly string[]).includes(String(item.lineStatus)) ? item.lineStatus as LineStatus : 'Pending';
+/** The picked quantity of an order item (0 until pick results are saved). */
+export const qtyPicked = (item: Row) => { const value = Number(item.qtyPicked); return Number.isFinite(value) && value > 0 ? value : 0; };
+/** How the list and the detail name a type: the manual writes all five with a dash (the New Transfer Order select keeps the captured labels). */
+export const transferTypeLabel = (type: unknown) => String(type ?? '').replace(' → ', ' - ');
+
+/** A refusal of a transfer-order step: the HTTP status and the message the user reads. */
+export interface Refusal { status: 409 | 422; message: string }
+export type Step<T> = { ok: true; value: T } | ({ ok: false } & Refusal);
+const ok = <T>(value: T): Step<T> => ({ ok: true, value });
+const no = (status: 409 | 422, message: string): Step<never> => ({ ok: false, status, message });
+const closedText = (order: Row) => `This transfer order is already ${orderStatus(order).toLowerCase()}.`;
+
+/** The steps of the lifecycle (Transfer Order detail): Assign to me, Save pick results, Complete transfer, Cancel, Reverse order. */
+export type TransferEvent = 'assign' | 'pick' | 'complete' | 'cancel' | 'reverse';
+/**
+ * The status an order moves to on a step, or why the step is refused:
+ * - assign: an open order; Requested becomes Assigned, an order already Assigned / In progress keeps its status (the new handler takes it over);
+ * - pick: an order that a handler took (Assigned or In progress) becomes In progress;
+ * - complete: an Assigned or In progress order becomes Completed or Partial (see completePlan);
+ * - cancel: an open order becomes Cancelled;
+ * - reverse: a Completed or Partial order that was not reversed yet keeps its status (reversedAt marks it).
+ */
+export function nextStatus(order: Row, event: TransferEvent, outcome?: 'Completed' | 'Partial'): Step<TransferStatus> {
+  const status = orderStatus(order);
+  if (event === 'reverse') {
+    if (status !== 'Completed' && status !== 'Partial') return no(409, 'Only a completed transfer order can be reversed.');
+    if (order.reversedAt) return no(409, 'This transfer order is already reversed.');
+    return ok(status);
+  }
+  if (!isOpenOrder(order)) return no(409, closedText(order));
+  if (event === 'assign') return ok(status === 'Requested' ? 'Assigned' : status);
+  if (event === 'cancel') return ok('Cancelled');
+  if (status === 'Requested') return no(409, 'Assign the transfer order to yourself first (Assign to me).');
+  if (event === 'pick') return ok('In progress');
+  return ok(outcome ?? 'Completed');
+}
+/** Assign to me: offered on an open order that is not already the account's own. */
+export function canAssign(order: Row, userId: string): Step<TransferStatus> {
+  if (isOpenOrder(order) && order.assignedTo === userId) return no(409, 'This transfer order is already assigned to you.');
+  return nextStatus(order, 'assign');
+}
+
+const stepOf = (value: number) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
+/**
+ * The pick result of one line (Qty picked and Line status), checked against the ordered quantity:
+ * - Pending: nothing picked (an empty or zero quantity);
+ * - Picked: the full ordered quantity (an empty quantity means the full one);
+ * - Partial: more than 0 and less than the ordered quantity;
+ * - Not found: nothing picked.
+ * A quantity is at least 0 in steps of 0.01 and never above the ordered quantity.
+ */
+export function pickLine(item: Row, input: { qtyPicked?: unknown; lineStatus?: unknown }): Step<{ qtyPicked: number; lineStatus: LineStatus }> {
+  const status = String(input.lineStatus ?? '');
+  const label = String(item.materialNo || 'this line');
+  if (!(LINE_STATUSES as readonly string[]).includes(status)) return no(422, `${label}: choose the line status.`);
+  const ordered = Number(item.quantity);
+  const empty = input.qtyPicked === undefined || input.qtyPicked === null || input.qtyPicked === '';
+  if (!empty && (typeof input.qtyPicked !== 'number' || !Number.isFinite(input.qtyPicked) || input.qtyPicked < 0 || !stepOf(input.qtyPicked))) return no(422, `${label}: Qty picked must be zero or more, in steps of 0.01.`);
+  const picked = empty ? (status === 'Picked' ? ordered : 0) : round6(input.qtyPicked as number);
+  if (picked > ordered + 1e-9) return no(422, `${label}: Qty picked cannot exceed the ordered quantity (${ordered}).`);
+  if (status === 'Picked' && Math.abs(picked - ordered) > 1e-9) return no(422, `${label}: Picked means the full quantity (${ordered}). Choose Partial for less.`);
+  if (status === 'Partial' && !(picked > 0 && picked < ordered)) return no(422, `${label}: a partial line needs a quantity above 0 and below ${ordered}.`);
+  if ((status === 'Pending' || status === 'Not found') && picked > 0) return no(422, `${label}: a ${status === 'Pending' ? 'pending' : 'not found'} line has no picked quantity. Choose Picked or Partial.`);
+  return ok({ qtyPicked: picked, lineStatus: status as LineStatus });
+}
+/** Picked all: every line picked in full. */
+export const pickedAll = (items: Row[]) => items.map(item => ({ itemId: item.id, qtyPicked: Number(item.quantity), lineStatus: 'Picked' as LineStatus }));
+/**
+ * What Complete transfer moves: the picked quantity of every line that has one, nothing else. Refused while a line is
+ * still Pending or when nothing was picked at all. The order ends Completed when every line was picked in full, else Partial.
+ */
+export function completePlan(items: Row[]): Step<{ moves: { item: Row; quantity: number }[]; outcome: 'Completed' | 'Partial' }> {
+  if (!items.length) return no(409, 'This transfer order has no items.');
+  const pending = items.filter(item => lineStatus(item) === 'Pending');
+  if (pending.length) return no(409, `Set the line status of every line first (${pending.map(item => item.materialNo).join(', ')} still pending), then save the pick results.`);
+  const moves = items.filter(item => qtyPicked(item) > 0).map(item => ({ item, quantity: round6(Math.min(qtyPicked(item), Number(item.quantity))) }));
+  if (!moves.length) return no(409, 'Nothing was picked. Cancel the transfer order instead.');
+  const full = items.every(item => lineStatus(item) === 'Picked' && Math.abs(qtyPicked(item) - Number(item.quantity)) < 1e-9);
+  return ok({ moves, outcome: full ? 'Completed' : 'Partial' });
+}
+/** One compensating booking of Reverse order: the place a movement of the order changed and the opposite quantity. */
+export interface ReverseEntry { move: Row; place: { warehouseId: string } | { siteId: string }; quantity: number }
+/**
+ * Reverse order: one compensating booking per movement the completion wrote (the originals stay), the opposite quantity on
+ * the same place. What arrived is taken back first, then what left is given back, so a destination that no longer holds the
+ * material refuses the reversal before anything is returned. Per material and charge the entries sum to zero.
+ */
+export function reversePlan(order: Row, movements: Row[]): Step<ReverseEntry[]> {
+  const own = movements.filter(move => !move._archived && move.transferOrder === order.number && move.type !== 'Reversal');
+  if (!own.length) return no(409, 'This transfer order moved no stock, so there is nothing to reverse.');
+  const entries = own.map(move => ({ move, place: move.warehouseId ? { warehouseId: String(move.warehouseId) } : { siteId: String(move.siteId) }, quantity: round6(-Number(move.quantity)) }));
+  return ok([...entries.filter(entry => entry.quantity < 0), ...entries.filter(entry => entry.quantity > 0)]);
+}
+/** Return to inventory on a storehouse line: the quantity to return (more than 0, at most the line's balance; Return all = the balance). */
+export function returnToInventoryPlan(line: Row, input: { quantity?: unknown; all?: unknown }): Step<number> {
+  const balance = round6(Number(line.quantity) || 0);
+  if (input.all === true) return balance > 0 ? ok(balance) : no(422, 'There is nothing to return.');
+  if (!validQuantity(input.quantity)) return no(422, 'Quantity to return must be at least 0.01, in steps of 0.01.');
+  if (input.quantity > balance + 1e-9) return no(409, `Quantity exceeds available balance (${balance}).`);
+  return ok(round6(input.quantity));
+}
+/** The bell notifications of transfer orders (MTO manual 2.5: sto_new / sto_completed / sto_reversed), by the action that causes them. */
+export const TRANSFER_NOTIFICATIONS = { new: 'New Transfer Order', completed: 'Transfer Order Completed', reversed: 'Transfer Order Reversed' } as const;
+export type TransferNotification = keyof typeof TRANSFER_NOTIFICATIONS;
+export const TRANSFER_ORDER_EVENTS: Record<string, TransferNotification> = { 'transfer-order-create': 'new', 'transfer-order-complete': 'completed', 'stock-return': 'completed', 'transfer-order-reverse': 'reversed' };
+/** The page of one transfer order (the bell's notifications open it). */
+export const transferOrderPath = (id: string) => `/materials/transfer_orders?order=${encodeURIComponent(id)}`;
+/** Where a transfer order takes material from and delivers it to, as the list and the detail name them. */
+export function orderPlaces(rows: Record<string, Row[]>, order: Row): { from: string; to: string } {
+  const name = (key: string, id: unknown) => String((rows[key] || []).find(row => row.id === id)?.name ?? '');
+  const route = transferRoute(String(order.type));
+  const from = route?.from === 'inventory' ? (order.fromSiteId ? `Inventory · ${name('sites', order.fromSiteId)}` : '—') : order.fromWarehouseId ? name('warehouses', order.fromWarehouseId) : 'Storehouse of each item';
+  const to = route?.to === 'storehouse' ? name('warehouses', order.toWarehouseId) || '—' : order.siteId ? `${route?.to === 'site' ? '' : 'Inventory · '}${name('sites', order.siteId)}` : '—';
+  return { from, to };
+}
+/** The items of a transfer order, in the order they were added. */
+export const orderItemsOf = (rows: Record<string, Row[]>, orderId: string) => live(rows, 'transfer_order_items').filter(item => item.orderId === orderId).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)) || a.id.localeCompare(b.id));
+export const PICK_SHEET_COLUMNS = ['#', 'Material No', 'Description', 'Qty', 'UOM', 'Storehouse / charge', 'Qty picked', 'Line status'];
+/** Print pick sheet: the order's header and one line per item, with the place to take it from and the pick result saved so far. */
+export function pickSheetModel(rows: Record<string, Row[]>, orderId: string) {
+  const order = live(rows, 'transfer_orders').find(row => row.id === orderId);
+  if (!order) return null;
+  const places = orderPlaces(rows, order), stock = new Map((rows.stock || []).map(row => [row.id, row]));
+  const lines = orderItemsOf(rows, order.id).map((item, index) => {
+    const source = item.stockId ? stock.get(String(item.stockId)) : undefined;
+    const where = source ? [isSiteStock(source) ? 'Inventory' : String((rows.warehouses || []).find(row => row.id === source.warehouseId)?.name ?? ''), String(source.chargeNo || '')].filter(Boolean).join(' · ') : '';
+    const status = lineStatus(item);
+    return [String(index + 1), String(item.materialNo ?? ''), String(item.description ?? ''), String(Number(item.quantity)), String(item.uom ?? ''), where, status === 'Pending' ? '' : String(qtyPicked(item)), status === 'Pending' ? '' : status];
+  });
+  return { order, status: orderStatus(order), type: transferTypeLabel(order.type), ...places, lines };
+}
+/** Adjust quantity on a storehouse line saves only for an administrator or a storehouse manager (MTO manual, Adjust quantity). */
+export const ADJUST_REFUSED = 'Only an administrator or a storehouse manager can adjust a quantity.';
+export const mayAdjustQuantity = (administrator: boolean, account: Row | undefined) => administrator || account?.storehouseManager === true;
+/** Who a transfer-order notification goes to: of the accounts that may open the order, those ticked as Storehouse manager. */
+export const storehouseManagers = (accounts: Row[], candidates: string[]) => { const ticked = new Set(accounts.filter(account => account.storehouseManager === true).map(account => account.id)); return candidates.filter(id => ticked.has(id)); };
 export const CORRECTION_REASONS = ['Import error', 'Name correction', 'Other'] as const;
 /** Reasons of Adjust quantity and of Remove material (reference #adjustLagerQuantity, #removeLagerItem). */
 export const ADJUST_REASONS = ['Loss', 'Damage', 'Found', 'Count correction', 'Other'] as const;
@@ -30,7 +185,7 @@ export const REMOVE_REASONS = ['Imported by mistake', 'No longer held', 'Other']
 /** Every reason a stock movement may carry. */
 export const MOVEMENT_REASONS = [...new Set<string>([...CORRECTION_REASONS, ...ADJUST_REASONS, ...REMOVE_REASONS])];
 /** Movement types this flow adds to the existing receipt / issue / transfer / adjustment types. */
-export const MOVEMENT_TYPES = ['Project transfer', 'Project return', 'Correction', 'Removal', 'Return to inventory'] as const;
+export const MOVEMENT_TYPES = ['Project transfer', 'Project return', 'Correction', 'Removal', 'Return to inventory', 'Reversal'] as const;
 export const MAX_LENGTHS = { materialGroup: 100, articleNo: 100, uom: 20, description: 2000, dia: 20, lbs: 20, reasonText: 500, chargeNo: 100, materialNo: 100, comment: 500 } as const;
 export const LOCATION_KINDS = ['site', 'storehouse'] as const;
 export type LocationKind = typeof LOCATION_KINDS[number];
@@ -250,7 +405,7 @@ export function materialsList(rows: Record<string, Row[]>, filters: MaterialsLis
 
 /** What open transfer orders already hold of one storehouse line (reference "Reserved on open orders"). */
 export function reservedOnOpenOrders(rows: Record<string, Row[]>, stock: Row): number {
-  const open = new Set(live(rows, 'transfer_orders').filter(order => order.status === 'Open').map(order => order.id));
+  const open = new Set(live(rows, 'transfer_orders').filter(isOpenOrder).map(order => order.id));
   return round6(live(rows, 'transfer_order_items').filter(item => open.has(String(item.orderId)) && item.stockId === stock.id).reduce((sum, item) => sum + Number(item.quantity), 0));
 }
 /** An open transfer order that holds a storehouse line blocks its removal. */
@@ -311,6 +466,7 @@ export function movementAction(rows: Record<string, Row[]>, move: Row): { action
   }
   if (type === 'Removal') return { action: site ? 'Removed from inventory' : 'Removed from storehouse', reference: String(move.reasonText || move.note || '-') };
   if (type === 'Correction') return { action: 'Correction', reference: String(move.reasonText || move.note || '-') };
+  if (type === 'Reversal') return { action: `Reversal of transfer order ${move.transferOrder || ''}`.trim(), reference: String(move.transferOrder || '-') };
   if (type === 'Adjustment') {
     if (site && quantity > 0) return { action: 'Added to inventory', reference: '-' };
     return { action: 'Adjustment', reference: String(move.reasonText || move.note || '-') };
@@ -387,7 +543,7 @@ export function storehouseTransactions(rows: Record<string, Row[]>): Transaction
     const out = ordered.find(move => Number(move.quantity) < 0), into = ordered.find(move => Number(move.quantity) > 0);
     const order = ordered.map(move => move.transferOrder ? live(rows, 'transfer_orders').find(row => row.number === move.transferOrder) : undefined).find(Boolean);
     const types = new Set(ordered.map(move => String(move.type)));
-    const type = order ? String(order.type) : types.has('Project transfer') ? 'Storehouse → Project' : types.has('Return to inventory') ? 'Return → Inventory' : types.has('Transfer in') || types.has('Transfer out') ? 'Storehouse → Storehouse' : String(ordered[0].type);
+    const type = types.has('Reversal') ? 'Reversal' : order ? String(order.type) : types.has('Project transfer') ? 'Storehouse → Project' : types.has('Return to inventory') ? 'Return → Inventory' : types.has('Transfer in') || types.has('Transfer out') ? 'Storehouse → Storehouse' : String(ordered[0].type);
     const lone = !into && !out ? ordered[0] : undefined;
     return {
       key, reportNo: String(ordered[0].reportNo || ''), at: String(ordered[0]._createdAt || ''), date: String(ordered[0].date || ''), type,
@@ -443,16 +599,21 @@ export function applyMtoStock(resources: Resource[]) {
   resources.push({
     key: 'transfer_orders', title: 'Transfer orders', singular: 'transfer order', module: 'materials', group: 'Order & inventory', readonly: true, display: 'number',
     description: 'Planned moves of material between project site inventories and storehouses. Completing an order applies its movements.',
-    fields: [t('number', 'Transfer order'), sel('type', 'Type', TRANSFER_TYPES, { required: true }), sel('priority', 'Priority', TRANSFER_PRIORITIES, { default: 'Normal' }), sel('status', 'Status', TRANSFER_STATUSES, { default: 'Open' }),
+    fields: [t('number', 'Transfer order'), sel('type', 'Type', TRANSFER_TYPES, { required: true }), sel('priority', 'Priority', TRANSFER_PRIORITIES, { default: 'Normal' }), sel('status', 'Status', TRANSFER_STATUSES, { default: 'Requested', legacy: LEGACY_TRANSFER_STATUSES }),
       ref('fromWarehouseId', 'From storehouse', 'warehouses'), ref('fromSiteId', 'From project site', 'sites', { hint: 'The project site whose inventory the order takes from.' }), ref('siteId', 'Project site', 'sites', { hint: 'The project site whose inventory receives the material.' }), ref('toWarehouseId', 'To storehouse', 'warehouses'),
-      t('date', 'Date', { type: 'date' }), t('completedDate', 'Completed on', { type: 'date' }), t('notes', 'Notes', { type: 'textarea', section: 'Notes' })],
+      t('date', 'Date', { type: 'date' }), t('completedDate', 'Completed on', { type: 'date' }), t('notes', 'Notes', { type: 'textarea', section: 'Notes' }),
+      // The lifecycle (Assign to me, Cancel, Reverse order): who handles the order and when each step happened; absent on older orders.
+      t('assignedTo', 'Assigned to', { hidden: true }), t('assignedName', 'Handler', { hidden: true }), t('assignedAt', 'Assigned at', { hidden: true }), t('createdByName', 'Created by', { hidden: true }),
+      t('cancelReason', 'Cancel reason', { hidden: true }), t('completedAt', 'Completed at', { hidden: true }), t('reversedAt', 'Reversed at', { hidden: true }), t('reversedBy', 'Reversed by', { hidden: true })],
     columns: ['number', 'type', 'priority', 'status', 'fromWarehouseId', 'fromSiteId', 'siteId', 'toWarehouseId', 'date'],
   });
   resources.push({
     key: 'transfer_order_items', title: 'Transfer order items', singular: 'transfer order item', module: 'materials', group: 'Order & inventory', readonly: true, display: 'materialNo',
     description: 'The materials and quantities of a transfer order.',
     fields: [ref('orderId', 'Transfer order', 'transfer_orders', { required: true }), t('materialNo', 'Material no.', { required: true }), t('description', 'Description'),
-      t('quantity', 'Quantity', { type: 'number', min: MIN_QUANTITY, step: 0.01, required: true }), t('uom', 'UOM'), t('stockId', 'Inventory line', { hidden: true }), t('certIds', 'Certificates', { hidden: true })],
+      t('quantity', 'Quantity', { type: 'number', min: MIN_QUANTITY, step: 0.01, required: true }), t('uom', 'UOM'), t('stockId', 'Inventory line', { hidden: true }), t('certIds', 'Certificates', { hidden: true }),
+      // Pick results (Transfer Order detail): absent on older items, which read as Pending with nothing picked.
+      t('qtyPicked', 'Qty picked', { type: 'number', min: 0, step: 0.01, hidden: true }), sel('lineStatus', 'Line status', LINE_STATUSES, { hidden: true })],
     columns: ['orderId', 'materialNo', 'description', 'quantity', 'uom'],
   });
 }
@@ -479,7 +640,8 @@ add('inventory-remove', 'Remove material from inventory', 'Take a quantity of on
 // Storehouse lines (area 75).
 add('stock-to-project', 'Transfer material from storehouse to project', 'Move storehouse material into the Material inventory of a project site, with the chosen certificates.', [siteField('Destination project site'), itemsField('Materials'), dateField, noteField], 'Transfer');
 add('stock-move', 'Move to other storehouse', 'Move a quantity (or all of it) to another storehouse. Both balances change together.', [stockField, field('toWarehouseId', 'Destination storehouse', 'ref', { ref: 'warehouses', required: true }), quantity({ required: false }), allField('Move all'), dateField, noteField], 'Move');
-add('stock-return', 'Return to inventory', 'Move storehouse material back into the Material inventory of the project site.', [stockField, siteField('Project site', { hidden: true }), quantity({ label: 'Quantity to return', required: false }), allField('Return all'), dateField, noteField], 'Return');
+// Return to inventory (reference #returnFromLager): no destination field; the server books into the main project the user works in.
+add('stock-return', 'Return to inventory', 'Return storehouse material to the Material inventory of the main project you work in.', [stockField, siteField('Project site', { hidden: true, required: false }), quantity({ label: 'Quantity to return', required: false }), allField('Return all')], 'Return');
 add('stock-correction', 'Correction', 'Remove a quantity from a storehouse line, with the reason. The quantity is written off and logged.', [stockField, quantity({ label: 'Quantity to remove' }), field('reasonText', 'Reason', 'text', { required: true }), dateField], 'Apply correction');
 add('stock-correct', 'Edit storehouse item', 'Fix the wording of a storehouse line. A reason is required and the change is logged.', [stockField,
   field('materialGroup', 'Material group', 'text'), field('articleNo', 'Article No', 'text'), field('uom', 'UOM', 'text'), field('description', 'Description', 'text'), field('dia', 'DIA', 'text'), field('lbs', 'LBS/SCH', 'text'),
@@ -489,8 +651,12 @@ add('stock-remove', 'Remove material', 'Take the line out of the storehouse. Any
 // Transfer orders (area 16).
 add('transfer-order-create', 'New Transfer Order', 'Plan a move between project site inventories and storehouses. Nothing moves until the order is completed.', [field('type', 'Type', 'select', { options: [...TRANSFER_TYPES], required: true }), field('priority', 'Priority', 'select', { options: [...TRANSFER_PRIORITIES], default: 'Normal' }),
   field('fromWarehouseId', 'From storehouse', 'ref', { ref: 'warehouses' }), field('fromSiteId', 'From project site', 'ref', { ref: 'sites', hidden: true }), field('siteId', 'To project site', 'ref', { ref: 'sites' }), field('toWarehouseId', 'To storehouse', 'ref', { ref: 'warehouses' }), field('notes', 'Notes (optional)', 'textarea'), itemsField('Order items'), dateField], 'New Transfer Order');
-add('transfer-order-complete', 'Complete transfer order', 'Apply the movements of the order. If any item is short the whole order stays open.', [field('orderId', 'Transfer order', 'ref', { ref: 'transfer_orders', required: true }), dateField, noteField], 'Complete');
-add('transfer-order-cancel', 'Cancel transfer order', 'Cancel an open order. No stock moves.', [field('orderId', 'Transfer order', 'ref', { ref: 'transfer_orders', required: true }), noteField], 'Cancel order');
+const orderField = field('orderId', 'Transfer order', 'ref', { ref: 'transfer_orders', required: true });
+add('transfer-order-assign', 'Assign to me', 'Take ownership of the transfer order.', [orderField], 'Assign to me');
+add('transfer-order-pick', 'Save pick results', 'Save the picked quantity and the line status of every line.', [orderField, itemsField('Pick results')], 'Save pick results');
+add('transfer-order-complete', 'Complete transfer', 'Move the picked quantities. If a quantity exceeds the balance or the destination is no longer valid, nothing moves.', [orderField, dateField, noteField], 'Complete transfer');
+add('transfer-order-cancel', 'Cancel transfer order', 'Cancel an open order. No stock moves.', [orderField, field('reason', 'Reason', 'textarea', { required: true })], 'Cancel order');
+add('transfer-order-reverse', 'Reverse order', 'Undo the stock movements of a completed order. The original movements stay in the log.', [orderField, dateField], 'Reverse order');
 export const MTO_STOCK_ACTIONS = defs;
 export const isMtoStockAction = (key: string) => defs.some(def => def.key === key);
 /** The actions on storehouse lines: they are run from the Storehouses page of MTO Pilot. */
@@ -505,6 +671,8 @@ export const MTO_STOCK_ACTION_SCOPES: Record<string, [string, 'insert' | 'edit' 
   'stock-add': ['16', 'insert'], 'inventory-remove': ['16', 'delete'],
   'stock-to-project': ['75', 'insert'], 'stock-move': ['75', 'insert'], 'stock-return': ['75', 'insert'], 'stock-correction': ['75', 'edit'], 'stock-correct': ['75', 'edit'], 'stock-adjust': ['75', 'edit'], 'stock-remove': ['75', 'delete'],
   'transfer-order-create': ['16', 'insert'], 'transfer-order-complete': ['16', 'insert'], 'transfer-order-cancel': ['16', 'insert'],
+  // The other lifecycle steps keep the same gate (areas 111-113 of the matrix are not mapped: mto-procurement-stock-031).
+  'transfer-order-assign': ['16', 'insert'], 'transfer-order-pick': ['16', 'insert'], 'transfer-order-reverse': ['16', 'insert'],
 };
 
 // ---- Delivery to the hosted profile -------------------------------------------------------------------------

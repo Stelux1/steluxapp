@@ -16,4 +16,5 @@ export const PDF_REPORT_RESOURCES: Record<string, string[]> = {
   'pdf-reserved-materials': ['reservations'],
   'pdf-order': ['orders'],
   'pdf-material-label': ['stock'],
+  'pdf-pick-sheet': ['transfer_orders'],
 };

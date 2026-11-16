@@ -21,6 +21,7 @@ import { canReport, canResource } from '../../shared/permissions.ts';
 import { weldersSummaryDocument } from './welders-summary.ts';
 import { welderCardDocument } from './welder-card.ts';
 import { materialLabelsDocument } from './material-labels.ts';
+import { pickSheetDocument } from './pick-sheet.ts';
 
 /**
  * Everything a document definition may use. `rows` are the records the account may read (already checked
@@ -166,4 +167,5 @@ export const PDF_DOCUMENTS: AnyPdfDefinition[] = [
   ...OPERATIONAL_DOCUMENTS,
   weldersSummaryDocument,
   materialLabelsDocument,
+  pickSheetDocument,
 ];
