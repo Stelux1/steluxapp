@@ -2,7 +2,7 @@ import type { Express } from 'express';
 import ExcelJS from 'exceljs';
 import { AppError, qty, type Actor, type Store } from './store.ts';
 import type { AuthRequest } from './auth.ts';
-import { canResource } from '../shared/permissions.ts';
+import { EXPORT_TABLES, areaRight } from '../shared/export-tables.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import { PICKLIST_NOTE_MAX, START_FROM_PERCENT, allocateStock, canStartAt, isoStatuses, pickIssued, planReserve, planStart, startedPhases, undoRefusal } from '../shared/mto-logistics.ts';
 import { materialRecord } from '../shared/materials.ts';
@@ -161,7 +161,8 @@ export function registerMtoLogisticsRoutes(app: Express, availability: Availabil
     const body = (req.body ?? {}) as Input; const table = TABLE_EXPORTS[text(body.table)];
     if (!table) throw new AppError(404, 'This table cannot be exported.');
     const user = (req as unknown as AuthRequest).user;
-    if (!canResource(user, table.resource, 'export')) throw new AppError(403, 'Your permission profile does not allow this export.');
+    // The Export box of the table's own area (shared/export-tables.ts), not of a record type that happens to feed it.
+    if (!areaRight(user, EXPORT_TABLES[text(body.table)].area)) throw new AppError(403, 'Your permission profile does not allow this export.');
     const cell = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : String(value ?? '').slice(0, 2000);
     const columns = Array.isArray(body.columns) ? body.columns.slice(0, 30).map(value => String(value ?? '').slice(0, 100)) : [];
     const rows = Array.isArray(body.rows) ? body.rows.slice(0, 10000) : [];

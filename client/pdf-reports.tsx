@@ -20,7 +20,7 @@ export type PdfPage = 'isometric' | 'certifications' | 'materials' | 'projects';
 export interface PdfMenuItem { key: string; label: string; options: Option[]; /** Report whose access rule shows the entry. */ report: string; pilots?: PdfPilot[]; page?: PdfPage; scope?: 'isometric' | 'project'; resource?: string; /** Not in the captured menu: listed after ISO Book. */ extra?: boolean }
 export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl', label: 'LISL Report', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
-  { key: 'lisl-a3', label: 'LISL Report (A3)', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
+  { key: 'lisl-a3', label: 'LISL Report (A3)', options: ['type', 'signature'], report: 'lisl' },
   { key: 'lisl-gu', label: 'LISL Report [GU]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-mv', label: 'LISL Report [MV]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-iss', label: 'LISL Report [ISS]', options: [], report: 'lisl' },
@@ -28,7 +28,7 @@ export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl-wq2', label: 'LISL Report [WQ ver 2]', options: [], report: 'lisl' },
   { key: 'lisl-gu-rev2', label: 'LISL Report [GU Rev 2]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-gu-rev3', label: 'LISL Report [GU Rev 3]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
-  { key: 'lisl-blank', label: 'Blank LISL template', options: ['signature'], report: 'lisl' },
+  { key: 'lisl-blank', label: 'Blank LISL template', options: [], report: 'lisl' },
   { key: 'weld-cards', label: 'Weld card', options: ['welds', 'perPage'], report: 'weld-cards', pilots: ['weld'], page: 'isometric' },
   { key: 'weld-labels', label: 'Weld labels', options: ['welds', 'labelGrid'], report: 'weld-cards', pilots: ['weld'], page: 'isometric' },
   { key: 'punch-list-blank', label: 'Punch list - blank', options: [], report: 'pdf-punch', pilots: ['weld'], page: 'isometric' },
@@ -40,6 +40,13 @@ export const PDF_MENU: PdfMenuItem[] = [
 ];
 /** The entries that belong to a pilot and a page. */
 export const pdfEntries = (pilot: string | undefined, page: PdfPage) => PDF_MENU.filter(entry => (entry.pilots ?? ['weld']).includes(pilot as PdfPilot) && (entry.page ?? 'isometric') === page);
+
+/**
+ * The "Weld record" box of the LISL dialog is the reference's `blank` option (its form field is named blank): ticked, the
+ * LISL prints as a form to fill in, without the recorded values; unticked it prints them. The dialog value `weldRecord`
+ * means "print the recorded values" (the default), so the box shows the opposite of it.
+ */
+export const weldRecordBox = { checked: (weldRecord: boolean) => !weldRecord, value: (checked: boolean) => !checked };
 
 /** The dialog values of every option; each document reads only the ones it offers. */
 export interface PdfValues { type: string; weldRecord: boolean; signature: boolean; /** Ids of the chosen welds; empty / missing = all. */ welds?: string[]; perPage?: string; columns?: string; rows?: string; /** Operation phase id, empty = all phases. */ phase?: string; /** Project id, empty = all projects. */ projectId?: string; siteId?: string }
@@ -97,7 +104,7 @@ export function PdfDialog({ item, iso, projectId = '', phaseId = '', onClose }: 
         {error && <div className="alert error" role="alert">{error}</div>}
         {done && <div className="alert success" role="status">{done} <a className="text-link" href={apiUrl(path)} target="_blank" rel="noreferrer">Open in a new tab<ExternalLink size={13} aria-hidden="true"/></a></div>}
         {item.options.includes('type') && <div className="field"><label htmlFor={`${id}-type`}>Type</label><select id={`${id}-type`} value={type} disabled={busy} onChange={event => setType(event.target.value)}>{LISL_TYPES.map(value => <option key={value} value={value}>{value}</option>)}</select><small>Shop or Field follows the location of each weld type.</small></div>}
-        {item.options.includes('weldRecord') && <div className="field checkbox-field"><label htmlFor={`${id}-record`}><input id={`${id}-record`} type="checkbox" checked={weldRecord} disabled={busy} onChange={event => setWeldRecord(event.target.checked)}/><span>Weld record</span></label><small>Prints the recorded charge numbers, WPS, welder, date, NDT and PWHT. Untick to leave them empty.</small></div>}
+        {item.options.includes('weldRecord') && <div className="field checkbox-field"><label htmlFor={`${id}-record`}><input id={`${id}-record`} type="checkbox" checked={weldRecordBox.checked(weldRecord)} disabled={busy} onChange={event => setWeldRecord(weldRecordBox.value(event.target.checked))}/><span>Weld record</span></label><small>Tick to print the LISL as a form to fill in: the recorded charge numbers, WPS, welder, date, NDT and PWHT stay empty. Untick to print them.</small></div>}
         {item.options.includes('welds') && <fieldset className="field" disabled={busy}><legend>Welds</legend>
           <label><input type="radio" name={`${id}-welds`} checked={welds === null} onChange={() => setWelds(null)}/> <span>All welds ({isoWelds.length})</span></label>
           <label><input type="radio" name={`${id}-welds`} checked={welds !== null} onChange={() => setWelds([])}/> <span>Checked welds</span></label>

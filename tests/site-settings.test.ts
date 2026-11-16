@@ -179,10 +179,10 @@ test('hosted editing: invalid weights are rejected with a message, valid setting
 test('Document settings: labels, grouping and order of the reference; our owner-specific settings follow under their own heading', () => {
   const site = projectResource(availabilityFor(HOSTED_RELEASE_PROFILE)!, RESOURCE_MAP.sites);
   const documents = site.fields.filter(field => field.section === 'Document settings');
-  assert.deepEqual(documents.slice(0, 26).map(field => field.label), [
+  assert.deepEqual(documents.slice(0, 27).map(field => field.label), [
     'Prefix', 'Release doc drawing no', 'Hydrotest Execution Plan', 'Flange procedure No.',
     'Subcontractor QA/QC', 'Subcontractor Construction', 'Principal UI', 'Contractor QA/QC', 'Contractor Construction', 'NoBo',
-    'Doc.No. & Rev.No.', 'Procedure No.', 'Visual Inspection Ver 2', 'VT type 2 no:', 'VT type 2 rev:', 'VT type 2 date:', 'VT type 2 order No:', 'VT 2 prefix:',
+    'Doc.No. & Rev.No.', 'Procedure No.', 'Visual Inspection Ver 2', 'VT type 2 no:', 'VT type 2 rev:', 'VT type 2 date:', 'VT type 2 order No:', 'VT 2 prefix:', 'LISL ISS — VT source',
     'Field 1:', 'Field 2:', 'Field 3:', 'Field 1:', 'Field 2:', 'Field 3:', 'Doc.No. & Rev.No.', 'Procedure No.',
   ]);
   const heading = (name: string) => documents.find(field => field.name === name)!.intro;
@@ -190,7 +190,7 @@ test('Document settings: labels, grouping and order of the reference; our owner-
   assert.equal(documents.find(field => field.name === 'vt2Enabled')!.type, 'checkbox', 'the version switch is a checkbox');
   assert.equal(documents.find(field => field.name === 'vt2Prefix')!.type, 'text');
   assert.equal(documents.find(field => field.name === 'vtType2Date')!.type, 'text', 'VT type 2 date is free text as in the reference');
-  assert.ok(documents.slice(26).length > 0 && documents[26].intro === 'Owner-specific LISL forms', 'the extras come after the reference fields');
+  assert.ok(documents.slice(27).length > 0 && documents[27].intro === 'Owner-specific LISL forms', 'the extras come after the reference fields');
   assert.ok(!documents.some(field => field.label.startsWith('Signature title:')));
 });
 

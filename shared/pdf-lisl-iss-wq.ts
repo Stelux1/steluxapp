@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { ISS_NDT_STANDARDS } from './site-settings.ts';
+import { ISS_NDT_STANDARDS, LISL_VT_SOURCES } from './site-settings.ts';
 import { lislModel, printDate, type LislEntry, type LislModel } from './pdf-lisl.ts';
 import { NDT_FORM_COLUMNS, VT_COLUMN, ndtFormCells, ndtLookups, type NdtCell, type NdtFormColumn } from './pdf-ndt-columns.ts';
 
@@ -54,20 +54,28 @@ export interface IssModel extends FormBase {
   percent: Record<string, string>;
   welds: IssRow[];
 }
-export const issMethodLines = (cell: NdtCell | undefined): string[] => cell?.result ? lines(cell.result, cell.report, printDate(cell.date)) : [];
+/**
+ * Edit project site → Document settings → "LISL ISS — VT source": `ndt` (default; also every site saved before the setting
+ * existed) prints the VT column as it always did, `vt2` prints the report number of the weld's visual inspection report
+ * (the newest VI result) and nothing else in that column.
+ */
+export const issVtSource = (site?: Row | null): 'ndt' | 'vt2' => text(site?.lislVtSource) === LISL_VT_SOURCES[1] ? 'vt2' : 'ndt';
+/** The columns of [ISS] for a site: the standard set, with the VT column reading from the visual inspection report when the site says so. */
+export const issVtColumns = (site?: Row | null): NdtFormColumn[] => issVtSource(site) === 'vt2' ? NDT_FORM_COLUMNS.iss.map(item => item.id === 'vt' ? { ...item, match: { VI: 'any' } } : item) : NDT_FORM_COLUMNS.iss;
+export const issMethodLines =(cell: NdtCell | undefined): string[] => cell?.result ? lines(cell.result, cell.report, printDate(cell.date)) : [];
 const percentOf = (value: unknown) => { const raw = text(value).replace('%', '').trim(); return /^\d+([.,]\d+)?$/.test(raw) ? raw.replace(',', '.') : ''; };
 
 export function issModel(rows: Record<string, Row[]>, isoId: string, companyName = ''): IssModel | null {
   const form = formBase(rows, isoId);
   if (!form) return null;
-  const { base, owner } = form, iso = base.iso;
+  const { base, owner } = form, iso = base.iso; const issColumns = issVtColumns(base.site);
   const spools = [...new Set(base.entries.map(entry => text(find(rows, 'spools', entry.weld.spoolId)?.name)).filter(Boolean))].sort(natural).join(', ');
   const ndtStandard = NDT_STANDARD_OPTIONS.find(option => option === owner.issNdtStandard) ?? NDT_STANDARD_OPTIONS.find(option => text(iso.ndtnorm).toUpperCase().replace(/\s+/g, ' ').includes(option)) ?? '';
   const welds = base.entries.map((entry): IssRow => {
     const v = entry.values, wps = find(rows, 'wps', entry.weld.wpsId), pqr = find(rows, 'pqr', wps?.pqrId);
     const wires = [1, 2].map(side => find(rows, 'welding_wires', entry.weld[`wire${side}Id`])).map(wire => text(wire?.chargeNo) || text(find(rows, 'certifications', wire?.certificateId)?.chargeNo));
     const sides = [1, 2].map(side => ({ cert: entry.attest[side - 1], heat: v[`Charge No ${side}`] ?? '', wall: v[`Wall thickness ${side}`] ?? '', material: v[`Material ${side}`] ?? '' }));
-    const methods = Object.fromEntries(Object.entries(cellsOf(NDT_FORM_COLUMNS.iss, entry, rows)).map(([key, cell]) => [key, issMethodLines(cell)]));
+    const methods = Object.fromEntries(Object.entries(cellsOf(issColumns, entry, rows)).map(([key, cell]) => [key, issMethodLines(cell)]));
     return {
       weldNo: text(entry.weld.weldNo), weldType: text(entry.weldType?.abbreviation || entry.weldType?.name),
       description: lines(...sides.map(side => side.material)),

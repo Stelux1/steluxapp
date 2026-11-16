@@ -11,6 +11,9 @@ export const NDT_MEASUREMENTS = ['Inch-weighted', 'Per weld'];
 export const RELEASE_DOC_DRAWINGS = ['Drawing no + iso', 'Prefix + iso'];
 /** The NDT standards a LISL [ISS] sheet can tick. */
 export const ISS_NDT_STANDARDS = ['ASME', 'EN ISO'];
+/** Edit project site, Document settings: where the VT column of LISL [ISS] reads its report number from (default: the VT NDT column). */
+export const LISL_VT_SOURCES = ['VT from NDT column', 'VT from VT2 report'] as const;
+export const LISL_VT_SOURCE_LABEL = 'LISL ISS — VT source';
 /** Used by the weld dashboard KPI when a site leaves the repair performance limit empty. */
 export const DEFAULT_REPAIR_PERFORMANCE_LIMIT = 5;
 
@@ -169,6 +172,7 @@ export function hostedSiteFields<T extends SiteFormField>(fields: T[]): T[] {
   const adapted = fields.map(field => {
     if (SITE_CONTACT_LABELS[field.name]) return { ...field, label: SITE_CONTACT_LABELS[field.name], section: SITE_FORM_SECTION };
     if (field.name === 'repairLimit') return { ...field, label: 'Repair performance' };
+    if (field.name === 'lislVtSource') return { ...field, label: LISL_VT_SOURCE_LABEL, control: 'radio' as const, default: LISL_VT_SOURCES[0] };
     const document = documentSettings.get(field.name);
     if (document) return { ...field, label: document.label, ...(document.intro ? { intro: document.intro } : {}), ...(document.hint ? { hint: document.hint } : {}) };
     if (field.section === 'Document settings' && !firstOwner) { firstOwner = field.name; return { ...field, intro: OWNER_SETTINGS_HEADING }; }

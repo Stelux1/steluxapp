@@ -8,6 +8,8 @@ import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
 import { ApiError, apiUrl, formatDate, formatNumber, post } from './api.ts';
 import { EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
+import { exportTable, useTableRights } from './table-export.ts';
+import { ORDER_MATERIALS_EXPORT_COLUMNS } from '../shared/export-tables.ts';
 
 const pageOf = (key: string) => PROCUREMENT_PAGES.find(page => page.key === key)!;
 const text = (value: unknown, fallback = '—') => String(value ?? '') || fallback;
@@ -29,9 +31,10 @@ function useOrderPdf() {
 function NoAccess({ title }: { title: string }) {
   return <div className="page mto-procurement-page"><div className="alert error" role="alert"><AlertCircle size={18}/><span>You do not have rights to open this page.</span></div><EmptyState title={title} description="Ask an administrator to add this page to your profile."/></div>;
 }
-function download(name: string, headers: string[], rows: unknown[][]) {
-  const url = URL.createObjectURL(new Blob(['﻿' + toCsv(headers, rows)], { type: 'text/csv;charset=utf-8' }));
-  const link = document.createElement('a'); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+/** CSV or Excel of a table of these pages: the server writes the file and checks the Export right of the table's area (shared/export-tables.ts). */
+function useTableSender() {
+  const { notify } = useWorkspace(); const rights = useTableRights();
+  return { ...rights, send: (table: string, format: 'csv' | 'xlsx', name: string, headers: string[], lines: unknown[][]) => { void exportTable(table, format, headers, lines, name).catch(problem => notify((problem as Error).message || 'The file could not be created.')); } };
 }
 function Heading({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
   return <div className="page-heading"><div><div className="eyebrow">MTO PILOT · ORDER / TAKE IN</div><h1>{title}</h1><p>{description}</p></div><div className="heading-actions">{children}</div></div>;
@@ -46,6 +49,7 @@ function ChoiceFilter({ id, label, empty, value, options, onChange }: { id: stri
 /** Order materials: one row per material, summed over the isometrics that still need it, less what open orders still bring. */
 export function OrderMaterials() {
   const { rows, label, canRun, refresh, notify } = useWorkspace();
+  const { canExport, canPrint, send } = useTableSender();
   const allowed = useProcurementAccess('order-materials');
   const [projectId, setProject] = useState(''); const [isoId, setIso] = useState(''); const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -71,7 +75,7 @@ export function OrderMaterials() {
     } catch (problem) { tab?.close(); setError(problem instanceof ApiError || problem instanceof Error ? problem.message : 'The order could not be created.'); } finally { setBusy(false); }
   }
   return <div className="page mto-procurement-page"><Heading title="Order materials" description="Materials still to be ordered, added up over the isometrics that need them. Check the rows and order them: the order document opens in a new tab.">
-    <button className="btn" disabled={!exportRows.length} onClick={() => download('order-materials.csv', ['Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Description', 'Quantity', 'UOM'], exportRows.map(g => { const c = materialCells(g.material); return [c[0], c[1], c[2], c[3], c[4], c[5], g.quantity, c[6]]; }))}><Download size={16}/>Export</button>
+    {canExport('order-materials') && <button className="btn" disabled={!exportRows.length} onClick={() => send('order-materials', 'xlsx', 'order-materials', [...ORDER_MATERIALS_EXPORT_COLUMNS], exportRows.map(g => { const c = materialCells(g.material); return [c[0], c[1], c[2], c[3], c[4], c[5], g.quantity, c[6]]; }))}><Download size={16}/>Export</button>}
     {canRun('order-requirements') && <button className="btn primary" disabled={!requirementIds.length || busy} onClick={() => void orderChecked()}>{busy ? <Loader2 size={16} className="spin"/> : <ShoppingCart size={16}/>}Order checked materials{checked.length ? ` (${checked.length})` : ''}</button>}
   </Heading>
     {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
@@ -90,13 +94,14 @@ export function OrderMaterials() {
 /** Pending order: ordered against received for every order line that is still open. */
 export function PendingOrders() {
   const { rows, label, canRun } = useWorkspace();
+  const { canExport, canPrint, send } = useTableSender();
   const allowed = useProcurementAccess('pending-order');
   const [projectId, setProject] = useState(''); const [query, setQuery] = useState(''); const [takeIn, setTakeIn] = useState('');
   const lines = useMemo(() => pendingLines(rows, { projectId, query }), [rows, projectId, query]);
   if (!allowed) return <NoAccess title="Pending order"/>;
   return <div className="page mto-procurement-page"><Heading title="Pending order" description="What was ordered and what has arrived so far, for every order that is still open.">
-    <button className="btn" disabled={!lines.length} onClick={() => download('pending-order.csv', ['Group', 'Material No', 'Description', 'Ordered', 'Ord. No.', 'Date', 'Received'], lines.map(l => [text(l.material?.materialGroup, ''), materialName(rows, l.line), text(l.line.description ?? l.material?.description, ''), l.line.quantity, l.order.number, l.order.date, l.line.received]))}><Download size={16}/>CSV</button>
-    <button className="btn" onClick={() => window.print()}><Printer size={16}/>Print</button>
+    {canExport('pending-order') && <><button className="btn" disabled={!lines.length} onClick={() => send('pending-order', 'csv', 'pending-order', ['Group', 'Material No', 'Description', 'Ordered', 'Ord. No.', 'Date', 'Received'], lines.map(l => [text(l.material?.materialGroup, ''), materialName(rows, l.line), text(l.line.description ?? l.material?.description, ''), l.line.quantity, l.order.number, l.order.date, l.line.received]))}><Download size={16}/>CSV</button><button className="btn" disabled={!lines.length} onClick={() => send('pending-order', 'xlsx', 'pending-order', ['Group', 'Material No', 'Description', 'Ordered', 'Ord. No.', 'Date', 'Received'], lines.map(l => [text(l.material?.materialGroup, ''), materialName(rows, l.line), text(l.line.description ?? l.material?.description, ''), l.line.quantity, l.order.number, l.order.date, l.line.received]))}><Download size={16}/>Excel</button></>}
+    {canPrint('pending-order') && <button className="btn" onClick={() => window.print()}><Printer size={16}/>Print</button>}
   </Heading>
     <section className="panel procurement-panel">
       <div className="procurement-filters"><FieldInput field={{ name: 'projectId', label: 'Project', type: 'ref', ref: 'projects' }} value={projectId} onChange={v => setProject(String(v))}/></div>
@@ -113,6 +118,7 @@ export function PendingOrders() {
 /** Material take in: the log of receipts and the Receive materials button; with an order chosen, its take-in page (step 2). */
 export function MaterialTakeIn() {
   const { rows, label, canRun } = useWorkspace();
+  const { canExport, canPrint, send } = useTableSender();
   const allowed = useProcurementAccess('take-in');
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState(''); const [receiving, setReceiving] = useState(false);
@@ -121,7 +127,8 @@ export function MaterialTakeIn() {
   const orderId = params.get('order') || '';
   if (orderId) return <TakeInOrder orderId={orderId} supplierId={params.get('supplier') || ''} onDone={() => setParams({})}/>;
   return <div className="page mto-procurement-page"><Heading title="Material take in" description="Every delivery taken in against an order. Negative quantities correct an earlier receipt.">
-    <button className="btn" disabled={!log.length} onClick={() => download('material-take-in.csv', ['Date', 'Order No.', 'Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Description', 'Quantity', 'UOM', 'Supplier'], log.map(e => { const c = materialCells(e.material, e.receipt); return [printMoment(receiptMoment(e.receipt)), e.order?.number ?? '', c[0], c[1], c[2], c[3], c[4], c[5], e.receipt.quantity, c[6], e.supplierId ? label('suppliers', e.supplierId) : '']; }))}><Download size={16}/>CSV</button>
+    {canExport('take-in') && <><button className="btn" disabled={!log.length} onClick={() => send('take-in', 'csv', 'material-take-in', ['Date', 'Order No.', 'Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Description', 'Quantity', 'UOM', 'Supplier'], log.map(e => { const c = materialCells(e.material, e.receipt); return [printMoment(receiptMoment(e.receipt)), e.order?.number ?? '', c[0], c[1], c[2], c[3], c[4], c[5], e.receipt.quantity, c[6], e.supplierId ? label('suppliers', e.supplierId) : '']; }))}><Download size={16}/>CSV</button><button className="btn" disabled={!log.length} onClick={() => send('take-in', 'xlsx', 'material-take-in', ['Date', 'Order No.', 'Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Description', 'Quantity', 'UOM', 'Supplier'], log.map(e => { const c = materialCells(e.material, e.receipt); return [printMoment(receiptMoment(e.receipt)), e.order?.number ?? '', c[0], c[1], c[2], c[3], c[4], c[5], e.receipt.quantity, c[6], e.supplierId ? label('suppliers', e.supplierId) : '']; }))}><Download size={16}/>Excel</button></>}
+    {canPrint('take-in') && <button className="btn" onClick={() => window.print()}><Printer size={16}/>Print</button>}
     {canRun('receive') && <button className="btn primary" onClick={() => setReceiving(true)}><PackageCheck size={16}/>Receive materials</button>}
   </Heading>
     <section className="panel procurement-panel">
@@ -194,6 +201,7 @@ function TakeInOrder({ orderId, supplierId, onDone }: { orderId: string; supplie
 /** Order archive: every order in a date range, sorted by date; Options: assign the supplier, print the order, list its contents. */
 export function OrderArchive() {
   const { rows, label, canRun } = useWorkspace();
+  const { canExport, canPrint, send } = useTableSender();
   const allowed = useProcurementAccess('order-archive'); const printable = useOrderPdf();
   const [range] = useState(() => archiveDefaultRange(localToday()));
   const [projectId, setProject] = useState(''); const [from, setFrom] = useState(range.from); const [to, setTo] = useState(range.to); const [sort, setSort] = useState<'desc' | 'asc'>('desc');
@@ -204,7 +212,7 @@ export function OrderArchive() {
   if (!allowed) return <NoAccess title="Order archive"/>;
   const projects = activeRows(rows, 'projects').map(project => ({ value: project.id, label: label('projects', project.id) }));
   return <div className="page mto-procurement-page"><Heading title="Order archive" description="All orders by date. Assign the supplier, print the order or list its contents.">
-    <button className="btn" disabled={!orders.length} onClick={() => download('order-archive.csv', ['Date', 'Request number', 'Assigned supplier'], orders.map(o => [printMoment(orderMoment(o), true), o.number, o.supplierId ? label('suppliers', o.supplierId) : 'NA']))}><Download size={16}/>CSV</button>
+    {canExport('order-archive') && <><button className="btn" disabled={!orders.length} onClick={() => send('order-archive', 'csv', 'order-archive', ['Date', 'Request number', 'Assigned supplier'], orders.map(o => [printMoment(orderMoment(o), true), o.number, o.supplierId ? label('suppliers', o.supplierId) : 'NA']))}><Download size={16}/>CSV</button></>}
   </Heading>
     <section className="panel procurement-panel">
       <div className="procurement-filters">

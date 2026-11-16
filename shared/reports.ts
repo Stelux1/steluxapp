@@ -4,6 +4,7 @@ import { materialName, materialRecord } from './materials.ts';
 import { active, weldingStats } from './module-metrics.ts';
 import { LISL_COLUMNS, lislValues } from './lisl.ts';
 import { calculationEntries, cutListEntries } from './planning.ts';
+import { NON_WELD_CODES, isNonWeldCode, type NonWeldCode } from './weld-codes.ts';
 
 export interface ReportDefinition {key:string;title:string;description:string;module:Module;}
 export interface ReportFilters {siteId?:string;ndtRequired?:string;projectId?:string;isoId?:string;welderId?:string;clientId?:string;warehouseId?:string;type?:string;from?:string;to?:string;}
@@ -62,6 +63,22 @@ export function buildReport(key:string,rows:Record<string,Row[]>,filters:ReportF
   if(key==='releases')return {definition,columns:[...baseCols,col('number','Release'),col('type','Type'),col('report','Report'),col('engineer','QA / QC engineer'),col('signature','Signatory'),col('date','Release date','date'),col('note','Notes')],rows:active(rows,'releases').filter(r=>isoIds.has(String(r.isoId))&&inDate(r.date)&&(!filters.type||r.type===filters.type)).map(r=>row('releases',r,{...isoValues(r.isoId),number:r.number||'',type:r.type||'',report:r.reportNo||'',engineer:label('qa_engineers',r.engineerId),signature:label('signatures',r.signatureId),date:r.date||'',note:r.note||''}))};
   return {definition,columns:[...baseCols,col('irn','IRN'),col('drawing','Drawing no.'),col('itp','ITP'),col('itp2','ITP 2'),col('class','Piping class'),col('system','Test system'),col('package','Field work package'),col('priority','Priority'),...RESOURCE_MAP.isometrics.fields.filter(f=>f.section==='Phases').map(f=>col(f.name,f.label))],rows:isos.map(i=>row('isometrics',i,{...isoValues(i.id),irn:i.irn||'',drawing:i.drawingNo||'',itp:i.itpNo||'',itp2:i.itpNo2||'',class:i.pipingClass||'',system:label('test_systems',i.testSystemId),package:label('field_packages',i.fieldPackageId),priority:i.priority||'',...Object.fromEntries(RESOURCE_MAP.isometrics.fields.filter(f=>f.section==='Phases').map(f=>[f.name,i[f.name]?'Complete':'Incomplete']))}))};
 }
+/**
+ * Export weld data (Weld Pilot → Welding data → Export weld data): the weld register of the chosen project, or of every
+ * project of the site, in the columns of the Data LISL. Weld numbers that carry a GAP, SP, E or B code are left out of the
+ * file unless their code is ticked under "Also export these records" (`includeCodes`; shared/weld-codes.ts).
+ */
+export interface WeldExportOptions {siteId?:string;projectId?:string;includeCodes?:readonly string[];}
+export function buildWeldExport(rows:Record<string,Row[]>,options:WeldExportOptions={}):Report{
+  const report=buildReport('lisl',rows,{siteId:options.siteId||'',projectId:options.projectId||''});
+  const weldNo=new Map((rows.welds||[]).map(weld=>[weld.id,weld.weldNo]));
+  return {...report,rows:report.rows.filter(row=>!isNonWeldCode(weldNo.get(row.source?.id??row.id),options.includeCodes))};
+}
+/** The codes of a comma-separated `includeCodes` query value: only GAP, SP, E and B, each once, in that order. */
+export const parseIncludeCodes=(value:unknown):NonWeldCode[]=>{
+  const given=new Set(String(typeof value==='string'?value:'').toUpperCase().split(',').map(code=>code.trim()));
+  return NON_WELD_CODES.filter(code=>given.has(code));
+};
 export function reportCsv(report:Report){
   const cell=(value:unknown)=>{let s=String(value??'');if(/^[\s]*[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
   return '\ufeff'+[report.columns.map(c=>cell(c.label)).join(','),...report.rows.map(r=>report.columns.map(c=>cell(r.values[c.key])).join(','))].join('\r\n');
