@@ -55,6 +55,12 @@ export function seed(store: Store) {
       ...(i === 3 ? { paintState: 'Done', tracingState: 'N/A', insulationState: 'N/A' } : i === 1 ? { paintState: 'Done' } : {}) });
     // A field-only drawing: no shop welds yet, so its Prefab flag in the isometrics list is a dash.
     add('isometrics', 'iso-10', { isoNo: 'STX-SK-010', projectId: 'project-skid', revNo: '0', irn: 'IRN-110', pipingClass: 'SS300', material: 'A312 TP316L', itpNo: 'ITP-04', priority: 'Prio 3', date: '2026-09-25', assetTag: 'AT-SK-10', drawingNo: 'DWG-2410', testPressure: '24 bar', testMedium: 'Water', ped: 'Cat I / A', xRay: '5', paintSpec: 'PS-02', prefab_materials: true });
+    // Every sample isometric shows a revision number, so it also gets that ISO revision record (the Revision select of
+    // Add material and the quantity log need one).
+    for (const iso of store.list('isometrics')) if (String(iso.revNo ?? '') !== '') {
+      const revNo = String(iso.revNo), previous = /^\d+$/.test(revNo) && Number(revNo) > 0 ? String(Number(revNo) - 1) : '';
+      add('revisions', `revision-${iso.id}`, { isoId: iso.id, type: 'ISO', revNo, previousRev: previous, date: String(iso.date || '2026-09-01'), comment: revNo === '0' ? 'First issue (sample).' : `Revision ${revNo} issued for construction (sample).` });
+    }
     const mats = [['CS-P060', 'Seamless carbon steel pipe', 'Pipe', '2', 'SCH 40', 'M', 28.4], ['CS-E090', '90° long radius elbow', 'Elbow', '2', 'SCH 40', 'EA', 18.6], ['CS-F150', 'Weld neck flange, class 150', 'Flange', '2', '150', 'EA', 42.5], ['SS-P114', 'Stainless steel pipe 316L', 'Pipe', '4', 'SCH 10S', 'M', 82], ['SS-T114', 'Equal tee, stainless steel 316L', 'Tee', '4', 'SCH 10S', 'EA', 118], ['CS-V060', 'Gate valve, flanged ends', 'Valve', '2', '150', 'EA', 156], ['SS-E114', '90° elbow, stainless steel 316L', 'Elbow', '4', 'SCH 10S', 'EA', 56], ['CS-B020', 'Stud bolt and two hex nuts', 'Bolt', '3/4', 'B7 / 2H', 'SET', 6.8]];
     // Component code and progress class: only pipe, supports and valves are classified; everything else stays unclassified.
     const parts: Record<string, string> = { Pipe: 'part-0', Elbow: 'part-1', Flange: 'part-2', Tee: 'part-3', Valve: 'part-5' };

@@ -64,9 +64,9 @@ test('revision uploads save the drawing and current revision together and retain
  response=await upload('ITP-1','ITP');assert.equal(response.status,201);assert.equal(f.s.get('isometrics','iso-2').itpRevNo,'ITP-1');assert.equal(f.s.get('isometrics','iso-2').revNo,'HTTP-2');
 });
 test('rejected drawing uploads leave no revision, attachment, file or audit changes',async t=>{
- const f=await fixture(t);await f.setup();const iso=f.s.get('isometrics','iso-2'),before=JSON.stringify({iso,audit:f.s.activity(10000)});
+ const f=await fixture(t);await f.setup();const iso=f.s.get('isometrics','iso-2'),before=JSON.stringify({iso,audit:f.s.activity(10000)}),seededRevisions=f.s.list('revisions').length;
  for(const [name,revNo] of [['rejected.exe','HTTP-NEW'],['sample.pdf',String(iso.revNo)]]){const body=new FormData();body.set('isoId',iso.id);body.set('type','ISO');body.set('revNo',revNo);body.set('file',new Blob(['Fictional file']),name);const response=await f.request('/revisions','POST',body);assert.ok([409,422].includes(response.status));}
- assert.equal(f.s.list('revisions').length,0);assert.equal(f.s.list('attachments').length,0);assert.equal(readdirSync(join(f.dir,'uploads')).length,0);assert.equal(JSON.stringify({iso:f.s.get('isometrics',iso.id),audit:f.s.activity(10000)}),before);
+ assert.equal(f.s.list('revisions').length,seededRevisions,'only the sample revisions');assert.equal(f.s.list('attachments').length,0);assert.equal(readdirSync(join(f.dir,'uploads')).length,0);assert.equal(JSON.stringify({iso:f.s.get('isometrics',iso.id),audit:f.s.activity(10000)}),before);
  await f.request('/records/users','POST',{name:'Revision Viewer',email:'revision-viewer@example.test',password:'Revision-Viewer-Only',profileId:'profile-viewer',active:true});await f.request('/auth/login','POST',{email:'revision-viewer@example.test',password:'Revision-Viewer-Only'});
  const body=new FormData();body.set('isoId',iso.id);body.set('type','ISO');body.set('revNo','DENIED');body.set('file',new Blob(['Fictional file']),'sample.pdf');assert.equal((await f.request('/revisions','POST',body)).status,403);assert.equal(readdirSync(join(f.dir,'uploads')).length,0);
  assert.equal((await f.request('/actions/remove-material-quantity','POST',{})).status,403);

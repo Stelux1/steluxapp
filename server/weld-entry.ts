@@ -183,4 +183,15 @@ export function seedWeldEntry(store: Store) {
   }
   // Weld 4 continues from existing pipework and weld 5 meets a connected isometric.
   for (const [id, one, two] of [['weld-4', 'EXISTING', 'CONN ISO'], ['weld-13', 'CONN ISO', 'EXISTING']] as const) { try { const weld = store.get('welds', id); store.update('welds', id, { chargeNo1: one, chargeNo2: two }, weld._version, SYSTEM); } catch { /* absent */ } }
+  // Every other sample weld whose charge number matches exactly one sample certificate is traced to it, so Idx and Material show.
+  const sampleCertificates = store.list('certifications');
+  for (const weld of store.list('welds')) {
+    const changes: Values = {};
+    for (const side of [1, 2] as const) {
+      const charge = String(weld[`chargeNo${side}`] ?? '').trim(); if (!charge || weld[`certificate${side}Id`]) continue;
+      const matches = sampleCertificates.filter(row => String(row.chargeNo ?? '').trim() === charge); if (matches.length !== 1) continue;
+      Object.assign(changes, { [`certificate${side}Id`]: matches[0].id, [`material${side}Id`]: matches[0].materialId ?? '' });
+    }
+    if (Object.keys(changes).length) { try { store.update('welds', weld.id, changes, weld._version, SYSTEM); } catch { /* a rule of the sample refuses it: leave the weld as it is */ } }
+  }
 }
