@@ -1,0 +1,44 @@
+/* Punch lists page (Weld Pilot) and the punch part of the isometric status card. */
+.punch-kpis { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.punch-kpi { padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: left; cursor: pointer; border: 1px solid var(--line); border-top: 3px solid var(--pilot-color, var(--primary)); background: #fff; }
+.punch-kpi:hover { background: var(--surface-blue); }
+.punch-kpi small { font-size: 12px; color: var(--muted); line-height: 1.3; }
+.punch-kpi strong { font-size: 24px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.punch-kpi.on { background: var(--surface-accent); border-color: var(--border-strong); border-top-color: var(--primary); }
+.punch-kpi.alert strong { color: #b65c55; }
+.punch-toolbar { flex-wrap: wrap; align-items: flex-end; }
+.punch-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.punch-filters .field { margin: 0; min-width: 150px; }
+.punch-filters .field label { font-size: 12px; }
+.punch-filters select { min-height: 36px; font-size: 13px; width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; background: #fff; }
+.punch-filters .text-link { min-height: 36px; }
+.punch-table td { font-size: 13px; }
+.punch-table .description-cell { max-width: 320px; }
+.punch-letter { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; background: var(--surface-blue); color: var(--ink); font-weight: 600; font-size: 13px; }
+.punch-documents { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; min-height: 52px; }
+.punch-documents .text-link { font-size: 12px; }
+.punch-lock { color: var(--muted); vertical-align: middle; margin-right: 4px; }
+.punch-summary { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.6; color: var(--ink); }
+.punch-files { border: 1px solid var(--line); border-radius: 7px; padding: 14px 16px; margin: 4px 0 0; }
+.punch-files legend { font-size: 13px; font-weight: 500; padding: 0 6px; }
+.punch-files legend small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.punch-files ul { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.punch-files li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.punch-files .field { margin-bottom: 10px; }
+.punch-sign { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.punch-sign .table-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 10px 2px; font-size: 13px; }
+.btn.danger { background: #b65c55; border-color: #b65c55; color: #fff; }
+.btn.danger:hover { background: #9c4a44; }
+.iso-punch { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+.iso-punch .iso-facts { grid-template-columns: 1fr; }
+.iso-punch .iso-hint { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; margin: 0; }
+.iso-punch .iso-punch-progress { margin: 0; }
+.iso-punch .iso-punch-progress select { width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; background: #fff; font-size: 13px; }
+.iso-overdue { color: #b65c55; }
+@media (max-width: 1100px) { .punch-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .punch-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .punch-filters { width: 100%; }
+  .punch-filters .field { flex: 1 1 140px; }
+}
+@media print { .punch-kpis, .punch-filters { display: none; } }

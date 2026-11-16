@@ -2,6 +2,9 @@ import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
 import { seedHydrotest } from './hydrotest.ts';
 import { seedItpSamples } from './itp-dashboard.ts';
+import { seedWeldCatalogs } from './weld-catalogs-seed.ts';
+import { seedWeldEntry } from './weld-entry.ts';
+export { seedInspectionSamples } from './inspections-seed.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
@@ -18,8 +21,8 @@ export function seed(store: Store) {
       weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10,
       fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 });
     add('sites', 'site-river', { name: 'Riverside installation', address: '42 Harbour Lane', residence: 'Antwerp', zip: '2000' });
-    add('companies', 'company-stelux', { name: 'Stelux Engineering', residence: 'Belgrade', email: 'projects@example.com' });
-    add('companies', 'company-north', { name: 'Northline Process', residence: 'Rotterdam', email: 'office@example.com' });
+    add('companies', 'company-stelux', { name: 'Stelux Engineering', address: '12 Knez Mihailova', zip: '11000', residence: 'Belgrade', phone: '+381 11 555 0100', email: 'projects@example.com' });
+    add('companies', 'company-north', { name: 'Northline Process', address: '7 Maasboulevard', zip: '3063', residence: 'Rotterdam', phone: '+31 10 555 0150', email: 'office@example.com' });
     add('warehouses', 'warehouse-main', { name: 'Main warehouse', siteId: 'site-north', companyId: 'company-stelux', use: 'Both', residence: 'Rotterdam' });
     add('warehouses', 'warehouse-field', { name: 'Field stores', siteId: 'site-river', companyId: 'company-stelux', use: 'Both', residence: 'Antwerp' });
     add('suppliers', 'supplier-steel', { name: 'Atlas Steel Supply', residence: 'Breda', email: 'orders@example.com' });
@@ -28,7 +31,9 @@ export function seed(store: Store) {
     add('laydowns', 'laydown-a', { name: 'Laydown A — Prefab', siteId: 'site-north' });
     add('laydowns', 'laydown-b', { name: 'Laydown B — Field', siteId: 'site-river' });
     ['Pipe', 'Elbow 90', 'Flange', 'Tee', 'Reducer', 'Valve', 'Cap'].forEach((name, i) => add('material_parts', `part-${i}`, { name }));
-    ['Carbon steel', 'Stainless steel', 'Alloy steel'].forEach((name, i) => add('material_types', `material-type-${i}`, { name }));
+    add('material_parts', 'part-custom', { name: 'Customer spool piece', custom: true });
+    ['Carbon steel', 'Stainless steel', 'Alloy steel'].forEach((name, i) => add('material_types', `material-type-${i}`, { name, typeOfSteel: name }));
+    [['a106b', 'A106 Gr B', 'Carbon steel', 'Seamless carbon steel pipe for high-temperature service', 'C-Si', '1.1', 'P-1', '1'], ['a312-316l', 'A312 TP316L', 'Stainless steel', 'Seamless austenitic stainless steel pipe', 'Cr-Ni-Mo', '8.1', 'P-8', '1'], ['a335-p11', 'A335 P11', 'Alloy steel', 'Seamless ferritic alloy steel pipe for high-temperature service', 'Cr-Mo', '5.1', 'P-4', '1']].forEach(([id, name, typeOfSteel, materialDescription, basicMaterial, iso15608, asmePNumber, asmeGroup]) => add('material_types', `material-type-${id}`, { name, typeOfSteel, materialDescription, basicMaterial, materialGroup: typeOfSteel, iso15608, asmePNumber, asmeGroup, isoAsme: `${iso15608} / ${asmePNumber} Gr ${asmeGroup}` }));
     ['EA', 'M', 'KG', 'SET'].forEach(name => add('uoms', `uom-${name}`, { name, symbol: name }));
     ['Shop', 'Field', 'Hydrotest field'].forEach((name, i) => add('operation_phases', `phase-${i}`, { name, sort: i + 1 }));
     const projects = [
@@ -51,22 +56,31 @@ export function seed(store: Store) {
       add('spools', `spool-${i}`, { name: `SP-${String(i).padStart(3, '0')}`, isoId: `iso-${i}`, diameter: i < 4 ? '2' : '4', paintSpec: 'PS-02', laydownId: i < 7 ? 'laydown-a' : 'laydown-b' });
       add('iso_materials', `requirement-${i}`, { isoId: `iso-${i}`, materialId: `material-${(i - 1) % 8 + 1}`, quantity: i % 2 ? 12 : 4, phaseId: 'phase-0' });
     }
-    add('roles', 'role-welder', { name: 'Welder' });
-    for (let i = 1; i <= 4; i++) add('welders', `welder-${i}`, { name: ['Alex Taylor', 'Robin Lane', 'Casey Brooks', 'Jordan Reed'][i - 1], number: `W-${String(i).padStart(3, '0')}`, companyId: 'company-stelux', roleId: 'role-welder', status: 'Active',globallyDeployable:true });
+    add('roles', 'role-welder', { name: 'Welder', abbreviation: 'WLD', maxTasks: 6, leadRole: false });
+    add('roles', 'role-foreman', { name: 'Welding foreman', abbreviation: 'WFM', maxTasks: 10, leadRole: true });
+    add('roles', 'role-trainee', { name: 'Trainee welder', abbreviation: 'TRW', maxTasks: 2, leadRole: false });
+    [['ISO 9606-1', 'Welder qualification test (EN ISO 9606-1)'], ['NEN 3650', 'Welder qualification test (NEN 3650)'], ['ASME IX', 'Welder performance qualification (ASME IX)']].forEach(([abbreviation, name], i) => add('certificate_types', `welder-certificate-type-${i}`, { name, abbreviation }));
+    [['W01', 'W01 Custom - 141 | FM1-FM2', '21.3', '168.3', '2', '12'], ['W02', 'W02 Custom - 111 | FM1', '48.3', '219.1', '3', '16'], ['W03', 'W03 Custom - 135 | FM1-FM2 | FW', '', '', '3', '20'], ['W04', 'W04 Custom - 141 | FM5', '21.3', '114.3', '2', '8']].forEach(([abbreviation, name, diameterFrom, diameterTo, wtFrom, wtTo], i) => add('welder_customs_catalog', `welder-custom-${i + 1}`, { name, abbreviation, diameterFrom, diameterTo, wtFrom, wtTo }));
+    const welderRows = [['Alex Taylor', '1984-03-12', 'W01-441', 'site-north', ['welder-custom-1', 'welder-custom-2']], ['Robin Lane', '1990-07-02', 'W01-518', 'site-north', ['welder-custom-1']], ['Casey Brooks', '1979-11-23', 'W02-207', 'site-river', ['welder-custom-4']], ['Jordan Reed', '1995-01-30', 'W02-389', 'site-river', ['welder-custom-3']]];
+    welderRows.forEach(([name, dob, welderCode, siteId, customIds], i) => add('welders', `welder-${i + 1}`, { name, number: `W-${String(i + 1).padStart(3, '0')}`, welderCode, dob, phone: `+31 10 555 02${40 + i}`, email: `${String(name).toLowerCase().replace(' ', '.')}@example.com`, companyId: 'company-stelux', roleId: i === 0 ? 'role-foreman' : 'role-welder', status: 'Active', globallyDeployable: i < 2, combination: i === 1, currentlyOn: i < 2 ? 'Cooling water expansion' : 'Riverside steam network', siteIds: [siteId], customIds }));
+    add('welders', 'welder-5', { name: 'Sam Peters', number: 'W-005', welderCode: 'W03-112', companyId: 'company-north', roleId: 'role-trainee', status: 'Inactive', globallyDeployable: false, description: 'On leave until the next fabrication package.' });
+    add('welders', 'welder-6', { name: 'Noor Hendriks', number: 'W-006', welderCode: 'W03-140', companyId: 'company-north', roleId: 'role-welder', status: 'Active', globallyDeployable: false, description: 'Left the company.' });
+    const welder6 = store.get('welders', 'welder-6'); store.archive('welders', welder6.id, welder6._version, SYSTEM);
     ['141 — TIG', '111 — MMA', '135 — MAG', '136 — FCAW'].forEach((name, i) => add('weld_processes', `process-${i}`, { name, code: name.slice(0, 3) }));
-    ['Butt Weld - Field', 'Butt Weld - Shop', 'Branch welds - Field', 'Branch welds - Shop', 'Socket welds - Shop', 'Socket welds - Field', 'Fillet Weld - Shop', 'Fillet Weld - Field', 'Longitudinal Welds - Shop', 'Longitudinal Welds - Field', 'HOOK-UP', 'Victaulic Joint - Shop', 'Victaulic Joint - Field', 'Reinforcement Pad GW - Shop', 'Reinforcement Pad GW - Field', 'Reinforcement Pad FW - Shop', 'Reinforcement Pad FW - Field'].forEach((name, i) => add('weld_types', `weld-type-${i}`, { name, location: name.includes('Field') ? 'Field' : 'Shop', sort: i + 1 }));
-    add('coatings', 'coating-none', { name: 'UNCOATED' });
+    seedWeldCatalogs(store);
+    // Qualifications relative to the day the sample workspace is created, so the expire warnings always have an expired and an expiring entry.
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+    [['welder-1', 'WQ-2024-0412', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -730, -12], ['welder-1', 'WQ-2025-0233', 'welder-certificate-type-1', 'welder-custom-2', 'process-1', 'NEN 3650', 'PA', 'BW', 'EN', -350, 18], ['welder-2', 'WQ-2025-0310', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -125, 240], ['welder-3', 'WQ-2025-0118', 'welder-certificate-type-2', 'welder-custom-4', 'process-0', 'ASME IX', '6G', 'BW', 'ASME', -40, 690], ['welder-4', 'WQ-2025-0377', 'welder-certificate-type-0', 'welder-custom-3', 'process-2', 'ISO 9606-1', 'PB', 'FW', 'EN', -356, 9], ['welder-5', 'WQ-2024-0105', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -800, -60], ['welder-4', 'WQ-2025-0378', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -356, 374]].forEach(([welderId, name, certificateTypeId, customId, processId, standard, position, weldKind, system, issued, expires], i) => add('welder_certificates', `welder-qualification-${i + 1}`, { name, welderId, certificateTypeId, customId, processId, standard, position, weldKind, system, issuedAt: inDays(Number(issued)), expiresAt: inDays(Number(expires)) }));
     [['1/2"', 21.3, 0.5, 66.9], ['3/4"', 26.7, 0.75, 83.8], ['1"', 33.4, 1, 104.9], ['1.1/4"', 42.2, 1.25, 132.5], ['1.1/2"', 48.3, 1.5, 151.7], ['2"', 60.3, 2, 189.3], ['2.1/2"', 73, 2.5, 229.2], ['3"', 88.9, 3, 279.1], ['4"', 114.3, 4, 358.9], ['6"', 168.3, 6, 528.5], ['8"', 219.1, 8, 688]].forEach(([diameter, size, sizeinch, outline], i) => add('diameters', `diameter-${i + 1}`, { diameter, size, sizeinch, outline, sorting: i + 1 }));
     add('pqr', 'pqr-1', { name: 'STX-PQR-001', standard: 'ISO 15614-1', processId: 'process-0' });
     add('wps', 'wps-1', { name: 'STX-WPS-141-01', method: '141', definition:'Sample procedure — see the attached specification',jointType:'BW',allProjects:true,siteIds:['site-north','site-river'], processId: 'process-0', pqrId: 'pqr-1', standard: 'ISO 15609-1' });
-    add('welding_wires', 'wire-1', { name: 'WIRE-316L-01', classification: 'ER316L', diameter: 2.4, manufacturer: 'Sample Filler Co.', chargeNo: 'H-1042' });
-    add('ndt_groups', 'ndt-vol', { name: 'Volumetric examination' });
-    ['RT', 'UT', 'PT', 'MT', 'VT'].forEach((name, i) => add('ndt_processes', `ndt-${i}`, { name, groupId: 'ndt-vol' }));
-    add('ndt_locations', 'ndt-shop', { name: 'Fabrication shop' });
-    add('pwht_processes', 'pwht-1', { name: 'Controlled post-weld heat treatment' });
-    add('pwht_locations', 'pwht-shop', { name: 'Heat treatment bay' });
-    add('qa_engineers', 'qa-1', { name: 'Morgan Lee', companyId: 'company-stelux', email: 'quality@example.com' });
-    ['Isometric drawing', 'ITP', 'NDT report', 'Material certificate', 'Signed release'].forEach((name, i) => add('attachment_names', `attachment-type-${i}`, { name }));
+    add('welding_wires', 'wire-1', { name: 'WIRE-316L-01', classification: 'ER316L', diameter: 2.4, manufacturer: 'Sample Filler Co.', chargeNo: 'H-1042', materialTypeId: 'material-type-a312-316l', norm: 'EN ISO 14343-A', certType: '3.1', attestNo: 'ATT-W-2291', supplierId: 'supplier-steel', allProjects: true, controlled: true, accepted: true });
+    add('welding_wires', 'wire-2', { name: '0001', classification: 'ER70S-6', diameter: 2.4, chargeNo: '4417-8812', materialTypeId: 'material-type-a106b', norm: 'AWS A5.18', certType: '3.1', attestNo: 'ATT-W-2305', supplierId: 'supplier-pipe', allProjects: false, projectIds: ['project-cooling'], controlled: true, accepted: false, description: 'Waiting for the incoming inspection.' });
+    // Material certificates: a certificate for every project, and two linked to one project each. The weld entry sample
+    // (seedWeldEntry) adds the fitting and flange certificates and traces welds to them.
+    add('certifications', 'certificate-1', { name: 'ATT-26-1184', indexNo: '0001', chargeNo: 'H-1042', certType: '3.1', date: '2026-09-02', standard: 'EN 10204 3.1', materialCode: 'A106 Gr B', materialDescription: 'Seamless carbon steel pipe', materialId: 'material-1', materialTypeId: 'material-type-a106b', materialPartId: 'part-0', basicMaterial: 'C-Si', diameter: '2"', schedule: '40', wallThickness: '3.91', supplierId: 'supplier-steel', allProjects: true, controlled: true, accepted: true });
+    add('certifications', 'certificate-2', { name: 'ATT-26-1190', indexNo: '0002', chargeNo: 'H-2210', certType: '3.1', date: '2026-09-09', standard: 'EN 10204 3.1', materialCode: 'A312 TP316L', materialDescription: 'Stainless steel pipe 316L', materialId: 'material-4', materialTypeId: 'material-type-a312-316l', materialPartId: 'part-0', basicMaterial: 'Cr-Ni-Mo', diameter: '4"', schedule: '10S', wallThickness: '3.05', supplierId: 'supplier-pipe', allProjects: false, projectIds: ['project-steam'], controlled: true, accepted: true });
+    add('certifications', 'certificate-3', { name: 'ATT-26-1207', indexNo: '0003', chargeNo: 'H-5120', certType: '3.2', date: '2026-09-23', standard: 'EN 10204 3.2', materialCode: 'A335 P11', materialDescription: 'Seamless alloy steel pipe P11', materialTypeId: 'material-type-a335-p11', materialPartId: 'part-0', basicMaterial: 'Cr-Mo', diameter: '3"', schedule: '40', wallThickness: '5.49', supplierId: 'supplier-steel', allProjects: false, projectIds: ['project-cooling'], controlled: true, accepted: false, description: 'Third-party inspection report still to be countersigned.' });
     for (let i = 1; i <= 30; i++) add('welds', `weld-${i}`, { weldNo: `W${String(i).padStart(3, '0')}`, isoId: `iso-${(i - 1) % 9 + 1}`, spoolId: `spool-${(i - 1) % 9 + 1}`, typeId: `weld-type-${i % 4}`, welder1Id: `welder-${i % 4 + 1}`, wpsId: 'wps-1', diameterId: i % 2 ? 'diameter-6' : 'diameter-9', lengthMode: 'Diameter', date: `2026-10-${String(Math.min(21, i)).padStart(2, '0')}`, datefit: '2026-10-01', ndoReq: true, pwhtReq: i === 2 || i === 11, wire1Id: 'wire-1', chargeNo1: 'H-1042', chargeNo2: i === 29 ? '' : 'H-1042', coating1Id: 'coating-none' });
     for (let i = 1; i <= 18; i++) {
       const result = action('inspection-request', { weldIds: [`weld-${i}`], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-19' });
@@ -87,7 +101,17 @@ export function seed(store: Store) {
       if (request) action('inspection-result', { requestId: request.id, reportNo: `PWHT-2026-${String(i).padStart(3, '0')}`, result: 'Accepted', round: 'Initial', date: '2026-10-21' });
     }
     action('repair', { weldId: 'weld-5', date: '2026-10-21', note: 'Sample repair record — repeat examination pending.' });
-    add('punchlists', 'punch-1', { name: 'Confirm support tag on cooling line', isoId: 'iso-2', category: 'B', status: 'Open', assignedTo: 'Site team', dueDate: '2026-10-27' });
+    // Punch items relative to the day the sample is created, so the Overdue and Deadline 7 days cards always have something to show.
+    const due = (days: number) => { const date = new Date(); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
+    add('punchlists', 'punch-1', { punchType: 'Pre-punch', category: 'B — ASAP fix (blocking)', isoId: 'iso-2', name: 'Support tag missing on cooling line', description: 'Support CW-SUP-014 on the cooling line has no tag plate; fit the stainless tag and record the number on the as-built.', status: 'Open', contractorId: 'company-north', dueDate: due(-5), reportedDate: due(-12), reportedBy: 'Morgan Lee' });
+    add('punchlists', 'punch-2', { punchType: 'Pre-punch', category: 'A — Immediate fix (blocking)', isoId: 'iso-1', description: 'Gasket on flange FL-1104 is spiral wound 316/graphite; the line list asks for PTFE envelope. Replace before the hydrotest.', status: 'Open', contractorId: 'company-north', dueDate: due(3), reportedDate: due(-4), reportedBy: 'Morgan Lee' });
+    add('punchlists', 'punch-3', { punchType: 'Punch', category: 'C — Fix (non-blocking)', isoId: 'iso-1', description: 'Paint damage on the 2" pipe support after the transport; touch up to PS-02.', status: 'Open', contractorId: 'company-stelux', dueDate: due(6), reportedDate: due(-2), reportedBy: 'Sara Jansen' });
+    add('punchlists', 'punch-4', { punchType: 'Punch', category: 'D — Fix in operation (non-blocking)', projectId: 'project-cooling', description: 'Add name plates to the isolation valves of the cooling water header when the plant is commissioned.', status: 'Open', contractorId: 'company-north', dueDate: due(45), reportedDate: due(-1), reportedBy: 'Alex Morgan' });
+    add('punchlists', 'punch-5', { punchType: 'Pre-punch', category: 'C — Fix (non-blocking)', isoId: 'iso-3', description: 'Weld W021 shows slight undercut on the visual inspection record; grind smooth and re-inspect.', status: 'Open', contractorId: 'company-stelux', dueDate: due(14), reportedDate: due(-3), reportedBy: 'Morgan Lee' });
+    add('punchlists', 'punch-6', { punchType: 'Punch', category: 'B — ASAP fix (blocking)', isoId: 'iso-5', description: 'Pipe class label missing on spool SP-005; marking must follow the project procedure.', status: 'Finished', contractorId: 'company-stelux', dueDate: due(-8), reportedDate: due(-15), reportedBy: 'Morgan Lee', finishedAt: due(-7), finishedBy: 'Sara Jansen', signerType: 'Own inspector', signInspector: 'Morgan Lee', signMethod: 'Drawn' });
+    add('punchlists', 'punch-7', { punchType: 'Punch', category: 'A — Immediate fix (blocking)', isoId: 'iso-4', description: 'Temporary blind left in the steam header branch; remove and close the joint.', status: 'Passed', contractorId: 'company-stelux', dueDate: due(-20), reportedDate: due(-30), reportedBy: 'Sam Rivers', finishedAt: due(-19), finishedBy: 'Sara Jansen', signerType: 'Client', signName: 'Jan de Vries', signCompany: 'Riverside Utilities', signFunction: 'Site engineer', signMethod: 'Uploaded PDF', passedAt: due(-18), passedBy: 'Morgan Lee' });
+    add('punchlists', 'punch-8', { punchType: 'Pre-punch', category: 'C — Fix (non-blocking)', isoId: 'iso-6', description: 'Insulation clips ordered for this line are no longer needed after the design change.', status: 'Removed', dueDate: due(-10), reportedDate: due(-20), reportedBy: 'Sam Rivers', removedAt: due(-9), removedBy: 'Morgan Lee', removeReason: 'Design change DC-044 removes the insulation on this line.' });
+    for (const [id, punchProgress] of [['iso-1', '50 %'], ['iso-4', '100 %']]) { const iso = store.get('isometrics', id); store.update('isometrics', id, { punchProgress }, iso._version, SYSTEM); }
     // Flange Management sample records: one per status. Torque values are sample entries, not catalog values.
     const flangeBase = { gasket_type: 'Spiral wound', gasket_material: '316L / flexible graphite', flange_type: 'Weld neck (WN)', flange_rating: 'Class 150', studbolt_afmeting: '3/4" x 110 mm', stud_dia: '3/4"', matl_studbolts: 'ASTM A193 B7', materiaal_moer: 'ASTM A194 2H', lubricant_used: 'Molykote P-37', torque_wrench_type: 'Hydraulic square drive', pipe_class: 'CS150' };
     add('flanges', 'flange-1', { ...flangeBase, isoId: 'iso-1', flange_id: 'FL-CW-001', assetTag: 'AT-CW-FL-001', from_equipment: 'P-101A', to_equipment: 'Line 6"-CW-1101', eq_con: 'Pump discharge', pid: 'P&ID-CW-01', line_number: '6"-CW-1101-CS150', fluid_code: 'CW', area_unit: 'Area 1 / Cooling', location: 'Pump deck', flange_size: '6" (DN150)', aantal_studbolts: 8, operatingPressure: '10 bar', operatingTemp: '35 °C', testPressure: '15 bar', criticality: 'Medium' });
@@ -99,6 +123,10 @@ export function seed(store: Store) {
     action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
     seedHydrotest(store);
+    // Field work packages: descriptions, a second package for the steam network and the first assignments (see shared/releases.ts).
+    store.update('field_packages', 'fwp-1', { description: 'Cooling water loop, area 1: prefab spools erected and welded in the field.' }, store.get('field_packages', 'fwp-1')._version, SYSTEM);
+    add('field_packages', 'fwp-2', { name: 'Steam header — Area 2', number: 'FWP-002', projectId: 'project-steam', description: 'Riverside steam header and branches, installed after the cooling loop.' });
+    for (const [isoId, packageId] of [['iso-1', 'fwp-1'], ['iso-2', 'fwp-1'], ['iso-4', 'fwp-2']]) store.update('isometrics', isoId, { fieldPackageId: packageId }, store.get('isometrics', isoId)._version, SYSTEM);
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });
     if ('record' in po && po.record) { const line = store.list('order_lines').find(l => l.orderId === po.record?.id)!; action('receive', { orderId: po.record.id, warehouseId: 'warehouse-main', date: '2026-10-20', items: [{ lineId: line.id, quantity: 12, chargeNo: 'H-1043' }] }); }
@@ -110,6 +138,7 @@ export function seed(store: Store) {
     ['Alex Taylor', 'Robin Lane', 'Casey Brooks', 'Jordan Reed'].forEach((name, i) => add('clients', `client-${i + 1}`, { barcode: `C-${1001 + i}`, name, companyId: 'company-stelux', warehouseId: 'warehouse-main' }));
     for (let i = 1; i <= 5; i++) action('rent', { articleId: `article-${i}`, warehouseId: 'warehouse-main', clientId: `client-${i % 4 + 1}`, quantity: i === 3 ? 1 : 2, date: '2026-10-18', dueDate: i === 2 ? '2026-10-20' : '2026-10-28' });
     action('rent', { articleId: 'article-6', warehouseId: 'warehouse-main', clientId: 'client-1', quantity: 3, date: '2026-10-19' });
+    seedWeldEntry(store);
     seedItpSamples(store);
     store.db.prepare('DELETE FROM audit').run();
     store.audit('projects', 'project-cooling', 'created', 'Cooling water expansion added to the workspace', SYSTEM);

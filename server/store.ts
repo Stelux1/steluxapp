@@ -11,9 +11,12 @@ import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { hydrotestErrors } from '../shared/hydrotest.ts';
 import { flangeInputErrors, flangeStoredValue } from '../shared/flanges.ts';
 import { isoItpLinks, itpSlotRefresh } from '../shared/itp-dashboard.ts';
+import { normalizePunch, punchInputErrors } from '../shared/punch.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
+import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
+import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -39,6 +42,8 @@ const unpackAudit=(r:Record<string,unknown>):AuditEvent=>({id:String(r.id),entit
 export class Store {
   db: Database;
   depth = 0;
+  /** Hosted workspace rules (welder data, certificates): set by createApp when the release profile delivers pilots. */
+  hostedRules = false;
   constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = database || new DatabaseSync(filename);
@@ -103,10 +108,19 @@ export class Store {
     if (!raw) throw new AppError(404, `The ${this.resource(key).singular} could not be found.`);
     return unpack(raw);
   }
+  /** Depth of `keepingReferences` calls: while above zero, the "Enabled on this site" rule does not refuse references. */
+  private keptReferences = 0;
+  /**
+   * Run writes that carry references over from existing records (copy isometrics): the rule refusing references to
+   * catalog records switched off on the site applies to newly chosen references only, so a copy keeps what its source had.
+   */
+  keepingReferences<T>(fn: () => T): T { this.keptReferences++; try { return fn(); } finally { this.keptReferences--; } }
   validate(key: string, input: Record<string, unknown>, existing?: Row,actor:Actor=SYSTEM): RecordData {
     const resource = this.resource(key);
     const data: RecordData = {};
     const errors: Record<string, string> = {};
+    const prepared = this.hostedRules ? prepareWelderData(this, key, input, existing) : { input, errors: {} as Record<string, string> };
+    input = prepared.input;
     for (const field of resource.fields) {
       if (field.type === 'password') continue;
       let value: unknown = input[field.name] ?? existing?.[field.name] ?? field.default ?? (field.type === 'checkbox' ? false : '');
@@ -135,10 +149,13 @@ export class Store {
       }
       data[field.name] = value as Value;
     }
+    for (const [name, message] of Object.entries(prepared.errors)) errors[name] ??= message;
     if (key === 'flanges') for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
+    if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
+    if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
@@ -195,6 +212,7 @@ export class Store {
       const result = this.get(key, id);
       this.audit(key, id, 'created', `Created ${this.resource(key).singular} ${this.display(key, result)}`, actor);
       this.syncRelations(key,id,input,actor);
+      applyEnablement(this, key, id, input, actor);
       return result;
     });
   }
@@ -211,6 +229,7 @@ export class Store {
       this.audit(key, id, 'updated', `Updated ${this.resource(key).singular} ${this.display(key, existing)}`, actor);
       this.syncRelations(key,id,input,actor);
       if (key === 'itps') for (const change of itpSlotRefresh(this.get(key, id), this.list('isometrics'))) this.update('isometrics', change.id, change.values, this.get('isometrics', change.id)._version, actor);
+      applyEnablement(this, key, id, input, actor);
       return this.get(key, id);
     });
   }
@@ -221,6 +240,7 @@ export class Store {
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       if (!row._archived) {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');
+        if(this.hostedRules&&key==='welders')archiveWelderQualifications(this,id,actor);
         for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource).filter(l=>l[relation.ownerKey]===id)){const marked=this.update(relation.resource,link.id,{ownerArchived:true},link._version,actor);this.archive(relation.resource,marked.id,marked._version,actor);}
         for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
           const dependent = this.db.prepare(`SELECT id FROM ${table(resource.key)} WHERE "${f.name}"=? AND archived=0 LIMIT 1`).get(id);
@@ -228,6 +248,7 @@ export class Store {
         }
       }
       this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id);
+      if(row._archived&&this.hostedRules&&key==='welders')restoreWelderQualifications(this,id,actor);
       if(row._archived)for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource,true).filter(l=>l[relation.ownerKey]===id&&l._archived&&l.ownerArchived)){this.get(relation.target,link[relation.targetKey]);const restored=this.archive(relation.resource,link.id,link._version,actor);this.update(relation.resource,restored.id,{ownerArchived:false},restored._version,actor);}
       this.audit(key, id, row._archived ? 'restored' : 'archived', `${row._archived ? 'Restored' : 'Archived'} ${this.resource(key).singular} ${this.display(key, row)}`, actor);
       return this.get(key, id, true);

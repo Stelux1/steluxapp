@@ -20,12 +20,15 @@ import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkA
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
 import { assertSignatureImage } from './signatures.ts';
+import { assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
 import { ISO_LIST_COLUMNS, flagText } from '../shared/iso-list.ts';
 import { isoSummariesFor } from './iso-summary.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
+import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
 import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
+import { inspectionFileError } from '../shared/inspections.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -33,6 +36,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const cookieName = options.releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session' : availability ? 'blitzkrieg_session' : 'stelux_session';
   const access = releaseAccess(store, availability);
   const pilots = Boolean(availability?.features.includes('pilots'));
+  store.hostedRules = pilots;
   const presentUser = (id: string) => access.present(id);
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
@@ -104,7 +108,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       } catch (error) { return next(error); }
     } else (req as AuthRequest).user = access.user((req as AuthRequest).user);
     const projectBulk = availability?.features.includes('project-bulk-edit') && /^\/bulk\/(?:projects|isometrics)$/.test(req.path);
-    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
+    // The Options menu of a catalog with "Enabled on this site" switches the checked records on or off (nothing else is bulk-editable there).
+    const catalogBulk = availability?.features.includes('pilots') && enablementKey(/^\/bulk\/([^/]+)$/.exec(req.path)?.[1] || '');
+    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
     next();
   });
   app.param('resource', (_req, _res, next, key) => { try { access.resource(key); next(); } catch (error) { next(error); } });
@@ -149,7 +155,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
-    access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body);
+    access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); return row; });
@@ -158,7 +164,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.put('/api/records/:resource/:id', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
-    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
+    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     const row = store.transaction(() => {
@@ -171,6 +177,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.post('/api/records/:resource/:id/archive', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'delete',access.record(resource.key,String(req.params.id),true));
     if (resource.readonly) throw new AppError(405, 'Transaction history cannot be archived.');
+    access.archive(resource.key, access.record(resource.key,String(req.params.id),true));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
   });
@@ -183,7 +190,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if(copyAcross)for(const part of ['copyWelds','copyMaterials','copyCalculations'] as const)delete permissionData[part];
     checkActionPermission(req,action.key,permissionData);
     if(copyAcross){const parts=access.copyParts((req as unknown as AuthRequest).user.id);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}
-    res.status(201).json(access.result(runAction(store, action.key, req.body, actorOf(req))));
+    res.status(201).json(access.result(runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')) })));
   });
   app.post('/api/bulk/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit');
@@ -191,8 +198,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     access.input(resource.key, req.body.changes);
-    if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password'))) throw new AppError(422, 'An update field is invalid.');
-    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
+    if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
+    if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
+    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
   });
   /** Flag columns of the isometrics list for an export: the server summary of each exported (readable) isometric, as in both pilots' list. */
   const isoFlagExport = (isos: Row[]) => {
@@ -273,12 +281,15 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       res.status(201).json(result);
     }catch(error){documents.discard(req.file);throw error;}
   });
+  if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);
       if (!req.file) throw new AppError(422, 'Choose a file.');
+      if (pilots && key === 'punchlists') assertPunchFileAllowed(store, target, req.body.documentType);
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
+      const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);
       // A new signature image replaces the current one; earlier images stay as attachments (history).
       const signature = pilots && key === 'signatures';
       if (signature || pilots && key === 'company_data') assertSignatureImage(req.file);
@@ -307,7 +318,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const translated = store.translate(error);
     if (translated instanceof AppError) {
       // Error handlers see no route params, so the resource comes from the path; only delivered fields may be named.
-      const key=String(_req.params.resource||/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||'');
+      const key=String(_req.params.resource||/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||''||(/^\/api\/actions\/(?:save-weld|add-welds|mass-edit-welds|reorder-welds)$/.test(_req.path)?'welds':''));
       const fields=translated.fields?Object.fromEntries(Object.entries(translated.fields).filter(([name])=>access.field(key,name))):undefined;
       const message=availability&&translated.status===409?'This record is in use or has changed. Refresh and check its linked records.':availability&&translated.fields&&!Object.keys(fields||{}).length?'Please check the record and try again.':translated.message;
       res.status(translated.status).json({ error: message, ...(fields&&Object.keys(fields).length?{fields}:{}), ...(translated.code?{code:translated.code}:{}) });

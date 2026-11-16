@@ -1,0 +1,66 @@
+/* Prefab and Field release, request archive, field work packages and the release block of the isometric status card. */
+.releases-page .alert { margin: 0 0 14px; }
+.release-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 16px; align-items: end; }
+.release-filters .field { margin: 0; min-width: 0; }
+.release-filters .field input[type="search"], .release-filters .field input[type="date"], .release-filters .field select { width: 100%; }
+.release-counts { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); }
+.release-counts strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.release-export { justify-self: start; }
+.release-table th, .release-table td { white-space: nowrap; vertical-align: top; }
+.release-table td.release-status-col, .release-table th.release-status-col { white-space: normal; min-width: 240px; max-width: 360px; }
+.release-table tr.released td { color: var(--muted); }
+.release-state { display: grid; gap: 4px; }
+.release-state small { color: var(--muted); font-size: 12px; }
+.release-reasons { font-size: 13px; }
+.release-reasons summary { cursor: pointer; list-style: none; min-height: 28px; display: inline-flex; align-items: center; border-radius: 6px; }
+.release-reasons summary::-webkit-details-marker { display: none; }
+.release-reasons summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.release-reasons ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.release-reasons li { line-height: 1.45; padding-left: 10px; border-left: 3px solid #d9a21e; overflow-wrap: anywhere; }
+.release-reasons li strong { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #7a4f00; margin-right: 4px; }
+.release-iso-list { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; padding: 0; }
+.release-iso-list li { background: var(--surface-blue); border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; font-size: 13px; font-weight: 500; }
+.fwp-assign { flex-wrap: wrap; gap: 10px 14px; }
+.fwp-target select { min-height: 36px; min-width: 200px; max-width: 100%; }
+.fwp-tabs { margin: 0 0 14px; }
+.release-doc-tabs { margin-bottom: 14px; }
+
+/* The release block of the Status card. */
+.iso-release { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 12px; }
+.iso-release-phase { display: grid; gap: 6px; }
+.iso-release-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.iso-release-name { font-size: 12px; color: var(--muted); }
+.iso-release-meta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.iso-release-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.iso-release-actions:empty { display: none; }
+.iso-release-doc { justify-self: start; }
+.release-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 11px; font-size: 13px; font-weight: 600; border: 1px solid transparent; }
+.release-pill.green { color: #1a6a40; background: #e5f5ec; border-color: #9fd4b5; }
+.release-pill.blue { color: #004fbc; background: var(--surface-accent); border-color: var(--border-strong); }
+.release-pill.amber { color: #7a4f00; background: #fff7e0; border-color: #d9a21e; }
+.release-pill.neutral { color: var(--muted); background: var(--surface-blue); border-color: var(--line); }
+
+/* The release document. */
+.release-doc h3 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
+.release-doc-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin: 0; }
+.release-doc-facts > div { min-width: 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.release-doc-facts dt { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.release-doc-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.release-doc-note, .release-doc-numbering { font-size: 13px; color: var(--muted); margin: 14px 0 0; }
+.release-doc-signatures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.release-doc-signatures > div { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; min-height: 120px; align-content: start; }
+.release-doc-signatures small { color: var(--muted); font-size: 12px; }
+.release-doc-line { display: block; margin-top: 30px; border-bottom: 1px solid var(--ink); }
+
+@media (max-width: 1000px) { .release-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .release-filters { grid-template-columns: minmax(0, 1fr); }
+  .release-doc-facts, .release-doc-signatures { grid-template-columns: minmax(0, 1fr); }
+  .fwp-target, .fwp-target select { width: 100%; }
+  .release-table td.release-status-col, .release-table th.release-status-col { min-width: 200px; }
+}
+@media print {
+  .release-doc-facts > div { break-inside: avoid; }
+  .release-doc-signatures > div { break-inside: avoid; border-color: #888; }
+  .release-doc-tabs { display: none !important; }
+}

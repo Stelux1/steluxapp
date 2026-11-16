@@ -20,12 +20,7 @@ export function seedItpSamples(store: Store) {
   for (const id of ['iso-1', 'iso-2', 'iso-3']) link(id, { itpId: 'itp-01' });
   link('iso-1', { itp2Id: 'itp-ndt-01' });
   for (const id of ['iso-4', 'iso-5', 'iso-6']) link(id, { itpId: 'itp-02' });
-  // Weld type abbreviations used by the Total welds card.
-  const abbreviations: [string, string][] = [['Butt', 'BW'], ['Branch', 'BR'], ['Socket', 'SW'], ['Fillet', 'FW'], ['Longitudinal', 'LW'], ['HOOK-UP', 'HU'], ['Victaulic', 'VJ'], ['Reinforcement Pad GW', 'RPG'], ['Reinforcement Pad FW', 'RPF']];
-  for (const type of store.list('weld_types')) {
-    const abbreviation = abbreviations.find(([prefix]) => String(type.name).startsWith(prefix))?.[1];
-    if (abbreviation) store.update('weld_types', type.id, { abbreviation }, type._version, SYSTEM);
-  }
+  // Weld type abbreviations used by the Total welds card come from the weld catalog seed (server/weld-catalogs-seed.ts).
   // A second procedure: the upper half of the welds were made under it.
   add('wps', 'wps-2', { name: 'STX-WPS-135-01', method: '135', definition: 'Sample procedure — see the attached specification', jointType: 'BW', allProjects: true, siteIds: ['site-north', 'site-river'], processId: 'process-2', pqrId: 'pqr-1', standard: 'ISO 15609-1' });
   for (const weld of store.list('welds')) {

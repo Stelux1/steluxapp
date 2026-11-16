@@ -131,6 +131,7 @@ export function hydrotestState(isometric: Row, rows: HydrotestRows): HydrotestSt
   if (system && text(system.accepted) === TS_NOT_APPLICABLE) return { inScope: false, completed: false };
   if (!rows.hydrotest_requests && !rows.releases) return { inScope: false, completed: false };
   const passed = live(rows.hydrotest_requests).some(row => text(row.testSystemId) === systemId && text(row.result) === 'Passed');
-  const released = live(rows.releases).some(row => row.isoId === isometric.id && row.type === 'Hydrotest');
+  // A Reopened Hydrotest release no longer counts (same rule as isReleased() in shared/releases.ts, inlined to avoid an import cycle).
+  const released = live(rows.releases).some(row => row.isoId === isometric.id && row.type === 'Hydrotest' && row.status !== 'Reopened');
   return { inScope: true, completed: passed || released };
 }

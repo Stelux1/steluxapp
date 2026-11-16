@@ -18,7 +18,9 @@ import { resourcePath } from '../client/records.tsx';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
-const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports'];
+const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports'];
+// The Prefab release, Field release and Request archive pages share the releases route and differ by ?view= (see client/releases.tsx).
+EXPLICIT_ROUTES.push('/welding/releases');
 const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.map(item => ({ pilot, group, item }))));
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
@@ -29,7 +31,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'Calculations', 'System']);
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);
   // Reference items without a page in this application are not listed.
-  for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Defect codes', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
+  for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
 
 test('every menu item resolves to a real page and resource items use resourcePath()', () => {
@@ -45,8 +47,9 @@ test('every menu item resolves to a real page and resource items use resourcePat
   for (const pilot of PILOTS) { const paths = pilot.groups.flatMap(group => group.items).map(pilotItemPath).filter(Boolean); assert.equal(new Set(paths).size, paths.length, pilot.key); }
   // Every page the hosted profile delivers today stays reachable from at least one menu.
   const listed = new Set(items.map(({ item }) => pilotItemPath(item)?.split('?')[0]));
-  // Calculation lines and cut list open inside "MTO & calculations"; project sites open as the main-project picker.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'sites'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // Calculation lines and cut list open inside "MTO & calculations"; project sites open as the main-project picker;
+  // inspection requests open as the request archives of the NDT/PWHT Manager.
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'sites', 'inspection_requests'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   assert.ok(listed.has('/workspace/main-projects')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
 
@@ -93,7 +96,7 @@ test('selector eligibility follows the projected module levels', () => {
 });
 
 test('shared catalogs take the higher materials or welding level, only in module-level mode and only with pilots', () => {
-  assert.deepEqual(SHARED_PILOT_SCOPES.map(scope => Object.entries(RESOURCE_SCOPES).filter(([, scopes]) => scopes.includes(scope)).map(([key]) => key)).flat().sort(), ['certifications', 'material_parts', 'material_types', 'spools', 'suppliers']);
+  assert.deepEqual(SHARED_PILOT_SCOPES.map(scope => Object.entries(RESOURCE_SCOPES).filter(([, scopes]) => scopes.includes(scope)).map(([key]) => key)).flat().sort(), ['certificate_projects', 'certifications', 'material_parts', 'material_types', 'spools', 'suppliers']);
   const widened = { ...structuredClone(hosted), resources: { ...hosted.resources, ...Object.fromEntries(['material_parts', 'material_types', 'suppliers', 'orders', 'stock', 'movements', 'picklists'].map(key => [key, ['name']])) } };
   const weld = account({ general: 1, welding: 2 }, widened), mto = account({ general: 1, materials: 2 }, widened);
   for (const key of ['material_parts', 'material_types', 'suppliers', 'certifications', 'spools']) {
@@ -146,10 +149,11 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
-  for (const key of ['orders', 'stock', 'movements', 'material_parts', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
+  for (const key of ['orders', 'stock', 'movements', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
+  assert.equal((await f.request('/api/records/material_parts')).status, 200, 'material parts are delivered with the material data pages');
   assert.equal((await f.request('/api/reports/mto')).status, 403);
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'DENIED', quantity: 1 })).status, 403);
-  const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001' }); assert.equal(created.status, 201);
+  const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001', certType: '3.1', diameter: '1/2"', materialPartId: 'part-0', materialTypeId: 'material-type-0', schedule: '40', wallThickness: '2.77' }); assert.equal(created.status, 201);
   const data = await (await f.request('/api/bootstrap')).json() as Bootstrap;
   assert.ok(data.rows.certifications.some(row => row.name === 'Weld pilot cert')); assert.ok(data.rows.spools.length);
   for (const key of ['iso_materials', 'materials', 'orders', 'stock']) assert.equal(data.rows[key], undefined, key);

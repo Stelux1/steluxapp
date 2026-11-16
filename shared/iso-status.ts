@@ -1,6 +1,8 @@
 import type { Row } from './types.ts';
 import { hydrotestState } from './hydrotest.ts';
+import { hasPunchProgress, punchBlocking, punchProgress } from './punch.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
+import { repairState } from './inspections.ts';
 
 /**
  * Status of one isometric: what blocks it, the quality of its NDT results and its weighted progress.
@@ -26,7 +28,7 @@ export interface IsoStatusInput {
   punch?: Row[] | null;
   /** Budgets of the pipe / supports / appendages drivers. Absent: those drivers are out of scope. */
   budgets?: ProgressBudgets;
-  /** Punch driver progress 0..1. Absent until punch data supplies it: the driver is out of scope. */
+  /** Punch driver progress 0..1 (overrides the isometric's own). Absent until punch progress is entered: the driver is out of scope. */
   punchProgress?: number | null;
 }
 
@@ -143,7 +145,7 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
   // Release: shop welds exist and no Prefab release record yet. Skipped when releases cannot be read.
   if (input.releases) {
     const shopWelds = welds.some(weld => locationOf(weld, input.weldTypes) === 'shop');
-    const released = live(input.releases).some(row => row.isoId === input.iso.id && row.type === 'Prefab');
+    const released = live(input.releases).some(row => row.isoId === input.iso.id && row.type === 'Prefab' && row.status !== 'Reopened');
     if (shopWelds && !released) add('release', [{ message: 'The shop welds have not been released for prefab yet.' }]);
   }
   add('welds', welds.filter(hasWelder).flatMap(weld => { const missing = missingWeldFields(weld); return missing.length ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} is missing ${list(missing)}.` }] : []; }));
@@ -151,11 +153,19 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
   add('ndt', welds.flatMap(weld => [['ndoReqPre', 'NDT PRE'], ['ndoReq', 'NDT']].flatMap(([flag, type]) => weld[flag] === true && !resultsOf(input.results, weld.id, [type]).length ? [{ weldId: weld.id, message: `${type} on weld ${weld.weldNo} has no result yet.` }] : [])));
   // Repair: the latest NDT result is Rejected, so the repair is not closed (a later accepted result closes it).
   // The existing repair model is the weld's `repair` flag set by the repair action, nothing more.
-  add('repair', welds.flatMap(weld => resultsOf(input.results, weld.id, NDT_TYPES)[0]?.result === 'Rejected'
-    ? [{ weldId: weld.id, message: weld.repair ? `Weld ${weld.weldNo} was rejected; the repair is recorded and waits for an accepted re-examination.` : `Weld ${weld.weldNo} was rejected; no repair is recorded yet.` }] : []));
+  // A repair weld (`010R1`, linked by `repairOfId`, see shared/inspections.ts) keeps the original's repair open until a
+  // repair in its chain has an accepted result; the item names the original and its latest repair weld.
+  add('repair', welds.flatMap(weld => {
+    if (resultsOf(input.results, weld.id, NDT_TYPES)[0]?.result !== 'Rejected') return [];
+    const state = repairState(weld, live(input.welds), input.results);
+    if (!state) return [];
+    if (state.repair) return state.open ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} was rejected; repair weld ${state.repair.weldNo} has no accepted result yet.` }] : [];
+    return [{ weldId: weld.id, message: weld.repair ? `Weld ${weld.weldNo} was rejected; the repair is recorded and waits for an accepted re-examination.` : `Weld ${weld.weldNo} was rejected; no repair is recorded yet.` }];
+  }));
   if (input.punch) {
-    const open = live(input.punch).filter(row => row.isoId === input.iso.id && row.status !== 'Completed').length;
-    if (open) add('punch', [{ message: `${open} open punch item${open === 1 ? '' : 's'}.` }], open);
+    // Open items of the blocking categories A and B hold the isometric back (see shared/punch.ts).
+    const open = punchBlocking(live(input.punch).filter(row => row.isoId === input.iso.id)).length;
+    if (open) add('punch', [{ message: `${open} open punch item${open === 1 ? '' : 's'} in category A or B.` }], open);
   }
   return { groups, total: groups.reduce((sum, group) => sum + group.count, 0) };
 }
@@ -233,7 +243,12 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
       }
       return total > 0 ? done / total : null;
     }
-    if (key === 'punch') return phase === 'field' && typeof input.punchProgress === 'number' ? Math.min(1, Math.max(0, input.punchProgress)) : null;
+    if (key === 'punch') {
+      if (phase !== 'field') return null;
+      // The progress entered on the isometric counts once there is one; a caller may still pass its own value.
+      if (typeof input.punchProgress === 'number') return Math.min(1, Math.max(0, input.punchProgress));
+      return hasPunchProgress(input.iso) ? punchProgress(input.iso) : null;
+    }
     const quantity = ISO_QUANTITIES.find(item => item.phase === phase && item.key === key);
     const budget = quantity ? budgetOf(input.budgets, phase, quantity.key) : 0;
     if (!quantity || !budget) return null;

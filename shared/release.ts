@@ -3,6 +3,11 @@ import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
+import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
+import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
+import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
+import { deliverInspections, MANAGER_PATH } from './inspections.ts';
+import { RELEASE_ACTIONS } from './releases.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -118,9 +123,16 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       revisions: fields('isoId type revNo previousRev date comment'),
     });
     availability.actions.revision = fields('isoId type revNo date comment');
+    // Punch lists page (Weld Pilot → Releases) and its status changes.
+    deliverResource(availability, 'punchlists');
+    Object.assign(availability.actions, { 'punch-finish': fields('punchId signerType clientName company function inspector date note signMethod attachmentId'), 'punch-pass': fields('punchId date note'), 'punch-remove': fields('punchId date note') });
     // Set phase (bulk and single) and Copy isometrics: only the flags the user changes are sent.
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
+    // Prefab / Field release pages, Reopen, request archive and field work packages (see shared/releases.ts).
+    for (const key of ['releases', 'field_packages']) deliverResource(availability, key);
+    Object.assign(availability.actions, structuredClone(RELEASE_ACTIONS));
+    availability.features.push('releases');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
     // ITP / KNR register (Weld Pilot → Welding data → ITPs) and its project links; the links have no menu page.
     deliverResource(availability, 'itps', [...RESOURCE_MAP.itps.fields.map(field => field.name), 'projectIds']);
@@ -135,7 +147,22 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     for (const action of HYDROTEST_ACTIONS) availability.actions[action.key] = action.fields.map(field => field.name);
     // Flange Management (Weld Pilot → Releases): the flange record and its page.
     deliverResource(availability, 'flanges');
+    // Weld catalogs and "Enabled on this site" (shared/weld-catalogs.ts). Suppliers, service companies and laydowns gain the
+    // enablement wherever they are delivered (the server accepts its request names for every enablement catalog).
+    for (const key of WELD_CATALOG_RESOURCES) deliverResource(availability, key);
+    availability.resources[CATALOG_SITES] = fields('resourceKey recordId siteId enabled');
+    // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
+    for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
+    for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
+    // Weld table and weld entry on the isometric: the entry fields of a weld and the actions behind the form.
+    deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer'));
+    availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS];
+    availability.actions['add-welds'] = fields('isoId start end diameterId');
+    availability.actions['mass-edit-welds'] = fields('weldIds changes versions');
+    availability.actions['reorder-welds'] = fields('isoId weldIds');
     availability.features.push('project-planning', 'pilots');
+    // NDT per weld, tracers, repairs, visual inspection, Pre-HT / PWHT and the NDT/PWHT Manager (shared/inspections.ts).
+    deliverInspections(availability, deliverResource);
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
   return availability;
@@ -171,14 +198,15 @@ export function projectResource(availability: Availability | undefined, resource
   if (!availability) return resource;
   const prototype = availability.features.includes('lisl');
   const pilots = availability.features.includes('pilots');
-  const columns = pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const listed = pilots ? HOSTED_COLUMNS[resource.key] : undefined;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => {
+    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),
-    columns: columns.filter(key => fieldAvailable(availability, resource.key, key)),
+    columns: (listed ?? columns).filter(key => fieldAvailable(availability, resource.key, key)),
     actions: resource.actions?.filter(key => actionAvailable(availability, key)),
     createAction: resource.createAction && actionAvailable(availability, resource.createAction) ? resource.createAction : undefined,
   };
@@ -210,6 +238,7 @@ export function pageAvailable(availability: Availability | undefined, pathname: 
 function deliveredPage(availability: Availability, pathname: string, definitions: Resource[]): boolean {
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
+  if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);

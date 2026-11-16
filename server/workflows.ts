@@ -6,6 +6,11 @@ import { Store, AppError, positive, qty, validDate, today, type Actor } from './
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
 import { runHydrotestAction } from './hydrotest.ts';
+import { WELD_ENTRY_ACTIONS, runWeldEntryAction } from './weld-entry.ts';
+import { INSPECTION_ACTION_KEYS } from '../shared/inspections.ts';
+import { inspectionRules } from './inspections.ts';
+import { assignFieldPackage, releaseIsometrics, reopenRelease } from './releases.ts';
+import { runPunchAction } from './punch.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -17,15 +22,19 @@ export function weldLength(store: Store, weld: Row) {
   if (weld.lengthMode === 'Length in mm') return Number(weld.dialen) || 0;
   return weld.diameterId ? Number(store.get('diameters', weld.diameterId, true).outline) || 0 : 0;
 }
-export function runAction(store: Store, key: string, data: Input, actor: Actor) {
+/** `inspectionRules`: the profile delivers the inspections flow (hosted), so a not-accepted NDT result also creates its repair weld. */
+export function runAction(store: Store, key: string, data: Input, actor: Actor, options: { inspectionRules?: boolean } = {}) {
   if (!ACTIONS[key]) throw new AppError(404, 'This action does not exist.');
   if (key.startsWith('hydrotest-')) return runHydrotestAction(store, key, data, actor);
+  if (WELD_ENTRY_ACTIONS.has(key)) return runWeldEntryAction(store, key, data, actor);
   return store.transaction(() => {
+    if (INSPECTION_ACTION_KEYS.includes(key)) return inspectionRules(store, actor).run(key, data);
     const date = data.date ? validDate(data.date) : today();
     const note = str(data.note);
     const ensure = (resource: string, id: unknown) => store.get(resource, id);
     const add = (resource: string, input: Input) => store.create(resource, input, actor);
     const patch = (resource: string, row: Row, input: Input) => store.update(resource, row.id, input, row._version, actor);
+    if (key.startsWith('punch-')) return { resource: 'punchlists', record: runPunchAction(store, key, data, actor).record };
     const warehouse = (id: unknown, tool: boolean) => {
       const row = ensure('warehouses', id);
       if (row.use === (tool ? 'Materials' : 'Tools')) throw new AppError(422, `Choose a warehouse that holds ${tool ? 'tools' : 'materials'}.`);
@@ -227,21 +236,18 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       const record = add('inspection_results', { requestId: request.id, weldId: weld.id, reportNo, type: request.type, result, round: data.round || 'Initial', examinedLength: length, naLength: data.naLength ?? null, defectType: data.defectType || '', date, note });
       patch('inspection_requests', request, { status: result });
       store.audit('welds', weld.id, 'inspected', `${request.type} ${result.toLowerCase()} · ${reportNo}`, actor);
+      if (options.inspectionRules) inspectionRules(store, actor).ensureRepair(weld);
       return { resource: 'inspection_results', record };
     }
     if (key === 'repair') {
       const weld = ensure('welds', data.weldId); if (!note) throw new AppError(422, 'Enter repair notes.');
       const result = patch('welds', weld, { repair: true }); store.audit('welds', weld.id, 'repair', `Repair ${date} · ${note}`, actor);
+      if (options.inspectionRules) inspectionRules(store, actor).ensureRepair(result);
       return { resource: 'welds', record: result };
     }
-    if (key === 'release') {
-      const type = str(data.type); if (!['Prefab', 'Field', 'Hydrotest'].includes(type)) throw new AppError(422, 'Choose a release type.');
-      const reportNo = str(data.reportNo); if (!reportNo) throw new AppError(422, 'Enter a report number.');
-      if (data.engineerId) ensure('qa_engineers', data.engineerId); if (data.signatureId) ensure('signatures', data.signatureId);
-      const number = store.next(type === 'Hydrotest' ? 'HYDRO' : 'REL'); const created = [];
-      for (const id of ids(data.isoIds, 'isometric')) { ensure('isometrics', id); created.push(add('releases', { number, isoId: id, type, reportNo, date, engineerId: data.engineerId || '', signatureId: data.signatureId || '', note })); }
-      return { resource: 'releases', records: created };
-    }
+    if (key === 'release') return releaseIsometrics(store, data, actor, { date, note });
+    if (key === 'reopen-release') return reopenRelease(store, data, actor);
+    if (key === 'assign-fwp') return assignFieldPackage(store, data, actor);
     if (key === 'phases') {
       const phases: Input = {};
       for (const f of phaseFields) if (data[f.name] && data[f.name] !== 'Keep current') { if (!['Complete', 'Incomplete'].includes(String(data[f.name]))) throw new AppError(422, 'Select a valid phase value.'); phases[f.name] = data[f.name] === 'Complete'; }
@@ -267,7 +273,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       const carried = RESOURCE_MAP.isometrics.fields.filter(field => !leftOut.has(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
       const wpsRows = Object.fromEntries(['projects', 'wps_projects', 'wps_sites'].map(name => [name, store.list(name)]));
       const copies: Row[] = [];
-      for (const source of sources) {
+      // A copy keeps the references its source had, even to catalog records since switched off on the site.
+      store.keepingReferences(() => { for (const source of sources) {
         const copy = add('isometrics', { ...Object.fromEntries(carried.map(name => [name, source[name]])), projectId: target.id });
         const counts: string[] = [];
         // Spools are created on the copy when a copied weld or cut-list line names one.
@@ -307,7 +314,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
         }
         store.audit('isometrics', copy.id, 'copied', `Copied from ${source.isoNo} (${store.display('projects', ensure('projects', source.projectId))})${counts.length ? ' with ' + counts.join(', ') : ''}`, actor);
         copies.push(store.get('isometrics', copy.id));
-      }
+      } });
       return { resource: 'isometrics', records: copies };
     }
     if (key === 'revision') {

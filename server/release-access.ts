@@ -1,12 +1,15 @@
 import { RESOURCES } from '../shared/resources.ts';
-import { areaPilots, canResource, canScope, COPY_SCOPES, pilotBoundary, RESOURCE_SCOPES, type CopyPart, type CopyParts } from '../shared/permissions.ts';
+import { actionScope, areaPilots, canResource, canScope, COPY_SCOPES, pilotBoundary, RESOURCE_SCOPES, type CopyPart, type CopyParts } from '../shared/permissions.ts';
 import { actionAvailable, fieldAvailable, PILOT_KEYS, projectRow, resourceAvailable, rowAvailable, type PilotKey } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
+import { punchWriteError } from '../shared/punch.ts';
 import type { Availability, AuditEvent, Module, Row, User } from '../shared/types.ts';
 import { Store, AppError } from './store.ts';
 import { effectiveProfileId, publicUser } from './auth.ts';
 import { availableWps } from '../shared/welding.ts';
+import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
+import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
@@ -18,7 +21,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
   function user(original: User): User {
     if (!availability) return original;
     const modules = new Set(RESOURCES.filter(r => resourceAvailable(availability, r.key)).map(r => r.module));
-    const scopes = new Set(Object.entries(RESOURCE_SCOPES).filter(([key]) => resourceAvailable(availability, key)).flatMap(([, keys]) => keys));
+    // Areas of delivered actions count too: "Assign ISO to FWP" (91) is an action of its own, without a resource.
+    const scopes = new Set([...Object.entries(RESOURCE_SCOPES).filter(([key]) => resourceAvailable(availability, key)).flatMap(([, keys]) => keys), ...Object.keys(availability.actions).map(key => actionScope(key)[0]).filter(Boolean)]);
     return { ...original, availability,
       permissions: Object.fromEntries(Object.entries(original.permissions).map(([module, level]) => [module, modules.has(module as Module) ? level : 0])) as User['permissions'],
       ...(original.capabilities ? { capabilities: Object.fromEntries(Object.entries(original.capabilities).filter(([key]) => scopes.has(key))) } : {}),
@@ -50,9 +54,10 @@ export function releaseAccess(store: Store, availability?: Availability) {
   function input(key: string, value: Record<string, unknown>, action = false, existing?: Row) {
     if (!availability) return;
     const names = action ? availability.actions[key] : availability.resources[key];
-    if (!names || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !names.includes(name) && !(name === '_version' && !action))) throw notFound();
+    if (!names || !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(name => !names.includes(name) && !(name === '_version' && !action) && !(!action && enablementKey(key) && ENABLEMENT_INPUT.includes(name)))) throw notFound();
     if (action && !actionAvailable(availability, key, value.type)) throw notFound();
     if (!action && ['inspection_requests', 'inspection_results'].includes(key) && value.type !== undefined && !availability.inspectionTypes.includes(String(value.type))) throw notFound();
+    if (!action && key === 'punchlists') { const refusal = punchWriteError(value, existing); if (refusal) throw new AppError(422, refusal); }
     if (!action && key === 'welds' && (!existing || value.isoId !== undefined || value.wpsId !== undefined)) {
       const wpsId = value.wpsId ?? existing?.wpsId;
       if (wpsId) {
@@ -64,14 +69,30 @@ export function releaseAccess(store: Store, availability?: Availability) {
       }
     }
   }
+  /**
+   * Hosted rule of the weld catalogs: the fields the reference marks as required must be filled (the shared resource keeps
+   * them optional for the other profiles). A request that only switches availability does not touch them.
+   */
+  function complete(key: string, value: Record<string, unknown>, existing?: Row) {
+    if (!pilots || !value || typeof value !== 'object') return;
+    if (!Object.keys(value).some(name => name !== '_version' && !ENABLEMENT_INPUT.includes(name))) return;
+    const errors = missingRequired(key, value, existing);
+    if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
+  }
+  /** Weld entry rules and the lock of completed phases for the plain record routes of the hosted profile. */
+  function weldRecord(key: string, value: Record<string, unknown>, existing?: Row) { if (pilots && key === 'welds') assertWeldEntry(store, value, existing); }
+  /** Deleting or bringing back a weld of a completed phase is refused too. */
+  function archive(key: string, row: Row) { if (pilots && key === 'welds') assertWeldUnlocked(store, row); }
   function audit(account: User, event: AuditEvent): AuditEvent | null {
     try {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
     } catch { return null; }
     if (availability) {
-      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied'].includes(event.action)) return null;
+      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'released', 'reopened', 'finished', 'passed', 'removed'].includes(event.action)) return null;
       if (event.action === 'inspected' && !availability.inspectionTypes.some(type => ['accepted', 'rejected'].some(result => event.summary.startsWith(`${type} ${result} · `)))) return null;
     }
+    // Release and Reopen keep their sentences: they carry the report number and the reason the user typed.
+    if (event.action === 'released' || event.action === 'reopened') return event;
     return availability || account.capabilities ? { ...event, summary: `${event.action[0].toUpperCase() + event.action.slice(1)} ${resource(event.entityType).singular}` } : event;
   }
   const project = (key: string, row: Row) => projectRow(availability, key, row);
@@ -151,7 +172,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
     return output;
   }
-  return { user, resource, visible, record, input, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
+  return { user, resource, visible, record, input, complete, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };
