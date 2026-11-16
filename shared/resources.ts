@@ -171,6 +171,10 @@ extend('wps', [b('active', 'Active', { default: true })]);
 extend('wps', WPS_EXTRA_FIELDS);
 extend('pqr', [d('validUntil', 'Valid until')]);
 extend('materials', [t('wallThickness', 'Wall thickness')]);
+// The UOM record of a material (pilots profile, shared/material-db.ts): a material saved before keeps its UOM code and points at the UOM of that code.
+extend('materials', [r('uomId', 'UOM', 'uoms', { hidden: true })]);
+// The ID of an operation phase is its own number, given on create (shared/material-db.ts); the number typed before stays as `sort`.
+extend('operation_phases', [n('number', 'ID', { generated: true, readonly: true, hidden: true })]);
 extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Material code'), t('diameter', 'Diameter (inch)'), t('materialDescription', 'Description of material'), t('wallThickness', 'Wall thickness'), t('schedule', 'Schedule')]);
 // Welders, roles, qualifications, material data and certificates (shared/welder-data.ts).
 extend('welders', [b('combination', 'Combination')]);

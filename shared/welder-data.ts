@@ -165,7 +165,7 @@ export const HOSTED_HIDDEN: Record<string, string[]> = {
   certifications: names('diameter basicMaterial date standard materialCode materialDescription'),
 };
 /** Optional in the hosted profile although the shared definition requires them (the reference form has no required mark). */
-export const HOSTED_OPTIONAL: Record<string, string[]> = { certifications: ['name'] };
+export const HOSTED_OPTIONAL: Record<string, string[]> = { certifications: ['name'], materials: ['description'] };
 /** The Add certification form of the reference, in its order (capture weld__material__certifications.txt:69-118). */
 export const CERTIFICATE_FORM_FIELDS = names('chargeNo name materialId diameterId materialPartId materialTypeId schedule wallThickness hotYield impactStrength certType supplierId allProjects projectIds controlled accepted description');
 /** Required in the hosted profile (the shared definitions stay as they were for the other profiles). */

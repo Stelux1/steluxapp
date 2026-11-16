@@ -1,4 +1,5 @@
 import { AppError } from '../store.ts';
+import { phaseNumber } from '../../shared/material-db.ts';
 import { box, GREY_FILL, GREY_LINE, labelValueGrid, spacer, stack, textBlock, type Block, type PageSetup, type TableSpec } from './engine.ts';
 import { renderDocument } from './document.ts';
 import type { PdfDocumentDefinition } from './documents.ts';
@@ -32,7 +33,7 @@ export function mtoModel(rows: Rows, iso: Row, phaseOption?: string): MtoModel {
   const phase = mtoPhase(rows, phaseOption), phases = new Map((rows.operation_phases || []).map(row => [row.id, row]));
   const lines = (rows.iso_materials || []).filter(row => !row._archived && row.isoId === iso.id && (!phase || row.phaseId === phase.id)).map((row): MtoLine => {
     const material = materialRecord(rows, row) || row, own = phases.get(String(row.phaseId));
-    return { group: text(material.materialGroup), materialNo: text(material.materialNo), dia: text(material.dia), lbs: text(material.lbs), description: text(material.description), phase: text(own?.name), phaseSort: own ? Number(own.sort) || 0 : 1e9, quantity: Number(row.quantity) || 0, uom: text(material.uom) };
+    return { group: text(material.materialGroup), materialNo: text(material.materialNo), dia: text(material.dia), lbs: text(material.lbs), description: text(material.description), phase: text(own?.name), phaseSort: own ? phaseNumber(own) ?? 0 : 1e9, quantity: Number(row.quantity) || 0, uom: text(material.uom) };
   }).sort((a, b) => a.phaseSort - b.phaseSort || naturalCompare(a.phase, b.phase) || naturalCompare(a.group, b.group) || naturalCompare(a.materialNo, b.materialNo));
   const totals = new Map<string, UomTotal>();
   for (const line of lines) { const total = totals.get(line.uom) ?? { uom: line.uom, lines: 0, quantity: 0 }; total.lines++; total.quantity += line.quantity; totals.set(line.uom, total); }

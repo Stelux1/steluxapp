@@ -186,7 +186,7 @@ export const CATALOG_WORDING: Record<string, CatalogWording> = {
  * Catalog pages whose row action reads "Delete" and asks "Are you sure?" in the hosted profile, as the reference does.
  * Underneath the record is archived (it can be restored from the Archived tab), exactly as welds are.
  */
-export const DELETE_WORDING_RESOURCES = [...Object.keys(CATALOG_WORDING), 'ndt_groups', 'diameters', 'material_parts', 'material_types', 'suppliers', 'welding_wires', 'certifications'];
+export const DELETE_WORDING_RESOURCES = [...Object.keys(CATALOG_WORDING), 'ndt_groups', 'diameters', 'material_parts', 'material_types', 'suppliers', 'welding_wires', 'certifications', 'uoms'];
 export const DELETE_CONFIRMATION = 'Are you sure?';
 export const deleteWording = (key: string, singular: string) => ({ title: CATALOG_WORDING[key]?.remove ?? `Delete ${singular}`, text: DELETE_CONFIRMATION, button: 'Delete', cancel: 'Cancel' });
 /** The label of the row action: "Delete" for a catalog in DELETE_WORDING_RESOURCES, else "Archive record" / "Restore record". */

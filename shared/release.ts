@@ -10,6 +10,7 @@ import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
 import { deliverMtoMaterials } from './mto-materials.ts';
+import { MATERIAL_IMPORT_PATH } from './material-db.ts';
 import { PROCUREMENT_ACTION_FIELDS, PROCUREMENT_PATHS, PROCUREMENT_RESOURCE_FIELDS } from './mto-procurement.ts';
 import { deliverMtoStock } from './mto-stock.ts';
 import { deliverMtoLogistics, MTO_LOGISTICS_PAGES } from './mto-logistics.ts';
@@ -195,6 +196,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     for (const key of ['orders', 'order_lines', 'movements']) deliverResource(availability, key, undefined, { page: false });
     // MTO catalogs and the Materials tab of the isometric.
     deliverMtoMaterials(availability, deliverResource, key => RESOURCE_MAP[key].fields.map(field => field.name));
+    // Operation phases (reference form): the ID is the record's own number; the typed ID (sort) and the description are not offered.
+    availability.resources.operation_phases = availability.resources.operation_phases.filter(name => !['sort', 'description'].includes(name));
     // MTO procurement pages (Order materials, Pending order, Material take in, Order archive): their records and
     // actions are delivered without menu pages of their own; the pages are reached by path.
     for (const [key, names] of Object.entries(PROCUREMENT_RESOURCE_FIELDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
@@ -245,7 +248,7 @@ export function projectResource(availability: Availability | undefined, resource
   if (!availability) return resource;
   const prototype = availability.features.includes('lisl');
   const pilots = availability.features.includes('pilots');
-  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'operation_phases' ? ['number', 'name'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   const listed = pilots ? HOSTED_COLUMNS[resource.key] ?? WELD_DATA_COLUMNS[resource.key] : undefined;
   const ordered = (fields: Field[]) => pilots && resource.key === 'wps' ? orderWpsFields(fields) : fields;
   const projected: Resource = {
@@ -297,6 +300,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
   if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
   if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
+  if (pathname === MATERIAL_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('materials')) return true;
   if (pathname === PQR_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('pqr')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (availability.features.includes('pilots') && MTO_LOGISTICS_PAGES.includes(pathname)) return true;

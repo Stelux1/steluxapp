@@ -39,6 +39,7 @@ import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
+import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { assertAccountReach, assertCopyInScope, assertSiteAccessEdit, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteScopeFor, type SiteScope } from './site-scope.ts';
 
@@ -56,7 +57,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
   const needsSetup = () => !store.db.prepare('SELECT user_id FROM credentials LIMIT 1').get();
-  const readableRows = (req: Request, key: string, archived = false) => store.list(key, archived).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, withLegacyValues(store, key, row)));
+  const readableRows = (req: Request, key: string, archived = false) => deriveMaterialRows(store, key, store.list(key, archived)).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, withLegacyValues(store, key, row)));
   const visibleAudit = (req: Request, events: ReturnType<Store['activity']>) => events.map(event => access.audit((req as AuthRequest).user, event)).filter((event): event is NonNullable<typeof event> => Boolean(event));
   const documents = documentStorage(store, dataDir, options.documentStorage || 'disk', options.initializeStorage !== false);
   if (options.secureCookies) app.set('secure cookies', true);
@@ -263,6 +264,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly || resource.key === 'users') throw new AppError(405, 'Bulk editing is unavailable for this record type.');
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
+    // Mass edit materials (pilots): every filled field at once, never Material No.
+    if (pilots && resource.key === 'materials') req.body.changes = materialMassEdit(req.body.changes);
     access.input(resource.key, req.body.changes);
     // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
@@ -352,6 +355,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
   if (pilots) registerWpsRoutes(app, { store, access });
+  if (pilots) registerMaterialDbRoutes(app, { store, access });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);
