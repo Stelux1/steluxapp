@@ -132,8 +132,8 @@
       var tag = node.tagName.toUpperCase(), c0 = cn(node);
       var hasCtl = !!node.querySelector('input,select,textarea,button,a,table,img,canvas,iframe');
       var text = node.textContent || '';
-      if (!hasCtl && text.length <= 900) {
-        var t = T(text, 900), own = common(node);
+      if (!hasCtl && text.length <= st.textCap) {
+        var t = T(text, st.textCap), own = common(node);
         var isIcon = !t && /(^| )(fa|glyphicon|icon)([- ]|$)/.test(c0);
         if (t || eid(node) || node.getAttribute('onclick') || isIcon) out.push(pad(d) + tag + (own ? ' ' + own : '') + (t ? ' ' + JSON.stringify(t) : ''));
         return;
@@ -143,7 +143,7 @@
       } else kids(node, out, d, st);
     }
     function walk(node, out, d, st) {
-      if (node.nodeType === 3) { var t = T(node.nodeValue, 900); if (t) out.push(pad(d) + JSON.stringify(t)); return; }
+      if (node.nodeType === 3) { var t = T(node.nodeValue, st.textCap); if (t) out.push(pad(d) + JSON.stringify(t)); return; }
       if (node.nodeType !== 1) return;
       var tag = node.tagName.toUpperCase(), c0 = cn(node);
       if (SKIP[tag] || SKIPCLASS.test(c0)) return;
@@ -159,7 +159,7 @@
       }
       if (tag === 'TR') {
         var cells = [];
-        for (var c = node.firstElementChild; c; c = c.nextElementSibling) cells.push((c.tagName === 'TH' ? 'TH:' : '') + (inline(c, 300) || '-') + (c.getAttribute('colspan') ? ' {colspan ' + c.getAttribute('colspan') + '}' : '') + (selfHidden(c) ? ' {HID}' : ''));
+        for (var c = node.firstElementChild; c; c = c.nextElementSibling) cells.push((c.tagName === 'TH' ? 'TH:' : '') + (inline(c, st.cellCap) || '-') + (c.getAttribute('colspan') ? ' {colspan ' + c.getAttribute('colspan') + '}' : '') + (selfHidden(c) ? ' {HID}' : ''));
         var m = common(node); out.push(pad(d) + 'TR' + (m ? ' ' + m : '') + ' || ' + cells.join(' | ')); return;
       }
       var isModal = /(^| )modal( |$)/.test(c0) || node.getAttribute('role') === 'dialog';
@@ -195,7 +195,8 @@
       window.__capSlug = slug; window.__capPos = 0; window.__capRunId = hash(text).split('x')[0] + (Date.now() % 1679616).toString(36);
     }
     function normHash(t) { return hash(t.replace(/[A-Za-z0-9+\/_-]{24,}/g, '@').replace(/\d+/g, '#')); }
-    // opts: { wait: ms (default 8000), rowCap: body rows per table (default 40), noDedupe: true to dump shared blocks again }
+    // opts: { wait: ms (default 8000), rowCap: body rows per table (default 40), textCap / cellCap: longest text block / table cell
+    //         kept whole (default 900 / 300; raise them for pages of prose such as the in-application manuals), noDedupe: true to dump shared blocks again }
     // Partial capture after something was opened by a click: only the open dialogs / menus (or opts.root),
     // written in full, plus the requests the page made since __capWatch() and their responses.
     function finishOpen(slug, opts, st, out) {
@@ -242,7 +243,7 @@
     window.__capRun = async function (slug, opts) {
       opts = opts || {};
       var waited = await idle(opts.wait || 8000);
-      var st = { slug: slug, seen: loadSeen(), lines: loadLines(), tables: 0, newBlocks: 0, seenBlocks: 0, newScripts: 0, seenScripts: 0, rowCap: opts.rowCap || 40, noDedupe: !!opts.noDedupe, inBlock: false, fresh: [] };
+      var st = { slug: slug, seen: loadSeen(), lines: loadLines(), tables: 0, newBlocks: 0, seenBlocks: 0, newScripts: 0, seenScripts: 0, rowCap: opts.rowCap || 40, textCap: opts.textCap || 900, cellCap: opts.cellCap || 300, noDedupe: !!opts.noDedupe, inBlock: false, fresh: [] };
       var by = loadBy(); (by[slug] || []).forEach(function (k) { delete st.lines[k]; });
       var out = ['### CAPTURE ' + slug, 'URL ' + location.pathname + location.search + location.hash, 'TITLE ' + document.title, 'WAITED ' + waited + 'ms'];
       try {

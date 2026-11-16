@@ -35,27 +35,26 @@ def main():
             continue
         data = load(path)
         area = data.get('area') or name[:-5]
-        verdicts, extra = {}, []
+        verdicts, extra = {}, []  # id -> every verdict on it, oldest first
         for vpath in sorted(glob.glob(os.path.join(ROOT, name[:-5] + '.verdicts*.json')), key=os.path.getmtime):
             vdata = load(vpath)
             for verdict in vdata.get('verdicts', []):
-                verdicts[verdict.get('id')] = verdict
+                verdicts.setdefault(verdict.get('id'), []).append(verdict)
             for finding in vdata.get('new_findings', []):
                 extra.append(finding)
         for finding in list(data.get('findings', [])) + extra:
-            verdict = verdicts.get(finding.get('id'))
             row = dict(finding)
             row['area'] = area
-            if verdict:
+            # a finding added by a second reader is its own verdict until a later file says otherwise
+            row['status'] = 'confirmed' if finding in extra else 'unverified'
+            for verdict in verdicts.get(finding.get('id'), []):
                 row.update({k: v for k, v in (verdict.get('corrected') or {}).items() if v not in (None, '')})
-                row['status'] = verdict.get('verdict', 'unverified')
-                row['verdict_reason'] = verdict.get('reason', '')
+                row['status'] = verdict.get('verdict', row['status'])
+                reason = verdict.get('reason', '')
+                row['verdict_reason'] = (row['verdict_reason'] + ' || LATER: ' + reason) if row.get('verdict_reason') and reason else (reason or row.get('verdict_reason', ''))
                 for key in ('fix', 'question', 'capture_request', 'duplicate_of'):
                     if verdict.get(key):
                         row[key] = verdict[key]
-            else:
-                # a finding added by the second reader is its own verdict
-                row['status'] = 'confirmed' if finding in extra else 'unverified'
             ledger.append(row)
 
     with open(os.path.join(ROOT, 'LEDGER.json'), 'w', encoding='utf-8') as handle:

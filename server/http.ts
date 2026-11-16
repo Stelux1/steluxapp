@@ -328,7 +328,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     app.use(express.static(dist, { dotfiles: 'deny' }));
     app.get('/{*path}', (req, res) => {
       if (!pageAvailable(availability, req.path, RESOURCES) || (availability && pagePath(availability, req.path) === '/welding/reports' && req.query.report && !Object.hasOwn(availability.reports,String(req.query.report)))) res.status(404);
-      res.sendFile(join(dist, 'index.html'));
+      // Relative to the client folder: `send` refuses an absolute path with a dot segment (a checkout under `.claude/`, for example).
+      res.sendFile('index.html', { root: dist });
     });
   }
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -175,4 +175,17 @@ test('welding-only exports do not reveal project-site names from a restricted mo
   const f=await fixture(t);await f.setup();const profile=f.s.create('profiles',{name:'Welding without shared data',generalPermission:'No access',materialsPermission:'No access',weldingPermission:'Read only',toolsPermission:'No access',settingsPermission:'No access'});
   await f.request('/records/users','POST',{name:'Welding reader',email:'welding-reader@example.test',profileId:profile.id,active:true,password:'Welding-Test-Password'});await f.request('/auth/login','POST',{email:'welding-reader@example.test',password:'Welding-Test-Password'});
   const csv=await(await f.request('/export/wps')).text();assert.ok(!csv.includes('North fabrication yard'));assert.ok(!csv.includes('Riverside installation'));assert.ok(csv.includes('Unavailable record'));
+});
+
+test('a page address is answered with the client even when the installation folder has a dot segment', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'stelux-http-')); const dist = join(dir, '.hidden', 'dist'); mkdirSync(dist, { recursive: true });
+  writeFileSync(join(dist, 'index.html'), '<!doctype html><title>client</title>');
+  const s = new Store(join(dir, 'test.sqlite')); seed(s);
+  const server: Server = createApp(s, dir, { distDir: dist }).listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); s.close(); rmSync(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${(server.address() as {port: number}).port}`;
+  for (const path of ['/', '/welding/welds', '/workspace/projects']) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200, path); assert.match(await response.text(), /<title>client<\/title>/, path);
+  }
 });
