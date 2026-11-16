@@ -42,3 +42,9 @@
   .punch-filters .field { flex: 1 1 140px; }
 }
 @media print { .punch-kpis, .punch-filters { display: none; } }
+/* Row options with the sign-off checkbox; radio groups of the Add item and sign-off dialogs. */
+.punch-options { display: inline-flex; align-items: center; gap: 6px; }
+.punch-check { width: 16px; height: 16px; }
+.punch-radios { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.punch-radios .radio-option { align-items: center; }
+.punch-radios .radio-option input { width: auto; height: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; flex: none; }

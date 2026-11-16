@@ -12,7 +12,7 @@ import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { hydrotestErrors } from '../shared/hydrotest.ts';
 import { flangeInputErrors, flangeStoredValue } from '../shared/flanges.ts';
 import { isoItpLinks, itpSlotRefresh } from '../shared/itp-dashboard.ts';
-import { normalizePunch, punchInputErrors } from '../shared/punch.ts';
+import { nextPunchNumber, normalizePunch, punchInputErrors } from '../shared/punch.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
@@ -206,7 +206,7 @@ export class Store {
     // Deleted isometrics count too: one brought back later would otherwise sit in a test system of another project.
     if (key === 'test_systems' && existing && data.projectId && data.projectId !== existing.projectId && this.list('isometrics', true).some(iso => iso.testSystemId === existing.id && iso.projectId !== data.projectId)) errors.projectId = 'This test system holds isometrics of another project (deleted ones included). Move them to another test system first.';
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
-    if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
+    if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso, this.list('punchlists'))); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || nextPunchNumber(this.list('punchlists', true)); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
     if (key === 'materials' && this.requireMaterialGroup && !String(data.materialGroup ?? '').trim()) errors.materialGroup = 'Material group is required.';
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
