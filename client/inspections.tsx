@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Download, FileText, Filter, Loader2, Pencil, Printer, RefreshCw, Search, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  ARCHIVE_PAGE_SIZES, ARCHIVE_VIEWS, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
+  ARCHIVE_PAGE_SIZES, ARCHIVE_TITLES, ARCHIVE_VIEWS, MANAGER_PATH, heatSections, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
   archiveViewLabel, filterManagerWelds, groupRequests, inspectionFileError, keepEligible, locationField, managerColumns, managerResults, managerWelds, massRequestPlan, monthRange, processField, requestArchiveArea, requestDetail, requestFlag, requestSelectable, resultLabel, roundErrors, roundLabel,
   weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type ArchiveFilter, type ArchiveRow, type ArchiveView, type InspectionKind, type ManagerFilter, type ManagerTab, type MassRequestPlan, type RequestDetailLine, type RequestFilter, type RequestGroup, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
@@ -256,20 +256,73 @@ function NdtTracerPanel({ weld, welderId, onPendingChange }: { weld: Row; welder
 
 // ----- Pre-HT / PWHT per weld --------------------------------------------------------------------------------
 
-export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
-  const { rows, canRecord } = useWorkspace(); const context = weldContext(rows, weld);
-  const [upload, setUpload] = useState(false);
-  if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing heat treatment records"/>;
-  const results = weldResults(rows.inspection_results, weld.id, ['PRE-HT', 'PWHT']);
-  const state = inspectionCellState(weld, 'PWHT', workspaceCellRows(rows));
-  if (upload) return <UploadPwhtDialog weldIds={[weld.id]} onClose={onClose}/>;
-  return <Modal title={`Pre-HT/PWHT ${context.projectName} / ${context.isoName} / ${weldName(weld)}`} subtitle="Heat treatment requirements and recorded reports." onClose={onClose}><div className="modal-body">
-    <dl className="inspection-facts"><div><dt>Pre-HT</dt><dd>{weld.pwhtReqPre ? 'Required' : 'Not required'}</dd></div><div><dt>PWHT</dt><dd>{weld.pwhtReq ? 'Required' : 'Not required'}</dd></div></dl>
-    {results.length ? <TableScroll><table className="data-table"><thead><tr><th scope="col">Type</th><th scope="col">Report number</th><th scope="col">Pre report number</th><th scope="col">Check</th><th scope="col">Date</th></tr></thead><tbody>{results.map(row => <tr key={row.id}><td>{row.type === 'PRE-HT' ? 'Pre-HT' : 'PWHT'}</td><td>{String(row.reportNo || '—')}</td><td>{String(row.preReportNo || '—')}</td><td>{row.checked ? 'Yes' : 'No'}</td><td>{formatDate(row.date)}</td></tr>)}</tbody></table></TableScroll> : <EmptyState title="No heat treatment recorded" description="Upload the Pre-HT or PWHT report once the treatment is done."/>}
-    <section className="inspection-section"><h3>Documents</h3><FileLinks files={[...state.reportFiles, ...state.requestFiles]}/><WeldRequestPdfButtons weld={weld} types={['PRE-HT', 'PWHT']}/></section>
-  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button>{(weld.pwhtReqPre || weld.pwhtReq) && <UploadButton onClick={() => setUpload(true)}/>}</div></Modal>;
+/** "NDT archive" / "NDT Pre archive" / "PWHT archive" of one weld (reference showWeldNdtArchive, showWeldNdtPreArchive, showWeldPwhtArchive): one row per request the weld is on, newest first. */
+export function WeldArchiveDialog({ weld, kind, onClose }: { weld: Row; kind: InspectionKind; onClose: () => void }) {
+  const { rows } = useWorkspace();
+  const [error, setError] = useState('');
+  const state = inspectionCellState(weld, kind, workspaceCellRows(rows));
+  const pwht = kind === 'PWHT';
+  const title = ARCHIVE_TITLES[kind];
+  async function open(type: string, number: string) { setError(''); try { await openRequestPdf(type, number, false); } catch (failure) { setError((failure as ApiError).message || 'The request document could not be opened.'); } }
+  return <Modal title={title} onClose={onClose}><div className="modal-body"><Alert message={error}/>
+    {state.archive.length ? <TableScroll><table className="data-table" aria-label={title}><thead><tr><th scope="col">Document</th><th scope="col">Date</th>{!pwht && <th scope="col">Details</th>}</tr></thead><tbody>{state.archive.map(item => <tr key={item.key}>
+      <td>{item.file ? <a className="text-link" href={apiUrl(`/files/${item.file.id}`)} title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`}>{item.document}</a> : <button type="button" className="text-link" title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`} onClick={() => void open(item.type, item.number)}>{item.document}</button>}</td>
+      <td>{item.date}</td>{!pwht && <td><Link className="text-link" to={MANAGER_PATH} title={`Open request ${item.shown} in the NDT request archive`}>Details</Link></td>}</tr>)}</tbody></table></TableScroll>
+      : <EmptyState title="No requests yet" description={`Weld ${weldName(weld)} is not on a ${pwht ? 'PWHT' : 'NDT'} request.`}/>}
+  </div><Footer busy={false} onClose={onClose}/></Modal>;
 }
-function UploadButton({ onClick }: { onClick: () => void }) { const { canRun } = useWorkspace(); return canRun('pwht-upload') ? <button type="button" className="btn primary" onClick={onClick}><Upload size={15}/>Upload report</button> : null; }
+
+type HeatDraft = { locationId: string; processId: string; requestId: string; date: string; reportNo: string; checked: boolean };
+/**
+ * "PWHT request" of one weld (reference showPWHT): for each required treatment (Pre-HT, PWHT) its location, process, Rq/Nr. (the weld's
+ * requests of that treatment), date, Rp/Nr. and, for PWHT, "PWHT 100%"; one PDF document, the stored documents with a delete box.
+ * Save writes location and process on the weld and date, report number, 100% and the document on the result.
+ */
+export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
+  const { rows, canRecord, canRun } = useWorkspace(); const context = weldContext(rows, weld);
+  const sections = heatSections(weld);
+  const requestsOf = (type: string) => weldRequests(rows.inspection_requests, weld.id, [type]).filter(row => row.status !== 'Cancelled' && String(row.number || '').trim());
+  const [drafts, setDrafts] = useState<Record<string, HeatDraft>>(() => Object.fromEntries(sections.map(section => {
+    const last = weldResults(rows.inspection_results, weld.id, [section.type])[0], request = requestsOf(section.type).find(row => row.id === last?.requestId) ?? requestsOf(section.type)[0];
+    return [section.type, { locationId: String(weld[section.locationField] || ''), processId: String(weld[section.processField] || ''), requestId: request?.id ?? '', date: String(last?.date || ''), reportNo: String(last?.reportNo || ''), checked: last?.checked === true }];
+  })));
+  const [files, setFiles] = useState<File[]>([]), [removing, setRemoving] = useState<string[]>([]);
+  const { busy, error, setError, run } = useSubmit(onClose);
+  if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing heat treatment records"/>;
+  const editable = canRun('pwht-weld');
+  const change = (type: string, patch: Partial<HeatDraft>) => setDrafts(current => ({ ...current, [type]: { ...current[type], ...patch } }));
+  const resultIds = new Set(weldResults(rows.inspection_results, weld.id, ['PRE-HT', 'PWHT']).map(row => row.id));
+  const stored = (rows.attachments || []).filter(file => !file._archived && file.entityType === 'inspection_results' && file.documentType === PWHT_DOCUMENT && resultIds.has(String(file.entityId)));
+  const site = context.project?.siteId;
+  const catalog = (key: string, keep: string) => options(enabledRows(rows, key, site, keep), row => String(row.name));
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    for (const section of sections) { const draft = drafts[section.type]; if (!draft.reportNo.trim() && (draft.date || draft.checked)) { setError(`Enter the ${section.label} Rp/Nr.`); return; } }
+    const wrong = files.map(file => inspectionFileError(PWHT_DOCUMENT, file.name)).find(Boolean); if (wrong) { setError(wrong); return; }
+    if (files.length && !sections.some(section => drafts[section.type].reportNo.trim()) && !stored.length) { setError('Enter the Rp/Nr. before adding a document.'); return; }
+    void run(async () => {
+      const saved = await post<{ records: Row[] }>('/actions/pwht-weld', { weldId: weld.id, deleteFileIds: removing, sections: sections.map(section => { const draft = drafts[section.type]; return { type: section.type, locationId: draft.locationId, processId: draft.processId, requestId: draft.requestId, date: draft.date, reportNo: draft.reportNo.trim(), checked: section.hundred ? draft.checked : false }; }) });
+      // The document goes on the PWHT report, else on the Pre-HT report (or the weld's newest stored one).
+      const target = saved.records.find(row => row.type === 'PWHT') ?? saved.records[0] ?? weldResults(rows.inspection_results, weld.id, ['PWHT', 'PRE-HT'])[0];
+      const failed = files.length && target ? await uploadFiles('inspection_results', target.id, files, PWHT_DOCUMENT) : 0;
+      return failed ? 'Saved; the document could not be uploaded.' : 'PWHT request saved.';
+    });
+  }
+  return <Modal title="PWHT request" subtitle={`${context.projectName} / ${context.isoName} / ${weldName(weld)}`} onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
+    {sections.length ? sections.map(section => { const draft = drafts[section.type]; const key = section.type === 'PRE-HT' ? 'pre' : 'pwht'; return <section className="inspection-section" key={section.type} aria-label={section.label}><h3>{section.label}</h3><div className="form-grid">
+      <Select id={`${key}-location`} label={`${section.label} location`} value={draft.locationId} onChange={locationId => change(section.type, { locationId })} options={catalog('pwht_locations', draft.locationId)} disabled={!editable} empty="------------"/>
+      <Select id={`${key}-process`} label={`${section.label} process`} value={draft.processId} onChange={processId => change(section.type, { processId })} options={catalog('pwht_processes', draft.processId)} disabled={!editable} empty="------------"/>
+      <Select id={`${key}-request`} label={`${section.label} Rq/Nr.`} value={draft.requestId} onChange={requestId => change(section.type, { requestId })} options={requestsOf(section.type).map(row => ({ value: row.id, label: requestNumberShown(row.number) }))} disabled={!editable} empty="------------"/>
+      <Text id={`${key}-date`} label={`${section.label} Date`} type="date" value={draft.date} onChange={date => change(section.type, { date })} disabled={!editable}/>
+      <Text id={`${key}-report`} label={`${section.label} Rp/Nr.`} value={draft.reportNo} onChange={reportNo => change(section.type, { reportNo })} disabled={!editable}/>
+      {section.hundred && <div className="field checkbox-field"><label htmlFor={`${key}-check`}><input id={`${key}-check`} type="checkbox" checked={draft.checked} disabled={!editable} onChange={e => change(section.type, { checked: e.target.checked })}/><span>PWHT 100%</span></label></div>}
+    </div></section>; }) : <EmptyState title="No heat treatment required" description="Tick Pre-HT or PWHT required on the weld first."/>}
+    {sections.length > 0 && <>
+      {editable && <FilePicker id="pwht-weld-file" label="Document (Only PDFs are allowed)" files={files} onChange={setFiles} pdf single hint="One PDF file."/>}
+      {stored.length > 0 && <fieldset className="field full-width inspection-files"><legend>Documents</legend>{stored.map(file => <label key={file.id}><a href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a>{editable && <span className="inspection-delete"><input type="checkbox" aria-label={`Check for delete ${file.name}`} checked={removing.includes(file.id)} onChange={e => setRemoving(e.target.checked ? [...removing, file.id] : removing.filter(id => id !== file.id))}/> Check for delete</span>}</label>)}</fieldset>}
+    </>}
+  </div><Footer busy={busy} onClose={onClose} submit={editable && sections.length ? 'Save' : undefined}/></form></Modal>;
+}
 
 // ----- tracers ------------------------------------------------------------------------------------------------
 

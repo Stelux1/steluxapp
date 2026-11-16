@@ -18,7 +18,7 @@ import { canAction } from '../shared/permissions.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { isoBlockers } from '../shared/iso-status.ts';
 import {
-  MANAGER_PATH, MANAGER_TABS, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
+  ARCHIVE_TITLES, MANAGER_PATH, MANAGER_TABS, cellStatusTitle, heatSections, viCellText, weldArchive, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
   resultLabel, roundErrors, roundLabel, storedResult, tracerError, tracerSummary, inspectionFileError,
   naBlockErrors, roundsHaveNa, roundLockedError, autoReweld, notAccepted, repairDue, repairsOf, tracerProposal, tracerDetail, TRACER_DETAIL_TEXTS,
   ARCHIVE_PAGE_SIZES, MANAGER_PAGE_SIZES, MASS_REQUEST_TEXTS, PWHT_DOCUMENT, archiveViewLabel, filterManagerWelds, groupRequests, keepEligible, managerResults, massRequestPlan, monthRange, nextRequestNumber, openProcessIds, requestNumberShown, requestSelectable,
@@ -92,14 +92,13 @@ test('a ticked ReWeld? counts as not accepted and expects a repair; a weld added
 test('the inspection cell shows No, Yes while open, requested, accepted and not accepted, with files and the tracer button', () => {
   const w = weld('w1', { ndoReq: true, welder1Id: 'welder' });
   assert.equal(inspectionCellState(weld('w0'), 'NDT', {}).status, 'not-required');
-  assert.equal(inspectionCellState(weld('w0'), 'VI', {}).required, false, 'VI applies once welded');
-  assert.equal(inspectionCellState(w, 'VI', {}).required, true);
+  assert.equal(inspectionCellState(w, 'VI', {}).required, false, 'VI follows the VT reports, not the welder (weld-inspections-001)');
   assert.equal(inspectionCellState(w, 'NDT', {}).status, 'open');
   const request = row('req', { weldId: 'w1', type: 'NDT', status: 'Open' });
   assert.equal(inspectionCellState(w, 'NDT', { requests: [request] }).status, 'requested');
   const rejected = result('w1', 'Rejected', '2026-10-02', { reportNo: 'RT-9' });
   const state = inspectionCellState(w, 'NDT', { requests: [request], results: [rejected], attachments: [row('a', { entityType: 'inspection_results', entityId: rejected.id }), row('b', { entityType: 'inspection_requests', entityId: 'req', documentType: 'Request document' })] });
-  assert.equal(state.status, 'rejected'); assert.equal(state.tracer, true); assert.equal(state.reportFiles.length, 1); assert.equal(state.requestFiles.length, 1);
+  assert.equal(state.status, 'rejected'); assert.equal(state.tracer, false, 'a rejected weld that is no tracer has no T'); assert.equal(state.reportFiles.length, 1); assert.equal(state.requestFiles.length, 1);
   assert.equal(inspectionCellState(w, 'NDT', { results: [rejected, result('w1', 'Accepted', '2026-10-05')] }).status, 'accepted');
   // Pre-HT/PWHT is accepted only when every flagged treatment is.
   const hot = weld('h', { pwhtReqPre: true, pwhtReq: true });
@@ -109,7 +108,7 @@ test('the inspection cell shows No, Yes while open, requested, accepted and not 
   // The weld table passes the workspace rows, keyed by resource: the cell must still see the results and requests.
   const workspace = { inspection_results: [rejected], inspection_requests: [request], attachments: [], welds: [w] };
   const fromWorkspace = inspectionCellState(w, 'NDT', workspaceCellRows(workspace));
-  assert.equal(fromWorkspace.status, 'rejected'); assert.equal(fromWorkspace.tracer, true);
+  assert.equal(fromWorkspace.status, 'rejected'); assert.equal(fromWorkspace.tracer, false);
 });
 
 test('repair welds are numbered R1, R2 along the chain and the original stays open until a repair is accepted', () => {
@@ -769,4 +768,126 @@ test('E8: the NDT dialog offers Restart NDT process under its documents, not on 
   const refused = await f.admin.request('/actions/ndt-restart', 'POST', 'weld', { weldId: 'weld-3', type: 'NDT', processIds: ['ndt-0'] });
   assert.equal(refused.status, 423);
   assert.deepEqual(f.store.list('inspection_requests').filter(row => row.weldId === 'weld-3').map(row => [row.id, row._version]), before, 'nothing changed');
+});
+
+// ----- the inspection cells of the weld table (weld-inspections-001 to -006, weld-iso-welds-005) ---------------------------------------
+
+test('VI cell: "-" until the weld is on a VT report, "---" on one, then A or NA with the report document (weld-inspections-001, weld-iso-welds-005)', () => {
+  const welded = weld('w1', { welder1Id: 'welder' }), other = weld('w2');
+  const report = row('vt', { number: 'VT 7', seq: 7, weldIds: 'w1,w9' });
+  const off = inspectionCellState(welded, 'VI', { reports: [report] });
+  assert.equal(inspectionCellState(other, 'VI', { reports: [report] }).required, false);
+  assert.equal(viCellText(inspectionCellState(other, 'VI', { reports: [report] })), '-', 'a weld on no report reads "-", with or without a welder');
+  assert.equal(viCellText(inspectionCellState(welded, 'VI', {})), '-');
+  assert.equal(off.status, 'on-report'); assert.equal(viCellText(off), '---'); assert.equal(off.visual!.reportNo, 'VT 7'); assert.equal(off.visual!.file, undefined);
+  const pdf = row('f', { entityType: 'visual_reports', entityId: 'vt', documentType: 'VI document' });
+  assert.equal(inspectionCellState(welded, 'VI', { reports: [report], attachments: [pdf] }).visual!.file!.id, 'f', 'the signed upload is what the icon opens');
+  const marked = (value: string) => inspectionCellState(welded, 'VI', { reports: [report], results: [result('w1', value, '2026-10-02', { type: 'VI', reportNo: 'VT 7' })] });
+  assert.equal(viCellText(marked('Accepted')), 'A'); assert.equal(viCellText(marked('Rejected')), 'NA'); assert.equal(viCellText(marked('Not applicable')), '---');
+  assert.equal(marked('Accepted').visual!.reportNo, 'VT 7');
+  assert.equal(inspectionCellState(welded, 'VI', { reports: [row('gone', { number: 'VT 8', weldIds: 'w1', _archived: true })] }).required, false, 'an archived report does not count');
+});
+
+test('NDT cell: ReWeld has its own state and tooltip; NA, In progress and Accepted keep theirs (weld-inspections-002)', () => {
+  const w = weld('w1', { ndoReq: true });
+  const na = result('w1', 'Rejected', '2026-10-02', { requestId: 'q' });
+  const plain = inspectionCellState(w, 'NDT', { results: [na] });
+  assert.equal(plain.status, 'rejected'); assert.equal(cellStatusTitle(plain.status), 'NA');
+  const reweld = inspectionCellState(w, 'NDT', { results: [{ ...na, reweld: true }] });
+  assert.equal(reweld.status, 'reweld'); assert.equal(cellStatusTitle(reweld.status), 'ReWeld');
+  // Reference weld 002: Initial NA, Remaining Accepted, ReWeld? ticked: still ReWeld.
+  const later = [{ ...na, reweld: true }, result('w1', 'Accepted', '2026-10-03', { requestId: 'q', round: 'Remaining' })];
+  assert.equal(inspectionCellState(w, 'NDT', { results: later }).status, 'reweld');
+  assert.equal(inspectionCellState(w, 'NDT', { results: [na, result('w1', 'Accepted', '2026-10-03', { requestId: 'q', round: 'Remaining' })] }).status, 'accepted', 'without ReWeld? the accepted round closes it');
+  assert.equal(cellStatusTitle(inspectionCellState(w, 'NDT', { requests: [row('req', { weldId: 'w1', type: 'NDT', status: 'Open' })] }).status), 'In progress');
+  assert.equal(cellStatusTitle('accepted'), 'Accepted');
+});
+
+test('the T button is offered only on tracer welds (weld-inspections-005)', () => {
+  // Iso 0001 of the reference: NA on 002, 005 and 010, tracer flag on 004 and 010; T on exactly the tracers.
+  const welds = [weld('002', { ndoReq: true }), weld('004', { ndoReq: true, tracer: true }), weld('005', { ndoReq: true }), weld('010', { ndoReq: true, tracer: true }), weld('011', { ndoReq: true, tracerOfId: '002' })];
+  const results = ['002', '005', '010'].map(id => result(id, 'Rejected', '2026-10-02'));
+  assert.deepEqual(welds.filter(item => inspectionCellState(item, 'NDT', { results }).tracer).map(item => item.id), ['004', '010', '011']);
+  assert.equal(inspectionCellState(welds[0], 'NDT', { results }).tracer, false, 'a rejected weld that is no tracer has no T');
+});
+
+test('the Generate & Print icon: a weld that needs a request and still has an NDT process on none (weld-inspections-004)', () => {
+  const processes = [row('p1', { name: 'RT' }), row('p2', { name: 'UT' })];
+  const w = weld('w1', { ndoReq: true, ndtProcess1Id: 'p1' });
+  const printable = (target: Row, kind: 'NDT' | 'NDT PRE' | 'PWHT', requests: Row[] = []) => inspectionCellState(target, kind, { requests, processes }).printable;
+  assert.equal(printable(w, 'NDT'), true);
+  assert.equal(printable(weld('w0', { ndtProcess1Id: 'p1' }), 'NDT'), false, 'a weld that does not need NDT');
+  assert.equal(printable(weld('w5', { ndoReq: true }), 'NDT'), false, 'no NDT process to request');
+  const request = row('r1', { weldId: 'w1', type: 'NDT', number: 'R00001', processes: 'RT', processId: 'p1', status: 'Open', date: '2026-10-01' });
+  assert.equal(printable(w, 'NDT', [request]), false, 'every process is on a request');
+  assert.equal(printable({ ...w, ndtProcess2Id: 'p2' } as Row, 'NDT', [request]), true, 'a new process leaves an Additional request open');
+  assert.equal(printable(w, 'NDT PRE'), false, 'NDT Pre has its own requirement');
+  const hot = weld('h', { pwhtReq: true });
+  assert.equal(printable(hot, 'PWHT'), true);
+  assert.equal(printable(hot, 'PWHT', [row('hr', { weldId: 'h', type: 'PWHT', number: 'R00002', status: 'Open' })]), false);
+  assert.equal(printable(hot, 'PWHT', [row('hc', { weldId: 'h', type: 'PWHT', number: 'R00002', status: 'Cancelled' })]), true, 'a cancelled request frees the weld');
+});
+
+test('the per-weld archive lists one row per request, newest first, with the request PDF names; PWHT has no Details (weld-inspections-003)', () => {
+  const w = weld('w1', { ndoReqPre: true, pwhtReq: true });
+  const requests = [
+    row('a', { weldId: 'w1', type: 'NDT PRE', number: 'R00001', date: '2026-03-01', status: 'Accepted', _createdAt: '2026-03-01T10:00:00.000Z' }),
+    row('b', { weldId: 'w1', type: 'NDT PRE', number: 'R00002', date: '2026-03-21', status: 'Open', _createdAt: '2026-03-21T14:33:00.000Z' }),
+    row('c', { weldId: 'w1', type: 'NDT PRE', number: 'R00002', date: '2026-03-21', status: 'Open', _createdAt: '2026-03-21T14:33:01.000Z' }),
+    row('d', { weldId: 'w1', type: 'NDT PRE', number: 'R00003', date: '2026-03-22', status: 'Cancelled' }),
+    row('e', { weldId: 'w1', type: 'NDT', number: 'R00004', date: '2026-03-23', status: 'Open' }),
+    row('f', { weldId: 'w1', type: 'PWHT', number: 'R00005', date: '2024-10-11', status: 'Accepted', _createdAt: 'not a date' }),
+  ];
+  const pre = weldArchive(w, 'NDT PRE', { requests });
+  assert.deepEqual(pre.map(item => item.shown), ['00002', '00001'], 'two requests, newest first, the cancelled one and the NDT one left out');
+  assert.deepEqual(pre.map(item => item.document), ['20260321_R00002-NDT-RequestPre.pdf', '20260301_R00001-NDT-RequestPre.pdf']);
+  assert.match(pre[0].date, /^\d{2}\.\d{2}\.\d{4}\. \d{2}:\d{2}$/, 'dd.mm.yyyy. hh:mm');
+  assert.deepEqual(weldArchive(w, 'NDT', { requests }).map(item => item.document), ['20260323_R00004-NDT-Request.pdf']);
+  const heat = weldArchive(w, 'PWHT', { requests });
+  assert.deepEqual(heat.map(item => [item.document, item.date]), [['20241011_R00005-PWHT-Request.pdf', '11.10.2024.']]);
+  const stored = row('doc', { entityType: 'inspection_requests', entityId: 'b', documentType: 'Request document' });
+  assert.equal(weldArchive(w, 'NDT PRE', { requests, attachments: [stored] })[0].file!.id, 'doc');
+  assert.deepEqual(weldArchive(w, 'VI', { requests }), []);
+  assert.deepEqual([ARCHIVE_TITLES.NDT, ARCHIVE_TITLES['NDT PRE'], ARCHIVE_TITLES.PWHT], ['NDT archive', 'NDT Pre archive', 'PWHT archive']);
+  assert.equal(inspectionCellState(w, 'NDT PRE', { requests }).archive.length, 2, 'the cell state carries the archive: its icon appears once the weld is on a request');
+  assert.equal(inspectionCellState(weld('w9', { ndoReqPre: true }), 'NDT PRE', { requests }).archive.length, 0);
+});
+
+test('PWHT request dialog: sections follow what the weld requires, Save writes the weld, the result and the request (weld-inspections-006)', t => {
+  assert.deepEqual(heatSections(weld('a', { pwhtReq: true })).map(item => item.label), ['PWHT']);
+  assert.deepEqual(heatSections(weld('a', { pwhtReqPre: true, pwhtReq: true })).map(item => [item.label, item.hundred]), [['Pre-HT', false], ['PWHT', true]]);
+  assert.deepEqual(heatSections(weld('a', {})), []);
+  const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  const rules = inspectionRules(store, SYSTEM);
+  const target = store.list('welds').find(item => item.pwhtReq === true)!; const id = target.id;
+  assert.ok(INSPECTION_ACTIONS.find(action => action.key === 'pwht-weld'));
+  const section = { type: 'PWHT', locationId: 'pwht-site', processId: 'pwht-2', reportNo: 'PWHT-SAVE-1', date: '2026-10-20', checked: true };
+  const saved = rules.run('pwht-weld', { weldId: id, sections: [section] }).records!;
+  assert.equal(saved.length, 1);
+  const after = store.get('welds', id);
+  assert.equal(after.pwhtLocationId, 'pwht-site'); assert.equal(after.pwhtProcessId, 'pwht-2');
+  const stored = store.list('inspection_results').find(item => item.reportNo === 'PWHT-SAVE-1')!;
+  assert.deepEqual([stored.type, stored.result, stored.date, stored.checked, stored.weldId], ['PWHT', 'Accepted', '2026-10-20', true, id]);
+  assert.equal(store.get('inspection_requests', String(stored.requestId)).status, 'Accepted');
+  // Saving again edits the same result (the request is kept) and can clear location and process.
+  rules.run('pwht-weld', { weldId: id, sections: [{ ...section, locationId: '', processId: '', reportNo: 'PWHT-SAVE-2', checked: false }] });
+  assert.equal(store.list('inspection_results').filter(item => item.weldId === id && item.type === 'PWHT' && item.requestId === stored.requestId).length, 1);
+  assert.equal(store.get('inspection_results', stored.id).reportNo, 'PWHT-SAVE-2'); assert.equal(store.get('inspection_results', stored.id).checked, false);
+  assert.equal(store.get('welds', id).pwhtLocationId, '');
+  // The request chosen must be one of this weld's of that treatment; a date needs its Rp/Nr.; a treatment the weld does not need is refused.
+  const foreign = store.list('inspection_requests').find(item => item.weldId !== id && item.type === 'PWHT');
+  if (foreign) assert.throws(() => rules.run('pwht-weld', { weldId: id, sections: [{ ...section, requestId: foreign.id }] }), /not a request of this weld/);
+  assert.throws(() => rules.run('pwht-weld', { weldId: id, sections: [{ type: 'PWHT', reportNo: '', date: '2026-10-20' }] }), /Enter the PWHT Rp\/Nr/);
+  assert.throws(() => rules.run('pwht-weld', { weldId: id, sections: [{ type: 'PRE-HT', reportNo: 'X' }] }), /does not require Pre-HT/);
+  assert.throws(() => rules.run('pwht-weld', { weldId: id, sections: [{ ...section, locationId: 'missing' }] }));
+  assert.throws(() => rules.run('pwht-weld', { weldId: id, sections: [] }), /Enter the heat treatment/);
+  // A document ticked for deletion is archived, never deleted; only this weld's heat treatment documents qualify.
+  const file = store.create('attachments', { name: 'chart.pdf', entityType: 'inspection_results', entityId: stored.id, documentType: PWHT_DOCUMENT, mime: 'application/pdf', size: 12, note: '' }, SYSTEM);
+  const other = store.create('attachments', { name: 'other.pdf', entityType: 'inspection_results', entityId: 'nothing', documentType: PWHT_DOCUMENT, mime: 'application/pdf', size: 12, note: '' }, SYSTEM);
+  assert.throws(() => rules.run('pwht-weld', { weldId: id, sections: [section], deleteFileIds: [other.id] }), /does not belong/);
+  rules.run('pwht-weld', { weldId: id, sections: [section], deleteFileIds: [file.id] });
+  assert.equal(store.get('attachments', file.id, true)._archived, true);
+  assert.equal(store.list('attachments').some(item => item.id === file.id), false);
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  assert.ok(hosted.actions['pwht-weld'], 'the hosted profile delivers the action');
 });

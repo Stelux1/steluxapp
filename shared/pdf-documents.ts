@@ -189,10 +189,10 @@ export function engineerSignerId(engineer: Row | undefined, users: Row[]): strin
 
 // ----- Prefab / Field release document ------------------------------------------------------------------------------------
 
-const STATE_LABELS: Record<CellStatus, string> = { 'not-required': 'Not required', open: 'Open', requested: 'Requested', accepted: 'Accepted', rejected: 'Not accepted', 'not-applicable': 'Not applicable' };
+const STATE_LABELS: Record<CellStatus, string> = { 'not-required': 'Not required', open: 'Open', requested: 'Requested', accepted: 'Accepted', rejected: 'Not accepted', reweld: 'Not accepted (ReWeld)', 'not-applicable': 'Not applicable', 'on-report': 'On report' };
 /** Final state of a weld for one inspection column: the state word, and the report number of the newest result. */
 export function weldInspectionState(weld: Row, kind: InspectionKind, rows: Rows): [string, string] {
-  const state = inspectionCellState(weld, kind, { results: rows.inspection_results, requests: rows.inspection_requests, attachments: rows.attachments, welds: rows.welds });
+  const state = inspectionCellState(weld, kind, { results: rows.inspection_results, requests: rows.inspection_requests, attachments: rows.attachments, welds: rows.welds, reports: rows.visual_reports, processes: rows.ndt_processes });
   const types = kind === 'PWHT' ? ['PWHT', 'PRE-HT'] : [kind];
   const report = types.map(type => latestResult(rows.inspection_results, weld.id, type)).filter(Boolean).map(result => text(result!.reportNo)).filter(Boolean).join(', ');
   return [STATE_LABELS[state.status], report];

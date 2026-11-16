@@ -46,7 +46,7 @@ export function assertInspectionUnlocked(store: Store, key: string, data: Values
   if (actor.id === SYSTEM.id) return;
   const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : typeof value === 'string' && value ? [value] : [];
   let weldIds: string[] = [];
-  if (key === 'ndt-weld' || key === 'ndt-restart' || key === 'inspection-request-undo') weldIds = ids(data.weldId);
+  if (key === 'ndt-weld' || key === 'ndt-restart' || key === 'inspection-request-undo' || key === 'pwht-weld') weldIds = ids(data.weldId);
   else if (key === 'inspection-upload' || key === 'pwht-upload') weldIds = ids(data.weldIds);
   else if (key === 'visual-inspection') {
     weldIds = [...ids(data.weldIds), ...ids(data.accepted), ...ids(data.notAccepted), ...ids(data.notApplicable)];
