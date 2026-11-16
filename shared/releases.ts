@@ -179,15 +179,18 @@ export function releaseDocumentNumber(site: Row | undefined | null, iso: Row): s
   return [byPrefix ? text(site?.prefix) : text(iso.drawingNo), text(iso.isoNo)].filter(Boolean).join('-');
 }
 export interface SignatureTitle { label: string; title: string; }
-/** The six signature block titles of the main project's Document settings that are filled in. */
+/** The six signature block titles of the main project's Document settings that are filled in (printed on the Pressure Test Plan). */
 export const signatureTitlesOf = (site: Row | undefined | null): SignatureTitle[] => SIGNATURE_TITLES.map(([name, label]) => ({ label, title: text(site?.[name]) })).filter(entry => entry.title);
-/** What a new release record stores of the document settings. */
+/**
+ * What a new release record stores of the document settings. The six signature titles label the Pressure Test Plan
+ * (hydrotest), not the release documents, so a new release stores none; older releases keep the titles they stored.
+ */
 export function releaseDocumentData(site: Row | undefined | null, iso: Row) {
   return {
     docNo: releaseDocumentNumber(site, iso),
     docPrefix: text(site?.prefix),
     docDrawingRule: RELEASE_DOC_DRAWINGS.includes(text(site?.releaseDocDrawing)) ? text(site?.releaseDocDrawing) : RELEASE_DOC_DRAWINGS[0],
-    signatureTitles: JSON.stringify(signatureTitlesOf(site)),
+    signatureTitles: '[]',
   };
 }
 /** The stored signature titles of a release record; an unreadable value gives an empty list. */

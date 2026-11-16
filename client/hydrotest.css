@@ -1,4 +1,4 @@
-/* Hydrotest release (Weld Pilot): test systems, their isometrics and requests, spools. */
+/* Hydrotest release (Weld Pilot): test systems, spools, hydrotest release, results and attachments. */
 .hydrotest-panel{overflow:hidden}
 .hydrotest-view{padding:0 0 18px}
 .hydrotest-head{display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-start;padding:18px 20px;border-bottom:1px solid var(--line)}
@@ -15,7 +15,23 @@
 .hydrotest-files{list-style:none;margin:0 0 16px;padding:0;display:grid;gap:8px}
 .hydrotest-upload{display:grid;gap:12px;border-top:1px solid var(--line);padding-top:16px}
 .hydrotest-upload .btn{justify-self:start}
+/* State squares: Approved green, Testing not applicable red, Not set blue; a spool without a system red. */
+.ts-state{display:inline-block;width:10px;height:10px;border-radius:2px;flex-shrink:0;vertical-align:middle}
+.ts-green{background:#70ca63}.ts-red{background:#d0645b}.ts-blue{background:#56a9f6}
+.ts-name{display:inline-flex;align-items:center;gap:8px}
+.hydrotest-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 20px 4px}
+.hydrotest-bar-status{font-size:10px;color:var(--muted)}
+.hydrotest-system-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 20px 0}
+.hydrotest-system-head h2{display:flex;align-items:center;gap:8px;font-size:15px}
+.hydrotest-include{display:grid;gap:8px;margin-top:16px;border:0;padding:0}
+.hydrotest-include legend{font-size:12px;font-weight:600;margin-bottom:8px}
+.hydrotest-include label{display:flex;align-items:center;gap:8px;font-size:11px}
+.hydrotest-file-list{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.hydrotest-file-list .text-link{word-break:break-all}
+.hydrotest-accepted{color:#5c885e}
+.iso-hydrotest{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:11px}
 @media (max-width:760px){
+  .hydrotest-bar,.hydrotest-system-head{padding-inline:16px}
   .hydrotest-head{padding:16px}
   .hydrotest-title,.hydrotest-view .logistics-actions{margin-inline:16px;padding-inline:0}
   .hydrotest-filters{grid-template-columns:1fr}

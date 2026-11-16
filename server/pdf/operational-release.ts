@@ -2,7 +2,7 @@ import type { CompanyForDocuments } from './company.ts';
 import { A4_PORTRAIT, documentHeader, heading, noteBlock, plainTable, renderOperational, signatureBlock, type SignatureSlot, type Step } from './operational-blocks.ts';
 import { labelValueGrid } from './engine.ts';
 import { printDate } from '../../shared/pdf-lisl.ts';
-import { HYDROTEST_ISO_COLUMNS, RELEASE_COLUMNS, engineerLine, hydrotestIsoCells, projectItems, releaseRowCells, releaseSignatureBlock, type HydrotestDocumentModel, type ReleaseDocumentModel } from '../../shared/pdf-documents.ts';
+import { RELEASE_COLUMNS, engineerLine, projectItems, releaseRowCells, type ReleaseDocumentModel } from '../../shared/pdf-documents.ts';
 import type { Row } from '../../shared/types.ts';
 
 const text = (value: unknown) => String(value ?? '').trim();
@@ -38,34 +38,9 @@ export function releasePdf(input: ReleasePdfInput) {
         steps.push({ table: plainTable(['Punch type', 'Open', 'Finished'], [10, 4, 4], punch.lines.map(line => [line.label, line.open, line.finished]), { size: 7, headerSize: 7 }), before: 2 });
         steps.push({ block: noteBlock('Overall', `Overdue ${punch.overdue} - blocking (open A / B) ${punch.blocking} - passed ${punch.passed} - removed ${punch.removed}`), before: 3 });
       }
-      const titles = model.signatureTitles, owner = releaseSignatureBlock(titles);
-      const slots: SignatureSlot[] = titles.length ? titles.map((entry, index) => ({ title: entry.title, ...(index === owner && image ? { image, name: input.signature?.name } : {}) })) : [{ title: 'Released by', image, name: input.signature?.name }];
+      // The six signature titles of the Document settings belong to the Pressure Test Plan (server/pdf/hydrotest-book.ts).
+      const slots: SignatureSlot[] = [{ title: 'Released by', image, name: input.signature?.name }];
       steps.push({ block: signatureBlock(slots, 3), before: 14 });
-      return { header, steps };
-    },
-  });
-}
-
-export interface HydrotestPdfInput { model: HydrotestDocumentModel; company: CompanyForDocuments | null; generatedAt: Date; rows: Rows }
-/** Hydrotest request document: every field of the request, the test system's isometrics and signature boxes. */
-export function hydrotestPdf(input: HydrotestPdfInput) {
-  const { model, company } = input, request = model.request;
-  return renderOperational({
-    page: A4_PORTRAIT, title: `Hydrotest request ${text(request.recordNo)}`, generatedAt: input.generatedAt,
-    async layout(pdf) {
-      const box = model.plan ? [{ label: 'Hydrotest Execution Plan', value: model.plan }] : [];
-      const header = await documentHeader(pdf, { title: 'Hydrotest request', subtitle: `Record ${text(request.recordNo)}`, company, left: projectItems({ ...model.context, isometrics: [] }, input.rows).slice(0, 4), box });
-      const steps: Step[] = [];
-      for (const section of model.sections) {
-        if (section.title === 'Notes') { steps.push({ block: noteBlock('Notes', section.items.map(item => item.value).join('\n')), before: 8 }); continue; }
-        steps.push({ block: heading(section.title), before: steps.length ? 8 : 0 });
-        steps.push({ block: labelValueGrid(section.items, { columns: 2, size: 7.5, labelShare: 0.42 }), before: 2 });
-      }
-      if (model.includeIsometrics) {
-        steps.push({ block: heading(`Isometrics of the test system (${model.isometrics.length})`), before: 10 });
-        steps.push({ table: plainTable(HYDROTEST_ISO_COLUMNS, [10, 4, 10, 8, 8, 8], model.isometrics.map(iso => hydrotestIsoCells(iso, input.rows)), { size: 7, headerSize: 7 }), before: 2 });
-      }
-      steps.push({ block: signatureBlock([{ title: `QA/QC engineer${model.engineer ? ` - ${text(model.engineer.name)}` : ''}` }, { title: 'Client representative' }, { title: 'Witness' }], 3), before: 14 });
       return { header, steps };
     },
   });

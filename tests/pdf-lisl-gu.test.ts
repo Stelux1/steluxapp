@@ -116,9 +116,10 @@ test('DN follows the nominal size in inches and the cell wrapper breaks report n
 test('owner settings: the text fields exist in the Document settings and are read per form family', () => {
   const site = RESOURCES.find(resource => resource.key === 'sites')!;
   for (const setting of OWNER_FORM_SETTINGS) { const field = site.fields.find(item => item.name === setting.name); assert.ok(field, setting.name); assert.equal(field.section, 'Document settings'); assert.ok(field.label && field.hint); }
-  assert.deepEqual(ownerFormTexts({ lislGuField1: ' D-1 ', lislGuField2: 'V1', lislGuField3: '2026-01-02', lislGuSpec1: 'Spec', lislGuSpec2: '' }, 'gu'), { ownerLine: '', docNo: 'D-1', version: 'V1', date: '2026-01-02', specLines: ['Spec'] });
-  assert.deepEqual(ownerFormTexts({ lislRevOwnerLine: 'Line' }, 'rev'), { ownerLine: 'Line', docNo: '', version: '', date: '', specLines: [] });
-  assert.deepEqual(ownerFormTexts(undefined, 'mv'), { ownerLine: '', docNo: '', version: '', date: '', specLines: [] });
+  // [GU] prints the reference "LISL GU/MV" settings: Field 1 to 3 as the signature groups, Doc.No. & Rev.No. and Procedure No.
+  assert.deepEqual(ownerFormTexts({ lislGuField1: ' Contractor ', lislGuField2: 'Client', lislGuField3: 'NoBo X', lislDocNo: 'D-1', lislProcedureNo: 'P-1', lislGuSpec1: 'Spec', lislGuSpec2: '' }, 'gu'), { ownerLine: '', docNo: 'D-1', version: '', date: '', specLines: ['Spec'], procedureNo: 'P-1', parties: ['Contractor', 'Client', 'NoBo X'] });
+  assert.deepEqual(ownerFormTexts({ lislRevOwnerLine: 'Line' }, 'rev'), { ownerLine: 'Line', docNo: '', version: '', date: '', specLines: [], procedureNo: '', parties: ['', '', ''] });
+  assert.deepEqual(ownerFormTexts(undefined, 'mv'), { ownerLine: '', docNo: '', version: '', date: '', specLines: [], procedureNo: '', parties: ['', '', ''] });
 });
 
 test('each form: page size and orientation, header labels, weld numbers, material and NDT data, owner texts from the settings', async t => {
@@ -127,14 +128,14 @@ test('each form: page size and orientation, header labels, weld numbers, materia
   assert.ok(welds.length >= 2);
   const site = f.store.get('sites', 'site-north');
   const texts: Record<string, string[]> = {
-    'lisl-gu': [String(site.lislGuField1), String(site.lislGuField2), String(site.lislGuSpec1), String(site.lislGuSpec2)],
-    'lisl-mv': [String(site.lislMvDocNo), String(site.lislMvVersion), String(site.lislMvSpec1), String(site.lislMvSpec2)],
+    'lisl-gu': [String(site.lislGuField1), String(site.lislGuField2), String(site.lislGuField3), String(site.lislDocNo), String(site.lislProcedureNo), String(site.lislGuSpec1), String(site.lislGuSpec2)],
+    'lisl-mv': [String(site.lislMvDocNo), String(site.lislMvVersion), String(site.lislMvSpec1), String(site.lislMvSpec2), String(site.lislGuField1), String(site.lislGuField3), String(site.lislProcedureNo)],
     'lisl-gu-rev2': [String(site.lislRevOwnerLine), String(site.lislRevDocNo), String(site.lislRevVersion)],
     'lisl-gu-rev3': [String(site.lislRevOwnerLine), String(site.lislRevDocNo), String(site.lislRevVersion)],
   };
   const labels: Record<string, string[]> = {
-    'lisl-gu': ['WELDING REPORT STATIONS/INSTALLATIONS', 'Project: North fabrication yard', 'Doc.', 'Version', 'Date', 'Page', '1 of 1', 'Installation no.', 'IRN-101', 'Drawing No', 'STX-CW-001 Rev. 2', 'Diameter', 'ITP no:', 'ITP-01 / ITP-NDT-01', 'PED Cat.:', 'X Ray:', '10%', 'Section', 'STX-2401', 'Paint spec.', 'Section description', 'Cooling water expansion', 'Identifications code', 'Not Destructive Test', 'VT', 'PA', 'RT', 'PWHT', 'US weld', 'ToFD', 'MT/PT bevel', 'MT/PT', 'Weld No.', 'Welders', 'WPS', 'Diam.', 'WT', 'Pipe', 'Description', 'POS', 'Rep.', 'Compiled by:', 'Signature:', 'Northline Process', 'NoBo', 'WPS code', 'WPS name', 'Definition', 'STX-WPS-141-01', '141'],
-    'lisl-mv': ['WELDING REPORT STATIONS/INSTALLATIONS', 'Installation no.', 'Consumable details', 'Location', 'Joint', 'Welder', 'Wire 1', 'mm', 'Wire 2', 'Fit-up', 'PMI', 'MT/PT bevel', 'WPS name', 'WPS process', 'Definition', '2.4', 'Compiled by:', 'NoBo'],
+    'lisl-gu': ['WELDING REPORT STATIONS/INSTALLATIONS', 'Project: North fabrication yard', 'Doc.', 'Procedure', 'Page', '1 of 1', 'Installation no.', 'IRN-101', 'Drawing No', 'STX-CW-001 Rev. 2', 'Diameter', 'ITP no:', 'ITP-01 / ITP-NDT-01', 'PED Cat.:', 'X Ray:', '10%', 'Section', 'STX-2401', 'Paint spec.', 'Section description', 'Cooling water expansion', 'Identifications code', 'Not Destructive Test', 'VT', 'PA', 'RT', 'PWHT', 'US weld', 'ToFD', 'MT/PT bevel', 'MT/PT', 'Weld No.', 'Welders', 'WPS', 'Diam.', 'WT', 'Pipe', 'Description', 'POS', 'Rep.', 'Compiled by:', 'Signature:', 'NLP Operations', 'WPS code', 'WPS name', 'Definition', 'STX-WPS-141-01', '141'],
+    'lisl-mv': ['WELDING REPORT STATIONS/INSTALLATIONS', 'Installation no.', 'Consumable details', 'Location', 'Joint', 'Welder', 'Wire 1', 'mm', 'Wire 2', 'Fit-up', 'PMI', 'MT/PT bevel', 'WPS name', 'WPS process', 'Definition', '2.4', 'Compiled by:'],
     'lisl-gu-rev2': ['Pre-commissioning', 'WELDING REPORT (HEAT TRANSPORT) PIPES AND INSTALLATIONS', 'Project site', 'Project No.', 'Visual inspection report(s)', 'Location or line number', 'Drawing No.', 'Page', '1 of 1', 'Identification mark', 'Non-destructive testing', 'AUT/Phased Array', 'Radiography', 'US dubb.', 'US las', 'ToFD', 'MT bevel', 'MT cap', 'VT-no.', 'Construction Supervisor', 'Signature', 'Date', 'Contractor', 'Client', "Inspector's Stamp"],
     'lisl-gu-rev3': ['Pre-commissioning', 'WELDING REPORT (HEAT TRANSPORT) PIPES AND INSTALLATIONS', 'Project site', 'Project No.', 'Location or line number', 'Drawing No.', 'Page', 'Non-destructive testing', 'Construction Supervisor', "Inspector's Stamp"],
   };
@@ -162,10 +163,11 @@ test('owner texts name no third party unless the Document settings are filled in
   const site = f.store.get('sites', 'site-north');
   const set = (data: Record<string, unknown>) => { const current = f.store.get('sites', 'site-north'); f.store.update('sites', 'site-north', data, current._version, ACTOR); };
   const printed = async (key: string) => (await readPdf(await pdf(await f.admin.request(`/pdf/${key}?isoId=iso-1`, { pilot: 'weld' })))).pages.flatMap(page => page.text);
-  const values = OWNER_FORM_SETTINGS.map(setting => String(site[setting.name])).concat([String(site.lislGuField1), String(site.lislGuField2), String(site.lislGuField3)]).filter(Boolean);
+  const reference = ['lislGuField1', 'lislGuField2', 'lislGuField3', 'lislDocNo', 'lislProcedureNo'];
+  const values = OWNER_FORM_SETTINGS.map(setting => String(site[setting.name])).concat(reference.map(name => String(site[name]))).filter(Boolean);
   assert.ok(values.length >= 11);
   for (const key of ['lisl-gu', 'lisl-mv', 'lisl-gu-rev2', 'lisl-gu-rev3']) { const text = await printed(key); assert.ok(values.some(value => text.includes(value)), `${key} prints settings`); }
-  set(Object.fromEntries([...OWNER_FORM_SETTINGS.map(setting => [setting.name, '']), ['lislGuField1', ''], ['lislGuField2', ''], ['lislGuField3', '']]));
+  set(Object.fromEntries([...OWNER_FORM_SETTINGS.map(setting => [setting.name, '']), ...reference.map(name => [name, ''])]));
   for (const key of ['lisl-gu', 'lisl-mv', 'lisl-gu-rev2', 'lisl-gu-rev3']) {
     const text = await printed(key);
     for (const value of values) assert.ok(!text.includes(value), `${key} still prints "${value}"`);

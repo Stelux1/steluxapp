@@ -8,7 +8,8 @@ import { AddRevisionDialog, DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpLinkControl } from './itp-dashboard.tsx';
 import { itpSlots } from '../shared/itps.ts';
 import { materialStatus } from '../shared/mto-materials.ts';
-import { hydrotestState } from '../shared/hydrotest.ts';
+import { hydrotestState, isoTestSystemIds } from '../shared/hydrotest.ts';
+import { hydrotestSpoolsPath } from './hydrotest.tsx';
 import { ReleaseStatus } from './releases.tsx';
 import { PunchStatus } from './punch.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
@@ -50,7 +51,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   // computed here only where this pilot reads welds; elsewhere each group shows its count. Other profiles: computed here.
   const summary = isoSummaries?.[iso.id], weldItems = canRecord('welds');
   const status = useMemo(() => {
-    const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, testSystems: rows.test_systems ?? null, hydrotestRequests: rows.hydrotest_requests ?? null, budgets };
+    const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, testSystems: rows.test_systems ?? null, hydrotestRequests: rows.hydrotest_requests ?? null, spools: rows.spools ?? null, hydrotestResults: rows.hydrotest_results ?? null, budgets };
     const local = !summary || weldItems ? isoBlockers(input) : null;
     if (!summary) return { blockers: local!, quality: isoQuality(input), progress: isoProgress(input) };
     // A group lists its items only when the local calculation agrees with the server's count; otherwise its count line.
@@ -114,6 +115,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       </dl>
       <PhaseFlags iso={iso}/>
       <ReleaseStatus iso={iso}/>
+      {pilot?.pilot.key === 'weld' && <HydrotestStep iso={iso} state={summary?.hydrotest ?? hydrotestState(iso, rows)} summaryName={summary?.testSystemName}/>}
       <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
       {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
     </Card>
@@ -130,11 +132,27 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   </div>;
 }
 
+/**
+ * Hydrotest step of the Weld Pilot Status card: Yes once the hydrotest of the isometric's spools is completed, else "—",
+ * and the test system(s) of its spools, each linking to the Spools tab of the Hydrotest release filtered by it ("--" without one).
+ */
+export function HydrotestStep({ iso, state, summaryName }: { iso: Row; state: { inScope: boolean; completed: boolean }; summaryName?: string }) {
+  const { rows } = useWorkspace();
+  const systems = rows.test_systems ? isoTestSystemIds(iso, rows).map(id => rows.test_systems!.find(row => row.id === id && !row._archived)).filter((row): row is Row => Boolean(row)) : [];
+  return <dl className="iso-facts" data-slot="hydrotest"><Fact label="Hydrotest"><span className="iso-hydrotest">
+    <span title={state.inScope ? undefined : 'No test system, or testing not applicable.'}>{state.completed ? 'Yes' : '—'}</span>
+    {systems.length ? systems.map(system => <Link key={system.id} className="text-link" to={hydrotestSpoolsPath(system.id)}>{String(system.name)}</Link>) : summaryName ? <span>{summaryName}</span> : <span className="muted">--</span>}
+  </span></Fact></dl>;
+}
+
+/** "Hydrotest completed" of the MTO Pilot: always Yes or No (No also without a test system, as in the reference). */
+export const hydrotestCompletedText = (hydrotest: { inScope: boolean; completed: boolean }) => hydrotest.completed ? 'Yes' : 'No';
+
 /** Material status % (MTO Pilot): covered ÷ required over the isometric's material lines (shared/mto-materials.ts). */
 function MaterialStatusSlot({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
   return <div className="iso-material-slot" data-slot="material-status">
     <dl className="iso-facts"><Fact label="Material status">{percent === null ? <span title="The isometric requires no material yet.">—</span> : `${formatNumber(percent)} %`}</Fact>
-      <Fact label="Hydrotest completed">{hydrotest.inScope ? hydrotest.completed ? 'Yes' : 'No' : <span title="No test system, or testing not applicable.">—</span>}</Fact></dl>
+      <Fact label="Hydrotest completed"><span title={hydrotest.inScope ? undefined : 'No test system, or testing not applicable.'}>{hydrotestCompletedText(hydrotest)}</span></Fact></dl>
     {percent !== null && <Progress value={percent}/>}
   </div>;
 }

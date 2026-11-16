@@ -60,7 +60,7 @@ const DEMO_ACTOR: Actor = { id: SYSTEM.id, name: 'Demo project' };
 const SKIPPED = new Set(['users', 'profiles', 'signatures', USER_SITES, 'company_data', 'attachments', 'articles', 'clients', 'tool_stock', 'rentals', 'tool_movements']);
 /** Demo-only even where no reference leads to a site (storehouses, stock side, shared test systems, orders without a project). */
 const ALWAYS_SCOPED = new Set(['sites', 'warehouses', 'stock', 'movements', 'receipts', 'picklists', 'reservations', 'transfer_orders', 'transfer_order_items',
-  'orders', 'order_lines', 'custom_materials', 'test_systems', 'hydrotest_requests', 'field_packages', 'service_requests', 'material_locations', 'material_location_events', CATALOG_SITES]);
+  'orders', 'order_lines', 'custom_materials', 'test_systems', 'hydrotest_requests', 'hydrotest_results', 'field_packages', 'service_requests', 'material_locations', 'material_location_events', CATALOG_SITES]);
 /** Records whose catalog material carries quantities (see the comment above). */
 const QUANTITY_RESOURCES = ['iso_materials', 'stock', 'order_lines', 'receipts', 'movements', 'picklists', 'reservations'];
 /** Matching key of global resources without a unique rule. */

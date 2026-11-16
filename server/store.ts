@@ -9,7 +9,7 @@ import { SITE_REFUSED } from '../shared/site-scope.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
-import { hydrotestErrors } from '../shared/hydrotest.ts';
+import { hydrotestErrors, spoolsOfSystem } from '../shared/hydrotest.ts';
 import { flangeInputErrors, flangeStoredValue } from '../shared/flanges.ts';
 import { isoItpLinks, itpSlotRefresh } from '../shared/itp-dashboard.ts';
 import { normalizePunch, punchInputErrors } from '../shared/punch.ts';
@@ -64,16 +64,18 @@ export class Store {
   recordGuard?: (key: string, row: Row) => void;
   private guardAllows(key: string, row: Row) { try { this.recordGuard?.(key, row); return true; } catch { return false; } }
   /**
-   * A test system and its hydrotest requests decide the hydrotest of every isometric in the system (shared/hydrotest.ts).
-   * A test system without a project is shared, so it may hold isometrics of several main projects: under access per
-   * project site each of them is read, so a write that would change the hydrotest of an isometric the request cannot
-   * reach is refused (server/site-scope.ts).
+   * A test system, its hydrotest releases and its results decide the hydrotest of every isometric with a spool in the
+   * system (shared/hydrotest.ts). A test system may hold spools of several projects and main projects: under access per
+   * project site each of those isometrics is read, so a write that would change the hydrotest of an isometric the request
+   * cannot reach is refused (server/site-scope.ts).
    */
   private guardTestSystem(key: string, row: Partial<Row>) {
-    if (!this.recordGuard || (key !== 'test_systems' && key !== 'hydrotest_requests')) return;
+    if (!this.recordGuard || (key !== 'test_systems' && key !== 'hydrotest_requests' && key !== 'hydrotest_results')) return;
     const systemId = key === 'test_systems' ? row.id : row.testSystemId;
     if (typeof systemId !== 'string' || !systemId) return;
-    for (const iso of this.list('isometrics').filter(item => item.testSystemId === systemId)) this.get('isometrics', iso.id);
+    const isometrics = this.list('isometrics');
+    const ids = new Set([...isometrics.filter(item => item.testSystemId === systemId).map(item => item.id), ...spoolsOfSystem(systemId, { spools: this.list('spools'), isometrics }).map(entry => String(entry.spool.isoId))]);
+    for (const id of ids) this.get('isometrics', id);
   }
   constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
@@ -223,14 +225,6 @@ export class Store {
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
     this.guardTestSystem(key, { ...existing, ...data } as Row); if (existing) this.guardTestSystem(key, existing);
-    // A test system of one project takes only that project's isometrics (the rule of the hydrotest move action, server/hydrotest.ts),
-    // on every write: a new or changed test system or project of an isometric, and a new project of a test system that holds isometrics.
-    if (key === 'isometrics' && data.testSystemId && !errors.testSystemId && (!existing || data.testSystemId !== existing.testSystemId || data.projectId !== existing.projectId)) {
-      const system = this.list('test_systems').find(row => row.id === data.testSystemId);
-      if (system?.projectId && system.projectId !== data.projectId) errors.testSystemId = 'Choose a test system of the isometric’s project.';
-    }
-    // Deleted isometrics count too: one brought back later would otherwise sit in a test system of another project.
-    if (key === 'test_systems' && existing && data.projectId && data.projectId !== existing.projectId && this.list('isometrics', true).some(iso => iso.testSystemId === existing.id && iso.projectId !== data.projectId)) errors.projectId = 'This test system holds isometrics of another project (deleted ones included). Move them to another test system first.';
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
     if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));

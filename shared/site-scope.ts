@@ -99,6 +99,7 @@ export const SITE_RULES: Record<string, SiteRule> = {
   field_packages: via(PROJECT),
   test_systems: shared(PROJECT),
   hydrotest_requests: via(['testSystemId', 'test_systems']),
+  hydrotest_results: via(['testSystemId', 'test_systems']),
   releases: via(ISO),
   visual_reports: via(ISO),
   punchlists: via(ISO, PROJECT),

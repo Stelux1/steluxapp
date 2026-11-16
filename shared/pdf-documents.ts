@@ -3,9 +3,9 @@ import { lislValues } from './lisl.ts';
 import { printDate, type LabelValueItem } from './pdf-lisl.ts';
 import { currentRevision } from './revisions.ts';
 import { inspectionCellState, latestResult, locationField, processField, NDT_ROUNDS, type CellStatus, type InspectionKind } from './inspections.ts';
-import { PHASE_LOCATION, RELEASE_PHASES, releaseDocumentNumber, signatureTitlesOf, storedSignatureTitles, weldPhase, type ReleasePhase, type SignatureTitle } from './releases.ts';
+import { PHASE_LOCATION, RELEASE_PHASES, releaseDocumentNumber, signatureTitlesOf, weldPhase, type ReleasePhase, type SignatureTitle } from './releases.ts';
 import { punchCounts, punchStatus } from './punch.ts';
-import { HYDROTEST_REQUEST_RESOURCE } from './hydrotest.ts';
+import { HYDROTEST_DOCUMENT_TYPES, HYDROTEST_REQUEST_RESOURCE, SPOOL_COLUMNS, isPdfName, spoolFacts, spoolsOfSystem, storedList } from './hydrotest.ts';
 
 /**
  * Data side of the operational PDF documents: NDT / NDT Pre / Pre-HT/PWHT requests, the visual inspection report, the
@@ -204,13 +204,13 @@ export function punchSummary(items: Row[], today?: string): PunchSummary {
 }
 export interface ReleaseDocumentModel {
   release: Row; type: ReleasePhase; iso: Row; context: ProjectContext; docNo: string; revision: string; engineer?: Row;
-  welds: ReleaseWeldLine[]; /** Null while the account cannot read punch items. */ punch: PunchSummary | null; signatureTitles: SignatureTitle[]; reopened: boolean;
+  welds: ReleaseWeldLine[]; /** Null while the account cannot read punch items. */ punch: PunchSummary | null; reopened: boolean;
 }
 /**
  * The release document of one release record: the welds of the phase (Prefab: shop welds, Field: field welds) with their
- * final NDT state, and the punch summary of the isometric. The document number and the signature block titles are those
- * stored on the release when it was made (main project's prefix and drawing-number rule); an older release without them
- * takes the current Document settings. Null when the release is unknown, not Prefab or Field, or its isometric is not visible.
+ * final NDT state, and the punch summary of the isometric. The document number is the one stored on the release when it
+ * was made (main project's prefix and drawing-number rule); an older release without it takes the current Document
+ * settings. The six signature titles belong to the Pressure Test Plan, not to this document (one "Released by" box). Null when the release is unknown, not Prefab or Field, or its isometric is not visible.
  */
 export function releaseDocumentModel(rows: Rows, releaseId: string, isoIds: Set<string>, today?: string): ReleaseDocumentModel | null {
   const release = live(rows.releases).find(row => row.id === releaseId);
@@ -221,63 +221,79 @@ export function releaseDocumentModel(rows: Rows, releaseId: string, isoIds: Set<
   const weldTypes = live(rows.weld_types);
   const welds = sortWeldLines(live(rows.welds).filter(weld => weld.isoId === iso.id && weldPhase(weld, weldTypes) === PHASE_LOCATION[type]).map(weld => weldLine(weld, rows)))
     .map((line): ReleaseWeldLine => ({ line, ndtPre: weldInspectionState(line.weld, 'NDT PRE', rows), ndt: weldInspectionState(line.weld, 'NDT', rows), pwht: weldInspectionState(line.weld, 'PWHT', rows) }));
-  const stored = storedSignatureTitles(release);
   return {
     release, type, iso, context, docNo: text(release.docNo) || releaseDocumentNumber(context.site, iso), revision: currentRevision(rows, iso.id),
     engineer: find(rows, 'qa_engineers', release.engineerId), welds, punch: rows.punchlists ? punchSummary(live(rows.punchlists).filter(row => row.isoId === iso.id), today) : null,
-    signatureTitles: stored.length ? stored : signatureTitlesOf(context.site), reopened: release.status === 'Reopened',
+    reopened: release.status === 'Reopened',
   };
-}
-/**
- * UNVERIFIED. The release records one signature (the releasing QA/QC person's) but the document has six signature blocks and
- * the reference does not say which block it belongs to. It is placed in the "Subcontractor QA/QC" block (the party that
- * did the work), or in the first filled block when that title is not set. Returns the block index, or -1 without blocks.
- */
-export function releaseSignatureBlock(titles: SignatureTitle[]): number {
-  const index = titles.findIndex(entry => entry.label === 'Subcontractor QA/QC');
-  return index >= 0 ? index : titles.length ? 0 : -1;
 }
 export const RELEASE_COLUMNS = ['Weld no.', 'Type', 'Dia.', 'Welder', 'Weld date', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT'];
 export const releaseRowCells = (entry: ReleaseWeldLine) => [entry.line.weldNo, entry.line.type, entry.line.diameter, entry.line.welder, entry.line.date, entry.ndtPre, entry.ndt, entry.pwht];
 
-// ----- hydrotest request ------------------------------------------------------------------------------------------------------
+// ----- hydrotest release (Pressure Test Plan) -------------------------------------------------------------------------------
 
-export interface HydrotestSection { title: string; items: LabelValueItem[] }
 export interface HydrotestDocumentModel {
-  request: Row; testSystem?: Row; context: ProjectContext; engineer?: Row; sections: HydrotestSection[]; /** The test system's isometrics (empty unless included). */ isometrics: Row[]; includeIsometrics: boolean; plan: string;
+  request: Row; testSystem?: Row; context: ProjectContext; engineer?: Row;
+  /** The fields of the hydrotest release dialog in its order and wording (Note apart). */
+  items: LabelValueItem[]; note: string;
+  /** The spools of the test system (those stored with the release, else its current ones) of isometrics visible in this pilot. */
+  spools: string[][];
+  /** The test system's isometrics (empty unless "Include isometric(s)"). */
+  isometrics: Row[]; includeIsometrics: boolean; plan: string;
+  /** The six signature titles of the main project's Document settings that are filled in. */
+  signatureTitles: SignatureTitle[];
+  /** Custom documents of the test system of the ticked types (PDF), appended to the plan in the order of the types. */
+  documents: Row[];
 }
 /**
- * The hydrotest request document: every field of the request in the order and wording of the request form, and the
- * test system's visible isometrics unless the request (or `isometrics=0`) leaves them out. `requestKey` is an id or a record number.
- * Null when the request is unknown, or when its test system has isometrics and none of them is visible in this pilot (or,
- * without isometrics, when its project is not enabled in the pilot: `projectIds`).
+ * The Pressure Test Plan of one hydrotest release: every field of the dialog in its order and wording, the spools of the
+ * test system, its isometrics when included, the signature titles of the main project and the ticked custom documents.
+ * `requestKey` is an id or a record number. Null when the release is unknown, or when its test system holds isometrics and
+ * none of them is visible in this pilot (or, without isometrics, when its project is not enabled in the pilot: `projectIds`).
  */
 export function hydrotestDocumentModel(rows: Rows, requestKey: string, isoIds: Set<string>, include: boolean | null = null, projectIds: Set<string> | null = null): HydrotestDocumentModel | null {
   const request = live(rows.hydrotest_requests).find(row => row.id === requestKey || (text(requestKey) && text(row.recordNo) === text(requestKey)));
   if (!request) return null;
-  const testSystem = find(rows, 'test_systems', request.testSystemId);
-  const systemIsos = live(rows.isometrics).filter(iso => iso.testSystemId === request.testSystemId && text(iso.testSystemId));
+  const systemId = text(request.testSystemId), testSystem = find(rows, 'test_systems', systemId);
+  const stored = storedList(request.spoolIds);
+  const isoById = new Map(live(rows.isometrics).map(iso => [iso.id, iso]));
+  const entries = stored.length
+    ? live(rows.spools).filter(spool => stored.includes(spool.id)).map(spool => ({ spool, iso: isoById.get(text(spool.isoId)) }))
+    : spoolsOfSystem(systemId, rows);
+  const withSpools = new Set(live(rows.spools).map(spool => text(spool.isoId)));
+  // Isometrics of the system: those of its spools, and (without spools) those that name the system themselves.
+  const systemIsos = [...new Map([...entries.flatMap(entry => entry.iso ? [entry.iso] : []), ...live(rows.isometrics).filter(iso => systemId && !withSpools.has(iso.id) && text(iso.testSystemId) === systemId)].map(iso => [iso.id, iso])).values()];
   const visible = systemIsos.filter(iso => isoIds.has(iso.id));
   if (systemIsos.length && !visible.length) return null;
-  // A test system without isometrics belongs to a project; that project must be enabled in the pilot.
   if (!systemIsos.length && projectIds && testSystem?.projectId && !projectIds.has(text(testSystem.projectId))) return null;
   const engineer = find(rows, 'qa_engineers', request.engineerId);
-  const includeIsometrics = include ?? request.includeIsometrics !== false;
-  const context = projectContext(rows, visible.length ? visible : []);
+  const includeIsometrics = include ?? request.includeIsometrics === true;
+  const context = projectContext(rows, visible);
   const project = context.project ?? find(rows, 'projects', testSystem?.projectId);
   const site = context.site ?? find(rows, 'sites', project?.siteId);
   const value = (name: string): string => {
     const field = HYDROTEST_REQUEST_RESOURCE.fields.find(item => item.name === name)!, raw = request[name];
-    if (name === 'testSystemId') return text(testSystem?.name);
     if (name === 'engineerId') return engineerLine(engineer);
     if (field.type === 'date') return printDate(raw);
-    if (field.type === 'checkbox') return raw === false ? 'No' : 'Yes';
     return text(raw);
   };
-  const order: [string, string[]][] = [['Test request', ['testSystemId', 'recordNo', 'engineerId', 'date']]];
-  for (const section of ['Equipment', 'Test conditions', 'Result', 'Notes']) order.push([section, HYDROTEST_REQUEST_RESOURCE.fields.filter(field => field.section === section).map(field => field.name)]);
-  const sections = order.map(([title, names]) => ({ title, items: names.map(name => ({ label: HYDROTEST_REQUEST_RESOURCE.fields.find(field => field.name === name)!.label, value: value(name) })) })).filter(section => section.items.length);
-  return { request, testSystem, context: { ...context, project, site, client: context.client || text(find(rows, 'companies', project?.companyId)?.name) }, engineer, sections, isometrics: includeIsometrics ? visible.sort((a, b) => naturalCompare(text(a.isoNo), text(b.isoNo))) : [], includeIsometrics, plan: text(site?.hydrotestPlan) };
+  const items = [{ label: 'Test system', value: text(testSystem?.name) }, ...HYDROTEST_REQUEST_RESOURCE.fields.filter(field => !field.hidden && !['note', 'includeIsometrics'].includes(field.name)).map(field => ({ label: field.label, value: value(field.name) }))];
+  const visibleIds = new Set(visible.map(iso => iso.id));
+  const spools = entries.filter(entry => entry.iso && visibleIds.has(entry.iso.id))
+    .sort((a, b) => naturalCompare(text(a.iso?.isoNo), text(b.iso?.isoNo)) || naturalCompare(text(a.spool.name), text(b.spool.name)))
+    .map(entry => spoolFacts(entry.spool, entry.iso, find(rows, 'projects', entry.iso?.projectId)));
+  const types = storedList(request.includeDocuments);
+  const documents = live(rows.attachments).filter(file => file.entityType === 'test_systems' && file.entityId === systemId && types.includes(text(file.documentType)) && isPdfName(file.name))
+    .sort((a, b) => HYDROTEST_DOCUMENT_TYPES.indexOf(text(a.documentType)) - HYDROTEST_DOCUMENT_TYPES.indexOf(text(b.documentType)) || String(a._createdAt).localeCompare(String(b._createdAt)));
+  return {
+    request, testSystem, context: { ...context, project, site, client: context.client || text(find(rows, 'companies', project?.companyId)?.name) }, engineer, items, note: text(request.note), spools,
+    isometrics: includeIsometrics ? visible.sort((a, b) => naturalCompare(text(a.isoNo), text(b.isoNo))) : [], includeIsometrics, plan: text(site?.hydrotestPlan), signatureTitles: signatureTitlesOf(site), documents,
+  };
 }
+export const HYDROTEST_SPOOL_COLUMNS = SPOOL_COLUMNS.slice(0, 7);
 export const HYDROTEST_ISO_COLUMNS = ['ISO number', 'Rev.', 'Drawing no.', 'Piping class', 'Test pressure', 'Test medium'];
 export const hydrotestIsoCells = (iso: Row, rows: Rows) => [text(iso.isoNo), currentRevision(rows, iso.id), text(iso.drawingNo), text(iso.pipingClass), text(iso.testPressure), text(iso.testMedium)];
+/** The signature boxes of the Pressure Test Plan: the six titles of the Document settings, or our three when none is set. */
+export function pressureTestSignatures(model: HydrotestDocumentModel): string[] {
+  return model.signatureTitles.length ? model.signatureTitles.map(entry => entry.title) : [`QA/QC engineer${model.engineer ? ` - ${text(model.engineer.name)}` : ''}`, 'Client representative', 'Witness'];
+}

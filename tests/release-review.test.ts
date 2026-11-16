@@ -81,32 +81,28 @@ test('a limited administrator cannot reach main projects beyond its own through 
   assert.equal((await f.admin.request(`/records/users/${fitter.id}`, { method: 'PUT', pilot: 'weld', data: { title: 'Supervisor', _version: fitter._version } })).status, 200);
 });
 
-test('hydrotest result of a shared test system cannot complete isometrics of a main project outside the account\'s access', async t => {
+test('hydrotest result of a test system cannot complete isometrics of a main project outside the account\'s access', async t => {
   const f = await fixture(t);
   const writer = f.profile('Test writer', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write' });
   const north = f.account('North tester', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC }, { weld: [NORTH] });
-  // A test system without a project (shared), holding one isometric of each main project.
-  const system = f.store.create('test_systems', { name: 'SHARED-01', medium: 'Water', pressure: '10 bar' }, SYSTEM);
-  for (const id of ['iso-1', 'iso-4']) { const iso = f.store.get('isometrics', id); f.store.update('isometrics', id, { testSystemId: system.id }, iso._version, SYSTEM); }
-  const request = f.store.create('hydrotest_requests', { testSystemId: system.id, recordNo: 'HTR-SHARED-01', date: '2026-11-10', includeIsometrics: true }, SYSTEM);
+  // A test system holding one spool of each main project (spools of several projects may share a system).
+  const system = f.store.create('test_systems', { name: 'SHARED-01' }, SYSTEM);
+  for (const id of ['spool-1', 'spool-4']) { const spool = f.store.get('spools', id); f.store.update('spools', id, { testSystemId: system.id }, spool._version, SYSTEM); }
   await north.login();
-  const response = await north.as.request('/actions/hydrotest-result', { method: 'POST', pilot: 'weld', data: { requestId: request.id, result: 'Passed', actualPressure: '10.2 bar', date: '2026-11-12' } });
+  const rows = () => ({ test_systems: f.store.list('test_systems'), spools: f.store.list('spools'), hydrotest_results: f.store.list('hydrotest_results'), hydrotest_requests: f.store.list('hydrotest_requests'), releases: f.store.list('releases') }) as Record<string, Row[]>;
+  const response = await north.as.request('/actions/hydrotest-result', { method: 'POST', pilot: 'weld', data: { testSystemId: system.id, accepted: true } });
   assert.equal(response.status, 403, await response.clone().text());
-  const rows = { test_systems: f.store.list('test_systems'), hydrotest_requests: f.store.list('hydrotest_requests'), releases: f.store.list('releases') } as Record<string, Row[]>;
-  assert.equal(hydrotestState(f.store.get('isometrics', 'iso-4'), rows).completed, false, 'Riverside isometric stays open');
-  // The record routes are covered the same way: a passed request created directly, the system's acceptance, archiving.
-  const created = await north.as.request('/records/hydrotest_requests', { method: 'POST', pilot: 'weld', data: { testSystemId: system.id, recordNo: 'HTR-SHARED-02', date: '2026-11-12', result: 'Passed', actualPressure: '10 bar' } });
-  assert.equal(created.status, 403, await created.clone().text());
+  assert.equal(hydrotestState(f.store.get('isometrics', 'iso-4'), rows()).completed, false, 'Riverside isometric stays open');
+  assert.equal(f.store.list('hydrotest_results').filter(row => row.testSystemId === system.id).length, 0, 'the refused result changed nothing');
   const shared = f.store.get('test_systems', system.id);
-  assert.equal((await north.as.request(`/records/test_systems/${system.id}`, { method: 'PUT', pilot: 'weld', data: { accepted: 'Testing not applicable', _version: shared._version } })).status, 403);
-  assert.equal((await north.as.request(`/records/hydrotest_requests/${request.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: f.store.get('hydrotest_requests', request.id)._version } })).status, 403);
+  assert.equal((await north.as.request(`/records/test_systems/${system.id}`, { method: 'PUT', pilot: 'weld', data: { accepted: 'Approved', _version: shared._version } })).status, 403);
+  assert.equal((await north.as.request('/actions/hydrotest-release', { method: 'POST', pilot: 'weld', data: { testSystemId: system.id } })).status, 403);
   assert.equal(f.store.get('test_systems', system.id)._version, shared._version);
-  // A shared test system holding only the account's own isometrics still takes its result.
-  const iso4 = f.store.get('isometrics', 'iso-4'); f.store.update('isometrics', 'iso-4', { testSystemId: '' }, iso4._version, SYSTEM);
-  const fresh = f.store.get('hydrotest_requests', request.id);
-  assert.equal(fresh.result, '', 'the refused result changed nothing');
-  const own = await north.as.request('/actions/hydrotest-result', { method: 'POST', pilot: 'weld', data: { requestId: request.id, result: 'Passed', actualPressure: '10.2 bar', date: '2026-11-12' } });
+  // A test system holding only the account's own spools still takes its result.
+  const spool4 = f.store.get('spools', 'spool-4'); f.store.update('spools', 'spool-4', { testSystemId: '' }, spool4._version, SYSTEM);
+  const own = await north.as.request('/actions/hydrotest-result', { method: 'POST', pilot: 'weld', data: { testSystemId: system.id, accepted: true } });
   assert.equal(own.status, 201, await own.clone().text());
+  assert.equal(hydrotestState(f.store.get('isometrics', 'iso-1'), rows()).completed, true);
 });
 
 test('a release can only carry the releasing account\'s own signature (its image is printed on the release document)', async t => {
@@ -129,37 +125,18 @@ test('a release can only carry the releasing account\'s own signature (its image
 const detailed = (rules: Record<string, string[]>) => ({ permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(rules) });
 type Summaries = { isoSummaries: Record<string, { testSystemName?: string }> };
 
-test('an isometric takes only a test system of its own project or a shared one, and the summary never names another project\'s test system', async t => {
+test('the summary never names another project\'s test system (test systems may hold spools of several projects)', async t => {
   const f = await fixture(t);
   const river = f.store.create('test_systems', { name: 'RIVER-TS-07', projectId: 'project-steam', medium: 'Water', pressure: '10 bar' }, SYSTEM);
   const shared = f.store.create('test_systems', { name: 'SHARED-TS-01', medium: 'Water', pressure: '10 bar' }, SYSTEM);
   const put = (id: string, data: Record<string, unknown>) => f.admin.request(`/records/isometrics/${id}`, { method: 'PUT', pilot: 'weld', data: { ...data, _version: f.store.get('isometrics', id)._version } });
-  // 1. A plain record update follows the rule of the hydrotest move action.
-  const wrong = await put('iso-1', { testSystemId: river.id });
-  assert.equal(wrong.status, 422, await wrong.clone().text());
-  assert.ok((await wrong.json()).fields.testSystemId, 'the refusal names the field');
-  assert.equal(f.store.get('isometrics', 'iso-1').testSystemId, 'test-cw');
-  const created = await f.admin.request('/records/isometrics', { method: 'POST', pilot: 'weld', data: { isoNo: 'STX-CW-777', projectId: 'project-cooling', testSystemId: river.id } });
-  assert.equal(created.status, 422, await created.clone().text());
-  // Moving an isometric to another project keeps the rule: its test system stays behind.
-  assert.equal((await put('iso-1', { projectId: 'project-steam' })).status, 422);
-  // A shared test system and one of the isometric's own project are accepted; other fields save as before.
+  // 1. Test systems are composed at spool level and mix projects (reference PTC 01 holds spools of two projects): no
+  //    same-project rule on isometrics or on the test system any more (lead decision, weld-releases-027).
   assert.equal((await put('iso-1', { testSystemId: shared.id })).status, 200);
   assert.equal((await put('iso-1', { testSystemId: 'test-cw', pipingClass: 'CS300' })).status, 200);
   assert.equal((await put('iso-4', { testSystemId: river.id })).status, 200);
-  // 2. A test system that holds isometrics cannot be handed to another project.
   const system = f.store.get('test_systems', 'test-cw');
-  const moved = await f.admin.request('/records/test_systems/test-cw', { method: 'PUT', pilot: 'weld', data: { projectId: 'project-steam', _version: system._version } });
-  assert.equal(moved.status, 422, await moved.clone().text());
-  assert.ok((await moved.json()).fields.projectId);
-  // Deleting the isometrics first does not open the way: one brought back later would sit in another project's test system.
-  const held = f.store.create('test_systems', { name: 'HELD-TS-01', medium: 'Water', pressure: '10 bar' }, SYSTEM);
-  const spare = f.store.create('isometrics', { isoNo: 'STX-CW-900', projectId: 'project-cooling', testSystemId: held.id }, SYSTEM);
-  const archive = () => f.admin.request(`/records/isometrics/${spare.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: f.store.get('isometrics', spare.id, true)._version } });
-  assert.equal((await archive()).status, 200);
-  assert.equal((await f.admin.request(`/records/test_systems/${held.id}`, { method: 'PUT', pilot: 'weld', data: { projectId: 'project-steam', _version: f.store.get('test_systems', held.id)._version } })).status, 422, 'a deleted isometric of another project still holds the test system');
-  assert.equal((await archive()).status, 200, 'restored');
-  assert.equal(f.store.get('isometrics', spare.id).testSystemId, held.id);
+  assert.equal((await f.admin.request('/records/test_systems/test-cw', { method: 'PUT', pilot: 'weld', data: { description: 'Edited', _version: system._version } })).status, 200);
   // 3. Older data may still hold such a link (written here below the rules): its name is not shown to anyone.
   f.store.db.prepare("UPDATE isometrics SET data=json_set(data,'$.testSystemId',?) WHERE id='iso-2'").run(river.id);
   const reader = f.profile('MTO reader', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });

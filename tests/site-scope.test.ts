@@ -236,7 +236,7 @@ test('Weld Pilot limited to one main project: every write path naming the other 
     ['POST', '/actions/release', { isoIds: ['iso-4'], type: 'Prefab', reportNo: 'R-1', date: '2026-11-16' }],
     ['POST', '/actions/copy-isometrics', { isoIds: ['iso-4'], projectId: 'project-steam' }],
     ['POST', '/actions/copy-isometrics', { isoIds: ['iso-1'], projectId: 'project-steam' }],
-    ['POST', '/actions/hydrotest-move', { testSystemId: 'test-cw', isoIds: ['iso-4'] }],
+    ['POST', '/actions/hydrotest-move', { testSystemId: 'test-cw', spoolIds: ['spool-4'] }],
     // Relations: links to a main project outside the scope cannot be added.
     ['PUT', '/records/wps/wps-1', { siteIds: [NORTH, RIVER, 'site-none'], _version: version('wps', 'wps-1') }],
   ];
