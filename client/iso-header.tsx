@@ -111,7 +111,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       </dl>
       <PhaseFlags iso={iso}/>
       <ReleaseStatus iso={iso}/>
-      <PunchStatus iso={iso} items={rows.punchlists ?? null}/>
+      <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
       {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
     </Card>
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>

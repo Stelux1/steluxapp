@@ -10,7 +10,7 @@ import { SignaturePad } from './signatures.tsx';
 import { PunchListPdfButton } from './pdf-documents.tsx';
 import {
   PUNCH_FILE_LIMIT, PUNCH_FILE_TYPES, PUNCH_LETTERS, PUNCH_PROGRESS_OPTIONS, PUNCH_SIGN_OFF_DOCUMENT, PUNCH_TYPES, SIGNER_TYPES, canTransition, isOverdue, matchesPunchKpi, punchCategory,
-  punchCategoryLabel, punchCounts, punchFinishErrors, punchInputErrors, punchKind, punchKpis, punchStatus, punchToday, type PunchKpiKey, type PunchTransition,
+  punchCategoryLabel, punchCounts, punchFinishErrors, punchInputErrors, punchKind, punchKpis, punchStatus, punchToday, type PunchCounts, type PunchKpiKey, type PunchTransition,
 } from '../shared/punch.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -271,11 +271,12 @@ function FinishDialog({ item, onClose, onDone }: { item: Row; onClose: () => voi
  * Punch part of an isometric's status card: open and finished pre-punch and punch counts, the overdue count, a note
  * while blocking items remain and the punch progress (0 / 25 / 50 / 75 / 100 %) stored on the isometric.
  */
-export function PunchStatus({ iso, items }: { iso: Row; items: Row[] | null }) {
+export function PunchStatus({ iso, items, summary }: { iso: Row; items: Row[] | null; summary?: PunchCounts | null }) {
   const { canRecord, refresh, notify } = useWorkspace(); const id = useId();
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  if (!items) return null;
-  const counts = punchCounts(items.filter(row => row.isoId === iso.id && !row._archived));
+  // Hosted profile: the server summary counts every punch item, so MTO Pilot (which reads none) shows the same numbers as Weld Pilot.
+  const counts = summary ?? (items ? punchCounts(items.filter(row => row.isoId === iso.id && !row._archived)) : null);
+  if (!counts) return null;
   const editable = canRecord('isometrics', 'edit', iso);
   async function save(value: string) {
     setBusy(true); setError('');

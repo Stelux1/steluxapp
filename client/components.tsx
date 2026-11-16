@@ -126,11 +126,14 @@ export function Dropdown({ trigger, label, children, className = '', menuClassNa
   </div>;
 }
 export function FieldInput({ field, value, onChange, error, values = {}, allowedIds }: { field: Field | ActionField; value: unknown; onChange: (value: unknown) => void; error?: string; values?: Record<string, unknown>;allowedIds?:string[] }) {
-  const { rows, user, label, projectScopeEnabled, siteId } = useWorkspace();
+  const { rows, allRows, user, label, projectScopeEnabled, siteId } = useWorkspace();
   if (projectScopeEnabled && field.ref === 'projects' && /^(Project|Project scope)$/.test(field.label)) field = { ...field, label: 'Subproject' };
   const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
   if(field.hidden)return null;
-  let options = field.ref ? (rows[field.ref] || []).filter(r => !r._archived) : [];
+  // A list of main projects to tick (e.g. "Weld Pilot project sites" in the user form) offers every main project the
+  // account may see: the workspace rows hold only the open main project, which would leave that one project alone.
+  const siteList = field.ref === 'sites' && 'multiple' in field && Boolean(field.multiple);
+  let options = field.ref ? ((siteList ? allRows : rows)[field.ref] || []).filter(r => !r._archived) : [];
   if(field.refCategory)options=options.filter(r=>r.category===field.refCategory);
   if(allowedIds)options=options.filter(r=>allowedIds.includes(r.id));
   // Catalogs switched off on the active main project are not offered; the value already stored stays selectable.

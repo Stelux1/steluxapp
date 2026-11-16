@@ -32,9 +32,11 @@ export function MainProjects() {
   const limited = Boolean(user.siteLimited);
   const [query, setQuery] = useState(''), [editor, setEditor] = useState<Row | 'new' | null>(null);
   const [archived, setArchived] = useState(false), [archiving, setArchiving] = useState<Row | null>(null);
+  // Weld counts and WDI only where this pilot reads welds (MTO Pilot receives none, so they would always show 0).
+  const weldData = canRecord('welds');
   const sites = (allRows.sites || []).filter(site => site._archived === archived).filter(site => [site.name, site.residence, site.address].some(value => String(value || '').toLowerCase().includes(query.toLowerCase())));
   return <div className="page workflow-page main-projects-page">
-    <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>Open a project to work with its subprojects, isometrics, and weld records.</p></div>{canRecord('sites', 'insert') && !limited && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div>
+    <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>{pilot?.pilot.key === 'mto' ? 'Open a project to work with its subprojects, isometrics, and materials.' : 'Open a project to work with its subprojects, isometrics, and weld records.'}</p></div>{canRecord('sites', 'insert') && !limited && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div>
     <div className="table-tabs" role="group" aria-label="Main project visibility"><button className={!archived ? "selected" : ""} aria-pressed={!archived} onClick={() => setArchived(false)}>Active projects</button><button className={archived ? "selected" : ""} aria-pressed={archived} onClick={() => setArchived(true)}>Archived projects</button></div>
     <div className="project-picker-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search main projects…"/><span>{sites.length} main projects</span></div>
     <div className="main-project-grid">{sites.map(site => {
@@ -45,8 +47,8 @@ export function MainProjects() {
         <div className="main-project-card-top"><span className="project-card-icon"><FolderKanban size={25}/></span><div className="heading-actions">{!site._archived && canRecord('sites', 'edit', site) && <button className="icon-btn" aria-label={`Edit main project ${site.name}`} onClick={() => setEditor(site)}><Pencil size={16}/></button>}<ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/></div></div>
         <h2>{String(site.name)}{site._archived && <Badge>Archived</Badge>}</h2>
         <p className="project-location"><MapPin size={14}/>{[site.address, [site.zip, site.residence].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Address not recorded'}</p>
-        <div className="project-card-counts"><div><strong>{projects.length}</strong><span>Subprojects</span></div><div><strong>{isos.length}</strong><span>Isometrics</span></div><div><strong>{welds.length}</strong><span>Welds</span></div></div>
-        <WdiProgress compact welds={welds} diameters={allRows.diameters || []}/>
+        <div className="project-card-counts"><div><strong>{projects.length}</strong><span>Subprojects</span></div><div><strong>{isos.length}</strong><span>Isometrics</span></div>{weldData && <div><strong>{welds.length}</strong><span>Welds</span></div>}</div>
+        {weldData && <WdiProgress compact welds={welds} diameters={allRows.diameters || []}/>}
         {!site._archived && <button className="btn primary" onClick={() => { selectSite(site.id); navigate('/dashboard'); }}>Open project<ArrowRight size={16}/></button>}
       </section>;
     })}</div>
