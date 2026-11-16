@@ -12,7 +12,7 @@ export type PdfPilot = 'weld' | 'mto';
 /** Where an entry is offered: the Reports menu of the isometric page, the Certifications page or the materials of an isometric (MTO Pilot). */
 export type PdfPage = 'isometric' | 'certifications' | 'materials';
 /**
- * One entry of the Reports menu (the order of the reference: LISL Report, A3, [GU], [MV], [ISS], [WQ], [WQ ver 2], [GU Rev 2], [GU Rev 3], Blank LISL template, Weld card, Weld labels). Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
+ * One entry of the Reports menu (the order of the reference: LISL Report, A3, [GU], [MV], [ISS], [WQ], [WQ ver 2], [GU Rev 2], [GU Rev 3], Blank LISL template, Weld card, Weld labels, Punch list - blank). Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
  * `pilots` and `page` say where it belongs (default: the isometric page of Weld Pilot); `scope: 'project'` entries are about a
  * project instead of one isometric; `resource` is the resource whose read permission shows the entry instead of a report.
  */
@@ -30,6 +30,7 @@ export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl-blank', label: 'Blank LISL template', options: ['signature'], report: 'lisl' },
   { key: 'weld-cards', label: 'Weld card', options: ['welds', 'perPage'], report: 'weld-cards', pilots: ['weld'], page: 'isometric' },
   { key: 'weld-labels', label: 'Weld labels', options: ['welds', 'labelGrid'], report: 'weld-cards', pilots: ['weld'], page: 'isometric' },
+  { key: 'punch-list-blank', label: 'Punch list - blank', options: [], report: 'pdf-punch', pilots: ['weld'], page: 'isometric' },
   { key: 'mto-report', label: 'MTO report', options: ['phase'], report: 'mto', pilots: ['mto'], page: 'materials' },
   { key: 'certification-index', label: 'Certification index', options: ['project'], report: '', resource: 'certifications', pilots: ['weld', 'mto'], page: 'certifications', scope: 'project' },
 ];
