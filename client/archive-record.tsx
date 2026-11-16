@@ -5,22 +5,26 @@ import { RESOURCE_MAP } from './catalog.ts';
 import { useWorkspace } from './context.tsx';
 import { post } from './api.ts';
 import { Modal } from './components.tsx';
+import { DELETE_WORDING_RESOURCES, deleteWording } from '../shared/weld-catalogs.ts';
 
 export function ArchiveRecordDialog({ resourceKey, record, onClose, onSaved }: { resourceKey: string; record: Row; onClose: () => void; onSaved?: () => void }) {
-  const { canRecord, refresh, notify, label } = useWorkspace();
+  const { canRecord, refresh, notify, label, user } = useWorkspace();
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const restoring = record._archived, verb = restoring ? 'Restore' : 'Archive';
+  // A catalog of the hosted profile reads "Delete" and "Are you sure?" as the reference does; the record is archived underneath.
+  const deleting = !restoring && Boolean(user.availability?.features.includes('pilots')) && DELETE_WORDING_RESOURCES.includes(resourceKey);
+  const wording = deleteWording(resourceKey, RESOURCE_MAP[resourceKey].singular);
   if (!canRecord(resourceKey, 'delete', record)) return null;
   async function submit() {
     setBusy(true); setError('');
     try {
       await post(`/records/${resourceKey}/${record.id}/archive`, { _version: record._version });
-      await refresh(); notify(`Record ${restoring ? 'restored' : 'archived'}.`); onClose(); onSaved?.();
+      await refresh(); notify(`Record ${restoring ? 'restored' : deleting ? 'deleted' : 'archived'}.`); onClose(); onSaved?.();
     } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   }
-  return <Modal title={`${verb} ${RESOURCE_MAP[resourceKey].singular}?`} subtitle={label(resourceKey, record.id)} onClose={onClose}>
-    <div className="modal-body"><p>{restoring ? 'This record will appear in active lists again.' : 'Remove this record from active lists and keep its documents and history. Archive linked active records first.'}</p>{error && <div className="alert error" role="alert">{error}</div>}</div>
-    <div className="modal-footer"><button className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void submit()}>{verb} record</button></div>
+  return <Modal title={deleting ? wording.title : `${verb} ${RESOURCE_MAP[resourceKey].singular}?`} subtitle={label(resourceKey, record.id)} onClose={onClose}>
+    <div className="modal-body"><p>{deleting ? wording.text : restoring ? 'This record will appear in active lists again.' : 'Remove this record from active lists and keep its documents and history. Archive linked active records first.'}</p>{error && <div className="alert error" role="alert">{error}</div>}</div>
+    <div className="modal-footer"><button className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void submit()}>{deleting ? wording.button : `${verb} record`}</button></div>
   </Modal>;
 }
 

@@ -83,7 +83,7 @@ export function seed(store: Store) {
     add('welders', 'welder-5', { name: 'Sam Peters', number: 'W-005', welderCode: 'W03-112', companyId: 'company-north', roleId: 'role-trainee', status: 'Inactive', globallyDeployable: false, description: 'On leave until the next fabrication package.' });
     add('welders', 'welder-6', { name: 'Noor Hendriks', number: 'W-006', welderCode: 'W03-140', companyId: 'company-north', roleId: 'role-welder', status: 'Active', globallyDeployable: false, description: 'Left the company.' });
     const welder6 = store.get('welders', 'welder-6'); store.archive('welders', welder6.id, welder6._version, SYSTEM);
-    ['141 — TIG', '111 — MMA', '135 — MAG', '136 — FCAW'].forEach((name, i) => add('weld_processes', `process-${i}`, { name, code: name.slice(0, 3) }));
+    ['141', '111', '135', '136'].forEach((name, i) => add('weld_processes', `process-${i}`, { name }));
     seedWeldCatalogs(store);
     // Qualifications relative to the day the sample workspace is created, so the expire warnings always have an expired and an expiring entry.
     const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);

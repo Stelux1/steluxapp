@@ -1,8 +1,9 @@
 import { RESOURCE_MAP } from '../shared/resources.ts';
-import { CATALOG_SITES, ENABLEMENT_INPUT, enablementKey, enabledOnSite } from '../shared/weld-catalogs.ts';
+import { CATALOG_SITES, ENABLEMENT_INPUT, NEW_RECORDS_OFF, UNFILTERED_OPTIONS, codesOfNorm, enablementKey, enabledOnSite } from '../shared/weld-catalogs.ts';
+import { DEFECT_NORMS } from '../shared/site-settings.ts';
 import type { Row } from '../shared/types.ts';
 import { SITE_REFUSED } from '../shared/site-scope.ts';
-import type { Actor, Store } from './store.ts';
+import { SYSTEM, type Actor, type Store } from './store.ts';
 
 /**
  * Server side of "Enabled on this site" (shared/weld-catalogs.ts): writing the availability of a catalog record
@@ -40,7 +41,7 @@ export function enablementErrors(store: Store, key: string, data: Record<string,
   const errors: Record<string, string> = {};
   const instruction = enablementInput(store, key, input);
   if (instruction && 'error' in instruction) errors[instruction.field] = instruction.error;
-  const fields = RESOURCE_MAP[key]?.fields.filter(f => f.ref && enablementKey(f.ref)) || [];
+  const fields = RESOURCE_MAP[key]?.fields.filter(f => f.ref && enablementKey(f.ref) && !UNFILTERED_OPTIONS.includes(f.ref)) || [];
   if (!fields.length || !store.list(CATALOG_SITES).length) return errors;
   const siteId = siteOfRecord(store, key, { ...existing, ...data });
   if (!siteId) return errors;
@@ -61,8 +62,31 @@ export function setAvailability(store: Store, key: string, id: string, siteId: s
   else if (!enabled) store.create(CATALOG_SITES, { resourceKey: key, recordId: id, siteId, enabled: false }, actor);
 }
 
-/** Apply the availability instruction of a create / update / bulk request after the record is written. */
-export function applyEnablement(store: Store, key: string, id: string, input: Record<string, unknown>, actor: Actor) {
+/**
+ * Apply the availability instruction of a create / update / bulk request after the record is written. A catalog record
+ * that a user creates in the hosted profile (NEW_RECORDS_OFF) starts switched off on every main project; the instruction
+ * of the Add form (the box ticked for the current main project) switches it on for that one. Records written by the
+ * system (sample data, the demo copy) keep "no link = enabled everywhere".
+ */
+export function applyEnablement(store: Store, key: string, id: string, input: Record<string, unknown>, actor: Actor, created = false) {
   const instruction = enablementInput(store, key, input);
-  if (instruction && !('error' in instruction)) setAvailability(store, key, id, instruction.siteId, instruction.enabled, actor);
+  const chosen = instruction && !('error' in instruction) ? instruction : null;
+  if (created && store.hostedRules && actor.id !== SYSTEM.id && NEW_RECORDS_OFF.includes(key)) {
+    for (const site of store.list('sites', true)) setAvailability(store, key, id, site.id, Boolean(chosen && chosen.enabled && chosen.siteId === site.id), actor);
+    return;
+  }
+  if (chosen) setAvailability(store, key, id, chosen.siteId, chosen.enabled, actor);
+}
+
+/** Switch every code of a defect norm on for a main project (the norm bar of the Defect codes page; saving a new Defect norm on the site). */
+export function activateDefectNorm(store: Store, siteId: string, norm: string, actor: Actor): number {
+  const codes = codesOfNorm(store.list('ndt_defect_codes'), norm);
+  for (const code of codes) setAvailability(store, 'ndt_defect_codes', code.id, siteId, true, actor);
+  return codes.length;
+}
+/** After a project site is saved: a Defect norm that changed turns that norm's codes on for the site; other codes stay as they were. */
+export function defectNormSaved(store: Store, existing: Row, saved: Row, actor: Actor) {
+  const norm = String(saved.defectNorm || '');
+  if (!store.hostedRules || norm === String(existing.defectNorm || '') || !DEFECT_NORMS.slice(1).includes(norm)) return;
+  activateDefectNorm(store, saved.id, norm, actor);
 }

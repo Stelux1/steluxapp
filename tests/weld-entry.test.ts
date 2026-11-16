@@ -381,7 +381,7 @@ test('the sample seed carries realistic entry data: qualifications, certificates
   const s = new Store(':memory:'); seed(s);
   assert.ok(s.list('welder_certificates').length >= 6); assert.ok(s.list('certifications').every(c => c.indexNo && c.chargeNo && (c.materialId || c.materialTypeId)));
   assert.equal(new Set(s.list('certifications').map(c => c.chargeNo)).size, s.list('certifications').length, 'one certificate per charge / heat number');
-  assert.equal(s.get('weld_types', 'weld-type-0').abbreviation, 'BW-F', 'the weld catalog sample owns the abbreviations');
+  assert.equal(s.get('weld_types', 'weld-type-0').abbreviation, 'FW', 'the weld catalog sample owns the abbreviations (the Shop / Field code, as in the reference)');
   const first = s.get('welds', 'weld-1');
   assert.equal(first.certificate1Id, 'certificate-1'); assert.equal(first.material1Id, 'material-1'); assert.equal(s.get('welds', 'weld-4').chargeNo1, 'EXISTING');
   assert.ok(s.list('welds').every(w => typeof w.sortOrder === 'number'));

@@ -16,7 +16,8 @@ import { normalizePunch, punchInputErrors } from '../shared/punch.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
-import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
+import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
+import { ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 
 export class AppError extends Error {
@@ -131,6 +132,13 @@ export class Store {
     const row = unpack(raw); this.recordGuard?.(key, row);
     return row;
   }
+  /**
+   * Standard defect codes (shipped with the product, `system`) cannot be edited or deleted by a user in the hosted profile;
+   * switching them on or off per main project stays possible. The flag itself is never taken from a request.
+   */
+  private guardStandardCode(key: string, row: Row, actor: Actor, changes: boolean) {
+    if (this.hostedRules && key === 'ndt_defect_codes' && row.system === true && actor.id !== SYSTEM.id && changes) throw new AppError(403, 'This defect code cannot be changed.');
+  }
   /** Depth of `keepingReferences` calls: while above zero, the "Enabled on this site" rule does not refuse references. */
   private keptReferences = 0;
   /**
@@ -177,6 +185,7 @@ export class Store {
     }
     for (const [name, message] of Object.entries(prepared.errors)) errors[name] ??= message;
     if (key === 'flanges') for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
+    if (key === 'ndt_defect_codes' && actor.id !== SYSTEM.id) data.system = existing?.system === true;
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
     this.guardTestSystem(key, { ...existing, ...data } as Row); if (existing) this.guardTestSystem(key, existing);
@@ -248,7 +257,7 @@ export class Store {
       const result = this.get(key, id);
       this.audit(key, id, 'created', `Created ${this.resource(key).singular} ${this.display(key, result)}`, actor);
       this.syncRelations(key,id,input,actor);
-      applyEnablement(this, key, id, input, actor);
+      applyEnablement(this, key, id, input, actor, true);
       return result;
     });
   }
@@ -256,6 +265,7 @@ export class Store {
     return this.transaction(() => {
       const existing = this.get(key, id);
       if (existing._version !== expectedVersion) throw new AppError(409, 'This record changed since you opened it. Refresh and try again.');
+      this.guardStandardCode(key, existing, actor, Object.keys(input).some(name => name !== '_version' && !ENABLEMENT_INPUT.includes(name)));
       const data = this.validate(key, input, existing,actor);
       this.db.prepare(`UPDATE ${table(key)} SET data=?,version=version+1,updated_at=? WHERE id=? AND version=?`).run(JSON.stringify(data), new Date().toISOString(), id, expectedVersion);
       if(key==='iso_materials'&&Number(existing.quantity)!==Number(data.quantity)){
@@ -266,6 +276,7 @@ export class Store {
       this.syncRelations(key,id,input,actor);
       if (key === 'itps') for (const change of itpSlotRefresh(this.get(key, id), this.list('isometrics'))) this.update('isometrics', change.id, change.values, this.get('isometrics', change.id)._version, actor);
       applyEnablement(this, key, id, input, actor);
+      if (key === 'sites') defectNormSaved(this, existing, this.get(key, id), actor);
       return this.get(key, id);
     });
   }
@@ -275,6 +286,7 @@ export class Store {
       if (row._version !== version) throw new AppError(409, 'This record changed. Refresh and try again.');
       this.guardTestSystem(key, row);
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
+      this.guardStandardCode(key, row, actor, true);
       if (!row._archived) {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');
         if(this.hostedRules&&key==='welders')archiveWelderQualifications(this,id,actor);

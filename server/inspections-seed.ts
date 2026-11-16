@@ -16,7 +16,7 @@ export function seedInspectionSamples(store: Store) {
     const set = (id: string, data: Record<string, unknown>) => store.update('welds', id, data, store.get('welds', id)._version, SYSTEM);
     if (!has('ndt_locations', 'ndt-field')) store.create('ndt_locations', { name: 'Field NDT cabin — Area 2' }, SYSTEM, 'ndt-field');
     // W005: RT not accepted with porosity over 14 mm; the repair weld W005R1 is welded but not examined yet.
-    rules.run('ndt-weld', { weldId: 'weld-5', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-005-01', reportNo: 'RT-2026-005', date: '2026-10-20', result: 'Rejected', naLength: 14, defectType: '2013' }] });
+    rules.run('ndt-weld', { weldId: 'weld-5', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-005-01', reportNo: 'RT-2026-005', date: '2026-10-20', result: 'Rejected', naLength: 14, defectType: '201' }] });
     const w005r1 = store.list('welds').find(row => row.repairOfId === 'weld-5');
     if (w005r1) set(w005r1.id, { welder1Id: 'welder-2', datefit: '2026-10-22', date: '2026-10-23', wire1Id: 'wire-1' });
     rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-13', 'weld-7'] });
