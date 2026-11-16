@@ -23,6 +23,7 @@ import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 import { HOSTED_OPTIONAL, hostedFreeValue } from '../shared/welder-data.ts';
 import { pqrNumber } from '../shared/wps.ts';
+import { UOM_IN_USE, nextPhaseNumber, resolveMaterialUom, uomOfMaterial } from '../shared/material-db.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -234,6 +235,10 @@ export class Store {
     if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
     if (key === 'materials' && this.requireMaterialGroup && !String(data.materialGroup ?? '').trim()) errors.materialGroup = 'Material group is required.';
+    // Pilots: a material points at its UOMs record (EA when none is chosen); the code is kept with it (shared/material-db.ts).
+    if (key === 'materials' && this.hostedRules) { const uom = resolveMaterialUom(input, existing, this.list('uoms')); if ('error' in uom) errors[uom.error[0]] ??= uom.error[1]; else Object.assign(data, uom); }
+    // The ID of an operation phase is given on create, one above every ID so far (deleted phases included); it never changes.
+    if (key === 'operation_phases') data.number = existing ? existing.number ?? null : Object.keys(errors).length ? null : this.phaseNumber();
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
@@ -282,6 +287,11 @@ export class Store {
     if (key === 'iso_materials' && existing && data.isoId !== existing.isoId && ['cut_list', 'calculation_lines'].some(resource => this.list(resource).some(row => row.requirementId === existing.id))) throw new AppError(422, 'This MTO material is used in planning. Remove its calculation and cut-list links before moving it to another isometric.');
     return data;
   }
+  private phaseNumber() {
+    const start = nextPhaseNumber(this.list('operation_phases', true));
+    const highest = this.db.dialect === 'postgres' ? 'GREATEST' : 'MAX';
+    return Number((this.db.prepare(`INSERT INTO counters(key,value) VALUES ('operation_phase_number',?) ON CONFLICT(key) DO UPDATE SET value=${highest}(counters.value+1,excluded.value) RETURNING value`).get(start) as { value: number }).value);
+  }
   create(key: string, input: Record<string, unknown>, actor: Actor = SYSTEM, id: string = randomUUID()): Row {
     return this.transaction(() => {
       const data = this.validate(key, input,undefined,actor);
@@ -310,6 +320,12 @@ export class Store {
       if (key === 'itps') for (const change of itpSlotRefresh(this.get(key, id), this.list('isometrics'))) this.update('isometrics', change.id, change.values, this.get('isometrics', change.id)._version, actor);
       applyEnablement(this, key, id, input, actor);
       if (key === 'sites') defectNormSaved(this, existing, this.get(key, id), actor);
+      // Pilots: renaming a UOM renames it on its materials (they point at the record; ones saved before by their code).
+      if (key === 'uoms' && this.hostedRules && String(existing.name ?? '') !== String(data.name ?? '')) for (const material of this.list('materials', true).filter(row => uomOfMaterial(row, existing))) {
+        const { id: materialId, _version, _archived, _createdAt, _updatedAt, ...stored } = material;
+        this.db.prepare('UPDATE "materials" SET data=?,version=version+1,updated_at=? WHERE id=?').run(JSON.stringify({ ...stored, uomId: id, uom: data.name }), new Date().toISOString(), materialId);
+        this.audit('materials', materialId, 'updated', `Updated material ${this.display('materials', material)}: UOM ${existing.name} renamed to ${data.name}`, actor);
+      }
       return this.get(key, id);
     });
   }
@@ -320,6 +336,7 @@ export class Store {
       this.guardTestSystem(key, row);
       if (this.hostedRules && key === 'roles' && isWelderRole(row) && !row._archived) throw new AppError(422, 'The Welder role cannot be deleted.');
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
+      if (key === 'uoms' && this.hostedRules && !row._archived && this.list('materials').some(material => uomOfMaterial(material, row))) throw new AppError(422, UOM_IN_USE);
       this.guardStandardCode(key, row, actor, true);
       if (!row._archived) {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw conflict('Return outstanding rentals before archiving this article.');

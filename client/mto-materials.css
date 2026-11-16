@@ -19,3 +19,17 @@
   .iso-materials-panel .heading-actions > .btn, .iso-materials-panel .heading-actions > .dropdown { flex: 1 1 auto; }
 }
 @media print { .mto-toolbar .field, .mto-filter-note, .mto-catalog-table .column-filters { display: none; } .mto-lines-table td, .mto-lines-table th { font-size: 9px; } }
+/* Material database: Show entries, sortable headings. Import material: take-over well, preview cells in error / warning. */
+.mto-catalog-toolbar { padding: 12px 20px; }
+.mto-catalog-toolbar .page-size { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.mto-catalog-toolbar .page-size select { min-height: 34px; padding: 4px 8px; }
+.material-import-templates { margin: 14px 0; font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.material-import-takeover { margin: 0 0 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f7f9fc; }
+.material-import-takeover h2 { margin: 0 0 6px; font-size: 14px; }
+.material-import-takeover p { margin: 0 0 10px; font-size: 13px; }
+.material-import-commit { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.material-import-commit .pqr-import-summary { margin: 0; }
+.material-import-table td.mi-error-cell { background: #fbe1d8; }
+.material-import-table td.mi-warning-cell { background: #fff4d6; }
+.material-import-table .mi-edit-input { width: 100%; min-width: 120px; font: inherit; font-size: 12px; padding: 5px 7px; border: 1px solid #d5dde8; border-radius: 5px; }
+@media (max-width: 560px) { .mto-catalog-toolbar { padding: 10px 14px; } .material-import-takeover { padding: 12px; } }

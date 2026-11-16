@@ -14,6 +14,11 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { isoBudgets as statusBudgets } from '../shared/iso-status.ts';
 import { isoBudgets, isoMaterialInputErrors, materialLineStatuses, materialStatus, phaseLocation, progressClassOf } from '../shared/mto-materials.ts';
 import type { Row } from '../shared/types.ts';
+import ExcelJS from 'exceljs';
+import {
+  MASS_EDIT_FIELDS, MATERIAL_DEFAULT_SORT, MATERIAL_FORM_FIELDS, MATERIAL_IMPORT_COLUMNS, MATERIAL_PAGE_SIZE, MATERIAL_PAGE_SIZES, importField, massEditChanges, massEditRefusal,
+  materialImportPreview, materialImportSummary, materialTypeLabel, nextPhaseNumber, phasesById, phasesByName, resolveMaterialUom, showingEntries, sortMaterials, summaryText,
+} from '../shared/material-db.ts';
 
 const actor = { id: 'test', name: 'Test' };
 const row = (id: string, props: Record<string, unknown> = {}) => ({ id, _version: 1, _archived: false, _createdAt: `2026-01-01T00:00:0${id.length % 10}Z`, _updatedAt: '', ...props }) as Row;
@@ -244,9 +249,9 @@ test('the Material database requires a group in the pilots profile, validates th
   assert.deepEqual([created.progressClass, created.componentCode, created.partId], ['Pipe', 'PIP', 'part-0']);
   const second = (await body(await f.request('/api/records/materials', 'POST', { ...bare, materialNo: 'HTTP-PIPE-2', materialGroup: 'Pipe' }))).record!;
   // Mass edit of the checked rows: all or nothing.
-  response = await f.request('/api/bulk/materials', 'POST', { ids: [created.id, second.id], changes: { uom: 'KG', progressClass: 'Supports' }, versions: { [created.id]: created._version, [second.id]: second._version } });
+  response = await f.request('/api/bulk/materials', 'POST', { ids: [created.id, second.id], changes: { uomId: 'uom-KG', lbs: 'SCH 80' }, versions: { [created.id]: created._version, [second.id]: second._version } });
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json())); assert.equal((await body(response)).count, 2);
-  assert.deepEqual([f.store.get('materials', created.id).uom, f.store.get('materials', second.id).progressClass], ['KG', 'Supports']);
+  assert.deepEqual([f.store.get('materials', created.id).uom, f.store.get('materials', second.id).lbs], ['KG', 'SCH 80']);
   response = await f.request('/api/bulk/materials', 'POST', { ids: [created.id, second.id], changes: { materialGroup: '' }, versions: { [created.id]: created._version + 1, [second.id]: second._version + 1 } });
   assert.equal(response.status, 422); assert.equal(f.store.get('materials', created.id).materialGroup, 'Pipe');
   // UOMs and Operation Phases follow the reference fields.
@@ -254,7 +259,7 @@ test('the Material database requires a group in the pilots profile, validates th
   assert.equal((await f.request('/api/records/uoms', 'POST', { name: 'RL' })).status, 409);
   assert.equal((await f.request('/api/records/uoms', 'POST', { name: '' })).status, 422);
   assert.equal((await f.request('/api/records/uoms', 'POST', { name: 'XX', symbol: 'x' })).status, 404, 'only the UOM field is delivered');
-  response = await f.request('/api/records/operation_phases', 'POST', { name: 'Support WS', sort: 9, progressLocation: 'Shop' });
+  response = await f.request('/api/records/operation_phases', 'POST', { name: 'Support WS', progressLocation: 'Shop' });
   assert.equal(response.status, 201);
   assert.equal((await f.request('/api/records/operation_phases', 'POST', { name: 'Odd', progressLocation: 'Yard' })).status, 422);
 });
@@ -330,4 +335,215 @@ test('hosted MTO catalogs use the capture wording: suppliers, service companies,
   assert.equal(resource('warehouses').title, 'Storehouses');
   assert.equal(resource('suppliers', 'full').fields.find(field => field.name === 'name')?.label, 'Supplier name');
   assert.equal(resource('warehouses', 'full').title, 'Warehouses');
+});
+
+// ----- Material database (w2-mto-material-db) ---------------------------------------------------------------------------
+
+test('material forms: reference field order, Type of material option text, mass edit fields without Material No', () => {
+  assert.deepEqual(MATERIAL_FORM_FIELDS.map(name => RESOURCE_MAP.materials.fields.find(field => field.name === name)!.label), ['Component code', 'Material group', 'Article No', 'Legacy No', 'Material No', 'DIA', 'LBS/SCH', 'UOM', 'Material part', 'Type of material', 'Material description']);
+  assert.ok(!MASS_EDIT_FIELDS.includes('materialNo'));
+  assert.equal(materialTypeLabel({ name: 'A106 Gr B', typeOfSteel: 'CS', materialDescription: 'Pipe', basicMaterial: 'C-Si' }), 'A106 Gr B / CS / Pipe / C-Si');
+  assert.equal(materialTypeLabel({ name: 'A106-B', typeOfSteel: 'CS' }), 'A106-B / CS /  / ', 'empty parts are kept');
+  assert.deepEqual(massEditChanges({ materialGroup: ' X ', dia: '', uomId: 'uom-M', lbs: undefined }), { materialGroup: 'X', uomId: 'uom-M' });
+  assert.match(massEditRefusal({ materialNo: 'N' }), /cannot be changed/);
+  assert.match(massEditRefusal({}), /at least one/);
+  assert.equal(massEditRefusal({ materialGroup: 'X', description: 'Y' }), '');
+});
+
+test('the list shows 20 of 10/20/50/100/500 entries, sorted by UOM to start with, and sorts any column both ways', () => {
+  assert.deepEqual([MATERIAL_PAGE_SIZES, MATERIAL_PAGE_SIZE, MATERIAL_DEFAULT_SORT], [[10, 20, 50, 100, 500], 20, { column: 'uom', direction: 'asc' }]);
+  const list = [row('a', { materialNo: 'M-10', uom: 'M', componentCode: '2' }), row('b', { materialNo: 'M-2', uom: 'EA', componentCode: '' }), row('c', { materialNo: 'M-1', uom: 'EA', componentCode: '1' })];
+  assert.deepEqual(sortMaterials(list, 'uom', 'asc').map(item => item.id), ['c', 'b', 'a'], 'ties by Material No, numbers by value');
+  assert.deepEqual(sortMaterials(list, 'componentCode', 'desc').map(item => item.id), ['a', 'c', 'b']);
+  assert.deepEqual(sortMaterials(list, 'materialNo', 'asc').map(item => item.id), ['c', 'b', 'a']);
+  assert.equal(showingEntries(21, 40, 1234), 'Showing 21 to 40 of 1,234 entries');
+  assert.equal(showingEntries(1, 0, 0), 'Showing 0 to 0 of 0 entries');
+});
+
+test('phases: ID order for the Add material Type select (first one preselected), A-Z for the dashboard and Set type', () => {
+  const phases = [row('p-field', { name: 'Field', sort: 2 }), row('p-shop', { name: 'Shop', sort: 1 }), row('p-new', { name: 'Bernecker', number: 7 }), row('p-gone', { name: 'Old', number: 9, _archived: true })];
+  assert.deepEqual(phasesById(phases).map(phase => phase.name), ['Shop', 'Field', 'Bernecker']);
+  assert.deepEqual(phasesByName(phases).map(phase => phase.name), ['Bernecker', 'Field', 'Shop']);
+  assert.equal(nextPhaseNumber(phases), 10, 'deleted phases keep their number');
+});
+
+test('the import reads the reference headings and checks every row as the reference preview does', () => {
+  assert.deepEqual(MATERIAL_IMPORT_COLUMNS.map(column => column.header), ['CC', 'Group', 'Article No', 'Material No', 'Description', 'DIA', 'LBS/SCH', 'UOM', 'Legacy No', 'Type Material', 'Material Part']);
+  assert.deepEqual(['CC', 'group', 'Article  No', 'MATERIAL NO', 'LBS/SCH', 'Type Material', 'Material Part', 'Colour'].map(importField), ['componentCode', 'materialGroup', 'articleNo', 'materialNo', 'lbs', 'typeMaterial', 'materialPart', '']);
+  const context = { materials: [row('m', { materialNo: 'OLD-1' })], uoms: [row('ea', { name: 'EA' }), row('m-uom', { name: 'M' })], parts: [row('pipe', { name: 'Pipe' })], types: [row('t', { name: 'A106 Gr B' })] };
+  const preview = materialImportPreview([
+    { rowNo: 2, values: { componentCode: '1', materialGroup: 'PIPE', materialNo: 'NEW-1', uom: 'm', materialPart: 'pipe', typeMaterial: 'A106 Gr B' } },
+    { rowNo: 3, values: { componentCode: '4', materialGroup: '', materialNo: 'NEW-2', uom: 'XX', materialPart: 'Bolt', typeMaterial: 'Nope' } },
+    { rowNo: 4, values: { materialGroup: 'PIPE', materialNo: 'OLD-1', uom: 'EA' } },
+    { rowNo: 5, values: { materialGroup: 'PIPE', materialNo: 'NEW-1', uom: 'EA' }, action: 'skip' },
+    { rowNo: 6, values: { materialGroup: 'PIPE', uom: '' } },
+  ], context);
+  assert.deepEqual(preview.map(item => Object.keys(item.error).sort()), [[], ['componentCode', 'materialGroup', 'materialPart', 'typeMaterial', 'uom'], [], ['materialNo'], ['materialNo', 'uom']]);
+  assert.ok(preview[2].warning.materialNoExists, 'a Material No in the database is a warning');
+  assert.equal(preview[3].action, 'skip');
+  assert.equal(summaryText(materialImportSummary(preview)), 'Rows: 5 | Errors: 3 | Importable now: 1');
+});
+
+test('a hosted material write points at a UOMs record: EA when none is given, a typed code must exist', () => {
+  const uoms = [row('uom-EA', { name: 'EA' }), row('uom-M', { name: 'M' }), row('uom-X', { name: 'X', _archived: true })];
+  assert.deepEqual(resolveMaterialUom({}, undefined, uoms), { uomId: 'uom-EA', uom: 'EA' });
+  assert.deepEqual(resolveMaterialUom({ uom: 'm' }, undefined, uoms), { uomId: 'uom-M', uom: 'M' });
+  assert.deepEqual(resolveMaterialUom({ uom: 'XX' }, undefined, uoms), { error: ['uom', 'UOM XX is not on the UOMs page.'] });
+  assert.ok('error' in resolveMaterialUom({ uomId: 'uom-X' }, undefined, uoms), 'a deleted UOM cannot be chosen');
+  assert.deepEqual(resolveMaterialUom({}, row('old', { uom: 'M' }), uoms), { uomId: 'uom-M', uom: 'M' }, 'a material saved with a code gets its UOM record');
+});
+
+async function workbook(header: string[], lines: string[][]) {
+  const book = new ExcelJS.Workbook(); const sheet = book.addWorksheet('Materials'); sheet.addRow(header); for (const line of lines) sheet.addRow(line);
+  const form = new FormData(); form.set('file', new Blob([await book.xlsx.writeBuffer()]), 'materials.xlsx'); return form;
+}
+interface PreviewBody { rows: { rowNo: number; values: Record<string, string>; action: string; source: string; origin?: string; error: Record<string, string>; warning: Record<string, string> }[]; summary: { rows: number; errors: number; importable: number }; empty?: boolean }
+
+test('Import material: an .xlsx with the reference headings is previewed per row and commit imports only the valid rows', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const existing = f.store.get('materials', 'material-1');
+  const headings = ['CC', 'Group', 'Article No', 'Material No', 'Description', 'DIA', 'LBS/SCH', 'UOM'];
+  const form = await workbook(headings, [['1', 'PIPE CS', 'ART-9', 'IMP-PIPE-1', 'Pipe 6"', '6', 'SCH 40', 'M'], ['2', 'SUPPORT', '', 'IMP-SUP-1', 'Shoe', '6', '', 'XX'], ['', 'PIPE CS', '', String(existing.materialNo), 'Duplicate', '', '', 'EA'], ['3', 'PIPE CS', '', 'IMP-PIPE-1', 'Again', '', '', 'EA']]);
+  let response = await f.request('/api/material-import/preview', 'POST', form);
+  assert.equal(response.status, 200, await response.clone().text());
+  const preview = await response.json() as PreviewBody;
+  assert.deepEqual(preview.rows.map(item => [item.rowNo, Object.keys(item.error), Object.keys(item.warning)]), [[2, [], []], [3, ['uom'], []], [4, [], ['materialNoExists']], [5, ['materialNo'], []]]);
+  assert.deepEqual(preview.summary, { rows: 4, errors: 2, importable: 1 });
+  // The page sends the rows back; the server checks them again and saves only the valid one.
+  const before = f.store.list('materials').length;
+  response = await f.request('/api/material-import/commit', 'POST', { rows: preview.rows });
+  assert.equal(response.status, 201); assert.deepEqual(await response.json(), { committed: 1, skipped: 0, failed: 3, linked: 0 });
+  assert.equal(f.store.list('materials').length, before + 1);
+  const imported = f.store.list('materials').find(item => item.materialNo === 'IMP-PIPE-1')!;
+  assert.deepEqual([imported.componentCode, imported.materialGroup, imported.uom, imported.uomId, imported.lbs], ['1', 'PIPE CS', 'M', 'uom-M', 'SCH 40']);
+  // Editing the existing Material No on the page makes that row importable; a skipped row is left out.
+  const edited = preview.rows.map(item => item.rowNo === 4 ? { ...item, values: { ...item.values, materialNo: 'IMP-RENAMED' } } : item.rowNo === 3 ? { ...item, action: 'skip' } : item);
+  const checked = await (await f.request('/api/material-import/check', 'POST', { rows: edited })).json() as PreviewBody;
+  // Row 2 (IMP-PIPE-1) is in the database now; row 3 keeps its UOM error; the edited row 4 is clean; row 5 repeats row 2.
+  assert.deepEqual(checked.rows.map(item => Object.keys(item.warning).length + Object.keys(item.error).length), [1, 1, 0, 1]);
+  response = await f.request('/api/material-import/commit', 'POST', { rows: edited });
+  assert.equal(((await response.json()) as { committed: number; skipped: number }).committed, 1);
+  assert.ok(f.store.list('materials').some(item => item.materialNo === 'IMP-RENAMED'));
+  assert.equal((await f.request('/api/material-import/commit', 'POST', { rows: [{ rowNo: 2, values: { surprise: 'x' } }] })).status, 422);
+  assert.equal((await f.request('/api/material-import/commit', 'POST', { rows: preview.rows, options: { clean: true } })).status, 422, 'Clean import comes with the per-site materials');
+  // The template holds the reference headings in order and our example rows.
+  response = await f.request('/api/material-import/template');
+  assert.equal(response.status, 200);
+  const template = new ExcelJS.Workbook(); await template.xlsx.load(await response.arrayBuffer());
+  assert.deepEqual((template.worksheets[0].getRow(1).values as unknown[]).slice(1), MATERIAL_IMPORT_COLUMNS.map(column => column.header));
+  assert.ok(template.worksheets[0].rowCount >= 6);
+  // A read-only account and the other profiles have no import.
+  await f.signIn('Material reader', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'No access' });
+  assert.equal((await f.request('/api/material-import/preview', 'POST', await workbook(headings, [['1', 'G', '', 'RO-1', '', '', '', 'EA']]))).status, 403);
+  const full = await hostedFixture(t, 'full'); await full.setup();
+  assert.equal((await full.request('/api/material-import/template')).status, 404);
+});
+
+test('Take over missing materials: custom isometric lines of the site fill the preview and commit links them to the new catalog rows', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const iso = f.store.get('isometrics', 'iso-1'), siteId = String(f.store.get('projects', iso.projectId).siteId);
+  const line = runAction(f.store, 'add-iso-material', { isoId: iso.id, source: 'Custom', materialNo: 'CUS-TAKE-1', description: 'Site-measured pipe', materialGroup: 'Pipe', uom: 'M', quantity: 4, componentCode: '1' }, actor);
+  assert.ok('record' in line && line.record);
+  const counts = await (await f.request(`/api/material-import/take-over?siteId=${siteId}`)).json() as { iso: number; order: number };
+  assert.ok(counts.iso >= 1 && counts.order >= 1, JSON.stringify(counts));
+  const preview = await (await f.request('/api/material-import/take-over', 'POST', { siteId, source: 'iso' })).json() as PreviewBody;
+  const row = preview.rows.find(item => item.values.materialNo === 'CUS-TAKE-1')!;
+  assert.deepEqual([row.source, row.origin, row.values.uom, row.values.componentCode, Object.keys(row.error)], ['iso', 'CUS-TAKE-1', 'M', '1', []]);
+  const response = await f.request('/api/material-import/commit', 'POST', { siteId, rows: [row] });
+  assert.equal(response.status, 201); assert.deepEqual(await response.json(), { committed: 1, skipped: 0, failed: 0, linked: 1 });
+  const material = f.store.list('materials').find(item => item.materialNo === 'CUS-TAKE-1')!;
+  const linked = f.store.get('iso_materials', line.record.id);
+  assert.deepEqual([linked.materialId, linked.customMaterial, linked.quantity], [material.id, false, 4]);
+  const after = await (await f.request(`/api/material-import/take-over?siteId=${siteId}`)).json() as { iso: number };
+  assert.equal(after.iso, counts.iso - 1);
+  assert.equal((await f.request('/api/material-import/take-over', 'POST', { siteId, source: 'elsewhere' })).status, 422);
+});
+
+test('Mass edit sets every filled field at once, keeps the empty ones and never changes Material No', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const [a, b] = ['material-1', 'material-2'].map(id => f.store.get('materials', id));
+  const versions = () => Object.fromEntries([a, b].map(item => [item.id, f.store.get('materials', item.id)._version]));
+  let response = await f.request('/api/bulk/materials', 'POST', { ids: [a.id, b.id], changes: { materialGroup: 'X GROUP', articleNo: 'ART-X', dia: '', uomId: 'uom-SET', partId: 'part-2', description: 'Mass edited' }, versions: versions() });
+  assert.equal(response.status, 200, await response.clone().text());
+  for (const item of [a, b]) {
+    const now = f.store.get('materials', item.id);
+    assert.deepEqual([now.materialGroup, now.articleNo, now.dia, now.uom, now.uomId, now.partId, now.description, now.materialNo], ['X GROUP', 'ART-X', item.dia, 'SET', 'uom-SET', 'part-2', 'Mass edited', item.materialNo]);
+  }
+  response = await f.request('/api/bulk/materials', 'POST', { ids: [a.id, b.id], changes: { materialNo: 'SAME' }, versions: versions() });
+  assert.equal(response.status, 422);
+  response = await f.request('/api/bulk/materials', 'POST', { ids: [a.id], changes: { dia: '' }, versions: versions() });
+  assert.equal(response.status, 422, 'nothing filled');
+  response = await f.request('/api/bulk/materials', 'POST', { ids: [a.id], changes: { uomId: 'nope' }, versions: versions() });
+  assert.equal(response.status, 422);
+});
+
+test('Add material: only the group and Material No are needed, UOM defaults to EA and must be a UOMs record', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  let response = await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve', materialNo: 'ADD-1' });
+  assert.equal(response.status, 201, await response.clone().text());
+  const added = (await body(response)).record!;
+  assert.deepEqual([added.uom, added.uomId, added.description], ['EA', 'uom-EA', '']);
+  response = await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve', materialNo: 'ADD-2', uom: 'XX' });
+  assert.equal(response.status, 422); assert.ok((await body(response)).fields?.uom);
+  response = await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve', materialNo: 'ADD-3', uomId: 'uom-M' });
+  assert.equal((await body(response)).record?.uom, 'M');
+  assert.equal((await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve' })).status, 422, 'Material No stays required');
+  // Materials saved with a code only are read with the UOM record of that code.
+  const rows = (await body(await f.request('/api/records/materials'))).rows as unknown as Row[];
+  assert.equal(rows.find(item => item.id === 'material-1')?.uomId, `uom-${f.store.get('materials', 'material-1').uom}`);
+  // Other profiles keep the free code and the required description.
+  const full = await hostedFixture(t, 'full'); await full.setup();
+  assert.equal((await full.request('/api/records/materials', 'POST', { materialNo: 'FREE-1', uom: 'XX' })).status, 422, 'description still required');
+  assert.equal((await full.request('/api/records/materials', 'POST', { materialNo: 'FREE-1', uom: 'XX', description: 'Free code' })).status, 201);
+});
+
+test('Delete material deletes an unused material for good and refuses one an isometric uses', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const used = f.store.get('materials', 'material-1');
+  assert.ok(f.store.list('iso_materials').some(line => line.materialId === used.id));
+  let response = await f.request(`/api/materials/${used.id}/delete`, 'POST', { _version: used._version });
+  assert.equal(response.status, 422); assert.match(String((await response.json() as { error?: string }).error ?? ''), /used by isometric materials/);
+  const fresh = (await body(await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve', materialNo: 'DEL-1' }))).record!;
+  assert.equal((await f.request(`/api/materials/${fresh.id}/delete`, 'POST', { _version: fresh._version + 1 })).status, 409, 'a stale version');
+  response = await f.request(`/api/materials/${fresh.id}/delete`, 'POST', { _version: fresh._version });
+  assert.equal(response.status, 200);
+  assert.equal(f.store.list('materials', true).some(item => item.id === fresh.id), false, 'gone, not archived');
+  assert.equal(f.store.history('materials', fresh.id).events[0].action, 'deleted');
+  await f.signIn('Material reader 2', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'No access' });
+  const other = f.store.create('materials', { materialGroup: 'Valve', materialNo: 'DEL-2', description: 'x' });
+  assert.equal((await f.request(`/api/materials/${other.id}/delete`, 'POST', { _version: other._version })).status, 403);
+});
+
+test('materials follow a UOM rename, and a UOM in use cannot be deleted', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const created = (await body(await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve', materialNo: 'UOM-1' }))).record!;
+  const older = f.store.list('materials').find(item => item.uom === 'EA' && !item.uomId)!;
+  assert.ok(older, 'a sample material saved with the code only');
+  const ea = f.store.get('uoms', 'uom-EA');
+  const refused = await f.request(`/api/records/uoms/${ea.id}/archive`, 'POST', { _version: ea._version });
+  assert.equal(refused.status, 422); assert.match(String((await refused.json() as { error?: string }).error), /used by materials/);
+  const response = await f.request(`/api/records/uoms/${ea.id}`, 'PUT', { name: 'EACH', _version: ea._version });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual([f.store.get('materials', created.id).uom, f.store.get('materials', older.id).uom, f.store.get('materials', older.id).uomId], ['EACH', 'EACH', 'uom-EA']);
+  const listed = (await body(await f.request('/api/records/materials'))).rows as unknown as Row[];
+  assert.equal(listed.find(item => item.id === created.id)?.uom, 'EACH');
+  const unused = (await body(await f.request('/api/records/uoms', 'POST', { name: 'RL' }))).record!;
+  assert.equal((await f.request(`/api/records/uoms/${unused.id}/archive`, 'POST', { _version: unused._version })).status, 200);
+});
+
+test('an operation phase gets the next ID on create; the ID cannot be typed and the earlier typed number shows as the ID', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const phases = projectResource(hosted, RESOURCE_MAP.operation_phases);
+  assert.deepEqual([phases.columns, hosted.resources.operation_phases.includes('sort'), hosted.resources.operation_phases.includes('description')], [['number', 'name'], false, false]);
+  const first = (await body(await f.request('/api/records/operation_phases', 'POST', { name: 'Bernecker' }))).record!;
+  const second = (await body(await f.request('/api/records/operation_phases', 'POST', { name: 'Paint shop', number: 1 }))).record!;
+  assert.deepEqual([first.number, second.number], [7, 8], 'one above the six sample phases; a sent number is ignored');
+  assert.equal((await f.request('/api/records/operation_phases', 'POST', { name: 'Typed', sort: 3 })).status, 404);
+  assert.equal((await f.request(`/api/records/operation_phases/${second.id}/archive`, 'POST', { _version: second._version })).status, 200);
+  const third = (await body(await f.request('/api/records/operation_phases', 'POST', { name: 'Coating' }))).record!;
+  assert.equal(third.number, 9, 'a deleted phase keeps its number');
+  const updated = (await body(await f.request(`/api/records/operation_phases/${first.id}`, 'PUT', { name: 'Bernecker yard', _version: first._version }))).record!;
+  assert.equal(updated.number, 7);
+  const listed = (await body(await f.request('/api/records/operation_phases'))).rows as unknown as Row[];
+  assert.equal(listed.find(item => item.id === 'phase-0')?.number, 1);
 });

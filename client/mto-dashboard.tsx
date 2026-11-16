@@ -1,8 +1,9 @@
 import { useId, useMemo, useState } from 'react';
+import { phasesByName } from '../shared/material-db.ts';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowRight, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { useWorkspace, activeRows } from './context.tsx';
+import { useWorkspace } from './context.tsx';
 import { formatDate, formatNumber } from './api.ts';
 import { Badge, EmptyState, Modal, SearchInput, TableScroll } from './components.tsx';
 import {
@@ -26,7 +27,8 @@ export function MtoDashboard() {
     if (!readable) return {};
     try { return { model: mtoDashboard(rows, { phaseId, today: day }) }; } catch (failure) { return { error: (failure as Error).message || 'The figures could not be calculated.' }; }
   }, [rows, phaseId, day, readable]);
-  const phases = useMemo(() => activeRows(rows, 'operation_phases').sort((a, b) => Number(a.sort ?? 0) - Number(b.sort ?? 0) || String(a.name).localeCompare(String(b.name), 'en', { numeric: true })), [rows]);
+  // The reference lists the phases A-Z after "All operation phases" (capture mto__start__dashboard.txt:126).
+  const phases = useMemo(() => phasesByName(rows.operation_phases), [rows]);
   const site = rows.sites?.find(row => row.id === siteId);
 
   if (!readable) return <section className="panel md-state" role="alert"><EmptyState title="No access to the MTO dashboard" description="Your profile does not include the isometrics, requirements, stock, orders and pick lists this dashboard reads. Ask an administrator to open them for you."/></section>;
