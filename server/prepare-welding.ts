@@ -9,6 +9,7 @@ import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { inspectHostedSchema, prepareHostedSchema } from './hosted-schema.ts';
 import { Store } from './store.ts';
 import { upgradeWeldCatalogs } from './catalog-upgrade.ts';
+import { loadDiameterCatalog, missingDiameterCatalog } from './diameter-catalog.ts';
 
 // Hosted update: back up, then bring the schema to this release in one transaction (see server/hosted-schema.ts).
 // `--dry-run` (or STELUX_PREPARE_DRY_RUN=1) performs the whole step and rolls it back; it writes no backup.
@@ -16,6 +17,7 @@ const dryRun = process.argv.includes('--dry-run') || process.env.STELUX_PREPARE_
 const runtime = runtimeConfig({ ...process.env, STELUX_RUNTIME: 'cloud', STELUX_RELEASE_PROFILE: HOSTED_RELEASE_PROFILE });
 const config = postgresConfig(process.env, runtime.cloudDatabaseSource === 'evaluation');
 const db = new PostgresDatabase(config);
+let backedUp = false;
 try {
   if (runtime.cloudDatabaseSource === 'evaluation') cloudDatabase(db); else workspaceCloudDatabase(db);
   // After the schema: the data this release ships (standard defect codes, QA/QC engineer companies), idempotent (server/catalog-upgrade.ts).
@@ -30,11 +32,20 @@ try {
   } else {
     const destination = resolve('backups', `before-welding-live-${new Date().toISOString().replaceAll(':', '-')}`);
     mkdirSync(destination, { recursive: true, mode: 0o700 });
-    const backup = backupPostgres(destination, config);
+    const backup = backupPostgres(destination, config); backedUp = true;
     const result = prepareHostedSchema(db);
     const data = catalogs({});
     writeFileSync(join(destination, 'preparation.json'), JSON.stringify({ ...result, catalogData: data, backup: 'stelux-postgres.sql', backupSkipped: backup.skipped }, null, 2) + '\n', { mode: 0o600 });
     console.log(JSON.stringify({ backup: destination, ...result, catalogData: data }, null, 2));
+  }
+  // The diameter catalog of the reference (shared/diameter-catalog-data.ts): adds the diameters the workspace does not hold yet and
+  // never changes one that exists, so what the customer entered stays. A dry run only counts.
+  const store = new Store('hosted-workspace', db, { initialize: false });
+  const missing = missingDiameterCatalog(store).length;
+  if (dryRun) console.log(JSON.stringify({ diameterCatalog: { wouldAdd: missing } }));
+  else if (missing) {
+    if (!backedUp) { const destination = resolve('backups', `before-diameter-catalog-${new Date().toISOString().replaceAll(':', '-')}`); mkdirSync(destination, { recursive: true, mode: 0o700 }); backupPostgres(destination, config); }
+    console.log(JSON.stringify({ diameterCatalog: { added: loadDiameterCatalog(store) } }));
   }
 } catch (error) {
   console.error(`Hosted schema preparation failed${dryRun ? ' (dry run)' : ''}; every change was rolled back. ${(error as Error).message}`);

@@ -12,10 +12,10 @@ const text = (value: unknown) => typeof value === 'string' ? value.trim() : valu
 // ---------------------------------------------------------------------------------------------------------
 // Standard designations used by the option lists.
 // ---------------------------------------------------------------------------------------------------------
-/** ISO/TR 15608 material groups (1.1 … 11.3). */
-export const ISO_15608_GROUPS = ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '3.1', '3.2', '3.3', '4.1', '4.2', '5.1', '5.2', '5.3', '5.4', '6.1', '6.2', '6.3', '6.4', '7.1', '7.2', '7.3', '8.1', '8.2', '8.3', '9.1', '9.2', '9.3', '10.1', '10.2', '11.1', '11.2', '11.3'];
-/** ASME BPVC section IX base-metal P-Numbers. */
-export const ASME_P_NUMBERS = ['P-1', 'P-3', 'P-4', 'P-5A', 'P-5B', 'P-5C', 'P-6', 'P-7', 'P-8', 'P-9A', 'P-9B', 'P-10H', 'P-11A', 'P-15E', 'P-21', 'P-41'];
+/** ISO/TR 15608 material groups offered by the type of material form (1.1 … 11.1, as the reference lists them). */
+export const ISO_15608_GROUPS = ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '3.1', '3.2', '3.3', '4.1', '4.2', '5.1', '5.2', '5.3', '5.4', '6.1', '6.2', '6.3', '6.4', '7.1', '7.2', '7.3', '8.1', '8.2', '8.3', '9.1', '9.2', '9.3', '10.1', '10.2', '10.3', '11.1'];
+/** ASME BPVC section IX base-metal P-Numbers offered by the type of material form (and by the WPS form). */
+export const ASME_P_NUMBERS = ['P-1', 'P-3', 'P-4', 'P-5A', 'P-5B', 'P-5C', 'P-6', 'P-7', 'P-8', 'P-9A', 'P-9B', 'P-10A', 'P-10H', 'P-10I', 'P-15E', 'P-34'];
 export const ASME_GROUP_NUMBERS = ['1', '2', '3', '4', '5'];
 /** EN 10204 inspection document types. */
 export const CERT_TYPES = ['2.1', '2.2', '3.1', '3.2'];
@@ -46,8 +46,9 @@ export const WELDER_DATA_PAGES: Record<string, string[]> = {
   welder_customs_catalog: names('name abbreviation diameterFrom diameterTo wtFrom wtTo'),
   diameters: names('diameter size sizeinch outline sorting'),
   material_parts: names('name custom'),
+  suppliers: names('name address zip residence mailbox mnzip mnresidence phone fax email'),
   material_types: names('name typeOfSteel materialDescription basicMaterial materialGroup lucefinGroup iso15608 asmePNumber asmeGroup isoAsme'),
-  welding_wires: names('name classification diameter chargeNo description materialTypeId norm certType attestNo supplierId allProjects controlled accepted projectIds'),
+  welding_wires: names('name classification diameter chargeNo description materialTypeId typeMaterial norm certType attestNo supplierId allProjects controlled accepted projectIds'),
   certifications: names('name indexNo chargeNo certType materialId materialTypeId materialPartId basicMaterial diameter schedule wallThickness hotYield impactStrength supplierId allProjects controlled accepted description projectIds'),
 };
 /** Resources delivered without a menu page of their own. */
@@ -89,10 +90,50 @@ export const HOSTED_COLUMNS: Record<string, string[]> = {
   diameters: ['diameter', 'size', 'sizeinch', 'outline', 'sorting'],
   material_parts: ['name', 'custom'],
   material_types: ['name', 'typeOfSteel', 'materialDescription', 'basicMaterial', 'materialGroup', 'isoAsme'],
-  welding_wires: ['name', 'chargeNo', 'classification', 'materialTypeId', 'diameter', 'certType', 'attestNo', 'supplierId', 'controlled', 'accepted'],
+  welding_wires: ['name', 'chargeNo', 'classification', 'typeMaterial', 'diameter', 'certType', 'attestNo', 'supplierId', 'controlled', 'accepted'],
   certifications: ['indexNo', 'chargeNo', 'certType', 'name', 'materialId', 'materialTypeId', 'materialPartId', 'basicMaterial', 'diameter', 'schedule', 'wallThickness', 'supplierId', 'controlled', 'accepted'],
   suppliers: ['name', 'address', 'email', 'phone'],
 };
+/** List headers of the reference where they differ from the form label (the list only; the forms keep the full word). */
+export const HOSTED_COLUMN_LABELS: Record<string, Record<string, string>> = {
+  welding_wires: { controlled: 'Ctrl.', accepted: 'Accp.' },
+  certifications: { controlled: 'Ctrl.', accepted: 'Accp.' },
+};
+/** Default order of a list in the hosted profile (a field name; ascending, numbers by value). The others sort by their display field. */
+export const HOSTED_DEFAULT_SORT: Record<string, string> = { diameters: 'sorting' };
+/** The field a list sorts by first (ascending): the reference's default order in the hosted profile, else the resource's display field. */
+export const listDefaultSort = (resource: string, hosted: boolean, display: string) => (hosted && HOSTED_DEFAULT_SORT[resource]) || display;
+/** Fields of the shared definitions the hosted profile does not offer (stored values stay; the server no longer delivers them). */
+export const HOSTED_DROPPED_FIELDS: Record<string, string[]> = {
+  material_parts: ['description'], material_types: ['description'], suppliers: ['description'], ndt_locations: ['description'], pwht_locations: ['description'],
+  welding_wires: ['manufacturer', 'materialTypeId'],
+};
+/** Form order of the reference where it differs from the shared definitions (fields not named follow, in their own order). */
+export const HOSTED_FIELD_ORDER: Record<string, string[]> = {
+  suppliers: ['name', 'address', 'zip', 'residence', 'mailbox', 'mnzip', 'mnresidence', 'phone', 'fax', 'email'],
+  welding_wires: ['name', 'chargeNo', 'attestNo', 'diameter', 'classification', 'typeMaterial', 'norm', 'projectIds', 'supplierId', 'certType', 'controlled', 'accepted', 'description'],
+};
+export function hostedFieldOrder<T extends { name: string }>(resource: string, fields: T[]): T[] {
+  const order = HOSTED_FIELD_ORDER[resource];
+  if (!order) return fields;
+  const rank = (name: string) => { const index = order.indexOf(name); return index < 0 ? order.length : index; };
+  return [...fields].sort((a, b) => rank(a.name) - rank(b.name));
+}
+/** Selects of the hosted profile that also take a value typed by the user (no fixed list on the server). */
+export const HOSTED_FREE_VALUES: Record<string, string[]> = { material_types: ['iso15608', 'asmePNumber', 'asmeGroup'], welding_wires: ['certType'], certifications: ['certType'] };
+export const hostedFreeValue = (resource: string, name: string) => Boolean(HOSTED_FREE_VALUES[resource]?.includes(name));
+/** Longest value of a free select (a group or P-Number is a short designation). */
+export const FREE_VALUE_MAX = 50;
+/** The main-project select of a welding wire: "ALL" and the projects in one control that replaces the All projects checkbox. */
+export const hostedRelation = (owner: string, relation: Relation): Relation => owner === 'welding_wires' && relation.field === 'projectIds' ? { ...relation, label: 'Project', showIf: undefined, allField: 'allProjects', section: 'Details' } : relation;
+/** Lists with the "Controlled / Accepted" bulk bar (tick rows, choose Yes or No, Apply) and the fields that bar may change. */
+export const FLAG_BULK_RESOURCES = ['certifications', 'welding_wires'];
+export const FLAG_BULK_FIELDS = ['controlled', 'accepted'];
+export const FLAG_BULK_NOUN: Record<string, string> = { certifications: 'certificates', welding_wires: 'welding wires' };
+export const FLAG_BULK_MESSAGES = { pick: 'Choose Yes or No for Controlled, Accepted, or both.', tooMany: (noun: string) => `Too many ${noun}. Narrow the search or project filter first.`, failed: (noun: string) => `The ${noun} could not be updated.` };
+export const FLAG_BULK_LIMIT = 500;
+/** Lists with a project select in the toolbar ("All projects" and the projects of the open main project) instead of a filter in the panel. */
+export const PROJECT_TOOLBAR_RESOURCES = ['certifications', 'welding_wires'];
 /** Required in the hosted profile (the shared definitions stay as they were for the other profiles). */
 export const HOSTED_REQUIRED: Record<string, [string, string][]> = {
   roles: [['abbreviation', 'Abbreviation']],
@@ -106,8 +147,63 @@ export function hostedField(resource: string, field: Field): Field {
   const label = HOSTED_LABELS[resource]?.[field.name];
   const required = HOSTED_REQUIRED[resource]?.some(([name]) => name === field.name);
   const grouped = field.name === 'allProjects' ? { section: 'Links & availability' } : {};
-  return label || required || Object.keys(grouped).length ? { ...field, ...(label ? { label } : {}), ...(required ? { required: true } : {}), ...grouped } : field;
+  const base: Field = label || required || Object.keys(grouped).length ? { ...field, ...(label ? { label } : {}), ...(required ? { required: true } : {}), ...grouped } : field;
+  // The diameter catalog: Size in mm, inches and outline take a decimal comma or point (numbers on the server).
+  if (resource === 'diameters' && (DIAMETER_DECIMALS as readonly string[]).includes(field.name)) return { ...base, decimal: true };
+  // Type of material: group, P-Number and group number are choose-or-type; the help line sits above the three.
+  if (resource === 'material_types' && hostedFreeValue(resource, field.name)) return { ...base, free: true, blank: 'Choose or type', ...(field.name === 'iso15608' ? { intro: FREE_VALUE_INTRO } : {}) };
+  // Certificate-type is free text on the welding wire and the certificate (the full profile keeps its EN 10204 list).
+  if (hostedFreeValue(resource, field.name) && field.name === 'certType') return { ...base, type: 'text', options: undefined };
+  if (resource === 'welding_wires') {
+    // The index number is generated; the project select (with ALL) replaces the checkbox; the note sits among the other fields.
+    if (field.name === 'name') return { ...base, generated: true, required: false };
+    if (field.name === 'allProjects') return { ...base, hidden: true };
+    if (field.name === 'description') return { ...base, section: undefined };
+  }
+  return base;
 }
+export const FREE_VALUE_INTRO = 'Optional. You can leave this empty. Choose a value or type one that is not in the list.';
+
+// ---------------------------------------------------------------------------------------------------------
+// Diameter catalog (Weld Pilot → Material data → Weld diameters)
+// ---------------------------------------------------------------------------------------------------------
+export const DIAMETER_DECIMALS = ['size', 'sizeinch', 'outline'] as const;
+export const DIAMETER_NUMBER_MESSAGE = 'Size in inch and outline in mm must be numbers.';
+/**
+ * A decimal typed like the reference accepts it: digits with one comma or point, a trailing one allowed (`88,9`, `0.75`, `5.`).
+ * Returns the number, null for an empty value and undefined for anything else.
+ */
+export function parseDiameterDecimal(value: unknown): number | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  const raw = String(value).trim().replace(',', '.').replace(/\.$/, '');
+  if (raw === '') return null;
+  return /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : undefined;
+}
+/** The text a decimal field lets the user keep typing: digits with at most one comma or point (the reference's keep-last-valid rule). */
+export const diameterDecimalTyping = (value: string) => value === '' || /^\d+([.,]\d*)?$/.test(value) || /^\d*[.,]\d+$/.test(value);
+/**
+ * Decimal fields of a diameter as numbers (comma → point) and the messages of those that are not numbers.
+ * Only the names present in `input` are looked at; an invalid value is left out of `values`.
+ */
+export function diameterNumbers(input: Record<string, unknown>): { values: Record<string, number | ''>; errors: Record<string, string> } {
+  const values: Record<string, number | ''> = {}, errors: Record<string, string> = {};
+  for (const name of DIAMETER_DECIMALS) {
+    if (!(name in input) || input[name] === undefined) continue;
+    const parsed = parseDiameterDecimal(input[name]);
+    if (parsed === undefined) errors[name] = name === 'size' ? 'Size in mm must be a number.' : DIAMETER_NUMBER_MESSAGE;
+    else values[name] = parsed === null ? '' : parsed;
+  }
+  return { values, errors };
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Option labels of the reference
+// ---------------------------------------------------------------------------------------------------------
+/** Supplier in a select (wire, certificate): the name and, when filled, the residence (`PFF BV Klundert`). */
+export const supplierOptionLabel = (row: Record<string, unknown>) => [text(row.name), text(row.residence)].filter(Boolean).join(' ');
+/** Type of material in a select: type / steel / description / basic material, empty parts left empty (`A234 Gr WPB/CS/Fitting/`). */
+export const materialTypeOptionLabel = (row: Record<string, unknown>) => [row.name, row.typeOfSteel, row.materialDescription, row.basicMaterial].map(text).join('/');
 
 // ---------------------------------------------------------------------------------------------------------
 // Derived values

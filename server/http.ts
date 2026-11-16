@@ -26,6 +26,8 @@ import { isoSummariesFor } from './iso-summary.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
+import { FLAG_BULK_FIELDS, FLAG_BULK_RESOURCES } from '../shared/welder-data.ts';
+import { withLegacyValues } from './welder-data.ts';
 import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
@@ -47,7 +49,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
   const needsSetup = () => !store.db.prepare('SELECT user_id FROM credentials LIMIT 1').get();
-  const readableRows = (req: Request, key: string, archived = false) => store.list(key, archived).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, row));
+  const readableRows = (req: Request, key: string, archived = false) => store.list(key, archived).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, withLegacyValues(store, key, row)));
   const visibleAudit = (req: Request, events: ReturnType<Store['activity']>) => events.map(event => access.audit((req as AuthRequest).user, event)).filter((event): event is NonNullable<typeof event> => Boolean(event));
   const documents = documentStorage(store, dataDir, options.documentStorage || 'disk', options.initializeStorage !== false);
   if (options.secureCookies) app.set('secure cookies', true);
@@ -119,7 +121,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const catalogBulk = availability?.features.includes('pilots') && enablementKey(/^\/bulk\/([^/]+)$/.exec(req.path)?.[1] || '');
     // Mass edit of the Material database (MTO Pilot catalogs); other hosted bulk routes stay closed.
     const materialBulk = pilots && req.path === '/bulk/materials';
-    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
+    // Controlled / Accepted of the ticked welding wires and certificates (nothing else is bulk-editable there, see the route).
+    const flagBulk = pilots && FLAG_BULK_RESOURCES.some(key => req.path === `/bulk/${key}`);
+    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk && !flagBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
     // The rest of the request runs inside the account's project site scope (derived once, see server/site-scope.ts).
     runInSiteScope(scope, next);
   });
@@ -215,6 +219,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     access.input(resource.key, req.body.changes);
+    if (availability?.features.includes('pilots') && FLAG_BULK_RESOURCES.includes(resource.key) && Object.keys(req.body.changes).some(k => !FLAG_BULK_FIELDS.includes(k))) throw new AppError(404, 'This resource could not be found.');
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
     const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });

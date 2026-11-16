@@ -16,6 +16,14 @@ export interface Field {
   legacy?: Record<string, string>;
   /** The list column's heading where it differs from the form label. */
   columnLabel?: string;
+  /** Number typed as text: a decimal comma or point is accepted (the hosted diameter catalog); the server stores a number. */
+  decimal?: boolean;
+  /** Select that also accepts a typed value that is not in its list (hosted material types). */
+  free?: boolean;
+  /** Short help line shown above the field. */
+  intro?: string;
+  /** Filled by the server when left empty: not offered in the add / edit form (hosted welding wire index number). */
+  generated?: boolean;
 }
 export interface Resource {
   key: string; title: string; singular: string; module: Module; group: string;
@@ -50,6 +58,6 @@ export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: 
   isoSummaries?: Record<string, import('./iso-summary.ts').IsoSummary>;
   /** Pilots profile: which parts Copy isometrics may carry for this account. */
   copyParts?: import('./permissions.ts').CopyParts; }
-export interface ActionField extends Field { multiple?: boolean; }
+export interface ActionField extends Field { multiple?: boolean; /** Checkbox field that the "ALL" option of this multi-select stands for. */ allField?: string; }
 export interface ActionDefinition { key: string; title: string; description: string; module: Module; fields: ActionField[]; submit: string; }
 export const labelOf = (row: Row | undefined, resource: Resource) => row ? String(row[resource.display] || row.name || row.id) : '—';

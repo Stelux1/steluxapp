@@ -11,7 +11,7 @@ import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
 import { INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS } from '../shared/inspections.ts';
 import {
-  WELDERS, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
+  WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
   planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
 } from '../shared/weld-entry.ts';
 import type { Row } from '../shared/types.ts';
@@ -24,6 +24,8 @@ const sortByName = (rows: Row[], key = 'name') => [...rows].sort((a, b) => str(a
 const welderLabel = (welder: Row) => `${str(welder.welderCode || welder.number)}${welder.name ? `, ${str(welder.name)}` : ''}`;
 
 /** Everything the table, the form and the dialogs read for one isometric, derived once from the workspace rows. */
+/** Dia. options: one per distinct Size in inches of the catalog in the hosted profile (see diameterOptions). */
+function useDiameterOptions() { const { rows, user } = useWorkspace(); return useMemo(() => diameterOptions(activeRows(rows, 'diameters'), Boolean(user.availability?.features.includes('pilots'))), [rows, user]); }
 function useWeldData(iso: Row) {
   const { rows, allRows } = useWorkspace();
   return useMemo(() => {
@@ -116,7 +118,7 @@ export function WeldDialog({ iso, weld, data, onClose }: { iso: Row; weld?: Row;
   const enabled = (key: string, keep?: unknown) => enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows, keep);
   const options = (key: string, label: (row: Row) => string, filter: (row: Row) => boolean = () => true, keep?: unknown) => sortByName(enabled(key, keep).filter(filter), 'name').map(row => ({ value: row.id, label: label(row) }));
   const nameOf = (row: Row) => str(row.name);
-  const diameters = [...activeRows(rows, 'diameters')].sort((a, b) => Number(a.sorting) - Number(b.sorting));
+  const diameters = useDiameterOptions();
   const welders = rows.welders || [];
 
   function precheck() {
@@ -167,7 +169,7 @@ export function WeldDialog({ iso, weld, data, onClose }: { iso: Row; weld?: Row;
           {multiple && [2, 3, 4].map(index => <SelectField key={index} label={`Welder ${index}`} value={values[`welder${index}Id`]} error={e[`welder${index}Id`]} options={welderOptions(welders, [values[`welder${index}Id`]])} onChange={set1(`welder${index}Id`)}/>)}
         </>, true)}
         {section('Diameter and length', <>
-          <SelectField label="Dia." value={explicit ? '__length' : values.diameterId} error={e.diameterId} placeholder="Select diameter" options={[{ value: '__length', label: '-- Length in mm --' }, ...diameters.map(row => ({ value: row.id, label: str(row.diameter) }))]} onChange={value => set(value === '__length' ? { lengthMode: 'Length in mm', diameterId: '' } : { lengthMode: 'Diameter', diameterId: value, dialen: '', ndtpercent: '' })}/>
+          <SelectField label="Dia." value={explicit ? '__length' : diameterOptionValue(diameters, values.diameterId)} error={e.diameterId} placeholder="Select diameter" options={[{ value: '__length', label: '-- Length in mm --' }, ...diameters]} onChange={value => set(value === '__length' ? { lengthMode: 'Length in mm', diameterId: '' } : { lengthMode: 'Diameter', diameterId: value, dialen: '', ndtpercent: '' })}/>
           {explicit && <TextField label="Length in mm" type="number" min={0} value={values.dialen} error={e.dialen} onChange={value => set({ dialen: value === '' ? '' : Number(value) })}/>}
           {explicit && Boolean(values.ndoReq) && <TextField label="NDT percent" type="number" min={0} max={100} value={values.ndtpercent} error={e.ndtpercent} hint="0 to 100. Only for an explicit length with NDT required." onChange={value => set({ ndtpercent: value === '' ? '' : Number(value) })}/>}
         </>)}
@@ -209,7 +211,7 @@ function RangeDialog({ iso, data, onClose, onBack }: { iso: Row; data: WeldData;
   const { rows, refresh, notify } = useWorkspace();
   const [start, setStart] = useState<number | ''>(''), [end, setEnd] = useState<number | ''>(''), [diameterId, setDiameter] = useState('');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const diameters = [...activeRows(rows, 'diameters')].sort((a, b) => Number(a.sorting) - Number(b.sorting));
+  const diameters = useDiameterOptions();
   let plan: ReturnType<typeof planWeldRange> | null = null, problem = '';
   if (start !== '' && end !== '') { try { plan = planWeldRange(start, end, data.welds.map(weld => str(weld.weldNo))); } catch (failure) { problem = (failure as Error).message; } }
   async function submit(event: FormEvent) {
@@ -225,7 +227,7 @@ function RangeDialog({ iso, data, onClose, onBack }: { iso: Row; data: WeldData;
       <div className="form-grid">
         <TextField label="Weld no. Start" required type="number" min={0} value={start} onChange={value => setStart(value === '' ? '' : Number(value))}/>
         <TextField label="Weld no. End" required type="number" min={0} value={end} onChange={value => setEnd(value === '' ? '' : Number(value))}/>
-        <SelectField label="Dia." value={diameterId} placeholder="Select diameter" options={diameters.map(row => ({ value: row.id, label: str(row.diameter) }))} onChange={setDiameter}/>
+        <SelectField label="Dia." value={diameterOptionValue(diameters, diameterId)} placeholder="Select diameter" options={diameters} onChange={setDiameter}/>
       </div>
       {plan && <p className="weld-range-preview" role="status">{plan.numbers.length ? <>Adds <strong>{plan.numbers.length}</strong> {plan.numbers.length === 1 ? 'weld' : 'welds'}: {plan.numbers.slice(0, 8).join(', ')}{plan.numbers.length > 8 ? ` … ${plan.numbers.at(-1)}` : ''}.</> : 'Every number in this range already exists.'}{plan.skipped.length > 0 && <> Skipped, already on the isometric: {plan.skipped.slice(0, 8).join(', ')}{plan.skipped.length > 8 ? '…' : ''}.</>}</p>}
       <p className="muted">All welds of the range are added together or none are. They follow the existing numbering and come last in the table.</p>
@@ -243,7 +245,7 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
   const set = (name: string) => (value: unknown) => setChanges(current => { const next = { ...current }; if (value === '' || value === undefined) delete next[name]; else next[name] = value; return next; });
   // Mass edit sets new values only, so catalog records switched off on the active main project are not offered.
   const options = (key: string, label: (row: Row) => string = row => str(row.name)) => sortByName(enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows), 'name').map(row => ({ value: row.id, label: label(row) }));
-  const diameters = [...activeRows(rows, 'diameters')].sort((a, b) => Number(a.sorting) - Number(b.sorting));
+  const diameters = useDiameterOptions();
   const flag = (name: string, label: string) => <SelectField key={name} label={label} value={changes[name] === undefined ? '' : changes[name] ? 'yes' : 'no'} placeholder="Keep current" options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} onChange={value => set(name)(value === '' ? '' : value === 'yes')}/>;
   const chargeField = (side: 1 | 2) => <SelectField label={`Charge number ${side}`} value={chargeValue(changes, side)} placeholder="Keep current" options={chargeOptions(data, str(changes[`certificate${side}Id`]))} error={fields[`chargeNo${side}`] || fields[`certificate${side}Id`]} onChange={value => setChanges(current => { const next = { ...current }; for (const name of [`chargeNo${side}`, `certificate${side}Id`, `material${side}Id`]) delete next[name]; return value ? { ...next, ...chargeSelection(value, side, data.certificates) } : next; })}/>;
   async function submit(event: FormEvent) {
@@ -270,7 +272,7 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
         {chargeField(1)}{chargeField(2)}
         <div className="weld-clearable"><TextField label="Fitup date" type="date" value={clear.datefit ? '' : changes.datefit} error={e.datefit} onChange={value => { setClear(current => ({ ...current, datefit: false })); set('datefit')(value); }}/><CheckField label="Clear date" checked={clear.datefit} onChange={checked => { setClear(current => ({ ...current, datefit: checked })); if (checked) set('datefit')(''); }}/></div>
         <div className="weld-clearable"><TextField label="Weld date" type="date" value={clear.date ? '' : changes.date} error={e.date} onChange={value => { setClear(current => ({ ...current, date: false })); set('date')(value); }}/><CheckField label="Clear date" checked={clear.date} onChange={checked => { setClear(current => ({ ...current, date: checked })); if (checked) set('date')(''); }}/></div>
-        <SelectField label="Dia." value={changes.diameterId} error={e.diameterId} placeholder="Keep current" options={diameters.map(row => ({ value: row.id, label: str(row.diameter) }))} onChange={value => { set('diameterId')(value); if (value) set('dialen')(''); }}/>
+        <SelectField label="Dia." value={changes.diameterId} error={e.diameterId} placeholder="Keep current" options={diameters} onChange={value => { set('diameterId')(value); if (value) set('dialen')(''); }}/>
         <TextField label="Length in mm" type="number" min={0} value={changes.dialen} error={e.dialen} onChange={value => { set('dialen')(value === '' ? '' : Number(value)); if (value !== '') set('diameterId')(''); }}/>
         {FLAGS.map(name => flag(name, FLAG_LABELS[name]))}{flag('tracer', 'Tracer')}
       </div>
