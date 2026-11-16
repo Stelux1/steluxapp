@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store, SYSTEM } from '../server/store.ts';
-import { seed } from '../server/seed.ts';
+import { seed, seedInspectionSamples } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
 import { setAvailability, siteOfRecord } from '../server/weld-catalogs.ts';
@@ -13,7 +13,7 @@ import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
-import { ATTACHMENT_POSITIONS, DEFECT_CODE_NORMS, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, missingRequired, orderedAttachmentNames, selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, missingRequired, orderedAttachmentNames, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
@@ -284,5 +284,17 @@ test('copy isometrics keeps weld references to catalog records since switched of
   assert.equal(copied.length, originals.length);
   for (const original of originals) assert.equal(copied.find(weld => weld.weldNo === original.weldNo)?.typeId || '', original.typeId || '', `${original.weldNo} keeps its weld type`);
   assert.throws(() => store.create('welds', { weldNo: 'W950', isoId: copy.id, typeId: types[0] }, SYSTEM), /highlighted/, 'a newly chosen switched-off weld type is still refused');
+  store.close();
+});
+
+test('the NDT sample records only defect codes the weld\'s main project may select', () => {
+  const store = new Store(':memory:'); seed(store); seedInspectionSamples(store);
+  const rows = { ndt_defect_codes: store.list('ndt_defect_codes'), [CATALOG_SITES]: store.list(CATALOG_SITES) };
+  const recorded = store.list('inspection_results').filter(result => result.defectType);
+  assert.ok(recorded.length >= 2, 'the sample has rejected results with a defect type');
+  for (const result of recorded) {
+    const siteId = siteOfRecord(store, 'inspection_results', result), site = store.get('sites', siteId);
+    assert.ok(selectableDefectCodes(rows, site, siteId).some(code => code.code === result.defectType), `${String(result.defectType)} is selectable on ${siteId}`);
+  }
   store.close();
 });

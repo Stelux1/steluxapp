@@ -1,4 +1,5 @@
 import type { ActionDefinition, ActionField, Module } from './types.ts';
+import { INSPECTION_ACTIONS } from './inspections.ts';
 const ref = (name: string, label: string, resource: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'ref', ref: resource, required: true, ...extra });
 const text = (name: string, label: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'text', ...extra });
 const number = (name = 'quantity', label = 'Quantity', extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'number', min: 0.000001, required: true, ...extra });
@@ -39,6 +40,7 @@ add('save-weld', 'Save weld', 'welding', 'Add or edit a weld; optionally copy a 
 add('add-welds', 'Add welds', 'welding', 'Create the missing weld numbers between a start and an end number.', [ref('isoId', 'Isometric', 'isometrics'), number('start', 'Weld no. Start', { min: 0 }), number('end', 'Weld no. End', { min: 0 }), ref('diameterId', 'Dia.', 'diameters', { required: false })], 'Add welds');
 add('mass-edit-welds', 'Mass edit welds', 'welding', 'Change the same fields on every checked weld. Only the fields you change are written.', [ref('weldIds', 'Welds', 'welds', { multiple: true })], 'Update welds');
 add('reorder-welds', 'Reorder welds', 'welding', 'Store a new table order for the welds of an isometric.', [ref('isoId', 'Isometric', 'isometrics'), ref('weldIds', 'Welds', 'welds', { multiple: true })], 'Save order');
+defs.push(...INSPECTION_ACTIONS);
 export const ACTIONS = Object.fromEntries(defs.map(d => [d.key, d]));
 export const ACTION_LIST = defs;
 export function actionPermission(key: string): Module { return ACTIONS[key].module; }

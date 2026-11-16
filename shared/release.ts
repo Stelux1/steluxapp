@@ -5,6 +5,7 @@ import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
 import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
 import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
+import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -141,6 +142,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions['mass-edit-welds'] = fields('weldIds changes versions');
     availability.actions['reorder-welds'] = fields('isoId weldIds');
     availability.features.push('project-planning', 'pilots');
+    // NDT per weld, tracers, repairs, visual inspection, Pre-HT / PWHT and the NDT/PWHT Manager (shared/inspections.ts).
+    deliverInspections(availability, deliverResource);
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
   return availability;
@@ -216,6 +219,7 @@ export function pageAvailable(availability: Availability | undefined, pathname: 
 function deliveredPage(availability: Availability, pathname: string, definitions: Resource[]): boolean {
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
+  if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);

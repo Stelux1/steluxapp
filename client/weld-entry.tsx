@@ -6,6 +6,7 @@ import { availableWps } from './catalog.ts';
 import { ApiError, post, formatDate } from './api.ts';
 import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
+import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
 import {
@@ -329,6 +330,8 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
   const [selected, setSelected] = useState<string[]>([]), [sortingOff, setSortingOff] = useState(readSorting);
   const [dialog, setDialog] = useState<'add' | 'mass' | 'delete' | 'deleted' | null>(null), [editing, setEditing] = useState<Row | null>(null), [stamping, setStamping] = useState<Row | null>(null), [removing, setRemoving] = useState<Row[]>([]);
   const [dragging, setDragging] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [announce, setAnnounce] = useState('');
+  // NDT / visual inspection / PWHT entries of the inspections flow (already filtered by permission and the 'inspections' feature).
+  const inspectionMenu = useInspectionMenu(str(iso.id)), [inspection, setInspection] = useState<InspectionMenuItem | null>(null);
   const { welds } = data, order = welds.map(weld => weld.id);
   const locks = new Map(welds.map(weld => [weld.id, weldLock(weld, data.lock)]));
   const checked = welds.filter(weld => selected.includes(weld.id) && !locks.get(weld.id)!.locked);
@@ -353,6 +356,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
           <button type="button" disabled={!canAttachments} onClick={onAttachments}>Attachments</button>
           <button type="button" onClick={onAuditTrail}>Audit trail</button>
           <button type="button" disabled={!canSetPhase} onClick={onSetPhase}>Set phase</button>
+          {inspectionMenu.map(item => <button key={item.key} type="button" onClick={() => setInspection(item)}>{item.label}</button>)}
           <button type="button" onClick={() => setDialog('deleted')}>Show deleted welds{data.deleted.length ? ` (${data.deleted.length})` : ''}</button>
           <button type="button" disabled={!canDelete || !checked.length} onClick={() => { setRemoving(checked); setDialog('delete'); }}>Delete selected{checked.length ? ` (${checked.length})` : ''}</button>
           <button type="button" role="menuitemcheckbox" aria-checked={sortingOff} onClick={toggleSorting}>{sortingOff ? '☑' : '☐'} Disable welds sorting</button>
@@ -393,6 +397,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     {dialog === 'mass' && <MassEditDialog iso={iso} data={data} selected={checked} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
     {dialog === 'delete' && <DeleteDialog welds={removing} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
     {dialog === 'deleted' && <DeletedDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
+    {inspection && <inspection.Dialog isoId={str(iso.id)} weldIds={checked.map(weld => weld.id)} onClose={() => setInspection(null)}/>}
   </section>;
 }
 
