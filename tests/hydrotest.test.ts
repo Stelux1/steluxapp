@@ -13,7 +13,7 @@ import { RESOURCE_MAP } from '../shared/resources.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { HYDROTEST_DOCUMENT_TYPES, SPOOL_COLUMNS, hydrotestState, spoolColour, spoolFacts, spoolTestSystemId, testSystemColour, TS_NOT_APPLICABLE } from '../shared/hydrotest.ts';
-import { backfillSpoolTestSystems } from '../server/hydrotest.ts';
+import { spoolsOfSystem } from '../shared/hydrotest.ts';
 import { isoProgress, type IsoStatusInput } from '../shared/iso-status.ts';
 import { PILOT_MAP, pilotItemPath } from '../shared/pilots.ts';
 import type { Row } from '../shared/types.ts';
@@ -143,19 +143,26 @@ test('hydrotestState follows every spool: two spools in two systems complete onl
   assert.deepEqual(stateOf(s, 'iso-1'), { inScope: true, completed: true });
 });
 
-test('a spool saved before spool level follows its isometric until the backfill writes the value once', () => {
+test('a spool saved before spool level follows its isometric when read; nothing writes the value onto it', () => {
   const iso1 = row('iso', { testSystemId: 'ts' });
   assert.equal(spoolTestSystemId(row('sp', { isoId: 'iso' }), iso1), 'ts', 'no own value: the isometric decides');
   assert.equal(spoolTestSystemId(row('sp', { isoId: 'iso', testSystemId: '' }), iso1), '', 'an own empty value is kept');
   const s = store();
-  const spool = spoolOf(s, 'iso-1');
-  const { testSystemId: _removed, ...data } = s.get('spools', spool.id);
-  s.db.prepare('UPDATE "spools" SET data=? WHERE id=?').run(JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => !key.startsWith('_') && key !== 'id'))), spool.id);
+  // Two spools of iso-1 as an older workspace stored them: no test system of their own.
+  const strip = (id: string) => { const { testSystemId: _removed, ...data } = s.get('spools', id); s.db.prepare('UPDATE "spools" SET data=? WHERE id=?').run(JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key]) => !key.startsWith('_') && key !== 'id'))), id); };
+  const spool = spoolOf(s, 'iso-1'); strip(spool.id);
+  const second = s.create('spools', { name: 'SP-001B', isoId: 'iso-1', diameter: '2' }); strip(second.id);
+  const raw = () => s.db.prepare('SELECT id, data, version, updated_at FROM "spools" ORDER BY id').all();
+  const stored = raw();
+  seed(s);
+  assert.deepEqual(raw(), stored, 'a local start writes nothing onto the spools');
   assert.equal(s.get('spools', spool.id).testSystemId, undefined);
-  assert.deepEqual(backfillSpoolTestSystems(s, { dryRun: true }), { spools: 1 });
-  assert.deepEqual(backfillSpoolTestSystems(s), { spools: 1 });
-  assert.equal(s.get('spools', spool.id).testSystemId, 'test-cw');
-  assert.deepEqual(backfillSpoolTestSystems(s), { spools: 0 }, 'idempotent');
+  assert.deepEqual(spoolsOfSystem('test-cw', { spools: s.list('spools'), isometrics: s.list('isometrics') }).map(entry => entry.spool.id).filter(id => [spool.id, second.id].includes(id)).sort(), [spool.id, second.id].sort(), 'the Spools tab filter and the release take them in their isometric\'s system');
+  assert.deepEqual(stateOf(s, 'iso-1').inScope, true);
+  // Moving one of them leaves the other in the system it shows, although the isometric's own field follows the moved one.
+  runAction(s, 'hydrotest-move', { spoolIds: [spool.id], testSystemId: 'test-st' }, actor);
+  assert.equal(s.get('spools', spool.id).testSystemId, 'test-st');
+  assert.equal(spoolTestSystemId(s.get('spools', second.id), s.get('isometrics', 'iso-1')), 'test-cw', 'the other spool stays in CW-01');
 });
 
 test('Enter results: every result stays in the history; Accepted ticked marks the system accepted and completes its spools', () => {

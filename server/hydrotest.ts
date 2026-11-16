@@ -44,9 +44,16 @@ function moveSpools(store: Store, data: Input, actor: Actor): Result {
   const systemId = str(data.testSystemId);
   if (systemId) store.get('test_systems', systemId);
   const spools = spoolIds.map(id => store.get('spools', id));
+  // A spool saved before test systems moved to spool level follows its isometric. The isometric's own test system follows
+  // its spools after the move, so its other spools without one of their own keep the system they show now.
+  const moving = new Set(spools.map(spool => spool.id));
+  for (const isoId of new Set(spools.map(spool => String(spool.isoId)))) {
+    const iso = store.get('isometrics', isoId);
+    for (const sibling of store.list('spools').filter(row => row.isoId === iso.id && !moving.has(row.id) && (row.testSystemId === undefined || row.testSystemId === null))) store.update('spools', sibling.id, { testSystemId: spoolTestSystemId(sibling, iso) }, sibling._version, actor);
+  }
   const records = spools.map(spool => {
     store.get('isometrics', spool.isoId);
-    return spool.testSystemId === systemId ? spool : store.update('spools', spool.id, { testSystemId: systemId }, spool._version, actor);
+    return spool.testSystemId !== undefined && spool.testSystemId !== null && spool.testSystemId === systemId ? spool : store.update('spools', spool.id, { testSystemId: systemId }, spool._version, actor);
   });
   for (const isoId of new Set(spools.map(spool => String(spool.isoId)))) syncIsometric(store, isoId, actor);
   return { resource: 'spools', records };
@@ -108,26 +115,6 @@ function deleteDocuments(store: Store, data: Input, actor: Actor): Result {
   if (missing.length) throw new AppError(422, 'Only documents of this test system can be deleted here.', { deleteIds: 'Check documents of this test system.' });
   const records = wanted.map(id => store.archive('attachments', id, own.get(id)!._version, actor));
   return { resource: 'attachments', records };
-}
-
-/**
- * Spools saved before test systems moved to spool level have no test system of their own; they follow their isometric's.
- * Writes that value once onto every such spool (idempotent: a spool that has the field, also empty, is left alone).
- * Run by the hosted preparation step (server/prepare-welding.ts) and on every local start (server/seed.ts).
- */
-export function backfillSpoolTestSystems(store: Store, options: { dryRun?: boolean } = {}): { spools: number } {
-  const isos = new Map(store.list('isometrics', true).map(iso => [iso.id, iso]));
-  const pending = store.list('spools', true).filter(spool => spool.testSystemId === undefined || spool.testSystemId === null);
-  if (options.dryRun || !pending.length) return { spools: pending.length };
-  store.transaction(() => {
-    // Written as stored data (no validation, no audit event): only the derived value is added, nothing else changes.
-    const statement = store.db.prepare('UPDATE "spools" SET data=?,version=version+1,updated_at=? WHERE id=?');
-    for (const spool of pending) {
-      const { id, _version: _v, _archived: _a, _createdAt: _c, _updatedAt: _u, ...data } = spool;
-      statement.run(JSON.stringify({ ...data, testSystemId: spoolTestSystemId(spool, isos.get(String(spool.isoId))) }), new Date().toISOString(), id);
-    }
-  });
-  return { spools: pending.length };
 }
 
 /**

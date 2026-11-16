@@ -8,10 +8,8 @@ import { backupPostgres } from './postgres-backup.ts';
 import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { inspectHostedSchema, prepareHostedSchema } from './hosted-schema.ts';
 import { Store } from './store.ts';
-import { upgradeWeldCatalogs } from './catalog-upgrade.ts';
-import { loadDiameterCatalog, missingDiameterCatalog } from './diameter-catalog.ts';
 import { runHostedPreparation } from './hosted-preparation.ts';
-import { backfillSpoolTestSystems } from './hydrotest.ts';
+import { hostedDataSteps } from './hosted-data-steps.ts';
 
 // Hosted update, one sequence (server/hosted-preparation.ts): decide what is pending, take ONE backup before the first
 // change, bring the schema to this release in one transaction (server/hosted-schema.ts), then run the data steps.
@@ -27,14 +25,8 @@ try {
   const outcome = runHostedPreparation({
     schemaUpToDate: () => inspectHostedSchema(db).upToDate,
     prepareSchema: options => prepareHostedSchema(db, options),
-    dataSteps: [
-      // The data this release ships: the missing standard defect codes, added only (server/catalog-upgrade.ts).
-      { name: 'catalogData', run: options => upgradeWeldCatalogs(store(), options) },
-      // The reference diameter catalog: adds the diameters the workspace does not hold and never changes one that exists.
-      { name: 'diameterCatalog', run: ({ dryRun: counting }) => ({ added: counting ? missingDiameterCatalog(store()).length : loadDiameterCatalog(store()) }) },
-      // Test systems at spool level: a spool without a test system of its own takes its isometric's, once (server/hydrotest.ts).
-      { name: 'spoolTestSystems', run: options => backfillSpoolTestSystems(store(), options) },
-    ],
+    // The data steps only insert (server/hosted-data-steps.ts).
+    dataSteps: hostedDataSteps(store),
     backup: () => {
       const destination = resolve('backups', `before-welding-live-${new Date().toISOString().replaceAll(':', '-')}`);
       mkdirSync(destination, { recursive: true, mode: 0o700 });

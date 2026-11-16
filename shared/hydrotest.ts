@@ -151,7 +151,8 @@ export function hydrotestErrors(key: string, data: Record<string, unknown>): Rec
 
 /**
  * The test system of a spool. A spool saved before test systems moved to spool level has no `testSystemId` of its own:
- * it follows its isometric's (the preparation step writes that value once, see `server/hydrotest.ts`).
+ * it follows its isometric's. Nothing writes that value onto old spools (the hosted preparation only inserts); every reader
+ * (Spools tab and its filter, hydrotest state of an isometric, release dialog, Pressure Test Plan) goes through this function.
  */
 export function spoolTestSystemId(spool: Row, iso?: Row | null): string {
   return spool.testSystemId === undefined || spool.testSystemId === null ? text(iso?.testSystemId) : text(spool.testSystemId);

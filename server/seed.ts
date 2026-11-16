@@ -1,6 +1,6 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
-import { backfillSpoolTestSystems, seedHydrotest } from './hydrotest.ts';
+import { seedHydrotest } from './hydrotest.ts';
 import { seedItpSamples } from './itp-dashboard.ts';
 import { seedWeldCatalogs } from './weld-catalogs-seed.ts';
 import { seedWeldEntry } from './weld-entry.ts';
@@ -9,8 +9,8 @@ import { seedMtoStock } from './mto-stock-seed.ts';
 import { loadDiameterCatalog } from './diameter-catalog.ts';
 
 export function seed(store: Store) {
-  // Spools of a workspace seeded before test systems moved to spool level take their isometric's test system once.
-  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) { backfillSpoolTestSystems(store); return; }
+  // An existing workspace is left as stored: a spool saved before test systems moved to spool level follows its isometric when read (shared/hydrotest.ts).
+  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
   store.transaction(() => {
     const add = (key: string, id: string, data: Record<string, unknown>) => store.create(key, data, SYSTEM, id);
     const action = (key: string, data: Record<string, unknown>) => runAction(store, key, data, SYSTEM);

@@ -16,6 +16,8 @@ import type { Bootstrap, Row } from '../shared/types.ts';
 import { seed } from '../server/seed.ts';
 import { upgradeWeldCatalogs } from '../server/catalog-upgrade.ts';
 import { loadDiameterCatalog, missingDiameterCatalog } from '../server/diameter-catalog.ts';
+import { hostedDataSteps } from '../server/hosted-data-steps.ts';
+import { spoolTestSystemId, spoolsOfSystem } from '../shared/hydrotest.ts';
 
 /**
  * A database in memory for the sequence of server/prepare-welding.ts: a schema that is behind until prepared, the
@@ -100,6 +102,14 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   const oldIds = old.map(([code, english, dutch, group, norm]) => store.create('ndt_defect_codes', { code, english, dutch, group, norm, system: false }, SYSTEM).id);
   const engineer = store.get('qa_engineers', 'qa-1'); store.update('qa_engineers', engineer.id, { company: '' }, engineer._version, SYSTEM);
   assert.equal(store.get('qa_engineers', 'qa-1').companyId, 'company-stelux');
+  // Spools saved before test systems moved to spool level: no test system of their own.
+  const oldSpools = store.list('spools').slice(0, 3);
+  for (const spool of oldSpools) {
+    const { id, _version, _archived, _createdAt, _updatedAt, testSystemId: _removed, ...data } = spool;
+    store.db.prepare('UPDATE "spools" SET data=? WHERE id=?').run(JSON.stringify(data), id);
+  }
+  assert.ok(oldSpools.every(spool => store.get('spools', spool.id).testSystemId === undefined));
+  assert.ok(oldSpools.some(spool => store.get('isometrics', spool.isoId).testSystemId), 'at least one old spool sits on an isometric with a test system');
 
   // Every row of every record type, as stored (the raw data text, version, archived flag and timestamps).
   const snapshot = () => new Map(RESOURCES.map(resource => [resource.key, new Map((store.db.prepare(`SELECT id, data, version, archived, created_at, updated_at FROM "${resource.key}"`).all() as { id: string }[]).map(row => [row.id, { ...row }]))]));
@@ -107,10 +117,8 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   const parts: PreparationParts = {
     schemaUpToDate: () => true,
     prepareSchema: ({ dryRun }) => ({ dryRun, upToDate: true, created: { tables: [], columns: [], foreignKeys: [], indexes: [], rowLevelSecurity: [] }, columns: [], counts: {}, recordsPreserved: true } as unknown as PrepareResult),
-    dataSteps: [
-      { name: 'catalogData', run: options => upgradeWeldCatalogs(store, options) },
-      { name: 'diameterCatalog', run: ({ dryRun }) => ({ added: dryRun ? missingDiameterCatalog(store).length : loadDiameterCatalog(store) }) },
-    ],
+    // The real list of server/prepare-welding.ts.
+    dataSteps: hostedDataSteps(() => store),
     backup: () => 'backup',
   };
   const missing = STANDARD_DEFECT_CODES.length - 2;
@@ -134,6 +142,15 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   assert.equal(isLockedRecord('ndt_defect_codes', rows.ndt_defect_codes!.find(row => row.id === oldIds[2])!, true), false, 'a code of its own stays editable');
   assert.equal((await request(`/api/records/ndt_defect_codes/${fusion.id}`, 'PUT', { english: 'Other', _version: fusion._version })).status, 403);
   assert.equal((await request(`/api/records/ndt_defect_codes/${oldIds[1]}/archive`, 'POST', { _version: store.get('ndt_defect_codes', oldIds[1])._version })).status, 403);
+  // The old spools are left as stored and follow their isometric's test system wherever they are read.
+  for (const spool of oldSpools) {
+    const shown = rows.spools!.find(row => row.id === spool.id)!, iso = rows.isometrics!.find(row => row.id === spool.isoId)!;
+    assert.equal(shown.testSystemId, undefined, 'nothing written onto the spool');
+    assert.equal(spoolTestSystemId(shown, iso), String(iso.testSystemId ?? ''), 'it shows its isometric\'s test system');
+    if (iso.testSystemId) assert.ok(spoolsOfSystem(String(iso.testSystemId), rows).some(entry => entry.spool.id === spool.id), 'the Spools tab filter of that system lists it');
+  }
+  // A local start on this workspace writes nothing either.
+  const beforeStart = snapshot(); seed(store); assert.deepEqual(snapshot(), beforeStart, 'start-up changes no stored row');
   const listed = rows.qa_engineers!.find((row: Row) => row.id === 'qa-1')!;
   assert.equal(listed.company, 'Stelux Engineering', 'list and form show the linked company');
   assert.equal(store.get('qa_engineers', 'qa-1').company, '', 'and nothing was written');
