@@ -1,5 +1,7 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
+import { seedHydrotest } from './hydrotest.ts';
+import { seedItpSamples } from './itp-dashboard.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
@@ -86,10 +88,17 @@ export function seed(store: Store) {
     }
     action('repair', { weldId: 'weld-5', date: '2026-10-21', note: 'Sample repair record — repeat examination pending.' });
     add('punchlists', 'punch-1', { name: 'Confirm support tag on cooling line', isoId: 'iso-2', category: 'B', status: 'Open', assignedTo: 'Site team', dueDate: '2026-10-27' });
+    // Flange Management sample records: one per status. Torque values are sample entries, not catalog values.
+    const flangeBase = { gasket_type: 'Spiral wound', gasket_material: '316L / flexible graphite', flange_type: 'Weld neck (WN)', flange_rating: 'Class 150', studbolt_afmeting: '3/4" x 110 mm', stud_dia: '3/4"', matl_studbolts: 'ASTM A193 B7', materiaal_moer: 'ASTM A194 2H', lubricant_used: 'Molykote P-37', torque_wrench_type: 'Hydraulic square drive', pipe_class: 'CS150' };
+    add('flanges', 'flange-1', { ...flangeBase, isoId: 'iso-1', flange_id: 'FL-CW-001', assetTag: 'AT-CW-FL-001', from_equipment: 'P-101A', to_equipment: 'Line 6"-CW-1101', eq_con: 'Pump discharge', pid: 'P&ID-CW-01', line_number: '6"-CW-1101-CS150', fluid_code: 'CW', area_unit: 'Area 1 / Cooling', location: 'Pump deck', flange_size: '6" (DN150)', aantal_studbolts: 8, operatingPressure: '10 bar', operatingTemp: '35 °C', testPressure: '15 bar', criticality: 'Medium' });
+    add('flanges', 'flange-2', { ...flangeBase, isoId: 'iso-1', flange_id: 'FL-CW-002', assetTag: 'AT-CW-FL-002', from_equipment: 'Line 6"-CW-1101', to_equipment: 'V-101 gate valve', eq_con: 'Valve inlet', pid: 'P&ID-CW-01', line_number: '6"-CW-1101-CS150', fluid_code: 'CW', area_unit: 'Area 1 / Cooling', location: 'Pump deck', flange_size: '6" (DN150)', aantal_studbolts: 8, torque_wrench_id: 'TW-014', first_pass_nm: 60, second_pass_nm: 120, target_moment_nm: 190, max_dev: 10, tightning_date: '2026-10-19', report_nr: 'FT-2026-031', operator: 'Alex Taylor' });
+    add('flanges', 'flange-3', { ...flangeBase, isoId: 'iso-2', flange_id: 'FL-CW-003', assetTag: 'AT-CW-FL-003', from_equipment: 'Line 4"-CW-1102', to_equipment: 'HX-201 shell inlet', eq_con: 'Heat exchanger nozzle N1', pid: 'P&ID-CW-02', line_number: '4"-CW-1102-CS150', fluid_code: 'CW', area_unit: 'Area 1 / Cooling', location: 'Exchanger bay', flange_size: '4" (DN100)', aantal_studbolts: 8, studbolt_afmeting: '5/8" x 100 mm', stud_dia: '5/8"', torque_wrench_id: 'TW-014', first_pass_nm: 40, second_pass_nm: 80, target_moment_nm: 125, max_dev: 8, tightning_date: '2026-10-21', report_nr: 'FT-2026-034', operator: 'Robin Lane', cqi: 'CQI-2026-112', insp_result: 'Accepted', highRisk: true });
+    add('flanges', 'flange-4', { ...flangeBase, isoId: 'iso-4', flange_id: 'FL-ST-004', assetTag: 'AT-ST-FL-004', from_equipment: 'Line 3"-ST-2101', to_equipment: 'PSV-301 inlet', eq_con: 'Relief valve inlet', pid: 'P&ID-ST-01', line_number: '3"-ST-2101-SS300', fluid_code: 'ST', area_unit: 'Area 2 / Steam', location: 'Skid level 2', flange_size: '3" (DN80)', gasket_material: '316L / PTFE envelope', aantal_studbolts: 4, studbolt_afmeting: '5/8" x 90 mm', stud_dia: '5/8"', torque_wrench_id: 'TW-022', first_pass_nm: 35, second_pass_nm: 70, target_moment_nm: 110, max_dev: 8, tightning_date: '2026-10-26', report_nr: 'FT-2026-040', operator: 'Casey Brooks', cqi: 'CQI-2026-120', insp_result: 'Accepted', commisioning_date: '2026-11-02', operatingPressure: '8 bar', operatingTemp: '175 °C', testPressure: '12 bar', finished: true });
     action('release', { isoIds: ['iso-9'], type: 'Prefab', reportNo: 'PFR-001', engineerId: 'qa-1', date: '2026-10-20' });
     action('release', { isoIds: ['iso-3'], type: 'Prefab', reportNo: 'PFR-002', engineerId: 'qa-1', date: '2026-10-22' });
     action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
+    seedHydrotest(store);
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });
     if ('record' in po && po.record) { const line = store.list('order_lines').find(l => l.orderId === po.record?.id)!; action('receive', { orderId: po.record.id, warehouseId: 'warehouse-main', date: '2026-10-20', items: [{ lineId: line.id, quantity: 12, chargeNo: 'H-1043' }] }); }
@@ -101,6 +110,7 @@ export function seed(store: Store) {
     ['Alex Taylor', 'Robin Lane', 'Casey Brooks', 'Jordan Reed'].forEach((name, i) => add('clients', `client-${i + 1}`, { barcode: `C-${1001 + i}`, name, companyId: 'company-stelux', warehouseId: 'warehouse-main' }));
     for (let i = 1; i <= 5; i++) action('rent', { articleId: `article-${i}`, warehouseId: 'warehouse-main', clientId: `client-${i % 4 + 1}`, quantity: i === 3 ? 1 : 2, date: '2026-10-18', dueDate: i === 2 ? '2026-10-20' : '2026-10-28' });
     action('rent', { articleId: 'article-6', warehouseId: 'warehouse-main', clientId: 'client-1', quantity: 3, date: '2026-10-19' });
+    seedItpSamples(store);
     store.db.prepare('DELETE FROM audit').run();
     store.audit('projects', 'project-cooling', 'created', 'Cooling water expansion added to the workspace', SYSTEM);
     store.audit('orders', '', 'received', 'Partial delivery recorded from Atlas Steel Supply', SYSTEM);
@@ -131,5 +141,17 @@ export function seedAccessSamples(store: Store) {
     user('user-sample-engineer', { name: 'Sara Jansen', email: 'sara.jansen@example.com', title: 'Project engineer', phone: '+31 10 555 0193', profileId: 'profile-review', weldEnabled: true, weldProfileId: 'profile-qaqc', mtoEnabled: true, mtoProfileId: 'profile-review' });
     user('user-sample-reviewer', { name: 'External reviewer', email: 'reviewer@example.com', title: 'Client inspector', companyId: 'company-stelux', profileId: 'profile-review' });
     store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_access_v1','1')").run();
+  });
+}
+
+/**
+ * Sample company data for documents (local sample workspace of the hosted profile only; never called for a
+ * connected database): a fictional contractor, no logo. Runs once; an existing company record is left untouched.
+ */
+export function seedCompanySample(store: Store) {
+  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_company_v1'").get()) return;
+  store.transaction(() => {
+    if (!store.list('company_data', true).length) store.create('company_data', { name: 'Kestrel Pipe Fabrication B.V.', address: 'Havenstraat 112', address2: 'Unit 4, Prefab hall', zip: '3089 KB', residence: 'Rotterdam', phone: '+31 10 555 0100', logoHeight: 18 }, SYSTEM, 'company-data');
+    store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_company_v1','1')").run();
   });
 }

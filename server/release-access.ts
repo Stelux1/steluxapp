@@ -122,6 +122,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
   const administrators = (id: string): User[] => pilots ? PILOT_KEYS.map(pilot => inPilot(id, pilot)).filter((account): account is User => Boolean(account)) : [publicUser(store, id)];
   /** Pilots profile: a signature record always belongs to the account writing it; one record per signature type. */
   function owner(account: User, key: string, value: Record<string, unknown>, existing?: Row) {
+    if (pilots && key === 'company_data' && !existing && store.list('company_data').length) throw new AppError(409, 'Company data already exists. Edit it instead.');
     if (!pilots || key !== 'signatures') return;
     if (existing ? existing.userId !== account.id : value.userId !== account.id) throw new AppError(403, 'You can only change your own signatures.');
     if (value.userId !== undefined && value.userId !== account.id) throw new AppError(403, 'You can only change your own signatures.');

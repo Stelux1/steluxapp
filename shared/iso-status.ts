@@ -1,4 +1,5 @@
 import type { Row } from './types.ts';
+import { hydrotestState } from './hydrotest.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
 
 /**
@@ -18,6 +19,9 @@ export interface IsoStatusInput {
   results: Row[];
   /** Release records; `null` or absent when the account cannot read them (that blocker group is then skipped). */
   releases?: Row[] | null;
+  /** Test systems and hydrotest requests (see `hydrotestState`); absent or `null` when the account cannot read them. */
+  testSystems?: Row[] | null;
+  hydrotestRequests?: Row[] | null;
   /** Punch items; `null` or absent when the account cannot read them. */
   punch?: Row[] | null;
   /** Budgets of the pipe / supports / appendages drivers. Absent: those drivers are out of scope. */
@@ -206,12 +210,12 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
   if (!weights.configured) return { configured: false, phases: PROGRESS_PHASES.map(phase => ({ key: phase.key, label: phase.label, weight: 0, percent: null, drivers: [] })), total: null };
   const welds = isoWelds(input), inch = ndtMeasurement(input.site) === 'inch-weighted';
   const finish = ISO_FINISH_ITEMS.map((item): number | null => { const state = text(input.iso[item.field]) || 'Open'; return state === 'Done' ? 1 : state === 'Open' ? 0 : null; }).filter((value): value is number => value !== null);
-  const hydrotest = input.releases ? live(input.releases).some(row => row.isoId === input.iso.id && row.type === 'Hydrotest') : null;
+  const hydrotest = hydrotestState(input.iso, { test_systems: input.testSystems, hydrotest_requests: input.hydrotestRequests, releases: input.releases });
 
   /** Progress 0..1 of one driver, or null when it is out of scope. */
   const progressOf = (phase: PhaseKey, key: string): number | null => {
     if (phase === 'site') {
-      if (key === 'hydrotest') return text(input.iso.testSystemId) && hydrotest !== null ? (hydrotest ? 1 : 0) : null;
+      if (key === 'hydrotest') return hydrotest.inScope ? (hydrotest.completed ? 1 : 0) : null;
       return finish.length ? finish.reduce((sum, value) => sum + value, 0) / finish.length : null;
     }
     const inPhase = welds.filter(weld => locationOf(weld, input.weldTypes) === phase);

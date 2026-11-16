@@ -1,3 +1,4 @@
+import { checkItpLinkAccess } from './itp-dashboard.ts';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
@@ -24,6 +25,7 @@ import { isoSummariesFor } from './iso-summary.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { reportWorkbook } from './report-export.ts';
+import { registerPdfRoutes } from './pdf/routes.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -144,9 +146,11 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (req.query.format === 'xlsx') { res.attachment(`blitzkrieg-${definition.key}.xlsx`); await reportWorkbook(report).xlsx.write(res); res.end(); return; }
     res.setHeader('Cache-Control','no-store');res.attachment(`blitzkrieg-${definition.key}-${new Date().toISOString().slice(0,10)}.csv`).type('text/csv').send(reportCsv(report));
   });
+  registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body);
+    checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
@@ -155,6 +159,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
+    checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
@@ -276,7 +281,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       // A new signature image replaces the current one; earlier images stay as attachments (history).
       const signature = pilots && key === 'signatures';
-      if (signature) assertSignatureImage(req.file);
+      if (signature || pilots && key === 'company_data') assertSignatureImage(req.file);
       const record = store.transaction(() => { const row = store.create('attachments', { name, entityType: key, entityId: req.body.entityId, documentType: signature ? String(target.kind) : req.body.documentType || 'Attachment', mime: req.file!.mimetype, size: req.file!.size, note: req.body.note || '' }, actorOf(req)); documents.save(row.id, req.file!); return row; });
       res.status(201).json({ record });
     } catch (error) { documents.discard(req.file); throw error; }

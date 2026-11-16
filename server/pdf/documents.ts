@@ -1,0 +1,56 @@
+import type { Store } from '../store.ts';
+import { AppError } from '../store.ts';
+import type { documentStorage } from '../documents.ts';
+import { currentSignature } from '../signatures.ts';
+import { companyForDocuments } from './company.ts';
+import { lislPdf, type LislVariant } from './lisl.ts';
+import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
+import type { Row, User } from '../../shared/types.ts';
+
+/**
+ * Everything a document definition may use. `rows` are the records the account may read (already checked
+ * against its permissions and the current pilot); `iso` is a readable isometric of the current pilot.
+ */
+export interface PdfRequest {
+  store: Store; documents: ReturnType<typeof documentStorage>;
+  user: User; iso: Row; rows: Record<string, Row[]>;
+  query: Record<string, string>; now: Date;
+}
+export interface PdfResult { bytes: Uint8Array; /** Without extension. */ fileName: string }
+/**
+ * A downloadable document. `report` is the report key whose access rules apply (`canReport(user, report, 'export')`);
+ * another agent adds a document by appending one entry to PDF_DOCUMENTS.
+ */
+export interface PdfDocumentDefinition {
+  key: string; title: string; report: string;
+  build(request: PdfRequest): Promise<PdfResult>;
+}
+
+const flag = (value: string | undefined, fallback: boolean) => value === undefined || value === '' ? fallback : ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+const safe = (value: unknown, fallback: string) => String(value ?? '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || fallback;
+
+/** Options of the LISL dialog from the query: type=All|Shop|Field, weldRecord=1|0, signature=1|0. */
+export function lislOptions(query: Record<string, string>): LislOptions {
+  const type = query.type === undefined || query.type === '' ? DEFAULT_LISL_OPTIONS.type : query.type;
+  if (!(LISL_TYPES as readonly string[]).includes(type)) throw new AppError(422, 'Choose All, Shop or Field.', { type: 'Choose All, Shop or Field.' });
+  return { type: type as LislType, weldRecord: flag(query.weldRecord, DEFAULT_LISL_OPTIONS.weldRecord), signaturePerPage: flag(query.signature, DEFAULT_LISL_OPTIONS.signaturePerPage) };
+}
+
+const lisl = (key: string, title: string, variant: LislVariant, suffix: string): PdfDocumentDefinition => ({
+  key, title, report: 'lisl',
+  async build({ store, documents, user, iso, rows, query, now }) {
+    const options = lislOptions(query);
+    const model = lislModel(rows, iso.id, variant === 'blank' ? 'All' : options.type);
+    if (!model) throw new AppError(404, 'This isometric could not be found.');
+    const signature = options.signaturePerPage ? currentSignature(store, documents, user.id, 'Short signature') : null;
+    const { bytes } = await lislPdf({ model, options, variant, company: companyForDocuments(store, documents), signature: signature && { content: signature.content, name: signature.name, nameUnder: signature.nameUnder }, generatedAt: now });
+    return { bytes, fileName: `${isoDate(now)}-${safe(model.project?.internnumber, 'project')}-LISL${suffix}` };
+  },
+});
+
+export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
+  lisl('lisl', 'LISL Report', 'a4', ''),
+  lisl('lisl-a3', 'LISL Report (A3)', 'a3', '-A3'),
+  lisl('lisl-blank', 'Blank LISL template', 'blank', '-template'),
+];

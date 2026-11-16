@@ -6,6 +6,7 @@ export const PQR_ATTRIBUTES=[
 export interface Relation {field:string;label:string;resource:string;ownerKey:string;target:string;targetKey:string;showIf?:ActionField['showIf'];}
 export const RELATIONS:Record<string,Relation[]>={
   wps:[{field:'pqrIds',label:'Procedure qualifications (PQRs)',resource:'wps_pqr',ownerKey:'wpsId',target:'pqr',targetKey:'pqrId'},{field:'projectIds',label:'Available on projects',resource:'wps_projects',ownerKey:'wpsId',target:'projects',targetKey:'projectId',showIf:['allProjects',false]},{field:'siteIds',label:'Enabled on project sites',resource:'wps_sites',ownerKey:'wpsId',target:'sites',targetKey:'siteId'}],
+  itps:[{field:'projectIds',label:'Linked projects',resource:'itp_projects',ownerKey:'itpId',target:'projects',targetKey:'projectId'}],
   welders:[{field:'siteIds',label:'Active on project sites',resource:'welder_sites',ownerKey:'welderId',target:'sites',targetKey:'siteId'},{field:'customIds',label:'Custom qualifications',resource:'welder_customs',ownerKey:'welderId',target:'welder_customs_catalog',targetKey:'customId'}]
 };
 export const relationFields=(owner:string):ActionField[]=>(RELATIONS[owner]||[]).map(r=>({name:r.field,label:r.label,type:'ref',ref:r.target,multiple:true,section:'Links & availability',showIf:r.showIf}));

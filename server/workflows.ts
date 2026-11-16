@@ -5,6 +5,7 @@ import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { Store, AppError, positive, qty, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
+import { runHydrotestAction } from './hydrotest.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -18,6 +19,7 @@ export function weldLength(store: Store, weld: Row) {
 }
 export function runAction(store: Store, key: string, data: Input, actor: Actor) {
   if (!ACTIONS[key]) throw new AppError(404, 'This action does not exist.');
+  if (key.startsWith('hydrotest-')) return runHydrotestAction(store, key, data, actor);
   return store.transaction(() => {
     const date = data.date ? validDate(data.date) : today();
     const note = str(data.note);
@@ -261,7 +263,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       for (const source of sources) { const number = String(source.isoNo).trim(); if (taken.has(number.toLowerCase())) clashes.push(number); taken.add(number.toLowerCase()); }
       if (clashes.length) throw new AppError(422, `ISO number${clashes.length === 1 ? '' : 's'} ${clashes.join(', ')} already exist${clashes.length === 1 ? 's' : ''} in project ${target.internnumber}. Nothing was copied.`);
       // What a copy carries: descriptive and technical fields, but not the project-bound assignments, the progress or the phase flags.
-      const leftOut = new Set(['projectId', 'testSystemId', 'fieldPackageId']);
+      const leftOut = new Set(['projectId', 'testSystemId', 'fieldPackageId', 'itpId', 'itp2Id']);
       const carried = RESOURCE_MAP.isometrics.fields.filter(field => !leftOut.has(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
       const wpsRows = Object.fromEntries(['projects', 'wps_projects', 'wps_sites'].map(name => [name, store.list(name)]));
       const copies: Row[] = [];

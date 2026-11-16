@@ -6,6 +6,7 @@ import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
+import { ItpLinkControl } from './itp-dashboard.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
@@ -43,7 +44,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   // computed here only where this pilot reads welds; elsewhere each group shows its count. Other profiles: computed here.
   const summary = isoSummaries?.[iso.id], weldItems = canRecord('welds');
   const status = useMemo(() => {
-    const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, budgets };
+    const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, testSystems: rows.test_systems ?? null, hydrotestRequests: rows.hydrotest_requests ?? null, budgets };
     const local = !summary || weldItems ? isoBlockers(input) : null;
     if (!summary) return { blockers: local!, quality: isoQuality(input), progress: isoProgress(input) };
     // A group lists its items only when the local calculation agrees with the server's count; otherwise its count line.
@@ -68,6 +69,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
           {historyAvailable ? <button className="text-link" onClick={() => setHistory(true)} aria-label={`${kind} revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}
           {!file && ' · no file'}</span></div></div>
       <div className="iso-slot-actions">
+        {pilot?.pilot.key === 'weld' && kind !== 'ISO' && <ItpLinkControl iso={iso} slot={kind === 'ITP' ? 1 : 2}/>}
         {canImport && <button className="icon-btn" aria-label={`Upload ${kind} document`} title={`Upload ${kind} document`} onClick={() => onUpload(kind)}><Upload size={16}/></button>}
         {canRevise && <button className="icon-btn" aria-label={`Add ${kind} revision`} title={`Add ${kind} revision`} onClick={() => setRevision(kind)}><Plus size={17}/></button>}
       </div>

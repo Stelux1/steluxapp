@@ -45,6 +45,9 @@ export interface IsoSummarySource {
   results: Row[] | null;
   releases: Row[] | null;
   punch: Row[] | null;
+  /** Test systems and hydrotest requests (the hydrotest driver, shared/hydrotest.ts); absent or null when unreadable. */
+  testSystems?: Row[] | null;
+  hydrotestRequests?: Row[] | null;
   /** Material requirements (the MTO budget of the progress drivers, once component codes exist). */
   requirements: Row[] | null;
   /** The calculation feature is delivered: the E flag exists. */
@@ -77,6 +80,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
     const input = {
       iso, site, welds: welds.get(iso.id) || [], weldTypes: source.weldTypes || [], diameters: source.diameters || [], results: results.get(iso.id) || [],
       releases: source.releases ? releases.get(iso.id) || [] : null, punch: source.punch ? punch.get(iso.id) || [] : null,
+      testSystems: source.testSystems ?? null, hydrotestRequests: source.hydrotestRequests ?? null,
       budgets: isoBudgets(iso, requirements.get(iso.id)),
     };
     const blockers = isoBlockers(input), quality = isoQuality(input), progress = isoProgress(input), flags = isoFlags(iso, context);

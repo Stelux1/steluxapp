@@ -2,6 +2,7 @@ import type { ActionDefinition, Availability, Field, Resource, Row } from './typ
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -121,9 +122,19 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
+    // ITP / KNR register (Weld Pilot → Welding data → ITPs) and its project links; the links have no menu page.
+    deliverResource(availability, 'itps', [...RESOURCE_MAP.itps.fields.map(field => field.name), 'projectIds']);
+    availability.resources.itp_projects = fields('itpId projectId ownerArchived');
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
-    for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
+    for (const key of ['users', 'profiles', 'signatures', 'company_data']) deliverResource(availability, key);
+    // Hydrotest release (shared/hydrotest.ts): test systems carry the client's acceptance; requests have no page of their own
+    // (they open from the test system), so they are delivered without a menu entry.
+    deliverResource(availability, 'test_systems', ['accepted']);
+    for (const resource of HYDROTEST_RESOURCES) availability.resources[resource.key] = resource.fields.map(field => field.name);
+    for (const action of HYDROTEST_ACTIONS) availability.actions[action.key] = action.fields.map(field => field.name);
+    // Flange Management (Weld Pilot → Releases): the flange record and its page.
+    deliverResource(availability, 'flanges');
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');

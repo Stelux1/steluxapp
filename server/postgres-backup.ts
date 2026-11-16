@@ -3,8 +3,11 @@ import { join } from 'node:path';
 import { PostgresDatabase, postgresConfig } from './postgres.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import type { ClientConfig } from 'pg';
-import { PLANNING_RESOURCES } from '../shared/planning.ts';
 
+/**
+ * A consistent read-only snapshot of every Stelux table that exists. Resource tables that a hosted database
+ * does not have yet (created later by the hosted preparation) are skipped and listed in the file header.
+ */
 export function backupPostgres(destination: string, config: ClientConfig = postgresConfig()) {
   const database = new PostgresDatabase(config);
   const quote = (value: unknown) => value == null ? 'NULL' : `'${String(value).replaceAll("'", "''")}'`;
@@ -16,16 +19,18 @@ export function backupPostgres(destination: string, config: ClientConfig = postg
     { name: 'upload_paths', columns: ['attachment_id', 'filename'] },
     { name: 'audit', columns: ['id', 'entity_type', 'entity_id', 'action', 'summary', 'actor_id', 'actor_name', 'created_at'] },
   ];
-  const sql = ['-- Restore only into an empty Stelux schema initialized by the app.', 'BEGIN;', 'SET LOCAL standard_conforming_strings=on;', 'SET search_path TO stelux,pg_catalog;', 'SET CONSTRAINTS ALL DEFERRED;'];
+  const sql: string[] = [];
+  const skipped: string[] = [];
   try {
     database.exec('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET search_path TO stelux,pg_catalog');
+    const existing = new Set(database.prepare("SELECT c.relname AS name FROM pg_class c WHERE c.relnamespace=to_regnamespace('stelux') AND c.relkind IN ('r','p')").all().map(row => String(row.name)));
     for (const { name, columns } of tables) {
-      if (PLANNING_RESOURCES.includes(name) && !database.prepare('SELECT to_regclass(?) AS name').get(`stelux.${name}`)?.name) continue;
+      if (!existing.has(name)) { skipped.push(name); continue; }
       const names = columns.map(column => `"${column}"`).join(',');
       const rows = database.prepare(`SELECT ${names} FROM "${name}"${name === 'audit' ? ' ORDER BY sequence' : ''}`).all();
       for (const row of rows) sql.push(`INSERT INTO "${name}" (${names}) VALUES (${columns.map(column => quote(row[column])).join(',')})${name === 'metadata' ? ' ON CONFLICT(key) DO UPDATE SET value=excluded.value' : ''};`);
     }
-    if (database.prepare("SELECT to_regclass('stelux.upload_blobs') AS name").get()?.name) {
+    if (existing.has('upload_blobs')) {
       // Fetch documents separately so several 20 MB files cannot overflow the
       // worker's bounded response buffer in a single database result.
       for (const row of database.prepare('SELECT attachment_id FROM upload_blobs ORDER BY attachment_id').all()) {
@@ -34,7 +39,14 @@ export function backupPostgres(destination: string, config: ClientConfig = postg
       }
     }
     database.exec('COMMIT');
-    sql.push('COMMIT;');
-    writeFileSync(join(destination, 'stelux-postgres.sql'), sql.join('\n') + '\n', { mode: 0o600 });
+    const header = [
+      '-- Restore only into an empty Stelux schema initialized by the app (Store, then initializeDocumentStorage).',
+      '-- Never restore over a live workspace. Sessions are omitted: sign in again after a restore.',
+      '-- Foreign keys are checked at COMMIT; the restore fails as a whole if a reference does not resolve.',
+      ...(skipped.length ? [`-- Not present in the source database (nothing to restore): ${skipped.join(', ')}`] : []),
+      'BEGIN;', 'SET LOCAL standard_conforming_strings=on;', 'SET search_path TO stelux,pg_catalog;', 'SET CONSTRAINTS ALL DEFERRED;',
+    ];
+    writeFileSync(join(destination, 'stelux-postgres.sql'), [...header, ...sql, 'COMMIT;'].join('\n') + '\n', { mode: 0o600 });
+    return { skipped };
   } finally { database.close(); }
 }
