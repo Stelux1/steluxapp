@@ -19,7 +19,7 @@ Each of the three tests fails without its fix (checked by taking the fixes out a
 
 ### Found after the first deploy of this change, fixed
 
-- **The collapsed menu shipped without its styles.** The hosting wrapper (`pages/_app.tsx`) keeps its own list of stylesheets and the new `client/nav-collapse.css` was only in the local entry (`client/main.tsx`), so the hosted build had the toggle button and no rules for it. No build or test failed, and the browser check ran on the local entry. Found by reading the deployed stylesheet right after the deploy; fixed by adding the import. `tests/hosting-styles.test.ts` now fails when the two lists differ. The wrong build was live for about 20 minutes.
+- **The collapsed menu shipped without its styles.** The hosting wrapper (`pages/_app.tsx`) keeps its own list of stylesheets and the new `client/nav-collapse.css` was only in the local entry (`client/main.tsx`), so the hosted build had the toggle button and no rules for it. No build or test failed, and the browser check ran on the local entry. Found by reading the deployed stylesheet right after the deploy; fixed by adding the import. `tests/hosting-styles.test.ts` now fails when the two lists differ. The build without the styles was live for about 6 minutes (09:41–09:47 UTC). After the corrected build went live, the deployed stylesheet was read back on the live sign-in page: collapsed menu 72 px wide, page margin 72 px, round toggle, group panel beside the icons.
 
 ### Review of this change
 
