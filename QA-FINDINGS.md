@@ -1,5 +1,38 @@
 # QA findings
 
+## Follow-up fixes (2026-11-16)
+
+Fixes for the open items of the three sections below, plus two menu items. No browser or dev server was used; each fix has an automated check. Verify (`npm run typecheck && npm test && npm run build:local && STELUX_RELEASE_PROFILE=welding-workspace npx vite build`) passed before every commit: 516 tests, 508 pass, 0 fail, 8 skipped (PostgreSQL). `shared/resources.ts` and `server/hosted-schema.ts` are unchanged.
+
+### Closed
+
+- **Weld sweep 9: the visual inspection hub records Accepted for every listed weld.** Every weld now starts without a result. Per weld the user picks Accepted, Not accepted or Not applicable, and only those welds are sent and written. A listed weld without a choice keeps its earlier result. "Set all to Accepted" is an explicit button. A save with no choice is refused on the client and the server (422). Test: `tests/inspections.test.ts`. A report lists three welds, one gets a choice, one result is created, and an earlier Not applicable on another listed weld is unchanged.
+- **Release review 7: the release dialog offers every signature.** With pilots it now lists only the signed-in account's own signatures.
+- **Release review 4: the visual report prints the signature of the matched engineer.** The image is printed only when the engineer's account also recorded every VI result of the report. The recording account comes from the audit trail (latest create or update). Otherwise the name is printed over an empty line. Test: `tests/pdf-documents.test.ts` (recorded by A naming engineer B: no image; recorded by B: image).
+- **MTO sweep 10: the "Open ordered" chip and the Backlog table disagree.** Both now sum `orderLinesInScope` (`shared/mto-dashboard.ts`). On the sample, STX-2401 shows 74 in both. Test: `tests/mto-dashboard.test.ts` checks that the chip equals the table sum per phase and per main project.
+- **MTO sweep 9: no Test system in the MTO Pilot header.** The isometric summary now carries one label, `testSystemName`, and only for the isometrics the caller may read. The header falls back to it. Test: `tests/site-scope.test.ts` (an MTO-only account limited to North gets "CW-01" and never the Riverside name). `tests/access.test.ts` allows only that one label.
+- **MTO sweep 12 and Weld sweep 11, 12, 14 (wording).** Fixed:
+  - Mass edit says "1 record updated." (and "1 weld updated.").
+  - Select prompts keep acronyms and pilot names ("Select UOM", "Select Weld Pilot profile", "Select MTO Pilot profile").
+  - "Include isometric(s)".
+  - Test systems: hosted label "Test system", list column "Test system", and "-- Not set --" as the acceptance select's empty option.
+  - Defect codes column "ISO 6520-1".
+  - "Order checked materials" opens a dialog of that name with "Create order", without the custom-materials sentence.
+  - Isometric selects are sorted by ISO number.
+  - The NDT dialog's Welder shows the Wdr stamps, with the names as tooltip. The NDT/PWHT Manager Welder column follows.
+  - Add material from DB / Add custom material and the storehouse dialogs focus the first invalid field after an error.
+  - The pick list view has a Storehouse column.
+- **Weld sweep 10 and MTO sweep 11 (sample data, local only).** Seeded welds whose charge number matches exactly one seeded certificate are traced to it (certificate and material per side). Every sample isometric gets its ISO revision record.
+- **Added: PQR in Weld Pilot.** The hosted profile now delivers `pqr` (page), `qualification_options` (records only), the `wps_pqr` links and the WPS `pqrIds` / `pqrId`. Weld Pilot only. Test: `tests/pilots.test.ts`.
+- **Added: Iso overview in both pilots.** Weld Pilot "Welding data", right after ITPs. MTO Pilot "Projects data", last. It opens the "Project search" dialog. Choose a project of the open main project (intern prj. no. - description, a searchable input with the project list). Search opens `/workspace/projects/:id/isometrics` in the current pilot. The entry is shown only with read access to projects and isometrics. Test: `tests/pilots.test.ts` (position in both menus).
+
+### Still open
+
+- MTO sweep 8: "Transfer to project" stock semantics (product decision).
+- Release review 5 and 6: login rate limit behind the proxy, and sign-in timing (product owner).
+- Weld sweep 13: the NDT dialog's five-round table is 70 px wider than the dialog at 1440 px.
+- None of the fixes above was checked in the browser. A short pass over the visual inspection hub, the Project search dialog, the MTO header and the wording changes is still to do.
+
 ## 2026-11-16 — Release review (before production deployment)
 
 Hostile review of `git diff origin/main...HEAD` (216 files), focused on the hosted release profile `welding-workspace` (pilots feature). Covered: authentication and sessions, the pilot boundary, access per project site, administrator-only resources, signatures, side channels (PDF documents, ISO Book, CSV / XLSX, bootstrap, history, audit), uploads, injection, hosted schema preparation and silent fallbacks. Every suspicion got a concrete scenario and was confirmed or dropped against the HTTP test harness (`createApp` on a temporary SQLite workspace). The confirmed findings have regression tests in `tests/release-review.test.ts`, and each test fails without its fix. No external site, remote database or `.env` file was used. No `db:*` script was run.
