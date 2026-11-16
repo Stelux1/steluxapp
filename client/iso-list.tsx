@@ -2,13 +2,14 @@ import { useState, type FormEvent } from 'react';
 import { Check, Minus, X } from 'lucide-react';
 import { Modal } from './components.tsx';
 import { formatNumber } from './api.ts';
-import { NO_ISO_FILTERS, type Flag, type IsoKpi, type IsoListFilters, type Tri } from '../shared/iso-list.ts';
+import { NO_ISO_FILTERS, type PhaseFlag, type IsoKpi, type IsoListFilters, type Tri } from '../shared/iso-list.ts';
 import type { Row } from '../shared/types.ts';
 
-/** A tick, cross or dash with a text alternative and a tooltip naming the flag. */
-export function FlagMark({ flag, title }: { flag: Flag; title: string }) {
-  const state = flag === null ? 'not applicable' : flag ? 'yes' : 'no';
-  return <span className={`iso-flag ${flag === null ? 'na' : flag ? 'yes' : 'no'}`} role="img" aria-label={`${title}: ${state}`} title={`${title}: ${state}`}>{flag === null ? <Minus size={15} aria-hidden="true"/> : flag ? <Check size={16} aria-hidden="true"/> : <X size={15} aria-hidden="true"/>}</span>;
+/** A tick, cross, orange minus ("ready, not signed off", Pfb / Fld only) or empty dash, with a text alternative and a tooltip naming the flag. */
+export function FlagMark({ flag, title }: { flag: PhaseFlag; title: string }) {
+  const state = flag === 'ready' ? 'ready, not signed off' : flag === null ? 'not applicable' : flag ? 'yes' : 'no';
+  const kind = flag === 'ready' ? 'ready' : flag === null ? 'na' : flag ? 'yes' : 'no';
+  return <span className={`iso-flag ${kind}`} role="img" aria-label={`${title}: ${state}`} title={`${title}: ${state}`}>{flag === null || flag === 'ready' ? <Minus size={15} aria-hidden="true"/> : flag ? <Check size={16} aria-hidden="true"/> : <X size={15} aria-hidden="true"/>}</span>;
 }
 
 /** The six key figures above the list, each as a percentage and n / total. */

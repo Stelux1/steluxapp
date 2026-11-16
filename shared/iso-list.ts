@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { newest } from './iso-status.ts';
+import { newest, phaseCompleted } from './iso-status.ts';
 
 /**
  * Derivations behind the isometrics list (flag columns, KPI cards, filters). Pure functions over plain rows.
@@ -10,6 +10,12 @@ import { newest } from './iso-status.ts';
 
 /** A list flag: true is a tick, false a cross, null the dash ("not applicable" or not readable). */
 export type Flag = boolean | null;
+/**
+ * Pfb / Fld: four states as in the reference list. true: the phase is completed (green tick); 'ready': not completed,
+ * every weld of the phase has a welder ("ready, not signed off", orange minus); false: a weld of the phase has no
+ * welder yet (red cross); null: Pfb of an isometric without shop welds, or not readable (empty).
+ */
+export type PhaseFlag = Flag | 'ready';
 
 const live = (rows?: Row[] | null) => (rows || []).filter(row => !row._archived);
 const textOf = (value: unknown) => String(value ?? '').trim();
@@ -31,6 +37,9 @@ export interface IsoListContext {
   weldsByIso: Map<string, Row[]> | null;
   /** Isometrics with at least one shop weld; null when that cannot be told. */
   shopIsos: Set<string> | null;
+  /** Isometrics with a shop / field weld that has no welder yet; null when that cannot be told. */
+  unweldedShop: Set<string> | null;
+  unweldedField: Set<string> | null;
   /** Latest inspection result of a weld and type, keyed `weldId|type`; null when results are unreadable. */
   latest: Map<string, Row> | null;
   prefab: Set<string> | null;
@@ -41,7 +50,11 @@ export function isoListContext(source: IsoListSource): IsoListContext {
   const weldsByIso = welds ? new Map<string, Row[]>() : null;
   for (const weld of welds || []) { const key = String(weld.isoId); weldsByIso!.set(key, [...(weldsByIso!.get(key) || []), weld]); }
   const locations = new Map((source.weldTypes || []).map(type => [type.id, type.location]));
-  const shopIsos = welds && source.weldTypes ? new Set(welds.filter(weld => locations.get(String(weld.typeId)) === 'Shop').map(weld => String(weld.isoId))) : null;
+  const typed = (location: string) => welds && source.weldTypes ? welds.filter(weld => locations.get(String(weld.typeId)) === location) : null;
+  const isoSet = (rows: Row[] | null) => rows ? new Set(rows.map(weld => String(weld.isoId))) : null;
+  const welded = (weld: Row) => [1, 2, 3, 4].some(side => textOf(weld[`welder${side}Id`]) !== '');
+  const shop = typed('Shop'), field = typed('Field');
+  const shopIsos = isoSet(shop), unweldedShop = isoSet(shop && shop.filter(weld => !welded(weld))), unweldedField = isoSet(field && field.filter(weld => !welded(weld)));
   let latest: Map<string, Row> | null = null;
   if (source.results) {
     latest = new Map();
@@ -50,7 +63,7 @@ export function isoListContext(source: IsoListSource): IsoListContext {
   }
   const releases = source.releases ? live(source.releases) : null;
   const released = (type: string) => releases ? new Set(releases.filter(row => row.type === type && row.status !== 'Reopened').map(row => String(row.isoId))) : null;
-  return { planning: source.planning === true, weldsByIso, shopIsos, latest, prefab: released('Prefab'), field: released('Field') };
+  return { planning: source.planning === true, weldsByIso, shopIsos, unweldedShop, unweldedField, latest, prefab: released('Prefab'), field: released('Field') };
 }
 
 // ----- the flags, one function each ---------------------------------------------------------------------------
@@ -65,17 +78,29 @@ export const pwhtFlag = (iso: Row): Flag => stored(iso, 'pwht');
 export const mtoReadyFlag = (iso: Row): Flag => stored(iso, 'prefab_materials');
 export const estReadyFlag = (iso: Row): Flag => stored(iso, 'prefab_est');
 export const weldReadyFlag = (iso: Row): Flag => stored(iso, 'prefab_welds');
-/** Pfb = tick when a Prefab release exists; dash when the isometric has no shop welds; otherwise a cross. */
-export function prefabFlag(iso: Row, ctx: IsoListContext): Flag {
-  if (!ctx.prefab) return null;
-  if (ctx.prefab.has(iso.id)) return true;
-  if (!ctx.shopIsos) return null;
-  return ctx.shopIsos.has(iso.id) ? false : null;
+/** Completed: marked complete on the isometric, or an active release of the phase (when releases are readable). */
+const completedFlag = (iso: Row, ctx: IsoListContext, phase: 'Prefab' | 'Field'): boolean | null => {
+  if (phaseCompleted(iso, phase)) return true;
+  const released = phase === 'Prefab' ? ctx.prefab : ctx.field;
+  return released ? released.has(iso.id) : null;
+};
+/**
+ * Pfb: tick when Prefab is completed; empty without shop welds; cross when a shop weld has no welder; otherwise the
+ * orange minus. The cross / minus split follows the reference sample (a shop weld without welder → cross).
+ */
+export function prefabFlag(iso: Row, ctx: IsoListContext): PhaseFlag {
+  const completed = completedFlag(iso, ctx, 'Prefab');
+  if (completed) return true;
+  if (completed === null || !ctx.shopIsos || !ctx.unweldedShop) return null;
+  if (!ctx.shopIsos.has(iso.id)) return null;
+  return ctx.unweldedShop.has(iso.id) ? false : 'ready';
 }
-/** Fld = tick when a Field release exists, otherwise a cross. */
-export function fieldFlag(iso: Row, ctx: IsoListContext): Flag {
-  if (!ctx.field) return null;
-  return ctx.field.has(iso.id);
+/** Fld: tick when Field is completed; cross when a field weld has no welder (by symmetry); otherwise the orange minus, also without field welds. */
+export function fieldFlag(iso: Row, ctx: IsoListContext): PhaseFlag {
+  const completed = completedFlag(iso, ctx, 'Field');
+  if (completed) return true;
+  if (completed === null || !ctx.unweldedField) return null;
+  return ctx.unweldedField.has(iso.id) ? false : 'ready';
 }
 /** Doc. = tick when both documentation phase flags (prefab and field) are set. */
 export function documentationFlag(iso: Row): Flag {
@@ -95,7 +120,7 @@ export const ndtApproved = (iso: Row, ctx: IsoListContext) => approved(iso, ctx,
 export const pwhtApproved = (iso: Row, ctx: IsoListContext) => approved(iso, ctx, PWHT_REQUIREMENTS);
 
 export interface IsoFlags {
-  noBo: Flag; pwht: Flag; m: Flag; e: Flag; w: Flag; pfb: Flag; fld: Flag; doc: Flag;
+  noBo: Flag; pwht: Flag; m: Flag; e: Flag; w: Flag; pfb: PhaseFlag; fld: PhaseFlag; doc: Flag;
   ndtApproved: boolean; pwhtApproved: boolean;
   /** At least one weld requires NDT (the NDT filter of the Filter dialog). */
   requiresNdt: boolean;
@@ -106,9 +131,9 @@ export function isoFlags(iso: Row, ctx: IsoListContext): IsoFlags {
 }
 
 /** Export text of a flag. */
-export const flagText = (flag: Flag) => flag === null ? 'n/a' : flag ? 'Yes' : 'No';
-/** Sort rank of a flag: dashes first, ticks last. */
-export const flagRank = (flag: Flag) => flag === null ? 0 : flag ? 2 : 1;
+export const flagText = (flag: PhaseFlag) => flag === 'ready' ? 'Ready' : flag === null ? 'n/a' : flag ? 'Yes' : 'No';
+/** Sort rank of a flag: dashes first, then crosses, orange minus, ticks last. */
+export const flagRank = (flag: PhaseFlag) => flag === null ? 0 : flag === 'ready' ? 2 : flag ? 3 : 1;
 
 // ----- KPI cards ------------------------------------------------------------------------------------------------
 
@@ -164,6 +189,6 @@ export const ISO_LIST_COLUMNS: IsoListColumn[] = [
   { key: 'projectId', label: 'Project' }, { key: 'isoNo', label: 'ISO No' }, { key: 'irn', label: 'IRN' }, { key: 'itpNo', label: 'ITP No' }, { key: 'itpNo2', label: 'ITP No 2' }, { key: 'pipingClass', label: 'P.Class' },
   { key: '_noBo', label: 'NoBo', flag: 'noBo', title: 'Notified body required' }, { key: '_pwht', label: 'PWHT', flag: 'pwht', title: 'PWHT required' },
   { key: '_m', label: 'M', flag: 'm', title: 'MTO ready: materials complete' }, { key: '_e', label: 'E', flag: 'e', title: 'EST ready: calculation complete' }, { key: '_w', label: 'W', flag: 'w', title: 'Weld ready: welds complete' },
-  { key: '_pfb', label: 'Pfb', flag: 'pfb', title: 'Prefab released' }, { key: '_fld', label: 'Fld', flag: 'fld', title: 'Field released' }, { key: '_doc', label: 'Doc.', flag: 'doc', title: 'Prefab and field documents complete' },
+  { key: '_pfb', label: 'Pfb', flag: 'pfb', title: 'Prefab complete' }, { key: '_fld', label: 'Fld', flag: 'fld', title: 'Field complete' }, { key: '_doc', label: 'Doc.', flag: 'doc', title: 'Prefab and field documents complete' },
   { key: 'priority', label: 'Prio.' },
 ];

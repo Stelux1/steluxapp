@@ -2,7 +2,7 @@ import type { Row } from './types.ts';
 import { hydrotestState } from './hydrotest.ts';
 import { hasPunchProgress, punchBlocking, punchProgress } from './punch.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
-import { repairState } from './inspections.ts';
+import { nextRepairNumber, repairChain, weldResults } from './inspections.ts';
 import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 
 /**
@@ -129,6 +129,21 @@ export interface BlockerGroup { key: BlockerKey; title: string; /** What the gro
 export interface IsoBlockers { groups: BlockerGroup[]; total: number; }
 export const BLOCKER_TITLES: Record<BlockerKey, string> = { release: 'Release', welds: 'Welds', ndt: 'NDT', repair: 'Repair', punch: 'Punch' };
 
+// ----- phase completion ----------------------------------------------------------------------------------------
+
+export type CompletionPhase = 'Prefab' | 'Field';
+/** The isometric's fields that hold "Prefab complete" / "Field complete" (written only by the complete and reopen actions). */
+export const COMPLETION_FIELDS: Record<CompletionPhase, { at: string; by: string }> = { Prefab: { at: 'prefabCompletedAt', by: 'prefabCompletedBy' }, Field: { at: 'fieldCompletedAt', by: 'fieldCompletedBy' } };
+/**
+ * Whether a phase of an isometric is completed: marked complete on the isometric, or (records from before the two
+ * steps existed) released by a live Prefab / Field release that was not reopened, so existing rows need no write.
+ * `releases` null / absent: only the isometric's own fields are read.
+ */
+export function phaseCompleted(iso: Row, phase: CompletionPhase, releases?: Row[] | null): boolean {
+  if (text(iso[COMPLETION_FIELDS[phase].at]) !== '') return true;
+  return live(releases).some(row => row.isoId === iso.id && row.type === phase && row.status !== 'Reopened');
+}
+
 /** Fields a weld that has a welder needs ("Mandatory fields" of the reference; blockers always apply them). */
 function missingWeldFields(weld: Row): string[] {
   const missing: string[] = [];
@@ -140,31 +155,34 @@ function missingWeldFields(weld: Row): string[] {
   if (!text(weld.chargeNo2)) missing.push('charge number 2');
   return missing;
 }
-const list = (items: string[]) => items.length < 3 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+
+/** NDT / NDT PRE: the latest outcome of a type is NA (stored "Rejected") or has "ReWeld?" ticked. */
+const rejection = (weld: Row, results: Row[]) => NDT_TYPES.some(type => { const latest = weldResults(results, weld.id, [type])[0]; return latest?.result === 'Rejected' || latest?.reweld === true; });
+/** Accepted: an accepted latest NDT / NDT PRE outcome and no rejection. */
+const acceptedWeld = (weld: Row, results: Row[]) => !rejection(weld, results) && NDT_TYPES.some(type => weldResults(results, weld.id, [type])[0]?.result === 'Accepted');
+/** Order of creation, as the reference lists blockers (a repair 010R1 follows weld 012); equal times by weld number. */
+const byCreation = (a: Row, b: Row) => text(a._createdAt).localeCompare(text(b._createdAt)) || text(a.weldNo).localeCompare(text(b.weldNo), 'en', { numeric: true });
 
 export function isoBlockers(input: IsoStatusInput): IsoBlockers {
-  const welds = isoWelds(input).sort((a, b) => text(a.weldNo).localeCompare(text(b.weldNo), 'en', { numeric: true }));
+  const welds = isoWelds(input).sort(byCreation);
   const groups: BlockerGroup[] = [];
   const add = (key: BlockerKey, items: BlockerItem[], count = items.length) => { if (items.length) groups.push({ key, title: BLOCKER_TITLES[key], count, items }); };
-  // Release: shop welds exist and no Prefab release record yet. Skipped when releases cannot be read.
+  // Release: one item per phase that is not completed, whatever welds the isometric has. Skipped when releases cannot be read.
   if (input.releases) {
-    const shopWelds = welds.some(weld => locationOf(weld, input.weldTypes) === 'shop');
-    const released = live(input.releases).some(row => row.isoId === input.iso.id && row.type === 'Prefab' && row.status !== 'Reopened');
-    if (shopWelds && !released) add('release', [{ message: 'The shop welds have not been released for prefab yet.' }]);
+    add('release', (['Prefab', 'Field'] as const).filter(phase => !phaseCompleted(input.iso, phase, input.releases)).map(phase => ({ message: `${phase} is not released yet` })));
   }
-  add('welds', welds.filter(hasWelder).flatMap(weld => { const missing = missingWeldFields(weld); return missing.length ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} is missing ${list(missing)}.` }] : []; }));
+  add('welds', welds.filter(hasWelder).flatMap(weld => missingWeldFields(weld).length ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} is missing required fields` }] : []));
   // NDT: a required examination without any result. Rejected results are handled under Repair.
-  add('ndt', welds.flatMap(weld => [['ndoReqPre', 'NDT PRE'], ['ndoReq', 'NDT']].flatMap(([flag, type]) => weld[flag] === true && !resultsOf(input.results, weld.id, [type]).length ? [{ weldId: weld.id, message: `${type} on weld ${weld.weldNo} has no result yet.` }] : [])));
-  // Repair: the latest NDT result is Rejected, so the repair is not closed (a later accepted result closes it).
-  // The existing repair model is the weld's `repair` flag set by the repair action, nothing more.
-  // A repair weld (`010R1`, linked by `repairOfId`, see shared/inspections.ts) keeps the original's repair open until a
-  // repair in its chain has an accepted result; the item names the original and its latest repair weld.
+  add('ndt', welds.flatMap(weld => [['ndoReqPre', 'NDT PRE'], ['ndoReq', 'NDT']].flatMap(([flag, type]) => weld[flag] === true && !resultsOf(input.results, weld.id, [type]).length ? [{ weldId: weld.id, message: `${type} on weld ${weld.weldNo} has no result` }] : [])));
+  // Repair: one item per rejection (latest NDT outcome NA, or ReWeld? ticked), naming the repair that follows it
+  // (`003` → `003R1`, a rejected `003R1` → `003R2`; the next number when no repair weld exists yet, shared/inspections.ts).
+  // A rejection is closed once a repair later in its chain (`repairOfId`) has an accepted result.
+  const all = live(input.welds), results = live(input.results);
   add('repair', welds.flatMap(weld => {
-    if (resultsOf(input.results, weld.id, NDT_TYPES)[0]?.result !== 'Rejected') return [];
-    const state = repairState(weld, live(input.welds), input.results);
-    if (!state) return [];
-    if (state.repair) return state.open ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} was rejected; repair weld ${state.repair.weldNo} has no accepted result yet.` }] : [];
-    return [{ weldId: weld.id, message: weld.repair ? `Weld ${weld.weldNo} was rejected; the repair is recorded and waits for an accepted re-examination.` : `Weld ${weld.weldNo} was rejected; no repair is recorded yet.` }];
+    if (!rejection(weld, results)) return [];
+    const chain = repairChain(weld, all);
+    if (chain.some(repair => acceptedWeld(repair, results))) return [];
+    return [{ weldId: weld.id, message: `Rejection on weld ${weld.weldNo}, repair ${chain[0] ? text(chain[0].weldNo) : nextRepairNumber(weld, all)} is still open` }];
   }));
   if (input.punch) {
     // Open items of the blocking categories A and B hold the isometric back (see shared/punch.ts).

@@ -137,23 +137,24 @@ export function weldDiameterText(weld: Values, diameter?: Values | null): string
 // Rule (d): the lock
 
 /**
- * The lock rule is owned by the releases flow (shared/releases.ts `weldLocked` / `weldLockReason`: a release counts
- * while it is not archived and not Reopened). The context carries the weld types with their Shop/Field location
- * resolved by `weldLocation` (older types without a location are read from their name) and the releases.
+ * The lock rule is owned by the releases flow (shared/releases.ts `weldLocked` / `weldLockReason`: a phase locks
+ * once the isometric is Prefab / Field complete, or holds an active release from before the two steps). The context
+ * carries the weld types with their Shop/Field location resolved by `weldLocation` (older types without a location
+ * are read from their name), the releases and the isometrics (their completion fields).
  */
-export interface LockContext { weldTypes: Row[]; releases: Row[]; }
-export function lockContext(weldTypes: Row[] | null | undefined, releases: Row[] | null | undefined): LockContext {
-  return { weldTypes: (weldTypes || []).map(type => ({ ...type, location: weldLocation(type) ?? '' })), releases: releases || [] };
+export interface LockContext { weldTypes: Row[]; releases: Row[]; isometrics: Map<string, Row>; }
+export function lockContext(weldTypes: Row[] | null | undefined, releases: Row[] | null | undefined, isometrics?: Row[] | null): LockContext {
+  return { weldTypes: (weldTypes || []).map(type => ({ ...type, location: weldLocation(type) ?? '' })), releases: releases || [], isometrics: new Map((isometrics || []).map(iso => [String(iso.id), iso])) };
 }
-export interface WeldLock { locked: boolean; /** The release that locks the weld. */ release: 'Prefab' | 'Field' | null; reason: string; }
+export interface WeldLock { locked: boolean; /** The completed phase that locks the weld. */ release: 'Prefab' | 'Field' | null; reason: string; }
 /**
- * Welds of a completed phase are read-only: field welds while the isometric has an active Field release, shop welds
- * while it has an active Prefab release. A weld whose type is not set yet has no phase and stays editable.
+ * Welds of a completed phase are read-only: shop welds once the isometric is Prefab complete, field welds once it
+ * is Field complete. A weld whose type is not set yet has no phase and stays editable.
  */
 export function weldLock(weld: Values, context: LockContext): WeldLock {
-  const row = weld as Row;
-  if (!weldLocked(row, undefined, context.releases, context.weldTypes)) return { locked: false, release: null, reason: '' };
-  return { locked: true, release: weldPhase(row, context.weldTypes) === 'shop' ? 'Prefab' : 'Field', reason: weldLockReason(row, undefined, context.releases, context.weldTypes) };
+  const row = weld as Row, iso = context.isometrics.get(text(row.isoId));
+  if (!weldLocked(row, iso, context.releases, context.weldTypes)) return { locked: false, release: null, reason: '' };
+  return { locked: true, release: weldPhase(row, context.weldTypes) === 'shop' ? 'Prefab' : 'Field', reason: weldLockReason(row, iso, context.releases, context.weldTypes) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

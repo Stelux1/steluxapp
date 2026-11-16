@@ -113,18 +113,27 @@ test('quantity budgets do not exist yet: isoBudgets returns none and entered qua
   assert.deepEqual(isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 120 }, row('iso', { isoNo: 'ISO-1', shopPipeM: 120 }), { shop: { materialPipe: 100 } }), {}, 'an unchanged stored value does not block other saves');
 });
 
-test('blockers: Release appears while shop welds have no Prefab release', () => {
-  const welds = [weld('s1')];
-  const none = isoBlockers(base({ welds }));
-  assert.deepEqual(none.groups.map(group => [group.key, group.title, group.items.length]), [['release', 'Release', 1]]);
-  assert.equal(none.total, 1);
-  assert.equal(isoBlockers(base({ welds, releases: [row('r', { isoId: 'iso', type: 'Prefab' })] })).total, 0);
-  assert.equal(isoBlockers(base({ welds, releases: [row('r', { isoId: 'iso', type: 'Field' }), row('r2', { isoId: 'other', type: 'Prefab' })] })).total, 1, 'only a Prefab release of this isometric counts');
-  assert.equal(isoBlockers(base({ welds: [weld('f1', { typeId: 'wt-field' })] })).total, 0, 'field welds alone need no prefab release');
-  assert.equal(isoBlockers(base({ welds, releases: null })).total, 0, 'unreadable releases skip the group');
+/** Both phases completed on the isometric, so a test sees only the group it is about. */
+const done = { prefabCompletedAt: '2026-10-10T08:00:00.000Z', fieldCompletedAt: '2026-10-11T08:00:00.000Z' };
+
+test('blockers: Release lists "Prefab is not released yet" and "Field is not released yet" until each phase is complete, with or without welds', () => {
+  const release = (setup: Setup) => isoBlockers(base(setup)).groups.find(group => group.key === 'release')?.items.map(item => item.message) ?? [];
+  // Reference 00022: no welds at all, "2 open".
+  const empty = isoBlockers(base({}));
+  assert.deepEqual(empty.groups.map(group => [group.key, group.title, group.items.map(item => item.message)]), [['release', 'Release', ['Prefab is not released yet', 'Field is not released yet']]]);
+  assert.equal(empty.total, 2);
+  assert.deepEqual(release({ welds: [weld('n1', { typeId: '' })] }), ['Prefab is not released yet', 'Field is not released yet'], 'untyped welds only');
+  assert.deepEqual(release({ welds: [weld('s1')] }), ['Prefab is not released yet', 'Field is not released yet'], 'no field welds: the Field line stays');
+  // Complete on the isometric removes the line, without a release document; reference 0001 (Field completed) shows only Prefab.
+  assert.deepEqual(release({ iso: { fieldCompletedAt: '2026-10-11T08:00:00.000Z' } }), ['Prefab is not released yet']);
+  assert.deepEqual(release({ iso: done }), [], 'reference 0003: both completed, no Release group');
+  // An active release from before the two steps counts as completed; a reopened one or another isometric's does not.
+  assert.deepEqual(release({ releases: [row('r', { isoId: 'iso', type: 'Prefab' })] }), ['Field is not released yet']);
+  assert.deepEqual(release({ releases: [row('r', { isoId: 'iso', type: 'Prefab', status: 'Reopened' }), row('r2', { isoId: 'other', type: 'Field' })] }), ['Prefab is not released yet', 'Field is not released yet']);
+  assert.equal(isoBlockers(base({ releases: null })).total, 0, 'unreadable releases skip the group');
 });
 
-test('blockers: Welds lists welds that have a welder and lack a mandatory field', () => {
+test('blockers: Welds lists welds that have a welder and lack a mandatory field, in the reference wording', () => {
   const welds = [
     weld('w1', { typeId: '', wpsId: '', date: '', diameterId: '', chargeNo1: '', chargeNo2: '' }),
     weld('w2', { chargeNo2: '' }),
@@ -133,39 +142,49 @@ test('blockers: Welds lists welds that have a welder and lack a mandatory field'
     weld('w5', { welder1Id: '', welder3Id: 'w9', wpsId: '' }),
     weld('w6', { welder1Id: '', typeId: '', date: '' }),
   ];
-  const blockers = isoBlockers(base({ welds, releases: [row('r', { isoId: 'iso', type: 'Prefab' })] }));
+  const blockers = isoBlockers(base({ welds, iso: done }));
   assert.deepEqual(blockers.groups.map(group => group.key), ['welds']);
-  assert.deepEqual(blockers.groups[0].items, [
-    { weldId: 'w1', message: 'Weld W1 is missing weld type, WPS, weld date, diameter, charge number 1 and charge number 2.' },
-    { weldId: 'w2', message: 'Weld W2 is missing charge number 2.' },
-    { weldId: 'w4', message: 'Weld W4 is missing length.' },
-    { weldId: 'w5', message: 'Weld W5 is missing WPS.' },
-  ]);
+  assert.deepEqual(blockers.groups[0].items, ['w1', 'w2', 'w4', 'w5'].map(id => ({ weldId: id, message: `Weld ${id.toUpperCase()} is missing required fields` })));
   assert.equal(blockers.total, 4);
 });
 
 test('blockers: NDT lists required examinations without a result; a rejection is a result', () => {
   const welds = [weld('n1', { ndoReq: true }), weld('n2', { ndoReq: true }), weld('n3', { ndoReqPre: true }), weld('n4', { ndoReqPre: true, ndoReq: true }), weld('n5', { ndoReq: true }), weld('n6')];
   const results = [result('n2', 'Accepted', '2026-10-06'), result('n4', 'Accepted', '2026-10-06', { type: 'NDT PRE' }), result('n5', 'Rejected', '2026-10-06'), result('n6', 'Accepted', '2026-10-06'), result('n1', 'Accepted', '2026-10-06', { type: 'VI' })];
-  const blockers = isoBlockers(base({ welds, results, releases: [row('r', { isoId: 'iso', type: 'Prefab' })] }));
-  const ndt = blockers.groups.find(group => group.key === 'ndt')!;
+  const ndt = isoBlockers(base({ welds, results, iso: done })).groups.find(group => group.key === 'ndt')!;
   assert.deepEqual(ndt.items, [
-    { weldId: 'n1', message: 'NDT on weld N1 has no result yet.' },
-    { weldId: 'n3', message: 'NDT PRE on weld N3 has no result yet.' },
-    { weldId: 'n4', message: 'NDT on weld N4 has no result yet.' },
+    { weldId: 'n1', message: 'NDT on weld N1 has no result' },
+    { weldId: 'n3', message: 'NDT PRE on weld N3 has no result' },
+    { weldId: 'n4', message: 'NDT on weld N4 has no result' },
   ]);
 });
 
-test('blockers: Repair lists welds whose latest NDT result is rejected until an accepted result follows', () => {
-  const welds = [weld('r1', { ndoReq: true }), weld('r2', { ndoReq: true, repair: true }), weld('r3', { ndoReq: true, repair: true }), weld('r4', { ndoReq: true })];
-  const results = [result('r1', 'Rejected', '2026-10-06'), result('r2', 'Rejected', '2026-10-06'), result('r3', 'Rejected', '2026-10-06'), result('r3', 'Accepted', '2026-10-12'), result('r4', 'Accepted', '2026-10-06'), result('r4', 'Rejected', '2026-10-13')];
-  const blockers = isoBlockers(base({ welds, results, releases: [row('r', { isoId: 'iso', type: 'Prefab' })] }));
-  assert.deepEqual(blockers.groups.map(group => group.key), ['repair']);
-  assert.deepEqual(blockers.groups[0].items, [
-    { weldId: 'r1', message: 'Weld R1 was rejected; no repair is recorded yet.' },
-    { weldId: 'r2', message: 'Weld R2 was rejected; the repair is recorded and waits for an accepted re-examination.' },
-    { weldId: 'r4', message: 'Weld R4 was rejected; no repair is recorded yet.' },
+test('blockers: items keep the order the welds were created in (reference: 010R1 after 012)', () => {
+  const at = (minute: number) => `2026-10-01T08:${String(minute).padStart(2, '0')}:00.000Z`;
+  const welds = [weld('012', { weldNo: '012', ndoReq: true, _createdAt: at(2) }), weld('010r1', { weldNo: '010R1', ndoReq: true, _createdAt: at(5) }), weld('003', { weldNo: '003', ndoReq: true, _createdAt: at(1) })];
+  assert.deepEqual(isoBlockers(base({ welds, iso: done })).groups[0].items.map(item => item.message), ['NDT on weld 003 has no result', 'NDT on weld 012 has no result', 'NDT on weld 010R1 has no result']);
+});
+
+test('blockers: Repair lists one item per rejection and names the next repair number (reference 0007, 0001)', () => {
+  const repair = (welds: Row[], results: Row[]) => isoBlockers(base({ welds, results, iso: done })).groups.find(group => group.key === 'repair')?.items ?? [];
+  // 0007: 003 NA, 003R1 NA, 003R2 NA → three items, the last naming 003R3 which does not exist yet.
+  const w003 = weld('a', { weldNo: '003', ndoReq: true, _createdAt: '2026-10-01T08:00:00.000Z' });
+  const r1 = weld('b', { weldNo: '003R1', repairOfId: 'a', ndoReq: true, _createdAt: '2026-10-02T08:00:00.000Z' });
+  const r2 = weld('c', { weldNo: '003R2', repairOfId: 'b', ndoReq: true, _createdAt: '2026-10-03T08:00:00.000Z' });
+  const chain = [w003, r1, r2], rejected = [result('a', 'Rejected', '2026-10-04'), result('b', 'Rejected', '2026-10-05'), result('c', 'Rejected', '2026-10-06')];
+  assert.deepEqual(repair(chain, rejected), [
+    { weldId: 'a', message: 'Rejection on weld 003, repair 003R1 is still open' },
+    { weldId: 'b', message: 'Rejection on weld 003R1, repair 003R2 is still open' },
+    { weldId: 'c', message: 'Rejection on weld 003R2, repair 003R3 is still open' },
   ]);
+  // An accepted repair later in the chain closes every rejection before it.
+  assert.deepEqual(repair(chain, [...rejected.slice(0, 2), result('c', 'Accepted', '2026-10-06')]), []);
+  // 0001: weld 002, Initial NA then Remaining Accepted with ReWeld? ticked → a rejection, repair 002R1 (no such weld).
+  const w002 = weld('d', { weldNo: '002', ndoReq: true });
+  assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial' }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', reweld: true })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
+  assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04'), result('d', 'Accepted', '2026-10-05')]), [], 'a later accepted result without ReWeld? is no rejection');
+  // A letter suffix is not a repair link: 005A does not close 005.
+  assert.deepEqual(repair([weld('e', { weldNo: '005', ndoReq: true }), weld('f', { weldNo: '005A', ndoReq: true })], [result('e', 'Rejected', '2026-10-04'), result('f', 'Accepted', '2026-10-05')]).map(item => item.message), ['Rejection on weld 005, repair 005R1 is still open']);
 });
 
 test('blockers: Punch counts open items of this isometric; groups come in the fixed order with the total', () => {
@@ -176,11 +195,11 @@ test('blockers: Punch counts open items of this isometric; groups come in the fi
   });
   const blockers = isoBlockers(everything);
   assert.deepEqual(blockers.groups.map(group => group.key), ['release', 'welds', 'ndt', 'repair', 'punch']);
-  assert.deepEqual(blockers.groups.map(group => group.count), [1, 1, 1, 1, 2]);
+  assert.deepEqual(blockers.groups.map(group => group.count), [2, 1, 1, 1, 2]);
   assert.equal(blockers.groups[4].items[0].message, '2 open punch items in category A or B.');
-  assert.equal(blockers.total, 6);
-  assert.equal(isoBlockers(base({ punch })).total, 2);
-  assert.equal(isoBlockers(base({ punch: null })).total, 0);
+  assert.equal(blockers.total, 7);
+  assert.equal(isoBlockers(base({ punch, iso: done })).total, 2);
+  assert.equal(isoBlockers(base({ punch: null, iso: done })).total, 0);
 });
 
 test('quality is accepted over accepted plus rejected NDT results of this isometric', () => {
@@ -277,8 +296,8 @@ test('the sample data shows a meaningful picture: one isometric with every block
     const input = (iso: Row): IsoStatusInput => ({ iso, site: store.get('sites', store.get('projects', iso.projectId).siteId), welds: store.list('welds'), weldTypes: store.list('weld_types'), diameters: store.list('diameters'), results: store.list('inspection_results'), releases: store.list('releases'), punch: store.list('punchlists') });
     const everything = isoBlockers(input(byNumber('STX-CW-002')));
     assert.deepEqual(everything.groups.map(group => group.key), ['release', 'welds', 'ndt', 'repair', 'punch']);
-    assert.equal(everything.total, 6);
-    assert.equal(isoBlockers(input(byNumber('STX-CW-003'))).total, 0);
+    assert.equal(everything.total, 7, 'both phases are not complete: two release items');
+    assert.equal(isoBlockers(input(byNumber('STX-CW-003'))).total, 0, 'released for prefab and field before the two steps: both count as completed');
     assert.equal(isoProgress(input(byNumber('STX-CW-003'))).total, 100);
     assert.equal(isoProgress(input(byNumber('STX-ST-004'))).configured, false, 'the second main project has no weights');
     assert.equal(isoProgress(input(byNumber('STX-CW-001'))).configured, true);

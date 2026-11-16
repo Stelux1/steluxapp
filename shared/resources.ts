@@ -174,6 +174,8 @@ function extend(key: string, fields: Field[]) {
   resource.fields.push(...fields);
 }
 extend('isometrics', [t('area', 'Area'), n('ndtPercentage', 'NDT %', { max: 100 }), t('pressureTestPlan', 'Pressure test plan')]);
+// Prefab complete / Field complete on the isometric (shared/releases.ts): written by the complete and reopen actions only.
+extend('isometrics', ['prefabCompletedAt', 'prefabCompletedBy', 'fieldCompletedAt', 'fieldCompletedBy'].map(name => t(name, { prefabCompletedAt: 'Prefab completed at', prefabCompletedBy: 'Prefab completed by', fieldCompletedAt: 'Field completed at', fieldCompletedBy: 'Field completed by' }[name]!, { hidden: true, readonly: true, section: 'Release' })));
 // ITP / KNR register links (pilots profile only): the two ITP slots of an isometric may point at register entries.
 extend('isometrics', [r('itpId', 'Linked ITP / KNR', 'itps', { hidden: true }), r('itp2Id', 'Linked ITP / KNR 2', 'itps', { hidden: true })]);
 // ITPs page (manual chapter 18): title, scope (decides the isometric slot), active, sort order; revisions are PDF attachments with a revision number (shared/itps.ts).

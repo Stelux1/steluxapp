@@ -38,7 +38,7 @@ function useWeldData(iso: Row) {
     const offered = project && projectCertificates(site) ? certificatesForProject(certificates, project.id, { links: rows.certificate_projects || [] }) : activeRows(rows, 'certifications');
     return {
       all, welds, deleted: all.filter(weld => weld._archived), project, site, certificates, offered,
-      lock: lockContext(rows.weld_types, rows.releases),
+      lock: lockContext(rows.weld_types, rows.releases, rows.isometrics),
       types: byId('weld_types'), welders: byId('welders'), wps: byId('wps'), diameters: byId('diameters'), spools: byId('spools'), certs: byId('certifications'), materials: byId('materials'), materialTypes: byId('material_types'), materialParts: byId('material_parts'),
     };
   }, [rows, allRows, iso]);

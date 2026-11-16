@@ -26,6 +26,7 @@ import { assertSignatureImage } from './signatures.ts';
 import { assertPunchAddAllowed, assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
 import { ISO_LIST_COLUMNS, flagText } from '../shared/iso-list.ts';
 import { isoSummariesFor } from './iso-summary.ts';
+import { dropCompletionInput } from './releases.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
@@ -239,6 +240,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
+    dropCompletionInput(resource.key, req.body);
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'punchlists') assertPunchAddAllowed(store, req.body, (req as unknown as AuthRequest).user);
@@ -252,6 +254,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.put('/api/records/:resource/:id', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
+    dropCompletionInput(resource.key, req.body);
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
@@ -305,6 +308,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     // Mass edit materials (pilots): every filled field at once, never Material No.
     if (pilots && resource.key === 'materials') req.body.changes = materialMassEdit(req.body.changes);
+    dropCompletionInput(resource.key, req.body.changes);
     access.input(resource.key, req.body.changes);
     if (pilots && resource.key === 'isometrics' && ['xRay', 'itpId', 'itp2Id'].some(name => Object.hasOwn(req.body.changes, name))) throw new AppError(422, 'X Ray % and the ITP links cannot be bulk edited. Use Link ITP on the isometric.');
     // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).

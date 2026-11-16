@@ -11,7 +11,7 @@ import { ReleasePdfButton } from './pdf-documents.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
 import { currentRevision } from '../shared/revisions.ts';
 import { priorityLabel } from '../shared/priority.ts';
-import { fwpAccepts, fwpListRows, phaseState, releaseArchiveRows, releaseListRows, storedSignatureTitles, toCsv, PHASE_LOCATION, type PhaseState, type ReleaseCheckInput, type ReleaseListRow, type ReleasePhase } from '../shared/releases.ts';
+import { COMPLETE_CONFIRM, fwpAccepts, fwpListRows, phaseCompletion, phaseState, releaseArchiveRows, releaseListRows, storedSignatureTitles, toCsv, PHASE_LOCATION, type PhaseState, type ReleaseCheckInput, type ReleaseListRow, type ReleasePhase } from '../shared/releases.ts';
 import type { Row } from '../shared/types.ts';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -65,10 +65,11 @@ function ReleaseList({ type }: { type: ReleasePhase }) {
   const list = useMemo(() => releaseListRows(type, source, { show, projectId, itpNo }), [type, source, show, projectId, itpNo]);
   const allowed = canRun('release', { type });
   const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE)), current = Math.min(page, pages - 1), shown = list.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE);
-  const selectable = (entry: ReleaseListRow) => allowed && !entry.release && entry.check.ready;
+  // Every listed isometric is completed (the phase's Complete was the check); a released one is shown only with Show released.
+  const selectable = (entry: ReleaseListRow) => allowed && !entry.release;
   const selectableShown = shown.filter(selectable);
   const checked = list.filter(entry => selected.includes(entry.iso.id) && selectable(entry));
-  const counts = { ready: list.filter(entry => !entry.release && entry.check.ready).length, blocked: list.filter(entry => !entry.release && !entry.check.ready).length, released: list.filter(entry => entry.release).length };
+  const counts = { ready: list.filter(entry => !entry.release).length, released: list.filter(entry => entry.release).length };
   const title = `${type} release`, noun = type === 'Prefab' ? 'shop' : 'field';
   useEffect(() => { setSelected(old => old.filter(id => list.some(entry => entry.iso.id === id && selectable(entry)))); }, [list]); // eslint-disable-line react-hooks/exhaustive-deps
   const reset = () => { setPage(0); setSelected([]); };
@@ -76,7 +77,7 @@ function ReleaseList({ type }: { type: ReleasePhase }) {
 
   return <div className="page releases-page" aria-busy={busy}>
     <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES</div><h1>{title}<span className="heading-count">{list.length}</span></h1>
-      <p>Isometrics of the active main project. {type === 'Prefab' ? 'Release the prefab once the shop welds are complete.' : 'Complete the field work once the field welds are complete and the prefab is released.'}</p></div>
+      <p>Isometrics of the active main project marked {type} complete on the isometric, ready for their release document.</p></div>
       <div className="heading-actions"><button className="btn" type="button" onClick={() => void reload()} disabled={busy}>{busy ? <Loader2 size={16} className="spin"/> : <RefreshCw size={16}/>}Refresh</button>
         {allowed && <button className="btn primary" type="button" disabled={!checked.length} onClick={() => setReleasing(true)}>Release checked{checked.length ? ` (${checked.length})` : ''}</button>}</div></div>
     {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
@@ -86,33 +87,31 @@ function ReleaseList({ type }: { type: ReleasePhase }) {
         <div className="field"><label htmlFor="release-show">Show</label><select id="release-show" value={show} onChange={event => { setShow(event.target.value as 'hide' | 'show'); reset(); }}><option value="hide">Hide released</option><option value="show">Show released</option></select></div>
         <div className="field"><label htmlFor="release-project">Project</label><select id="release-project" value={projectId} onChange={event => { setProjectId(event.target.value); reset(); }}><option value="">All projects</option>{(rows.projects || []).filter(project => !project._archived).map(project => <option key={project.id} value={project.id}>{label('projects', project.id)}</option>)}</select></div>
         <div className="field"><label htmlFor="release-itp">ITP No</label><input id="release-itp" type="search" value={itpNo} placeholder="ITP number or ITP number 2" onChange={event => { setItpNo(event.target.value); reset(); }}/></div>
-        <p className="release-counts" role="status" aria-live="polite"><strong>{counts.ready}</strong> ready · <strong>{counts.blocked}</strong> blocked{show === 'show' && <> · <strong>{counts.released}</strong> released</>}</p>
+        <p className="release-counts" role="status" aria-live="polite"><strong>{counts.ready}</strong> to release{show === 'show' && <> · <strong>{counts.released}</strong> released</>}</p>
       </div>
       <TableScroll><table className="data-table release-table" aria-label={`${title} isometrics`}>
         <thead><tr>
           <th className="select-cell"><input type="checkbox" aria-label="Select all ready isometrics on this page" disabled={!selectableShown.length} ref={input => { if (input) input.indeterminate = selectableShown.some(entry => selected.includes(entry.iso.id)) && !selectableShown.every(entry => selected.includes(entry.iso.id)); }}
             checked={selectableShown.length > 0 && selectableShown.every(entry => selected.includes(entry.iso.id))} onChange={event => setSelected(old => event.target.checked ? [...new Set([...old, ...selectableShown.map(entry => entry.iso.id)])] : old.filter(id => !selectableShown.some(entry => entry.iso.id === id)))}/></th>
           {['Project', 'ISO', 'IRN', 'Rev. no.', 'ITP No', 'ITP No 2', 'Spools', 'Piping class', 'Drawing no. 1', 'NoBo', 'X Ray %', 'PWHT', 'Priority'].map(column => <th key={column} scope="col">{column}</th>)}<th scope="col" className="release-status-col">{type} status</th></tr></thead>
-        <tbody>{shown.map(entry => { const { iso, release, check } = entry; return <tr key={iso.id} className={release ? 'released' : check.ready ? 'ready' : 'blocked'}>
+        <tbody>{shown.map(entry => { const { iso, release } = entry; return <tr key={iso.id} className={release ? 'released' : 'ready'}>
           <td className="select-cell"><input type="checkbox" aria-label={`Select ${text(iso.isoNo)} for ${type.toLowerCase()} release`} disabled={!selectable(entry)} checked={selected.includes(iso.id)} onChange={event => setSelected(old => event.target.checked ? [...old, iso.id] : old.filter(id => id !== iso.id))}/></td>
           <td>{entry.project ? label('projects', entry.project.id) : '—'}</td>
           <td><Link className="record-link" to={`/workspace/isometrics/${iso.id}`}>{text(iso.isoNo) || '—'}</Link></td>
           <td>{text(iso.irn) || '—'}</td><td className="tabular">{currentRevision(rows, iso.id, 'ISO')}</td><td>{text(iso.itpNo) || '—'}</td><td>{text(iso.itpNo2) || '—'}</td><td>{entry.spools || '—'}</td>
           <td>{text(iso.pipingClass) || '—'}</td><td>{text(iso.drawingNo) || '—'}</td><td>{yesNo(iso.noBo)}</td><td>{text(iso.xRay) || '—'}</td><td>{yesNo(iso.pwht)}</td><td>{priorityLabel(iso.priority) || '—'}</td>
-          <td className="release-status-col"><ReleaseStatusCell entry={entry} noun={noun}/></td></tr>; })}</tbody></table></TableScroll>
-      {!list.length && <EmptyState title={itpNo || projectId ? 'No isometrics match your filters' : show === 'hide' ? `Nothing waits for ${type.toLowerCase()} release` : 'No isometrics in this main project yet'} description={itpNo || projectId ? 'Clear the project or ITP filter to see more isometrics.' : show === 'hide' ? 'Every isometric of this main project is released. Choose Show released to see them.' : 'Add isometrics under the main project to release them here.'} action={itpNo || projectId ? <button className="btn" type="button" onClick={() => { setProjectId(''); setItpNo(''); reset(); }}>Clear filters</button> : undefined}/>}
+          <td className="release-status-col"><ReleaseStatusCell entry={entry} type={type}/></td></tr>; })}</tbody></table></TableScroll>
+      {!list.length && <EmptyState title={itpNo || projectId ? 'No isometrics match your filters' : show === 'hide' ? `Nothing waits for ${type.toLowerCase()} release` : `No isometric is ${type} complete yet`} description={itpNo || projectId ? 'Clear the project or ITP filter to see more isometrics.' : show === 'hide' ? `Isometrics appear here once they are marked ${type} complete on the isometric. Released ones show with Show released.` : `Mark an isometric ${type} complete on its Status card to release it here.`} action={itpNo || projectId ? <button className="btn" type="button" onClick={() => { setProjectId(''); setItpNo(''); reset(); }}>Clear filters</button> : undefined}/>}
       <Pager page={current} pages={pages} onPage={setPage} total={list.length} noun="isometrics"/>
     </section>
     {releasing && <ReleaseDialog type={type} isometrics={checked.map(entry => entry.iso)} onClose={() => setReleasing(false)} onDone={() => setSelected([])}/>}
   </div>;
 }
 
-function ReleaseStatusCell({ entry, noun }: { entry: ReleaseListRow; noun: string }) {
-  const { release, check } = entry;
+function ReleaseStatusCell({ entry, type }: { entry: ReleaseListRow; type: ReleasePhase }) {
+  const { release, iso } = entry; const completion = phaseCompletion(iso, type, release ? [release] : null);
   if (release) return <div className="release-state"><Badge color="green">Released</Badge><small>{formatDate(release.date)}{release.docNo ? ` · ${text(release.docNo)}` : ''}</small></div>;
-  if (check.ready) return <div className="release-state"><Badge color="green">Ready</Badge><small>All {noun} welds complete</small></div>;
-  return <details className="release-reasons"><summary><Badge color="amber">Blocked · {check.reasons.length}</Badge></summary>
-    <ul>{check.reasons.map((reason, index) => <li key={`${reason.group}-${reason.weldId || 'iso'}-${index}`}><strong>{reason.title}</strong> {reason.message}</li>)}</ul></details>;
+  return <div className="release-state"><Badge color="blue">{type} completed</Badge>{completion && <small>{formatDate(completion.at)}{completion.by ? ` · ${completion.by}` : ''}</small>}</div>;
 }
 
 /** Release the checked isometrics of one phase. The server checks every isometric again and releases all of them or none. */
@@ -224,55 +223,77 @@ export function ReleaseDocumentDialog({ releases, onClose }: { releases: Row[]; 
 
 // ----- Status card of the isometric ----------------------------------------------------------------------------------
 
-const PILL: Record<PhaseState['state'], string> = { released: 'green', ready: 'blue', 'not-ready': 'amber', none: 'neutral' };
-const stateText = (type: ReleasePhase, state: PhaseState) => state.state === 'released' ? (type === 'Prefab' ? 'released' : 'completed') : state.state === 'ready' ? 'ready' : state.state === 'none' ? `no ${PHASE_LOCATION[type]} welds` : type === 'Prefab' ? 'not ready' : 'open';
+const PILL: Record<PhaseState['state'], string> = { released: 'green', completed: 'green', ready: 'blue', 'not-ready': 'amber' };
 
-/** "Prefab not ready / ready / released", "Field completed" with Reopen, and "Create release doc" on the isometric's Status card (Weld Pilot only). */
+/**
+ * Per phase on the isometric's Status card (Weld Pilot only): "Prefab not ready" with the reasons, the "Prefab
+ * complete" button with the reference confirmation, or "Prefab completed" with Reopen; the same for Field.
+ * "Create release doc" opens the release documents made so far.
+ */
 export function ReleaseStatus({ iso }: { iso: Row }) {
   const { canRecord, canRun } = useWorkspace(); const pilot = usePilot(); const source = useReleaseSource();
-  const [releasing, setReleasing] = useState<ReleasePhase | ''>(''), [reopening, setReopening] = useState<ReleasePhase | ''>(''), [document, setDocument] = useState(false);
+  const [completing, setCompleting] = useState<ReleasePhase | ''>(''), [reopening, setReopening] = useState<ReleasePhase | ''>(''), [document, setDocument] = useState(false);
   const input: ReleaseCheckInput = useMemo(() => ({ iso, welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, punch: source.punch }), [iso, source]);
   const prefab = useMemo(() => phaseState('Prefab', input), [input]), field = useMemo(() => phaseState('Field', input), [input]);
   if (pilot?.pilot.key === 'mto' || !canRecord('releases')) return null;
   const released = [prefab.release, field.release].filter((row): row is Row => Boolean(row));
   const phase = (type: ReleasePhase, state: PhaseState) => {
-    const title = type === 'Prefab' ? 'Prefab' : 'Field';
+    const done = state.state === 'completed' || state.state === 'released';
     return <div className="iso-release-phase" key={type}>
-      <div className="iso-release-line"><span className="iso-release-name">{title}</span><span className={`release-pill ${PILL[state.state]}`}>{state.state === 'released' && <Lock size={12} aria-hidden="true"/>}{stateText(type, state)}</span></div>
-      {state.state === 'released' && <small className="iso-release-meta">{formatDate(state.release!.date)} · {text(state.release!.releasedBy) || 'unknown'} · {text(state.release!.reportNo)}</small>}
-      {!source.limited && (state.state === 'not-ready' || state.state === 'none') && <details className="release-reasons"><summary>Why {state.state === 'none' ? 'nothing to release' : `${title.toLowerCase()} is not ready`}</summary><ul>{state.check.reasons.map((reason, index) => <li key={`${reason.group}-${index}`}><strong>{reason.title}</strong> {reason.message}</li>)}</ul></details>}
+      <div className="iso-release-line"><span className="iso-release-name">{type}</span>
+        {state.state === 'ready' && canRun('complete-phase', { type }) ? <button className="btn small primary" type="button" onClick={() => setCompleting(type)}>{type} complete</button>
+          : <span className={`release-pill ${PILL[state.state]}`}>{done && <Lock size={12} aria-hidden="true"/>}{state.state === 'ready' ? `${type} ready` : state.label}</span>}</div>
+      {done && state.completion && <small className="iso-release-meta">{formatDate(state.completion.at)} · {state.completion.by || 'unknown'}{state.release ? ` · released ${text(state.release.reportNo || state.release.number)}` : ''}</small>}
+      {!source.limited && state.state === 'not-ready' && <details className="release-reasons"><summary>Why {type.toLowerCase()} is not ready</summary><ul>{state.check.reasons.map((reason, index) => <li key={`${reason.group}-${index}`}><strong>{reason.title}</strong> {reason.message}</li>)}</ul></details>}
       <div className="iso-release-actions">
-        {state.state === 'ready' && canRun('release', { type }) && <button className="btn small primary" type="button" onClick={() => setReleasing(type)}>Release {title.toLowerCase()}</button>}
-        {state.state === 'released' && canRun('reopen-release', { type }) && !(type === 'Prefab' && field.state === 'released') && <button className="btn small" type="button" onClick={() => setReopening(type)}><Unlock size={14}/>Reopen</button>}
+        {done && canRun('reopen-release', { type }) && <button className="btn small" type="button" onClick={() => setReopening(type)}><Unlock size={14}/>Reopen</button>}
       </div>
     </div>;
   };
   return <section className="iso-release" aria-label="Prefab and field release">
     {phase('Prefab', prefab)}{phase('Field', field)}
     {released.length > 0 && canRecord('releases', 'show') && <button className="btn small iso-release-doc" type="button" onClick={() => setDocument(true)}><FileText size={14}/>Create release doc</button>}
-    {releasing && <ReleaseDialog type={releasing} isometrics={[iso]} onClose={() => setReleasing('')}/>}
+    {completing && <CompleteDialog iso={iso} type={completing} onClose={() => setCompleting('')}/>}
     {reopening && <ReopenDialog iso={iso} type={reopening} onClose={() => setReopening('')}/>}
     {document && <ReleaseDocumentDialog releases={released} onClose={() => setDocument(false)}/>}
   </section>;
 }
 
-/** Reopen asks for a reason; the reason is kept with the release and in the audit trail. */
+/** "Prefab complete" / "Field complete": a confirmation only (reference wording); the server checks the phase again. */
+function CompleteDialog({ iso, type, onClose }: { iso: Row; type: ReleasePhase; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace(); const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function confirm() {
+    setBusy(true); setError('');
+    try { await post('/actions/complete-phase', { isoId: iso.id, type }); await refresh(); notify(`${text(iso.isoNo)} is ${type} complete. The ${PHASE_LOCATION[type]} welds are locked.`); onClose(); }
+    catch (failure) { setError((failure as Error).message || `${type} complete could not be saved.`); } finally { setBusy(false); }
+  }
+  return <Modal title={`${type} complete`} subtitle={text(iso.isoNo)} onClose={onClose}>
+    <div className="modal-body">
+      {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+      <p>{COMPLETE_CONFIRM[type]}</p>
+    </div>
+    <div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn primary" disabled={busy} onClick={() => void confirm()}>{busy && <Loader2 size={15} className="spin"/>}Confirm</button></div>
+  </Modal>;
+}
+
+/** Reopen asks for a reason; the reason is kept in the audit trail and with a release document of the phase. */
 function ReopenDialog({ iso, type, onClose }: { iso: Row; type: ReleasePhase; onClose: () => void }) {
   const { refresh, notify } = useWorkspace(); const [reason, setReason] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function submit(event: FormEvent) {
     event.preventDefault(); const value = reason.trim();
     if (!value) { setError('Enter the reason for reopening.'); return; }
     setBusy(true); setError('');
-    try { await post('/actions/reopen-release', { isoId: iso.id, type, reason: value }); await refresh(); notify(`${type} release reopened. The ${PHASE_LOCATION[type]} welds are unlocked.`); onClose(); }
-    catch (failure) { setError((failure as Error).message || 'The release could not be reopened.'); } finally { setBusy(false); }
+    try { await post('/actions/reopen-release', { isoId: iso.id, type, reason: value }); await refresh(); notify(`${type} complete reopened. The ${PHASE_LOCATION[type]} welds are unlocked.`); onClose(); }
+    catch (failure) { setError((failure as Error).message || `${type} complete could not be reopened.`); } finally { setBusy(false); }
   }
   const welds = PHASE_LOCATION[type];
-  return <Modal title={`Reopen ${type.toLowerCase()} release`} subtitle={text(iso.isoNo)} onClose={onClose}>
+  return <Modal title={`Reopen ${type.toLowerCase()} complete`} subtitle={text(iso.isoNo)} onClose={onClose}>
     <form onSubmit={event => void submit(event)}><div className="modal-body">
       {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
-      <p>The {welds} welds of this isometric are unlocked again and the {type === 'Prefab' ? 'isometric is blocked until the prefab is released again' : 'field completion is withdrawn'}. The release record is kept as history.</p>
+      <p>Are you sure you want to reopen {type} complete?</p>
+      <p className="muted">{type === 'Prefab' ? 'Shop welds become editable again. The isometric is removed from the prefab release overview.' : 'The isometric is removed from the field release overview.'} The {welds} welds are unlocked; a release document of this phase is kept as history.</p>
       <div className="field"><label htmlFor="reopen-reason">Reason for reopening <span className="required">*</span></label><textarea id="reopen-reason" rows={4} required maxLength={500} value={reason} onChange={event => setReason(event.target.value)} aria-invalid={Boolean(error) && !reason.trim()}/><small className="field-hint">{reason.length} / 500 · recorded in the audit trail</small></div>
-    </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}<RotateCcw size={15}/>Reopen release</button></div></form>
+    </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}<RotateCcw size={15}/>Reopen</button></div></form>
   </Modal>;
 }
 

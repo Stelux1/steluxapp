@@ -71,18 +71,26 @@ test('rule (c): project certificates follow the welder-data project links (linke
   assert.deepEqual(certificateErrors({ projectCertificates: false }, { certificate1Id: 'elsewhere' }, [1], certificates, 'p1', context), {});
 });
 
-test('rule (d): a weld is locked by the release of its own phase and unlocked when the release is reopened or archived (releases rule)', () => {
+test('rule (d): a weld is locked once its phase is complete on the isometric (or released before the two steps), and unlocked when reopened', () => {
   const types = [row('shop', { name: 'Butt Weld - Shop', location: 'Shop' }), row('field', { name: 'Butt Weld - Field', location: 'Field' }), row('named', { name: 'Socket weld - Field' }), row('plain', { name: 'HOOK-UP' })];
   const releases = [row('r1', { isoId: 'i1', type: 'Field' }), row('r2', { isoId: 'i2', type: 'Prefab' }), row('r3', { isoId: 'i3', type: 'Hydrotest' }), row('r4', { isoId: 'i4', type: 'Field', _archived: true }), row('r5', { isoId: 'i5', type: 'Field', status: 'Reopened' }), row('r6', { isoId: 'i6', type: 'Prefab', status: 'Released' })];
-  const context = lockContext(types, releases);
+  // i7 is Prefab complete on the isometric and has no release record at all (reference 0003: "Release not available").
+  const isometrics = [row('i7', { prefabCompletedAt: '2026-11-02T08:00:00.000Z', prefabCompletedBy: 'Mila Kovač' }), row('i8', { fieldCompletedAt: '2026-11-02T08:00:00.000Z' })];
+  const context = lockContext(types, releases, isometrics);
   const lock = (isoId: string, typeId: string) => weldLock({ isoId, typeId }, context);
+  assert.deepEqual(lock('i7', 'shop'), { locked: true, release: 'Prefab', reason: 'Locked after Prefab complete' });
+  assert.equal(lock('i7', 'field').locked, false, 'Prefab complete leaves the field welds open');
+  assert.deepEqual(lock('i8', 'field'), { locked: true, release: 'Field', reason: 'Locked after Field complete' });
+  assert.equal(lock('i8', 'shop').locked, false);
+  assert.equal(weldLock({ isoId: 'i7', typeId: 'shop' }, lockContext(types, releases)).locked, false, 'without the isometrics only a release can lock');
+  // Releases from before the two steps still count as completed.
   assert.equal(lock('i1', 'field').locked, true); assert.equal(lock('i1', 'field').release, 'Field'); assert.equal(lock('i1', 'named').locked, true, 'older types are read from their name');
   assert.equal(lock('i1', 'shop').locked, false, 'shop welds stay open with only a Field release');
   assert.equal(lock('i2', 'shop').locked, true); assert.equal(lock('i2', 'shop').release, 'Prefab'); assert.equal(lock('i2', 'field').locked, false);
   assert.equal(lock('i1', 'plain').locked, false, 'without a phase the weld is not locked'); assert.equal(weldLock({ isoId: 'i1' }, context).locked, false);
   assert.equal(lock('i3', 'field').locked, false, 'a hydrotest release does not lock welds'); assert.equal(lock('i4', 'field').locked, false, 'a removed release unlocks'); assert.equal(lock('i5', 'field').locked, false, 'a Reopened release unlocks');
-  assert.equal(lock('i6', 'shop').locked, true); assert.match(lock('i6', 'shop').reason, /Reopen the Prefab release/);
-  assert.match(lock('i1', 'field').reason, /Reopen the Field release/);
+  assert.equal(lock('i6', 'shop').reason, 'Locked after Prefab complete');
+  assert.equal(lock('i1', 'field').reason, 'Locked after Field complete');
   assert.equal(weldLocation(row('x', { name: 'HOOK-UP' })), null);
 });
 
@@ -234,6 +242,43 @@ test('Upd. prev. weld and Upd. next weld copy the charge to the adjoining side o
   const open = f.store.get('welds', 'weld-18');
   const locked = await f.act('save-weld', { weldId: open.id, expectedVersion: open._version, chargeNo1: 'EXISTING', updatePrev: true });
   assert.equal(locked.status, 423); assert.equal(f.store.get('welds', 'weld-18')._version, open._version); assert.equal(f.store.get('welds', 'weld-9').chargeNo2, 'H-1042');
+});
+
+test('rule (d) through HTTP: Prefab / Field complete lock their welds and the inspection results of those welds (423) until reopened', async t => {
+  const f = await fixture(t);
+  const location = (weld: Row) => f.store.get('weld_types', String(weld.typeId)).location;
+  const welds = f.store.list('welds').filter(weld => weld.isoId === 'iso-1');
+  const shop = welds.find(weld => location(weld) === 'Shop')!, field = welds.find(weld => location(weld) === 'Field')!;
+  // Marked complete without any release record (the sample's open NDT is skipped by the system actor).
+  runAction(f.store, 'complete-phase', { isoId: 'iso-1', type: 'Prefab' }, SYSTEM);
+  runAction(f.store, 'complete-phase', { isoId: 'iso-1', type: 'Field' }, SYSTEM);
+  assert.equal(f.store.list('releases').filter(row => row.isoId === 'iso-1').length, 0, 'Complete makes no release record');
+  let result = await f.act('save-weld', { weldId: shop.id, kr: 'K9' });
+  assert.deepEqual([result.status, result.body.error], [423, 'Locked after Prefab complete']);
+  result = await f.act('save-weld', { weldId: field.id, kr: 'K9' });
+  assert.deepEqual([result.status, result.body.error], [423, 'Locked after Field complete']);
+  assert.equal((await f.request(`/api/records/welds/${shop.id}`, 'PUT', { description: 'Changed', _version: f.store.get('welds', shop.id)._version })).status, 423);
+  // scn-SB-D1: an NDT result on a locked weld is refused and the stored results stay as they were.
+  const before = JSON.stringify(f.store.list('inspection_results').filter(row => row.weldId === shop.id || row.weldId === field.id));
+  for (const weld of [shop, field]) {
+    result = await f.act('inspection-upload', { type: 'NDT', weldIds: [weld.id], rounds: [{ round: 'Initial', reportNo: 'RT-SB-9', result: 'Accepted' }] });
+    assert.equal(result.status, 423, JSON.stringify(result.body)); assert.match(result.body.error, new RegExp(`Weld ${weld.weldNo}: Locked after ${location(weld) === 'Shop' ? 'Prefab' : 'Field'} complete`));
+  }
+  assert.equal((await f.act('pwht-upload', { weldIds: [shop.id], reportNo: 'PW-1', date: '2026-11-02' })).status, 423);
+  assert.equal((await f.act('visual-inspection', { weldIds: [field.id], accepted: [field.id], reportNo: 'VT-1', date: '2026-11-02' })).status, 423);
+  assert.equal(JSON.stringify(f.store.list('inspection_results').filter(row => row.weldId === shop.id || row.weldId === field.id)), before);
+  // The completion fields cannot be written through the record routes.
+  const iso = f.store.get('isometrics', 'iso-1');
+  assert.equal((await f.request('/api/records/isometrics/iso-1', 'PUT', { description: 'Changed', prefabCompletedAt: '', fieldCompletedBy: 'Forged', _version: iso._version })).status, 200);
+  const after = f.store.get('isometrics', 'iso-1');
+  assert.deepEqual([after.description, after.prefabCompletedAt, after.fieldCompletedBy], ['Changed', iso.prefabCompletedAt, iso.fieldCompletedBy], 'the other fields save, the completion stays');
+  // Reopen Prefab while Field stays completed (reference 0003: both Reopen buttons are offered independently).
+  result = await f.act('reopen-release', { isoId: 'iso-1', type: 'Prefab', reason: 'Charge number on a shop weld corrected' });
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  assert.equal(f.store.get('isometrics', 'iso-1').prefabCompletedAt, ''); assert.ok(f.store.get('isometrics', 'iso-1').fieldCompletedAt, 'Field stays completed');
+  assert.equal((await f.act('save-weld', { weldId: shop.id, kr: 'K9' })).status, 201);
+  assert.equal((await f.act('inspection-upload', { type: 'NDT', weldIds: [shop.id], rounds: [{ round: 'Initial', reportNo: 'RT-SB-9', result: 'Accepted' }] })).status, 201);
+  assert.equal((await f.act('save-weld', { weldId: field.id, kr: 'K9' })).status, 423, 'the field welds stay locked');
 });
 
 test('rule (d) through HTTP: locked welds cannot be edited, deleted or restored; reopening the release unlocks them; shop and field are separate', async t => {
