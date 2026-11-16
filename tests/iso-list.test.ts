@@ -312,16 +312,14 @@ test('hosted API: copy and phases work for a writer, a missing right is a 403 an
   const copy = (data: Record<string, unknown>) => f.request('/api/actions/copy-isometrics', 'POST', { isoIds: ['iso-9'], projectId: 'project-cooling', ...data });
   await f.signIn('Welding read only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read only' });
   assert.equal((await copy({ copyWelds: true })).status, 403, 'no add right on welds');
-  // Material requirements belong to MTO Pilot: copied from there, refused from Weld Pilot (the pilot is the boundary).
-  assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 403, 'materials are not copied from Weld Pilot');
-  f.usePilot('mto'); assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 201); f.usePilot('weld');
+  // Material requirements belong to MTO Pilot: from Weld Pilot they follow the account's MTO profile (here the same one, Read & write).
+  assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 201, 'materials are copied from Weld Pilot with the MTO right');
   assert.equal(f.store.list('welds').filter(w => copyOfProject(f.store, w.isoId as string)).length, 0);
   await f.signIn('General read only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'Read & write' });
   assert.equal((await copy({ projectId: 'project-skid', isoIds: ['iso-1'] })).status, 403);
   assert.equal((await f.request('/api/actions/phases', 'POST', { isoIds: ['iso-1'], prefab_doc: 'Complete' })).status, 403);
   await f.signIn('Full writer', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write' });
-  assert.equal((await copy({ isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true, copyMaterials: true, copyCalculations: true })).status, 403, 'one pilot copies its own records');
-  assert.equal((await copy({ isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true })).status, 201);
+  assert.equal((await copy({ isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true, copyMaterials: true, copyCalculations: true })).status, 201, 'all three parts from one pilot (each follows its own pilot)');
   const clash = await copy({ isoIds: ['iso-1'], projectId: 'project-skid' }); assert.equal(clash.status, 422); assert.match((await clash.json()).error, /STX-CW-001 already exists in project STX-2403\. Nothing was copied\./);
   assert.equal((await copy({ isoIds: ['iso-2'], projectId: 'project-skid', _version: 3 })).status, 404, 'undelivered field names are refused');
   const phases = await f.request('/api/actions/phases', 'POST', { isoIds: ['iso-1', 'iso-2'], field_test: 'Complete' }); assert.equal(phases.status, 201);
@@ -332,7 +330,7 @@ test('hosted API: copy and phases work for a writer, a missing right is a 403 an
 });
 const copyOfProject = (s: Store, isoId: string) => s.get('isometrics', isoId).projectId === 'project-cooling' && s.get('isometrics', isoId).isoNo === 'STX-SK-009';
 
-test('hosted export gives the flag columns as Yes / No / n/a, and n/a where the account cannot read the source records', async t => {
+test('hosted export gives the flag columns as Yes / No / n/a, the same in both pilots (from the server summary)', async t => {
   const f = await hostedFixture(t); await f.setup();
   const table = async (ids: string) => parse(await (await f.request(`/api/export/isometrics?format=csv&archived=true&ids=${ids}`)).text(), { columns: true, skip_empty_lines: true }) as Record<string, string>[];
   const rows = await table('iso-3,iso-10,iso-1');
@@ -344,5 +342,5 @@ test('hosted export gives the flag columns as Yes / No / n/a, and n/a where the 
   assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Pilot');
   f.usePilot('mto');
   const limited = (await table('iso-3')).at(0)!;
-  assert.deepEqual([limited.Pfb, limited.Fld, limited.M], ['n/a', 'n/a', 'No']);
+  assert.deepEqual([limited.Pfb, limited.Fld, limited.M], ['Yes', 'Yes', 'No'], 'the MTO-only account sees the releases\' effect, not the releases');
 });

@@ -119,16 +119,19 @@ const share = (count: number, total: number) => total > 0 ? Math.round(count / t
  * The six cards. `listed` are the flags of the isometrics currently shown (scope and filters applied); `inScope`
  * is how many isometrics the scope holds before the filters, so "Total isometrics" reads shown / all.
  */
+/** What one isometric adds to each KPI card (the server summary carries these; the cards count them). */
+export interface IsoKpiFacts { ndtApproved: boolean; pwhtApproved: boolean; prefabComplete: boolean; fieldComplete: boolean; documentation: boolean }
+export const isoKpiFacts = (flags: IsoFlags): IsoKpiFacts => ({ ndtApproved: flags.ndtApproved, pwhtApproved: flags.pwhtApproved, prefabComplete: flags.pfb === true, fieldComplete: flags.fld === true, documentation: flags.doc === true });
 export function isoKpis(listed: IsoFlags[], inScope: number): IsoKpi[] {
-  const n = listed.length, count = (test: (flags: IsoFlags) => boolean) => listed.filter(test).length;
+  const facts = listed.map(isoKpiFacts), n = facts.length, count = (key: keyof IsoKpiFacts) => facts.filter(item => item[key]).length;
   const card = (key: KpiKey, label: string, value: number, total: number): IsoKpi => ({ key, label, count: value, total, percent: share(value, total) });
   return [
     card('total', 'Total isometrics', n, inScope),
-    card('ndt', 'NDT approved', count(flags => flags.ndtApproved), n),
-    card('pwht', 'PWHT approved', count(flags => flags.pwhtApproved), n),
-    card('prefab', 'Prefab complete', count(flags => flags.pfb === true), n),
-    card('field', 'Field complete', count(flags => flags.fld === true), n),
-    card('documentation', 'Documentation', count(flags => flags.doc === true), n),
+    card('ndt', 'NDT approved', count('ndtApproved'), n),
+    card('pwht', 'PWHT approved', count('pwhtApproved'), n),
+    card('prefab', 'Prefab complete', count('prefabComplete'), n),
+    card('field', 'Field complete', count('fieldComplete'), n),
+    card('documentation', 'Documentation', count('documentation'), n),
   ];
 }
 

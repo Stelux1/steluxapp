@@ -12,7 +12,9 @@ import { documentStorage } from '../server/documents.ts';
 import { currentSignature } from '../server/signatures.ts';
 import { releaseAccess } from '../server/release-access.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.ts';
-import { areaPilots, canResource, isAdministrator, pilotBoundary } from '../shared/permissions.ts';
+import { areaPilots, canResource, isAdministrator, pilotBoundary, type CopyParts } from '../shared/permissions.ts';
+import { isoBlockers, isoProgress, isoQuality } from '../shared/iso-status.ts';
+import type { IsoSummary } from '../shared/iso-summary.ts';
 import { allowedPilots } from '../shared/pilots.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { projectResource } from '../shared/release.ts';
@@ -353,4 +355,150 @@ test('a fresh sample workspace with seeded accounts still asks for its administr
   assert.equal((await fetch(`${base}/auth/setup`, { method: 'POST', headers, body: JSON.stringify({ name: 'Sample admin', email: 'sample-admin@example.test', password: PASSWORD }) })).status, 201);
   assert.equal((await fetch(`${base}/auth/setup`, { method: 'POST', headers, body: JSON.stringify({ name: 'Second', email: 'second@example.test', password: PASSWORD }) })).status, 409);
   assert.equal((await (await fetch(`${base}/auth/status`)).json()).requiresSetup, false);
+});
+
+// ----- deliberate pilot-boundary crossings: the isometric summary and Copy isometrics ----------------------------
+
+type Summaries = Record<string, IsoSummary>;
+type BootstrapBody = { rows: Record<string, Row[]>; isoSummaries?: Summaries; copyParts?: CopyParts };
+/** Only aggregates: numbers, booleans, null and the fixed keys of phases and blocker groups; no other text. */
+function assertAggregates(value: unknown, path = 'summary') {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return;
+  if (typeof value === 'string') { assert.ok(['shop', 'field', 'site', 'release', 'welds', 'ndt', 'repair', 'punch'].includes(value), `${path} carries text "${value}"`); return; }
+  if (Array.isArray(value)) { value.forEach((item, index) => assertAggregates(item, `${path}[${index}]`)); return; }
+  assert.equal(typeof value, 'object', path);
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) assertAggregates(item, `${path}.${key}`);
+}
+
+test('one isometric summary for both pilots: the same numbers under Weld and MTO, aggregates only, scoped like the isometrics', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('Writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
+  const both = f.account('Both pilots', { profileId: writer }), mtoOnly = f.account('MTO only', { profileId: writer, weldEnabled: false });
+  const bootstrap = async (as: ReturnType<typeof f.client>, pilot: string) => json<BootstrapBody>(await as.request('/bootstrap', { pilot }));
+  const a = f.client(); await a.login(both.email);
+  const weld = await bootstrap(a, 'weld'), mto = await bootstrap(a, 'mto');
+  // project-skid (iso-7 … iso-10) is switched off for MTO Pilot: its isometrics have a summary in Weld Pilot only.
+  const inMto = mto.rows.isometrics.filter(iso => iso.projectId !== 'project-skid').map(iso => iso.id).sort();
+  assert.deepEqual(Object.keys(mto.isoSummaries!).sort(), inMto);
+  assert.deepEqual(Object.keys(weld.isoSummaries!).sort(), weld.rows.isometrics.map(iso => iso.id).sort());
+  for (const id of inMto) assert.deepEqual(mto.isoSummaries![id], weld.isoSummaries![id], id);
+  // The numbers are the shared formulas over every record (here: what Weld Pilot reads for this account).
+  const iso2 = weld.rows.isometrics.find(iso => iso.id === 'iso-2')!, site = weld.rows.sites.find(row => row.id === 'site-north');
+  const input = { iso: iso2, site, welds: weld.rows.welds, weldTypes: weld.rows.weld_types, diameters: weld.rows.diameters, results: weld.rows.inspection_results, releases: weld.rows.releases, punch: weld.rows.punchlists };
+  const summary = mto.isoSummaries!['iso-2'];
+  assert.equal(summary.blockers.total, isoBlockers(input).total); assert.ok(summary.blockers.total > 0);
+  assert.deepEqual(summary.blockers.groups, isoBlockers(input).groups.map(group => ({ key: group.key, count: group.count })));
+  assert.equal(summary.quality.percent, isoQuality(input).percent); assert.equal(summary.progress.total, isoProgress(input).total);
+  assert.equal(summary.progress.configured, true); assert.notEqual(summary.progress.total, null);
+  assert.deepEqual([mto.isoSummaries!['iso-3'].flags.pfb, mto.isoSummaries!['iso-3'].flags.fld, mto.isoSummaries!['iso-3'].kpi.prefabComplete], [true, true, true], 'releases count in MTO Pilot too');
+  assert.equal(mto.rows.releases, undefined, 'while the release records stay in Weld Pilot');
+  // The MTO-only account: the same numbers, no weld records in any response.
+  const m = f.client(); await m.login(mtoOnly.email);
+  const raw = await (await m.request('/bootstrap', { pilot: 'mto' })).text(), view = JSON.parse(raw) as BootstrapBody;
+  assert.deepEqual(view.isoSummaries, mto.isoSummaries);
+  for (const key of ['welds', 'inspection_results', 'inspection_requests', 'releases', 'punchlists', 'welders']) assert.equal(view.rows[key], undefined, key);
+  const records = [...f.store.list('welds', true).flatMap(row => [row.id, String(row.weldNo)]), ...f.store.list('inspection_results', true).flatMap(row => [row.id, String(row.reportNo)]), ...f.store.list('releases', true).flatMap(row => [row.id, String(row.reportNo)]), ...f.store.list('punchlists', true).flatMap(row => [row.id, String(row.name)])];
+  for (const text of records) assert.ok(!raw.includes(`"${text}"`), `MTO bootstrap carries ${text}`);
+  const payload = JSON.stringify(view.isoSummaries);
+  for (const text of [...records, ...f.store.list('welders', true).map(row => String(row.name)), 'H-1042', ...f.store.list('iso_materials', true).map(row => row.id)]) assert.ok(!payload.includes(text), `summary carries ${text}`);
+  for (const [id, item] of Object.entries(view.isoSummaries!)) { assert.deepEqual(Object.keys(item).sort(), ['blockers', 'flags', 'kpi', 'progress', 'quality'], id); assertAggregates(item, id); }
+  for (const path of ['/records/welds', '/records/inspection_results', '/records/releases', '/history/welds/weld-1', '/reports/lisl', '/export/welds']) assert.equal(await status(await m.request(path, { pilot: 'mto' })), 403, path);
+  // The isometrics export gives the same flags in both pilots (no n/a caused by the pilot).
+  const FLAG_COLUMNS = ['NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'];
+  const flagsExported = async (as: ReturnType<typeof f.client>, pilot: string) => { const [header, line] = (await (await as.request('/export/isometrics?format=csv&ids=iso-3', { pilot })).text()).trim().split('\n').map(text => text.split(',')); return FLAG_COLUMNS.map(column => line[header.indexOf(column)]); };
+  const exported = await flagsExported(m, 'mto');
+  assert.deepEqual(exported, await flagsExported(a, 'weld')); assert.deepEqual(exported, ['Yes', 'No', 'No', 'No', 'No', 'Yes', 'Yes', 'No']);
+  // A change made in one pilot shows in the other's next bootstrap (what refresh() reloads).
+  assert.equal(mto.isoSummaries!['iso-1'].flags.w, false);
+  assert.equal(await status(await m.request('/actions/phases', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-1'], prefab_welds: 'Complete' } })), 201);
+  assert.equal((await bootstrap(a, 'weld')).isoSummaries!['iso-1'].flags.w, true); assert.equal((await bootstrap(m, 'mto')).isoSummaries!['iso-1'].flags.w, true);
+  // An account that cannot read isometrics gets no summaries.
+  const blind = f.account('No isometrics', { profileId: f.profile('Materials without project data', { generalPermission: NONE, materialsPermission: RW, weldingPermission: RW }) });
+  const b = f.client(); await b.login(blind.email);
+  for (const pilot of ['weld', 'mto']) { const body = await bootstrap(b, pilot); assert.equal(body.rows.isometrics, undefined, pilot); assert.deepEqual(body.isoSummaries ?? {}, {}, pilot); }
+  // The selector (no pilot) gets neither summaries nor copy rules.
+  const selector = await json<BootstrapBody>(await a.request('/bootstrap')); assert.equal(selector.isoSummaries, undefined); assert.equal(selector.copyParts, undefined);
+});
+
+test('copy isometrics across the boundary: each part follows the account in the pilot that owns it', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('Writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
+  const viewer = f.profile('Copy viewer', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO });
+  const norm = f.store.create('calculation_norms', { name: 'Fit-up per metre', uom: 'M', hoursPerUnit: 1.5 });
+  /** A drawing in STX-2401 with two welds, one material requirement (pipe, metres) and one calculation line. */
+  const source = (isoNo: string) => {
+    const iso = f.store.create('isometrics', { isoNo, projectId: 'project-cooling' });
+    for (const weldNo of ['S1', 'S2']) f.store.create('welds', { isoId: iso.id, weldNo, typeId: 'weld-type-1', diameterId: 'diameter-6', lengthMode: 'Diameter', ndoReq: true });
+    const requirement = f.store.create('iso_materials', { isoId: iso.id, materialId: 'material-1', quantity: 6 });
+    f.store.create('calculation_lines', { name: `Fit-up ${isoNo}`, isoId: iso.id, requirementId: requirement.id, normId: norm.id });
+    return iso.id;
+  };
+  const ALL = { copyWelds: true, copyMaterials: true, copyCalculations: true };
+  const copy = (as: ReturnType<typeof f.client>, pilot: string, isoId: string, parts: Record<string, unknown>, projectId = 'project-skid') => as.request('/actions/copy-isometrics', { method: 'POST', pilot, data: { isoIds: [isoId], projectId, ...parts } });
+  /** Welds, material requirements and calculation lines on the copy in STX-2403, or null when there is no copy. */
+  const copied = (isoNo: string) => { const iso = f.store.list('isometrics').find(row => row.isoNo === isoNo && row.projectId === 'project-skid'); return iso ? ['welds', 'iso_materials', 'calculation_lines'].map(key => f.store.list(key).filter(row => row.isoId === iso.id).length) : null; };
+  const parts = async (as: ReturnType<typeof f.client>, pilot: string) => (await json<BootstrapBody>(await as.request('/bootstrap', { pilot }))).copyParts!;
+  // An account enabled in both pilots copies all three from either pilot.
+  const both = f.client(); await both.login(f.account('Both writer', { profileId: writer }).email);
+  for (const pilot of ['weld', 'mto']) assert.deepEqual(Object.values(await parts(both, pilot)).map(rule => rule.allowed), [true, true, true], pilot);
+  assert.equal(await status(await copy(both, 'weld', source('CP-WELD'), ALL)), 201); assert.deepEqual(copied('CP-WELD'), [2, 1, 1]);
+  const fromMto = await copy(both, 'mto', source('CP-MTO'), ALL); assert.equal(fromMto.status, 201); assert.deepEqual(copied('CP-MTO'), [2, 1, 1]);
+  assert.ok((await json<{ records: Row[] }>(fromMto)).records.every(row => row.isoNo === 'CP-MTO' && row.weldNo === undefined), 'the copy returns the isometric, not weld records');
+  // A weld-only account: welds yes; materials and calculations refused, also when the request is forged.
+  const weldOnly = f.client(); await weldOnly.login(f.account('Weld only writer', { profileId: writer, mtoEnabled: false }).email);
+  const weldParts = await parts(weldOnly, 'weld');
+  assert.deepEqual([weldParts.copyWelds.allowed, weldParts.copyMaterials.allowed, weldParts.copyCalculations.allowed], [true, false, false]);
+  assert.equal(weldParts.copyMaterials.reason, 'You are not enabled in MTO Pilot.');
+  const weldSource = source('CP-WELD-ONLY'), isos = f.store.list('isometrics').length;
+  for (const forged of [{ copyMaterials: true }, { copyMaterials: true, copyCalculations: true }, ALL]) {
+    const refused = await copy(weldOnly, 'weld', weldSource, forged); assert.equal(refused.status, 403, JSON.stringify(forged));
+    assert.equal((await json(refused)).error, 'You are not enabled in MTO Pilot.');
+  }
+  assert.equal(f.store.list('isometrics').length, isos, 'nothing is written');
+  assert.equal(await status(await copy(weldOnly, 'mto', weldSource, { copyMaterials: true })), 403, 'and MTO Pilot stays closed');
+  assert.equal(await status(await copy(weldOnly, 'weld', weldSource, { copyWelds: true })), 201); assert.deepEqual(copied('CP-WELD-ONLY'), [2, 0, 0]);
+  // Read only in MTO Pilot: materials refused from Weld Pilot; in MTO Pilot the isometric itself is refused.
+  const readOnly = f.client(); await readOnly.login(f.account('MTO reader', { profileId: writer, mtoProfileId: viewer }).email);
+  const readParts = await parts(readOnly, 'weld');
+  assert.deepEqual([readParts.copyWelds.allowed, readParts.copyMaterials.allowed], [true, false]); assert.equal(readParts.copyMaterials.reason, 'Your MTO Pilot profile cannot add material requirements.');
+  const readSource = source('CP-READER');
+  const refused = await copy(readOnly, 'weld', readSource, { copyWelds: true, copyMaterials: true }); assert.equal(refused.status, 403);
+  assert.equal((await json(refused)).error, 'Your MTO Pilot profile cannot add material requirements.');
+  assert.equal(await status(await copy(readOnly, 'mto', readSource, {})), 403, 'the MTO profile cannot add isometrics');
+  assert.equal(copied('CP-READER'), null);
+  assert.equal(await status(await copy(readOnly, 'weld', readSource, { copyWelds: true })), 201); assert.deepEqual(copied('CP-READER'), [2, 0, 0]);
+  // An MTO-only account: welds refused (also forged), materials and calculations copied.
+  const mtoOnly = f.client(); await mtoOnly.login(f.account('MTO only writer', { profileId: writer, weldEnabled: false }).email);
+  assert.deepEqual((await parts(mtoOnly, 'mto')).copyWelds, { allowed: false, pilot: 'weld', reason: 'You are not enabled in Weld Pilot.' });
+  const mtoSource = source('CP-MTO-ONLY');
+  assert.equal(await status(await copy(mtoOnly, 'mto', mtoSource, { copyWelds: true })), 403);
+  assert.equal(await status(await copy(mtoOnly, 'mto', mtoSource, { copyMaterials: true, copyCalculations: true })), 201); assert.deepEqual(copied('CP-MTO-ONLY'), [0, 1, 1]);
+  // A legacy single-profile account: one profile in both pilots, so it copies all three from either pilot; the
+  // duplicate and same-main-project rules still apply, and a part its single profile cannot add stays refused.
+  const legacyRow = f.account('Legacy copier', { profileId: writer });
+  const legacyReader = f.account('Legacy materials reader', { profileId: f.profile('Materials read only', { generalPermission: RW, materialsPermission: RO, weldingPermission: RW }) });
+  for (const id of [legacyRow.id, legacyReader.id]) f.store.db.prepare(`UPDATE users SET data=json_remove(data,'$.weldEnabled','$.mtoEnabled','$.weldProfileId','$.mtoProfileId') WHERE id=?`).run(id);
+  const legacy = f.client(); await legacy.login(legacyRow.email);
+  assert.equal(await status(await copy(legacy, 'mto', 'iso-1', ALL, 'project-cooling')), 422, 'the ISO number exists in the target');
+  assert.equal(await status(await copy(legacy, 'weld', 'iso-1', ALL, 'project-steam')), 422, 'another main project');
+  for (const [pilot, isoNo] of [['weld', 'CP-LEGACY-W'], ['mto', 'CP-LEGACY-M']]) { assert.equal(await status(await copy(legacy, pilot, source(isoNo), ALL)), 201, pilot); assert.deepEqual(copied(isoNo), [2, 1, 1], pilot); }
+  const lr = f.client(); await lr.login(legacyReader.email);
+  const lrSource = source('CP-LEGACY-READER');
+  for (const pilot of ['weld', 'mto']) assert.equal(await status(await copy(lr, pilot, lrSource, { copyMaterials: true })), 403, pilot);
+  assert.equal(await status(await copy(lr, 'weld', lrSource, { copyWelds: true })), 201);
+});
+
+test('other release profiles: no summaries or copy rules are delivered and Copy isometrics follows the single profile', async t => {
+  for (const profile of ['full', 'welding-demo'] as const) {
+    const f = await fixture(t, profile);
+    const body = await json<BootstrapBody>(await f.admin.request('/bootstrap'));
+    assert.equal(body.isoSummaries, undefined, profile); assert.equal(body.copyParts, undefined, profile);
+  }
+  const f = await fixture(t, 'full');
+  const copied = await f.admin.request('/actions/copy-isometrics', { method: 'POST', data: { isoIds: ['iso-1'], projectId: 'project-skid', copyWelds: true, copyMaterials: true, copyCalculations: true } });
+  assert.equal(copied.status, 201);
+  const weldsOnly = f.account('Welding writer', { profileId: f.profile('Welding writer', { generalPermission: RW, materialsPermission: RO, weldingPermission: RW }) });
+  const as = f.client(); await as.login(weldsOnly.email);
+  assert.equal(await status(await as.request('/actions/copy-isometrics', { method: 'POST', data: { isoIds: ['iso-2'], projectId: 'project-skid', copyMaterials: true } })), 403, 'single profile without the materials add right');
+  assert.equal(await status(await as.request('/actions/copy-isometrics', { method: 'POST', data: { isoIds: ['iso-2'], projectId: 'project-skid', copyWelds: true } })), 201);
 });

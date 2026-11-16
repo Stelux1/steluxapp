@@ -47,7 +47,7 @@ function rowProject(key: string, row: Row, rows: Record<string, Row[]>): string 
   return '';
 }
 export function TablePage({ resourceKey, scopeProjectId = '' }: {resourceKey: string; scopeProjectId?: string}) {
-  const def = RESOURCE_MAP[resourceKey]; const { rows, user, hasFeature, can,canRecord,canRun, label, openRecord, siteId, projectScopeEnabled } = useWorkspace(); const [params] = useSearchParams();
+  const def = RESOURCE_MAP[resourceKey]; const { rows, user, hasFeature, can,canRecord,canRun, label, openRecord, siteId, projectScopeEnabled, isoSummaries } = useWorkspace(); const [params] = useSearchParams();
   const [q, setQ] = useState(''); const [tab, setTab] = useState('active'); const [page, setPage] = useState(0); const [size, setSize] = useState(20);
   const [filtersOpen, setFiltersOpen] = useState(false); const [filters, setFilters] = useState<Record<string, unknown>>({ ...(params.get('status') ? { status: params.get('status')! } : {}), ...(params.get('result') ? { result: params.get('result')! } : {}), ...(scopeProjectId || params.get('projectId') ? { _projectId: scopeProjectId || params.get('projectId')! } : {}) });
   const [sort, setSort] = useState({ field: def.display, direction: 1 }); const [selected, setSelected] = useState<string[]>([]);
@@ -55,11 +55,12 @@ export function TablePage({ resourceKey, scopeProjectId = '' }: {resourceKey: st
   // The isometrics list of the hosted profile (both pilots): KPI cards, flag columns, column and dialog filters.
   const isoList = hosted && resourceKey === 'isometrics'; const planning = hasFeature('project-planning');
   const [isoFilters, setIsoFilters] = useState<IsoListFilters>(NO_ISO_FILTERS); const [isoFilterOpen, setIsoFilterOpen] = useState(false);
+  // Flags from the server summary (the same in both pilots); computed here only for an isometric without one.
   const flagsOf = useMemo(() => {
     if (!isoList) return new Map<string, ReturnType<typeof isoFlags>>();
     const context = isoListContext({ welds: rows.welds ?? null, weldTypes: rows.weld_types ?? null, results: rows.inspection_results ?? null, releases: rows.releases ?? null, planning });
-    return new Map((rows.isometrics || []).map(iso => [iso.id, isoFlags(iso, context)]));
-  }, [rows, isoList, planning]);
+    return new Map((rows.isometrics || []).map(iso => [iso.id, isoSummaries?.[iso.id]?.flags ?? isoFlags(iso, context)]));
+  }, [rows, isoList, planning, isoSummaries]);
   const wdiFields: Field[] = resourceKey === 'projects' && projectScopeEnabled && canRecord('welds') && canRecord('diameters') ? [{ name: '_projectStatus', label: 'Status (%)', type: 'number' }] : resourceKey === 'isometrics' && projectScopeEnabled && canRecord('welds') && canRecord('diameters') ? [{ name: '_wdiTotal', label: 'WDI total', type: 'number' }, { name: '_wdiCompleted', label: 'WDI completed', type: 'number' }, { name: '_wdiRemaining', label: 'WDI remaining', type: 'number' }] : [];
   const isoColumns = ISO_LIST_COLUMNS.filter(column => column.flag !== 'e' || planning);
   const isoFlagFields: Field[] = isoColumns.filter(column => column.flag).map(column => ({ name: column.key, label: column.label, type: 'text' }));

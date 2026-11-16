@@ -11,6 +11,8 @@ import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
 import { priorityLabel } from '../shared/priority.ts';
+import { BLOCKER_TITLES } from '../shared/iso-status.ts';
+import { blockerCountText, summaryProgress } from '../shared/iso-summary.ts';
 import type { Row } from '../shared/types.ts';
 
 const NO_BUDGET_TIP = 'No MTO budget yet. Add materials with a matching component code in MTO to enter progress here.';
@@ -33,14 +35,24 @@ interface HeaderProps {
 
 /** The six cards of the isometric header, identical under Weld Pilot and MTO Pilot. */
 export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld }: HeaderProps) {
-  const { rows, canRecord, canRun } = useWorkspace(); const pilot = usePilot();
+  const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot();
   const [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false);
   const site = rows.sites?.find(row => row.id === project?.siteId);
   const budgets = isoBudgets(iso);
+  // Hosted profile: the server summary (computed from every record, the same in both pilots). Weld-level items are
+  // computed here only where this pilot reads welds; elsewhere each group shows its count. Other profiles: computed here.
+  const summary = isoSummaries?.[iso.id], weldItems = canRecord('welds');
   const status = useMemo(() => {
     const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, budgets };
-    return { blockers: isoBlockers(input), quality: isoQuality(input), progress: isoProgress(input) };
-  }, [rows, iso, site, budgets]);
+    const local = !summary || weldItems ? isoBlockers(input) : null;
+    if (!summary) return { blockers: local!, quality: isoQuality(input), progress: isoProgress(input) };
+    // A group lists its items only when the local calculation agrees with the server's count; otherwise its count line.
+    const groups = summary.blockers.groups.map(group => {
+      const mine = local?.groups.find(item => item.key === group.key);
+      return { key: group.key, title: BLOCKER_TITLES[group.key], count: group.count, items: mine && mine.count === group.count ? mine.items : [{ message: blockerCountText(group.key, group.count) }] };
+    });
+    return { blockers: { groups, total: summary.blockers.total }, quality: summary.quality, progress: summaryProgress(summary) };
+  }, [rows, iso, site, budgets, summary, weldItems]);
   const canEdit = canRecord('isometrics', 'edit', iso), canImport = canRecord('isometrics', 'import', iso);
   const canRevise = canRun('revision', { isoId: iso.id }), historyAvailable = canRecord('revisions');
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);

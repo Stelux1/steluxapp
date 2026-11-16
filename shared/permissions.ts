@@ -102,7 +102,10 @@ export function actionScope(key:string,data:Record<string,unknown>={}):[string,P
  return direct[key]||['','insert'];
 }
 /** Copy isometrics: each ticked box needs the add right on what it copies (welds, material requirements, calculation / cut-list lines). */
-const COPY_SCOPES:[string,string][]=[['copyWelds','63'],['copyMaterials','70'],['copyCalculations','71']];
+export type CopyPart='copyWelds'|'copyMaterials'|'copyCalculations';
+/** Pilots profile: per part of Copy isometrics, whether the account may copy it (evaluated in the pilot that owns the part) and why not. */
+export type CopyParts=Record<CopyPart,{allowed:boolean;pilot?:PilotKey;reason?:string}>;
+export const COPY_SCOPES:[CopyPart,string][]=[['copyWelds','63'],['copyMaterials','70'],['copyCalculations','71']];
 export function canAction(user:User,key:string,data:Record<string,unknown>={}):boolean{
  if(!actionAvailable(user.availability,key,data.type))return false;
  if(user.capabilities&&data.type===undefined){const types=key==='release'?['Prefab','Field','Hydrotest']:key==='inspection-request'||key==='inspection-result'?['NDT','NDT PRE','VI','PWHT','PRE-HT']:[];if(types.length)return types.some(type=>canAction(user,key,{...data,type}));}

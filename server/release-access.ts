@@ -1,5 +1,5 @@
 import { RESOURCES } from '../shared/resources.ts';
-import { canResource, pilotBoundary, RESOURCE_SCOPES } from '../shared/permissions.ts';
+import { areaPilots, canResource, canScope, COPY_SCOPES, pilotBoundary, RESOURCE_SCOPES, type CopyPart, type CopyParts } from '../shared/permissions.ts';
 import { actionAvailable, fieldAvailable, PILOT_KEYS, projectRow, resourceAvailable, rowAvailable, type PilotKey } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
@@ -11,6 +11,7 @@ import { availableWps } from '../shared/welding.ts';
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
 export const pilotRefused = (message = 'Your account does not have access to this application workspace.') => new AppError(403, message, undefined, 'pilot');
+const COPY_PART_NAMES: Record<CopyPart, string> = { copyWelds: 'welds', copyMaterials: 'material requirements', copyCalculations: 'calculation lines' };
 const NO_PERMISSIONS: User['permissions'] = { general: 0, materials: 0, welding: 0, tools: 0, settings: 0 };
 
 export function releaseAccess(store: Store, availability?: Availability) {
@@ -128,7 +129,28 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (!existing && !SIGNATURE_KINDS.some(item => item.kind === value.kind)) throw new AppError(422, 'Choose a full or short signature.', { kind: 'Choose a signature type.' });
     if (!existing && store.list('signatures').some(row => row.userId === account.id && row.kind === value.kind)) throw new AppError(409, 'This signature already exists. Save a new image to replace it.');
   }
-  return { user, resource, visible, record, input, audit, project, present, pilotAccount, mainProjects, administrators, owner,
+  /**
+   * DELIBERATE PILOT-BOUNDARY CROSSING (2 of 2; the other is `isoSummariesFor` in `server/iso-summary.ts`).
+   *
+   * Copy isometrics may carry welds (Weld Pilot), material requirements and calculation lines (MTO Pilot) from
+   * either pilot. Each part is permitted when the account is enabled in the pilot that owns the part and that
+   * pilot's profile has the add right on it; the isometric itself is decided by the current pilot's profile
+   * (`canAction` with no parts ticked). Default-deny: a part whose owning pilot cannot be told is refused.
+   * The dialog shows this result and the server enforces it, so a forged request is refused.
+   */
+  function copyParts(id: string): CopyParts {
+    const output = {} as CopyParts;
+    for (const [part, area] of COPY_SCOPES) {
+      const owners = areaPilots(area), owner = owners.length === 1 ? owners[0] : undefined;
+      const account = owner ? inPilot(id, owner) : null;
+      const title = owner ? PILOT_MAP[owner].title : 'its pilot';
+      output[part] = !account ? { allowed: false, pilot: owner, reason: `You are not enabled in ${title}.` }
+        : canScope(account, area, 'insert') ? { allowed: true, pilot: owner }
+        : { allowed: false, pilot: owner, reason: `Your ${title} profile cannot add ${COPY_PART_NAMES[part]}.` };
+    }
+    return output;
+  }
+  return { user, resource, visible, record, input, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

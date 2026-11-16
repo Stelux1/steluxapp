@@ -46,7 +46,7 @@ export function PhaseDialog({ records, onClose, onDone }: { records: Row[]; onCl
 
 /** Copy isometrics into another subproject of the same main project. The server decides; the dialog only shows what it will refuse. */
 export function CopyIsometricsDialog({ records, onClose, onDone }: { records: Row[]; onClose: () => void; onDone?: () => void }) {
-  const { rows, refresh, notify, canRun } = useWorkspace();
+  const { rows, refresh, notify, canRun, copyParts } = useWorkspace();
   const projects = activeRows(rows, 'projects');
   const sites = [...new Set(records.map(row => projects.find(project => project.id === row.projectId)?.siteId))];
   const site = sites.length === 1 ? sites[0] : undefined;
@@ -56,10 +56,14 @@ export function CopyIsometricsDialog({ records, onClose, onDone }: { records: Ro
   const target = targets.find(project => project.id === targetId);
   const taken = new Set(activeRows(rows, 'isometrics').filter(row => row.projectId === targetId).map(row => String(row.isoNo).trim().toLowerCase()));
   const clashes = targetId ? records.filter(row => taken.has(String(row.isoNo).trim().toLowerCase())).map(row => String(row.isoNo)) : [];
+  // Pilots: each part follows the account's profile in the pilot that owns it, as the server decides (copyParts).
+  // Other profiles: the one profile decides, as before.
+  const part = (key: keyof typeof copy, why: string) => copyParts ? { allowed: copyParts[key].allowed, why: copyParts[key].reason || why } : { allowed: canRun('copy-isometrics', { [key]: true }), why };
+  const welds = part('copyWelds', 'Your profile cannot add welds.'), materials = part('copyMaterials', 'Your profile cannot add material requirements.'), calculations = part('copyCalculations', 'Your profile cannot add calculation lines.');
   const options = [
-    { key: 'copyWelds' as const, label: 'Copy welds', allowed: canRun('copy-isometrics', { copyWelds: true }), why: 'Your profile cannot add welds.', hint: 'Weld definitions only: no welders, dates, charge numbers, inspections or releases.' },
-    { key: 'copyMaterials' as const, label: 'Copy materials', allowed: canRun('copy-isometrics', { copyMaterials: true }), why: 'Your profile cannot add material requirements.', hint: 'Requirements with quantity and phase, without orders, stock or picks.' },
-    { key: 'copyCalculations' as const, label: 'Copy calculations', allowed: canRun('copy-isometrics', { copyCalculations: true }) && copy.copyMaterials, why: canRun('copy-isometrics', { copyCalculations: true }) ? 'Tick Copy materials first: calculation lines refer to materials.' : 'Your profile cannot add calculation lines.', hint: 'Calculation and cut-list lines that refer to the copied materials.' },
+    { key: 'copyWelds' as const, label: 'Copy welds', allowed: welds.allowed, why: welds.why, hint: 'Weld definitions only: no welders, dates, charge numbers, inspections or releases.' },
+    { key: 'copyMaterials' as const, label: 'Copy materials', allowed: materials.allowed, why: materials.why, hint: 'Requirements with quantity and phase, without orders, stock or picks.' },
+    { key: 'copyCalculations' as const, label: 'Copy calculations', allowed: calculations.allowed && copy.copyMaterials, why: calculations.allowed ? 'Tick Copy materials first: calculation lines refer to materials.' : calculations.why, hint: 'Calculation and cut-list lines that refer to the copied materials.' },
   ];
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');

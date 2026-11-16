@@ -35,7 +35,11 @@ export interface User {
   pilots?: ('weld' | 'mto')[];
 }
 export interface AuditEvent { id: string; entityType: string; entityId: string; action: string; summary: string; actorId: string; actorName: string; createdAt: string; }
-export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[]; }
+export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[];
+  /** Pilots profile: the server summary of every visible isometric, by id (aggregates only; see shared/iso-summary.ts). */
+  isoSummaries?: Record<string, import('./iso-summary.ts').IsoSummary>;
+  /** Pilots profile: which parts Copy isometrics may carry for this account. */
+  copyParts?: import('./permissions.ts').CopyParts; }
 export interface ActionField extends Field { multiple?: boolean; }
 export interface ActionDefinition { key: string; title: string; description: string; module: Module; fields: ActionField[]; submit: string; }
 export const labelOf = (row: Row | undefined, resource: Resource) => row ? String(row[resource.display] || row.name || row.id) : '—';

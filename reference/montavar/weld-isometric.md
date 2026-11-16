@@ -106,3 +106,26 @@ Generate NDT request PDF (per isometric or mass): NDT processes[] to include, la
 ## Not captured (no access with the observing account)
 
 - ITPs, ITP templates ("You do not have rights to open this page"), NDT Batch Import.
+
+## Additional captures (2026-11-16)
+
+### Punch lists — dialogs
+- Add item dialog has two tabs: **Add item** and **Report passed**. New item can be started by **Scan** (weld label / ISO book QR — belongs to the deferred Handheld feature) or **Manual**.
+- Manual fields: Project [sel], ISO [sel; first option "- Project related" for a punch not tied to an isometric], Type [sel], File (take photo / choose file; photos are resized), second File, Description, Due date, Contractor [sel: companies], Reported date, Reported by [sel: personnel], Pre-Punch / Punch [radio].
+- Type options, exact: `A — Immediate fix (blocking)`, `B — ASAP fix (blocking)`, `C — Fix (non-blocking)`, `D — Fix in operation (non-blocking)`.
+- Row options: move, **Mark as finished**, delete, edit, history. Statuses seen: Open → Finished → Passed; Removed (with "mark as removed" confirmation); Overdue is derived from the due date.
+- Finish sign-off dialog: signer type [radio: Client / other], Client name*, Company, Function, Inspector* [sel: personnel], Date*, Remarks, sign-off method [radio: Draw digitally / Upload signed PDF] with the file.
+- Print dialog: Language, include punch document, include isometric drawing.
+
+### Flange Management — extras
+- Filter: Project, Finished [— / No / Yes]. Report: language. The add form has no status select; the list status (e.g. "Planned") is derived from the record's progress (tightening date / result / finished).
+
+### Hydrotest release — dialogs
+- Add test system: Test system* (name), Description, "Test system accepted by client" [sel: -- Not set -- / Testing not applicable / Approved].
+- Move isometric(s) to a test system: Test system [sel].
+- Hydrotest request: QA/QC engineer [sel], Test record no., Pump type, Hose type, Manifold, Pressure gauge no., Recorder No, Calibration cert, Piping class, Design code, Test medium, Required test pressure, Actual test pressure, Date, Test start, Test end, Area temp, Test duration, Required leak test pressure, Leak test duration, Note, Include isometric(s) [checkbox].
+- Custom hydrotest documents: type [sel: Punchlist / Pressure test ITP / Blind list / Pressure gauge-recorder certificate / Piping and instrumentation diagram / 3D snippet], files.
+- Spools tab filter: Test system, Project.
+
+### Releases — filter
+- Prefab / Field release filter: Project, ITP No, Show [Hide released / Show released].
