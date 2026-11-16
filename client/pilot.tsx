@@ -9,7 +9,8 @@ import { useWorkspace } from './context.tsx';
 import { resourcePath } from './records.tsx';
 import { EmptyState, Modal } from './components.tsx';
 import { Wordmark } from './brand.tsx';
-import { apiBlob, post } from './api.ts';
+import { api, apiBlob, post } from './api.ts';
+import type { LogoSizing } from '../shared/pdf-company.ts';
 
 interface PilotState {
   pilot: Pilot;
@@ -71,23 +72,27 @@ function PilotRefused({ user, pilot, onSelect, onLogout }: { user: User; pilot: 
 
 /** The company logo of Company data for the application selector: its object URL, or '' while there is none (no logo saved, or it cannot be loaded). */
 function useCompanyLogo(enabled: boolean) {
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(''), [sizing, setSizing] = useState<LogoSizing | undefined>();
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false, object = '';
     apiBlob('/company-logo').then(blob => { if (cancelled) return; object = URL.createObjectURL(blob); setUrl(object); }).catch(() => { if (!cancelled) setUrl(''); });
+    // The size and padding saved in Company data; without them the stylesheet's size stays.
+    api<LogoSizing>('/company-logo?sizing=1').then(value => { if (!cancelled) setSizing(value); }).catch(() => { if (!cancelled) setSizing(undefined); });
     return () => { cancelled = true; if (object) URL.revokeObjectURL(object); };
   }, [enabled]);
-  return url;
+  return { url, sizing };
 }
+/** The inline style of the selector's logo from the Company data sizing (pixels). */
+export const logoStyle = (sizing?: LogoSizing): React.CSSProperties | undefined => sizing ? { maxHeight: sizing.maxHeight, paddingTop: sizing.paddingTop, paddingBottom: sizing.paddingBottom } : undefined;
 
 /** `logo`: the logo to show (a URL), or '' for none; left out, the selector loads the company logo itself. */
-export function PilotSelector({ user, pilots, onOpen, onLogout, logo }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void; logo?: string }) {
-  const loaded = useCompanyLogo(logo === undefined), source = logo ?? loaded;
+export function PilotSelector({ user, pilots, onOpen, onLogout, logo, sizing }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void; logo?: string; sizing?: LogoSizing }) {
+  const loaded = useCompanyLogo(logo === undefined), source = logo ?? loaded.url, size = sizing ?? (logo === undefined ? loaded.sizing : undefined);
   return <div className="pilot-select-page">
     <AccountBar user={user} onLogout={onLogout}/>
     <main className="pilot-select-main" id="main-content">
-      {source && <img className="pilot-select-logo" src={source} alt="Company logo"/>}
+      {source && <img className="pilot-select-logo" src={source} alt="Company logo" style={logoStyle(size)}/>}
       <div className="eyebrow">BLITZKRIEG · WORKSPACES</div>
       <h1>Select your application workspace</h1>
       <p>Projects, isometrics, spools and certificates are shared. Choose where you want to work now; you can switch at any time.</p>

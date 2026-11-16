@@ -23,3 +23,5 @@
 }
 .cert-actions { display: contents; }
 .heading-actions:has(.cert-actions) { flex-wrap: wrap; justify-content: flex-end; }
+/* Edit certification: the stored Material No read-only, with the Change link under it. */
+.cert-material-fixed .text-link { justify-self: start; margin-top: 4px; }

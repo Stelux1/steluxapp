@@ -104,25 +104,33 @@ function ConfirmDialog({ title, text, url, body, done, list, danger = false, onC
     <div className="modal-footer"><button className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className={`btn primary ${danger ? 'wps-danger' : ''}`} disabled={busy} onClick={() => void confirm()}>{busy && <Loader2 size={15} className="spin"/>}Confirm</button></div></Modal>;
 }
 
+/**
+ * The project sites the Copy dialogs list (row copy and Mass Copy alike): every active project site in the order they were
+ * created, and the one preselected is the current main project (the reference lists them in id order with the current one chosen).
+ */
+export function copyTargets(sites: Row[], siteId: string): { sites: Row[]; selected: string } {
+  const listed = sites.filter(site => !site._archived).sort((a, b) => str(a._createdAt).localeCompare(str(b._createdAt)) || str(a.id).localeCompare(str(b.id), 'en', { numeric: true }));
+  return { sites: listed, selected: listed.some(site => site.id === siteId) ? siteId : listed[0]?.id || '' };
+}
 /** "Copy WPS to another Project site" (one row) and "Mass Copy WPS" (the checked rows). */
 function CopyDialog({ records, onClose, onDone }: { records: Row[]; onClose: () => void; onDone: () => void }) {
   const { allRows, siteId, refresh, notify } = useWorkspace();
   const mass = records.length > 1;
-  // The row copy goes to another project site; the mass copy offers every project site, as the reference does.
-  const sites = activeRows(allRows, 'sites').filter(site => mass || site.id !== siteId).sort((a, b) => str(a.name).localeCompare(str(b.name), 'en', { numeric: true }));
-  const [target, setTarget] = useState(sites[0]?.id || ''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  // Both copies offer every project site in creation order with the current main project chosen, as the reference does.
+  const { sites, selected } = copyTargets(activeRows(allRows, 'sites'), siteId);
+  const [target, setTarget] = useState(selected); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const copies = records.filter(row => isWpsCopy(row));
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try { await post('/wps/copy', { ids: records.map(row => row.id), siteId: target }); await refresh(); notify(`${records.length} WPS ${records.length === 1 ? 'method' : 'methods'} copied to ${str(sites.find(site => site.id === target)?.name)}.`); onDone(); onClose(); }
     catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
   }
-  return <Modal title={mass ? 'Mass Copy WPS' : 'Copy WPS to another Project site'} subtitle={mass ? undefined : `WPS ${str(records[0]?.name)}`} onClose={onClose}><form onSubmit={event => void submit(event)}><div className="modal-body">
+  return <Modal title={mass ? 'Mass Copy WPS' : 'Copy WPS to another Project site'} onClose={onClose}><form onSubmit={event => void submit(event)}><div className="modal-body">
     {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
     {mass && <p>Are you sure?</p>}
     {copies.length > 0 && <div className="alert error" role="alert"><AlertCircle size={18}/><span>A copy cannot be copied again: {copies.map(row => str(row.name)).join(', ')}. Uncheck it first.</span></div>}
-    {sites.length ? <div className="field"><label htmlFor="wps-copy-site">Project site</label><div className="select-wrap"><select id="wps-copy-site" required value={target} onChange={event => setTarget(event.target.value)}>{sites.map(site => <option key={site.id} value={site.id}>{str(site.name)}</option>)}</select><ChevronDown size={14}/></div><small className="field-hint">The copy is active on that project site; the original stays as it is.</small></div>
-      : <p>There is no other project site to copy to.</p>}
+    {sites.length ? <div className="field"><div className="select-wrap"><select id="wps-copy-site" aria-label="Project site" required value={target} onChange={event => setTarget(event.target.value)}>{sites.map(site => <option key={site.id} value={site.id}>{str(site.name)}</option>)}</select><ChevronDown size={14}/></div></div>
+      : <p>There is no project site to copy to.</p>}
   </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !target || copies.length > 0}>{busy && <Loader2 size={15} className="spin"/>}Copy</button></div></form></Modal>;
 }
 
@@ -186,7 +194,7 @@ export function WpsEditor({ record, onClose }: { record?: Row; onClose: () => vo
   return <Modal title={record ? 'Edit WPS method' : 'Add WPS method'} subtitle={record ? str(record.name) : undefined} onClose={onClose} wide><form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)}><div className="modal-body">
     {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
     <div className="form-grid">
-      {text('name', 'WPS number', true)}{text('method', 'Weld process', true, WPS_METHOD_PLACEHOLDER)}
+      {text('name', 'WPS number', true)}{text('method', 'Weld process', !record, record ? undefined : WPS_METHOD_PLACEHOLDER)}
       <div className="full-width">{text('definition', 'WPS definition', true)}</div>
       <p className="field-hint full-width wps-group-hint">{WPS_GROUP_HINT}</p>
       {WPS_GROUP_FIELDS.map(field => <TagInput key={field.name} id={`wps-${field.name}`} label={field.label} options={field.options} value={str(values[field.name])} onChange={value => set(field.name, value)}/>)}

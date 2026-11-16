@@ -139,9 +139,13 @@ export function FormError({ message, fields }: { message: string; fields?: Recor
 }
 /** The empty option of a select: "Select …" in lower case, keeping acronyms (UOM, QA/QC) and the pilot names. */
 export const selectPrompt = (label: string) => `Select ${label.replace(/\b(?:Weld|MTO) Pilot\b|\S+/g, word => /Pilot$/.test(word) || /[A-Z].*[A-Z]/.test(word) ? word : word.toLowerCase())}`;
+/** With main projects on, a Project select reads "Subproject"; the multi-select with ALL (welding wire, certification) keeps the reference's "Project". */
+export function subprojectField<T extends Field | ActionField>(field: T, scoped: boolean): T {
+  return scoped && field.ref === 'projects' && !('allField' in field && field.allField) && /^(Project|Project scope)$/.test(field.label) ? { ...field, label: 'Subproject' } : field;
+}
 export function FieldInput({ field, value, onChange, error, values = {}, allowedIds, setValue }: { field: Field | ActionField; value: unknown; onChange: (value: unknown) => void; error?: string; values?: Record<string, unknown>;allowedIds?:string[]; /** Sets another field of the same form (the ALL option of a multi-select). */ setValue?: (name: string, value: unknown) => void }) {
   const { rows, allRows, user, label, projectScopeEnabled, siteId } = useWorkspace();
-  if (projectScopeEnabled && field.ref === 'projects' && /^(Project|Project scope)$/.test(field.label)) field = { ...field, label: 'Subproject' };
+  field = subprojectField(field, projectScopeEnabled);
   const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
   if(field.hidden)return null;
   // A list of main projects to tick (e.g. "Weld Pilot project sites" in the user form) offers every main project the

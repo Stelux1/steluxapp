@@ -1,4 +1,4 @@
-import { DEFECT_NORMS, defectNorm } from './site-settings.ts';
+import { DEFECT_NORMS } from './site-settings.ts';
 import { isStandardDefectCode } from './defect-codes.ts';
 import type { Field, Resource, Row } from './types.ts';
 
@@ -37,6 +37,19 @@ export const formEnablement = (key: string) => Object.hasOwn(FORM_ENABLEMENT, ke
  * Weld types are not in the list: their form has no box and their lists show every type as enabled.
  */
 export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers'];
+/**
+ * Catalog forms with a File input inside the dialog, and the field it follows (the NDT process dialog lists File after Method;
+ * the welding wire form keeps its own placement). The chosen file is attached to the record once it is saved.
+ */
+export const FORM_FILE_AFTER: Record<string, string> = { ndt_processes: 'groupId' };
+export const FORM_FILE_LABEL = 'File';
+/** The labels of a catalog form in order: its visible fields, the File input where the dialog puts it, the enablement box last. */
+export function catalogFormLabels(key: string, fields: Pick<Field, 'name' | 'label' | 'hidden'>[], siteName?: string): string[] {
+  const labels: string[] = [];
+  for (const field of fields.filter(item => !item.hidden)) { labels.push(field.label); if (FORM_FILE_AFTER[key] === field.name) labels.push(FORM_FILE_LABEL); }
+  if (formEnablement(key) && siteName) labels.push(enableLabel(siteName));
+  return labels;
+}
 /** The selects of these catalogs offer every record, whatever "Enabled on this site" says (the list column and Options stay). */
 export const UNFILTERED_OPTIONS = ['pwht_processes', 'pwht_locations'];
 
@@ -75,13 +88,42 @@ export const HOSTED_REQUIRED: Record<string, string[]> = {
   sites: ['address'],
 };
 const FIELD_LABELS: Record<string, Record<string, string>> = {
-  weld_types: { location: 'Shop/Field', abbreviation: 'Abbreviation' }, coatings: { abbreviation: 'Abbreviation' }, ndt_processes: { description: 'Description' },
+  ndt_groups: { description: 'Description' }, diameters: { sizeinch: 'Size in inches' },
+  weld_types: { location: 'Shop/Field', abbreviation: 'Abbreviation', jointType: 'Joint type' }, coatings: { abbreviation: 'Abbreviation' }, ndt_processes: { description: 'Description' },
   pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' }, sites: { address: 'Address' },
 };
+/**
+ * The reference's Edit dialogs differ from its Add dialogs (weld__*__edit.txt against the add dialogs): a few fields are required
+ * only when a record is edited, one is optional, two carry another label and the wire form lists Accepted before Controlled.
+ * Add is not changed. The browser applies the overrides (`editFields`); the server applies the required lists on an update only.
+ */
+export const EDIT_REQUIRED: Record<string, string[]> = { weld_types: ['jointType'], ndt_groups: ['description'], diameters: ['sizeinch'] };
+/** Fields the reference's Edit dialog does not require although its Add dialog does (the server relaxes them on an update only). */
+export const EDIT_OPTIONAL: Record<string, string[]> = { wps: ['method'] };
+export const EDIT_FIELD_OVERRIDES: Record<string, Record<string, Partial<Field>>> = {
+  roles: { name: { label: 'Function' } },
+  weld_types: { jointType: { required: true }, grooveType: { label: 'Groove shape' } },
+  ndt_groups: { description: { required: true } },
+  // Size in inches and Outline in mm are number inputs in the Edit dialog (Size in mm stays text with a decimal comma).
+  diameters: { sizeinch: { required: true, decimal: false }, outline: { decimal: false } },
+};
+/** [field, before]: the Edit dialog lists `field` ahead of `before` (welding wire: Accepted, then Controlled). */
+export const EDIT_FIELD_ORDER: Record<string, [string, string]> = { welding_wires: ['accepted', 'controlled'] };
+/** The fields of a resource as its Edit dialog shows them (the hosted profile only; Add keeps `fields`). */
+export function editFields<T extends Field>(resource: string, fields: T[]): T[] {
+  const overrides = EDIT_FIELD_OVERRIDES[resource];
+  const changed = overrides ? fields.map(field => overrides[field.name] ? { ...field, ...overrides[field.name] } : field) : fields;
+  const order = EDIT_FIELD_ORDER[resource];
+  if (!order) return changed;
+  const from = changed.findIndex(field => field.name === order[0]), to = changed.findIndex(field => field.name === order[1]);
+  if (from < 0 || to < 0 || from < to) return changed;
+  const next = [...changed]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved);
+  return next;
+}
 /** Messages of the required fields a hosted write leaves empty, by field name. Empty when nothing is missing. */
 export function missingRequired(key: string, input: Record<string, unknown>, existing?: Row): Record<string, string> {
   const errors: Record<string, string> = {};
-  for (const name of HOSTED_REQUIRED[key] || []) {
+  for (const name of [...(HOSTED_REQUIRED[key] || []), ...(existing ? EDIT_REQUIRED[key] || [] : [])]) {
     // An older QA/QC engineer without Company text shows its linked company (qaEngineerCompany): that counts as filled.
     const value = Object.hasOwn(input, name) ? input[name] : key === 'qa_engineers' && name === 'company' && existing && !String(existing.company ?? '').trim() ? existing.companyId : existing?.[name];
     if (value === undefined || value === null || String(value).trim() === '') errors[name] = `${FIELD_LABELS[key]?.[name] || name} is required.`;
@@ -131,16 +173,16 @@ export function enabledOptions<T extends Pick<Row, 'id'>>(resourceKey: string, o
 }
 
 /**
- * Defect code rule of the "Defect norm" site setting (simplest explicit reading of the reference): with no norm
- * selected every code is offered; with a norm only the codes written for that norm and the shared "Current list"
- * codes are. A code saved without a norm counts as "Current list".
+ * The defect codes a site may select for a rejected NDT result (NA "Defect type"): the codes switched on for the main
+ * project under Defect codes, whatever their norm. Saving a Defect norm on the project site switches that norm's codes
+ * on (server/weld-catalogs.ts); with no norm the list stays as it is. A code already stored on the weld (`keep`, the
+ * code text) is always listed, switched on or not, so an older result keeps showing its code. One entry per code text.
  */
-export const defectCodeMatchesNorm = (code: Record<string, unknown>, norm: string | null) => !norm || !code.norm || code.norm === CURRENT_LIST || code.norm === norm;
-/** The defect codes a site may select for a rejected result: enabled on the site and matching its defect norm. */
-export function selectableDefectCodes(rows: Rows, site: Record<string, unknown> | null | undefined, siteId: string | undefined | null = (site as Row | undefined)?.id): Row[] {
-  const norm = defectNorm(site);
-  return (rows.ndt_defect_codes || []).filter(code => !code._archived && enabledOnSite('ndt_defect_codes', code, siteId, rows) && defectCodeMatchesNorm(code, norm))
+export function selectableDefectCodes(rows: Rows, site: Record<string, unknown> | null | undefined, siteId: string | undefined | null = (site as Row | undefined)?.id, keep?: unknown): Row[] {
+  const stored = new Set((Array.isArray(keep) ? keep : [keep]).map(value => String(value ?? '').trim()).filter(Boolean));
+  const listed = (rows.ndt_defect_codes || []).filter(code => !code._archived && (stored.has(String(code.code)) || enabledOnSite('ndt_defect_codes', code, siteId, rows)))
     .sort((a, b) => String(a.code).localeCompare(String(b.code), 'en', { numeric: true }));
+  return listed.filter((code, index) => listed.findIndex(other => other.code === code.code) === index);
 }
 
 /** The two sorting modes of the Attachment names page (reference "Sorting: ISO book / Hydrotest"). */
@@ -181,6 +223,8 @@ export const CATALOG_WORDING: Record<string, CatalogWording> = {
   weld_processes: { title: 'Weld process', add: 'Add welding process', edit: 'Edit welding process', remove: 'Delete welding process' },
   weld_types: { title: 'Weld type', add: 'Add weld type', edit: 'Edit weld type', remove: 'Delete weld type' },
   coatings: { title: 'Coating', add: 'Add coating', edit: 'Edit coating', remove: 'Delete coating' },
+  // The groups page: the reference's add button and dialog reuse the process wording (weld__ndt__process-groups.txt:47,187,193).
+  ndt_groups: { title: 'NDT process groups', add: 'Add NDT process', edit: 'Edit NDT process group', remove: 'Delete NDT process group' },
   ndt_processes: { title: 'NDT process', add: 'Add NDT process', edit: 'Edit NDT process', remove: 'Delete NDT process' },
   ndt_defect_codes: { title: 'Defect codes', add: 'Add', edit: 'Edit', remove: 'Delete' },
   ndt_locations: { title: 'NDT locations', add: 'Add NDT location', edit: 'Edit NDT location', remove: 'Delete NDT location' },
@@ -198,7 +242,7 @@ export const CATALOG_WORDING: Record<string, CatalogWording> = {
  * Catalog pages whose row action reads "Delete" and asks "Are you sure?" in the hosted profile, as the reference does.
  * Underneath the record is archived (it can be restored from the Archived tab), exactly as welds are.
  */
-export const DELETE_WORDING_RESOURCES = [...Object.keys(CATALOG_WORDING), 'ndt_groups', 'diameters', 'material_parts', 'material_types', 'suppliers', 'welding_wires', 'certifications', 'uoms'];
+export const DELETE_WORDING_RESOURCES = [...Object.keys(CATALOG_WORDING), 'diameters', 'material_parts', 'material_types', 'suppliers', 'welding_wires', 'certifications', 'uoms'];
 export const DELETE_CONFIRMATION = 'Are you sure?';
 export const deleteWording = (key: string, singular: string) => ({ title: CATALOG_WORDING[key]?.remove ?? `Delete ${singular}`, text: DELETE_CONFIRMATION, button: 'Delete', cancel: 'Cancel' });
 /** The label of the row action: "Delete" for a catalog in DELETE_WORDING_RESOURCES, else "Archive record" / "Restore record". */
@@ -249,10 +293,13 @@ export function catalogField(resource: string, field: Field): Field {
     default: { const override = CATALOG_FIELD_OVERRIDES[resource]?.[field.name]; return override ? { ...field, ...override } : field; }
   }
 }
+/** Page titles the hosted profile words differently from the shared definition (breadcrumb, headings): the PQR page is "PQR". */
+export const HOSTED_TITLES: Record<string, string> = { pqr: 'PQR' };
 /** The page wording of a catalog in the hosted profile (title, add / edit / delete headings). */
 export function catalogResource(resource: Resource): Resource {
-  const wording = CATALOG_WORDING[resource.key];
-  return wording ? { ...resource, title: wording.title, wording: { add: wording.add, edit: wording.edit, remove: wording.remove } } : resource;
+  const wording = CATALOG_WORDING[resource.key], title = HOSTED_TITLES[resource.key];
+  const titled = title ? { ...resource, title } : resource;
+  return wording ? { ...titled, title: wording.title, wording: { add: wording.add, edit: wording.edit, remove: wording.remove } } : titled;
 }
 
 /**
