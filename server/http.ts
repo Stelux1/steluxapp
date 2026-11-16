@@ -28,6 +28,7 @@ import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
 import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
+import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
 
@@ -157,6 +158,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     res.setHeader('Cache-Control','no-store');res.attachment(`blitzkrieg-${definition.key}-${new Date().toISOString().slice(0,10)}.csv`).type('text/csv').send(reportCsv(report));
   });
   registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics });
+  registerIsoBookRoutes({ app, store, documents, availability, access, readableRows, pilotIsometrics });
   registerMtoStockRoutes(app, store, availability, access);
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');

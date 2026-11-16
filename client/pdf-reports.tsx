@@ -6,6 +6,7 @@ import { ApiError, apiBlob, apiUrl } from './api.ts';
 import { Dropdown, Modal } from './components.tsx';
 import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
+import { IsoBookDialog } from './iso-book.tsx';
 
 type Option = 'type' | 'weldRecord' | 'signature';
 /** One entry of the Reports menu. Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options. */
@@ -14,6 +15,7 @@ export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl', label: 'LISL Report', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-a3', label: 'LISL Report (A3)', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-blank', label: 'Blank LISL template', options: ['signature'], report: 'lisl' },
+  { key: 'welders-summary', label: "Welder's summary", options: [], report: 'wdi' },
 ];
 
 /** Query string of the chosen options (isometric, then the options the document offers). */
@@ -28,12 +30,13 @@ export function pdfQuery(item: PdfMenuItem, isoId: string, values: { type: strin
 /** "Reports" menu of the isometric page (Weld Pilot): opens a small options dialog, then generates the PDF. */
 export function PdfReportsMenu({ iso }: { iso: Row }) {
   const { canReadReport } = useWorkspace(); const pilot = usePilot();
-  const [item, setItem] = useState<PdfMenuItem | null>(null);
+  const [item, setItem] = useState<PdfMenuItem | null>(null), [book, setBook] = useState(false);
   const items = PDF_MENU.filter(entry => canReadReport(entry.report));
-  if (pilot?.pilot.key !== 'weld' || !items.length) return null;
+  if (pilot?.pilot.key !== 'weld') return null;
   return <>
-    <Dropdown label="Reports" trigger={<span className="btn"><FileText size={15}/>Reports<ChevronDown size={15}/></span>}>{items.map(entry => <button key={entry.key} onClick={() => setItem(entry)}>{entry.label}</button>)}</Dropdown>
+    <Dropdown label="Reports" trigger={<span className="btn"><FileText size={15}/>Reports<ChevronDown size={15}/></span>}>{items.map(entry => <button key={entry.key} onClick={() => setItem(entry)}>{entry.label}</button>)}<button onClick={() => setBook(true)}>ISO Book</button></Dropdown>
     {item && <PdfDialog item={item} iso={iso} onClose={() => setItem(null)}/>}
+    {book && <IsoBookDialog isos={[iso]} onClose={() => setBook(false)}/>}
   </>;
 }
 

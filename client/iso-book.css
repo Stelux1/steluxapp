@@ -1,0 +1,18 @@
+/* ISO Book dialog (isometric page, isometrics list selection bar, project "Generate multiple books"). */
+.iso-book-form fieldset { border: 1px solid var(--line); border-radius: 7px; padding: 12px 16px 14px; margin: 0 0 16px; min-width: 0; }
+.iso-book-form legend { font-size: 13px; font-weight: 500; padding: 0 6px; }
+.iso-book-form ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.iso-book-parts ul { max-height: 46vh; overflow-y: auto; }
+.iso-book-isos ul { max-height: 24vh; overflow-y: auto; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.iso-book-form li label, .iso-book-grouping label { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 13px; color: var(--ink); cursor: pointer; }
+.iso-book-form li label em { font-style: normal; color: var(--muted); }
+.iso-book-form input[type="checkbox"], .iso-book-form input[type="radio"] { width: 18px; height: 18px; flex: none; }
+.iso-book-off label { cursor: not-allowed; color: var(--muted); }
+.iso-book-off small { display: block; margin: -4px 0 6px 28px; font-size: 12px; color: var(--muted); line-height: 1.4; }
+.iso-book-bulk { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.iso-book-bulk .text-link { min-height: 32px; }
+.iso-book-limits { display: block; font-size: 12px; color: var(--muted); line-height: 1.5; }
+@media (max-width: 520px) {
+  .iso-book-form fieldset { padding: 10px 12px 12px; }
+  .iso-book-isos ul { grid-template-columns: 1fr; }
+}

@@ -26,6 +26,7 @@ import '../client/mto-procurement.css';
 import '../client/mto-stock.css';
 import '../client/inspections.css';
 import '../client/mto-logistics.css';
+import '../client/iso-book.css';
 
 export default function WorkspaceApp({ Component, pageProps }: AppProps) {
   return <Component {...pageProps}/>;

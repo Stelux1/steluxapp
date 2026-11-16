@@ -6,6 +6,7 @@ import { companyForDocuments } from './company.ts';
 import { lislPdf, type LislVariant } from './lisl.ts';
 import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
 import type { Row, User } from '../../shared/types.ts';
+import { weldersSummaryDocument } from './welders-summary.ts';
 
 /**
  * Everything a document definition may use. `rows` are the records the account may read (already checked
@@ -23,6 +24,8 @@ export interface PdfResult { bytes: Uint8Array; /** Without extension. */ fileNa
  */
 export interface PdfDocumentDefinition {
   key: string; title: string; report: string;
+  /** The ISO Book part this document fills (e.g. `pick-lists`); without it the book matches the document by its key. */
+  bookPart?: string;
   build(request: PdfRequest): Promise<PdfResult>;
 }
 
@@ -53,4 +56,5 @@ export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
   lisl('lisl', 'LISL Report', 'a4', ''),
   lisl('lisl-a3', 'LISL Report (A3)', 'a3', '-A3'),
   lisl('lisl-blank', 'Blank LISL template', 'blank', '-template'),
+  weldersSummaryDocument,
 ];
