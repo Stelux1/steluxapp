@@ -76,7 +76,7 @@ export function deliverMtoLogistics(availability: Availability, deliver: (availa
   // Records read by the pages below (the archives open on their resource paths, so they are pages as well).
   // Pick lists (the Pick List archive page) and stock are shared with the other MTO flows and delivered once in
   // `availabilityFor()` (shared/release.ts).
-  deliver(availability, 'service_requests', names('number name spoolId requirementId companyId laydownId materialLaydownId date requestedAt addedBy completedAt status note includeDrawings'));
+  deliver(availability, 'service_requests', names('number name spoolId requirementId companyId laydownId materialLaydownId date requestedAt addedBy completedAt status note includeDrawings contractorName contractorDate clientName clientDate noboName noboDate signedAt signedBy signedVia'));
   // Records without a page of their own.
   merge(availability, 'reservations', names('isoId requirementId materialId customMaterialId quantity date status note siteId'));
   merge(availability, 'material_locations', names('requirementId laydownId companyId date'));
@@ -483,10 +483,59 @@ export function archiveDefaultRange(today: string): { from: string; to: string }
   return { from: text(new Date(Date.UTC(year, month - 1, day - 30))), to: text(new Date(Date.UTC(year, month, 0))) };
 }
 
+/** A spool request (Service request) or a material request (Service request - Materials). */
+export const requestKind = (request: Row): 'Spool' | 'Material' => request.requirementId && !request.spoolId ? 'Material' : 'Spool';
+/** The main project (project site) of a request: through its spool or its material line, the isometric and the project. */
+export function requestSiteId(rows: Record<string, Row[]>, request: Row): string {
+  const isoId = request.spoolId ? (rows.spools || []).find(row => row.id === request.spoolId)?.isoId : (rows.iso_materials || []).find(row => row.id === request.requirementId)?.isoId;
+  return isoSiteId(rows, (rows.isometrics || []).find(row => row.id === isoId));
+}
+/** The next spool request number: one five-digit sequence of the spool requests (material requests count apart). */
+export const spoolRequestNumber = (requests: Row[]) => nextRequestNumber(requests.filter(row => requestKind(row) === 'Spool').map(row => row.number));
+/**
+ * The next material request number (mto-logistics-023, default of the owner): a five-digit sequence of its own per main
+ * project, after the highest five-digit number of that main project's material requests. Older numbers stay as stored.
+ * `rows` must hold every material request, archived ones included, so that a number is never handed out twice.
+ */
+export function materialRequestNumber(rows: Record<string, Row[]>, siteId: string): string {
+  return nextRequestNumber((rows.service_requests || []).filter(row => requestKind(row) === 'Material' && requestSiteId(rows, row) === siteId).map(row => row.number));
+}
+
+/** Document types of the files a service request holds (attachments of its first record). */
+export const SERVICE_REQUEST_FILES = { serviceRequest: 'ServiceRequest', coatingRelease: 'CoatingRelease', signed: 'Signed release note', uploaded: 'Uploaded signed document' } as const;
+/** Files only the server writes: the generic file route refuses them, and they cannot be archived. */
+export const RESERVED_REQUEST_FILES: string[] = Object.values(SERVICE_REQUEST_FILES);
+/** The name of the documents of a request: <yyyymmdd>_S<main project>_R<number> ("20240628_S1_R00002"). */
+export const serviceRequestFileBase = (date: string, siteNumber: number | string, number: string) => `${String(date).slice(0, 10).replaceAll('-', '')}_S${siteNumber || 0}_R${number}`;
+/**
+ * The number of a main project in file names. The reference prints its numeric site id; ours is the main project's place
+ * in creation order (archived ones count, so a number never changes), 0 when unknown.
+ */
+export function siteNumber(sites: Row[], siteId: string): number {
+  const index = [...sites].sort(byCreation).findIndex(row => row.id === siteId);
+  return index + 1;
+}
+
+export interface SignOff { at: string; by: string; via: 'Online' | 'Upload' }
+/** Whether (and how) a request is signed: Sign & save PDF or an uploaded signed scan. A signed request is read-only. */
+export function requestSignOff(requests: Row[]): SignOff | null {
+  const signed = requests.find(request => request.signedAt);
+  return signed ? { at: String(signed.signedAt), by: String(signed.signedBy || ''), via: signed.signedVia === 'Upload' ? 'Upload' : 'Online' } : null;
+}
+
 export interface ArchiveRequest {
+  /** Kind, main project (material requests) and number: what makes a request unique now that the two kinds count apart. */
+  key: string; headId: string; siteId: string;
   number: string; date: string; dateTime: string; name: string; companyId: string; kind: 'Spool' | 'Material'; items: string[]; status: string; completedAt: string; includeDrawings: boolean; openIds: string[];
   /** Records of the request (one per spool or material) and the person who made it. */
-  ids: string[]; addedBy: string; documents: Row[];
+  ids: string[]; addedBy: string; note: string;
+  /** Other files attached to the request (downloads). */
+  documents: Row[];
+  /** The two generated documents and the signed one (online or uploaded), when stored. */
+  files: { serviceRequest?: Row; coatingRelease?: Row; signed?: Row };
+  signOff: SignOff | null;
+  /** What was entered on Sign online (shown read-only once signed). */
+  signature: { contractorName: string; contractorDate: string; clientName: string; clientDate: string; noboName: string; noboDate: string };
 }
 export interface ArchiveFilters { from?: string; to?: string; kind?: 'Spool' | 'Material'; sort?: 'asc' | 'desc' }
 /**
@@ -495,10 +544,14 @@ export interface ArchiveFilters { from?: string; to?: string; kind?: 'Spool' | '
  */
 export function requestArchive(rows: Record<string, Row[]>, filters: ArchiveFilters = {}): ArchiveRequest[] {
   const groups = new Map<string, Row[]>();
-  for (const request of active(rows, 'service_requests')) groups.set(String(request.number), [...(groups.get(String(request.number)) || []), request]);
+  for (const request of active(rows, 'service_requests')) {
+    const kind = requestKind(request); const key = `${kind}|${kind === 'Material' ? requestSiteId(rows, request) : ''}|${request.number}`;
+    groups.set(key, [...(groups.get(key) || []), request]);
+  }
   const attachments = active(rows, 'attachments').filter(row => row.entityType === 'service_requests');
-  const list = [...groups].flatMap(([number, requests]) => {
-    const kind = requests[0].spoolId ? 'Spool' as const : 'Material' as const;
+  const list = [...groups].flatMap(([key, unsorted]) => {
+    const requests = unsorted.sort(byCreation); const head = requests[0]; const number = String(head.number);
+    const kind = requestKind(head);
     const dateTime = requests.map(request => String(request.requestedAt || request.date || '')).sort()[0] || '';
     const date = requests.map(request => String(request.date || '').slice(0, 10)).sort()[0] || dateTime.slice(0, 10);
     if (filters.kind && kind !== filters.kind || filters.from && date < filters.from || filters.to && date > filters.to) return [];
@@ -506,12 +559,96 @@ export function requestArchive(rows: Record<string, Row[]>, filters: ArchiveFilt
     const status = !open.length ? 'Completed' : open.some(request => request.status === 'In progress') ? 'In progress' : 'Requested';
     const completed = requests.map(request => String(request.completedAt || '')).sort();
     const ids = requests.map(request => request.id);
-    return [{ number, date, dateTime, name: String(requests[0].name || ''), companyId: String(requests[0].companyId || ''), kind, items: requests.map(request => requestItem(rows, request)), status,
+    const own = attachments.filter(row => ids.includes(String(row.entityId))).sort(byCreation);
+    const newest = (...types: string[]) => own.filter(row => types.includes(String(row.documentType))).at(-1);
+    const signed = head.signedAt ? head : requests.find(request => request.signedAt) || head;
+    const text = (name: string) => String(signed[name] ?? '');
+    return [{ key, headId: head.id, siteId: requestSiteId(rows, head), number, date, dateTime, name: String(head.name || ''), companyId: String(head.companyId || ''), kind, items: requests.map(request => requestItem(rows, request)), status,
       completedAt: open.length ? '' : completed[completed.length - 1] || '', includeDrawings: requests.some(request => request.includeDrawings === true), openIds: open.map(request => request.id),
-      ids, addedBy: String(requests.find(request => request.addedBy)?.addedBy || ''), documents: attachments.filter(row => ids.includes(String(row.entityId))).sort(byCreation) }];
+      ids, addedBy: String(requests.find(request => request.addedBy)?.addedBy || ''), note: String(head.note || ''),
+      documents: own.filter(row => !RESERVED_REQUEST_FILES.includes(String(row.documentType))),
+      files: { serviceRequest: newest(SERVICE_REQUEST_FILES.serviceRequest), coatingRelease: newest(SERVICE_REQUEST_FILES.coatingRelease), signed: newest(SERVICE_REQUEST_FILES.signed, SERVICE_REQUEST_FILES.uploaded) },
+      signOff: requestSignOff(requests),
+      signature: { contractorName: text('contractorName'), contractorDate: text('contractorDate'), clientName: text('clientName'), clientDate: text('clientDate'), noboName: text('noboName'), noboDate: text('noboDate') } }];
   });
   const order = (a: ArchiveRequest, b: ArchiveRequest) => (a.dateTime || a.date).localeCompare(b.dateTime || b.date) || a.number.localeCompare(b.number);
   return list.sort(filters.sort === 'asc' ? order : (a, b) => order(b, a));
+}
+/** The request a record belongs to (any of its records), whatever its date. */
+export const requestOf = (rows: Record<string, Row[]>, id: string) => requestArchive(rows).find(request => request.ids.includes(id));
+
+// ---- Service request documents -------------------------------------------------------------------------------------
+
+/** The table of both documents, per project group (MTO manual 15.4). */
+export const SERVICE_REQUEST_COLUMNS = ['Project', 'ISO no', 'Asset tag', 'Drawing no', 'Spool', 'Diameter', 'Paint spec', 'PWHT', 'Chemical clean', 'Tracing'];
+/**
+ * UNVERIFIED (the reference prints YES/NO; the isometric keeps a Tracing Spec text): tracing is YES when the isometric
+ * names a tracing spec, NO when it is empty or says there is none.
+ */
+export const tracingFlag = (value: unknown) => { const text = String(value ?? '').trim().toLowerCase(); return text && !['-', 'no', 'n/a', 'na', 'none', '0', 'nee'].includes(text) ? 'YES' : 'NO'; };
+export interface ServiceRequestGroup { projectId: string; project: string; lines: string[][]; isoIds: string[] }
+export interface ServiceRequestDocument {
+  reportNo: string; company: string; addedBy: string; dateTime: string; date: string; note: string; requestId: string;
+  includeDrawings: boolean; siteId: string; groups: ServiceRequestGroup[];
+}
+const natural = (a: unknown, b: unknown) => String(a ?? '').localeCompare(String(b ?? ''), 'en', { numeric: true });
+/** What the Service request and the Release note print: the header of the request and one table per project. */
+export function serviceRequestDocumentData(rows: Record<string, Row[]>, request: ArchiveRequest): ServiceRequestDocument {
+  const records = (rows.service_requests || []).filter(row => request.ids.includes(row.id));
+  const spools = new Map((rows.spools || []).map(row => [row.id, row])); const isos = new Map((rows.isometrics || []).map(row => [row.id, row])); const projects = new Map((rows.projects || []).map(row => [row.id, row]));
+  const groups = new Map<string, ServiceRequestGroup>();
+  /** A project is named by its internal project number, as everywhere in the pilots. */
+  const projectName = (id: unknown) => String(projects.get(String(id))?.internnumber ?? '');
+  const entries = records.flatMap(record => { const spool = spools.get(String(record.spoolId)); const iso = spool && isos.get(String(spool.isoId)); return spool && iso ? [{ spool, iso }] : []; })
+    .sort((a, b) => natural(projectName(a.iso.projectId), projectName(b.iso.projectId)) || natural(a.iso.isoNo, b.iso.isoNo) || natural(a.spool.name, b.spool.name));
+  for (const { spool, iso } of entries) {
+    const projectId = String(iso.projectId); const project = projectName(projectId);
+    const group = groups.get(projectId) || { projectId, project, lines: [], isoIds: [] };
+    const treatments = spoolTreatments(iso);
+    group.lines.push([project, String(iso.isoNo ?? ''), String(iso.assetTag ?? ''), String(iso.drawingNo ?? ''), String(spool.name ?? ''), String(spool.diameter ?? ''), treatments.paintSpec, treatments.pwht ? 'YES' : 'NO', treatments.chemicalClean, tracingFlag(iso.tracing)]);
+    if (!group.isoIds.includes(iso.id)) group.isoIds.push(iso.id);
+    groups.set(projectId, group);
+  }
+  const company = (rows.service_companies || []).find(row => row.id === request.companyId);
+  return { reportNo: request.number, company: String(company?.name ?? ''), addedBy: request.addedBy, dateTime: request.dateTime, date: request.date, note: request.note, requestId: request.headId, includeDrawings: request.includeDrawings, siteId: request.siteId, groups: [...groups.values()] };
+}
+
+// ---- Sign online ---------------------------------------------------------------------------------------------------
+
+/** How the Contractor / Supplier signs: the account's saved full signature, its saved initials (short signature), or a drawing. */
+export const CONTRACTOR_SIGN_METHODS = ['Signature', 'Initials', 'Draw'] as const;
+export interface SignOnlineInput {
+  note?: unknown; contractorName?: unknown; contractorDate?: unknown; contractorMethod?: unknown; contractorSignature?: unknown;
+  clientName?: unknown; clientDate?: unknown; clientSignature?: unknown; noboName?: unknown; noboDate?: unknown; noboSignature?: unknown;
+}
+export const SIGN_ONLINE_FIELDS = ['note', 'contractorName', 'contractorDate', 'contractorMethod', 'contractorSignature', 'clientName', 'clientDate', 'clientSignature', 'noboName', 'noboDate', 'noboSignature'];
+const filled = (value: unknown) => typeof value === 'string' && value.trim() !== '';
+/**
+ * The refusals of Sign & save PDF, per field (empty when the form is complete): every Name and Signature is required
+ * (MTO manual, Sign online window); a Date is optional but must be a date. `saved` says whether the account has the
+ * saved signature its chosen method needs.
+ */
+export function signOffComplete(input: SignOnlineInput, saved: { Signature: boolean; Initials: boolean } = { Signature: false, Initials: false }): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!filled(input.contractorName)) errors.contractorName = 'Contractor / Supplier name is required.';
+  const method = String(input.contractorMethod || 'Draw');
+  if (!(CONTRACTOR_SIGN_METHODS as readonly string[]).includes(method)) errors.contractorSignature = 'Choose Signature, Initials or Draw.';
+  else if (method === 'Draw' ? !filled(input.contractorSignature) : !saved[method as 'Signature' | 'Initials']) errors.contractorSignature = method === 'Draw' ? 'The Contractor / Supplier signature is required.' : `You have no saved ${method === 'Signature' ? 'signature' : 'initials'}. Save one under System → Signatures, or draw.`;
+  if (!filled(input.clientName)) errors.clientName = 'Client name is required.';
+  if (!filled(input.clientSignature)) errors.clientSignature = 'The client signature is required.';
+  if (!filled(input.noboName)) errors.noboName = 'NoBo name is required.';
+  if (!filled(input.noboSignature)) errors.noboSignature = 'The NoBo signature is required.';
+  for (const name of ['contractorDate', 'clientDate', 'noboDate'] as const) { const value = input[name]; if (value !== undefined && value !== '' && (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) errors[name] = 'Enter a valid date.'; }
+  for (const name of ['contractorName', 'clientName', 'noboName', 'note'] as const) { const value = input[name]; if (value !== undefined && typeof value !== 'string') errors[name] = 'Enter text.'; else if (typeof value === 'string' && value.length > (name === 'note' ? 2000 : 200)) errors[name] = 'This text is too long.'; }
+  return errors;
+}
+/** A drawn signature as the dialog sends it: a PNG data URL of at most 1 MB. Null when it is anything else. */
+export function drawnSignature(value: unknown): Uint8Array | null {
+  if (typeof value !== 'string') return null;
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(value); if (!match) return null;
+  const bytes = Uint8Array.from(atob(match[1]), char => char.charCodeAt(0));
+  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  return bytes.length <= 1024 * 1024 && png.every((byte, index) => bytes[index] === byte) ? bytes : null;
 }
 
 // ---- Spool export ---------------------------------------------------------------------------------------------------

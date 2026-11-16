@@ -4,6 +4,7 @@
 .mto-page .mto-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .mto-page .mto-options { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .mto-page .mto-options .btn[disabled] { opacity: .5; cursor: not-allowed; }
+.mto-page .request-options { flex-wrap: nowrap; gap: 6px; }
 .mto-status { display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; gap: 10px; min-width: 150px; }
 .mto-status .progress { height: 8px; margin: 0; }
 .mto-status strong { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }

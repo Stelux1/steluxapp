@@ -1,6 +1,6 @@
 import { AppError, today, type Actor, type Store } from './store.ts';
 import type { Row } from '../shared/types.ts';
-import { nextRequestNumber, serviceLocationText } from '../shared/mto-logistics.ts';
+import { serviceLocationText, spoolRequestNumber } from '../shared/mto-logistics.ts';
 
 /**
  * Spool service requests and moves to a laydown (MTO Pilot, Logistic -> Service request).
@@ -18,7 +18,8 @@ const idList = (value: unknown, label: string) => {
 /** The moment of an entry: now, or the start of the day a dated entry (sample data, other profiles) names. */
 const stamp = (date: string, explicit: boolean) => explicit ? `${date}T00:00:00.000Z` : new Date().toISOString();
 
-export const nextNumber = (store: Store) => nextRequestNumber(store.list('service_requests', true).map(row => row.number));
+/** The next spool request number: the spool requests' own sequence (material requests are numbered per main project). */
+export const nextNumber = (store: Store) => spoolRequestNumber(store.list('service_requests', true));
 
 export function createSpoolServiceRequest(store: Store, actor: Actor, input: Input, options: { hosted?: boolean; date?: string; note?: string } = {}): { resource: string; records: Row[] } {
   const company = store.get('service_companies', input.companyId);

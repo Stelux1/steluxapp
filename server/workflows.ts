@@ -17,7 +17,8 @@ import { isMtoStockAction } from '../shared/mto-stock.ts';
 import { changeSiteStock, receivingSiteId, runMtoStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
 import { moveMaterialsToInventory, runMtoLogisticsAction } from './mto-logistics.ts';
-import { createSpoolServiceRequest, moveSpoolsToLaydown, nextNumber } from './spool-logistics.ts';
+import { createSpoolServiceRequest, moveSpoolsToLaydown } from './spool-logistics.ts';
+import { materialRequestNumber, requestSiteId } from '../shared/mto-logistics.ts';
 import { duplicateSite } from './site-duplicate.ts';
 import { reorderAttachmentNames } from './attachment-names.ts';
 import { assignIrn, editedHeader, fillIrn, siteNumbersIrn } from './iso-pages.ts';
@@ -29,6 +30,13 @@ const ids = (v: unknown, label: string) => {
   if (!Array.isArray(v) || !v.length || v.length > 500 || v.some(x => typeof x !== 'string' || !x)) throw new AppError(422, `Select at least one ${label}.`);
   return [...new Set(v)] as string[];
 };
+/** The number of a new material request: the next one of its main project's material requests (shared/mto-logistics.ts). One request covers one main project. */
+function materialNumber(store: Store, requirements: Row[]) {
+  const rows = Object.fromEntries(['service_requests', 'iso_materials', 'spools', 'isometrics', 'projects'].map(key => [key, store.list(key, true)])) as Record<string, Row[]>;
+  const sites = new Set(requirements.map(requirement => requestSiteId(rows, { id: '', requirementId: requirement.id } as unknown as Row)));
+  if (sites.size > 1) throw new AppError(422, 'Choose materials of one main project for a service request.');
+  return materialRequestNumber(rows, [...sites][0] || '');
+}
 export function weldLength(store: Store, weld: Row) {
   if (weld.lengthMode === 'Length in mm') return Number(weld.dialen) || 0;
   return weld.diameterId ? Number(store.get('diameters', weld.diameterId, true).outline) || 0 : 0;
@@ -187,7 +195,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       const requirements=ids(data.requirementIds,'material requirement').map(id=>ensure('iso_materials',id));
       const laydown=key==='move-materials'?ensure('material_laydowns',data.laydownId):data.materialLaydownId?ensure('material_laydowns',data.materialLaydownId):undefined;
       const company=key==='service-materials'?ensure('service_companies',data.companyId):undefined;
-      const number=company?nextNumber(store):'';const created=[];
+      const number=company?materialNumber(store,requirements):'';const created=[];
       for(const requirement of requirements){
         ensure('isometrics',requirement.isoId);
         const current=store.list('material_locations').find(r=>r.requirementId===requirement.id);

@@ -12,7 +12,11 @@ import { passwordHash } from '../server/auth.ts';
 import { HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import { inspectionCellState, REQUEST_DOCUMENT } from '../shared/inspections.ts';
-import { pickListReports } from '../shared/mto-logistics.ts';
+import { pickListReports, requestOf, SERVICE_REQUEST_COLUMNS, serviceRequestDocumentData, serviceRequestFileBase, siteNumber, tracingFlag } from '../shared/mto-logistics.ts';
+import { runAction } from '../server/workflows.ts';
+import { documentStorage } from '../server/documents.ts';
+import { buildServiceRequestDocuments } from '../server/service-requests.ts';
+import { coatingReleasePdf, serviceRequestPdf } from '../server/pdf/service-request.ts';
 import { engineerSignerId, visualSignerId, hydrotestDocumentModel, pressureTestSignatures, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, weldInspectionState } from '../shared/pdf-documents.ts';
 import { blankPunchHeader, flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../shared/pdf-lists.ts';
 import { companyFromRow } from '../shared/pdf-company.ts';
@@ -568,4 +572,44 @@ test('Visual inspection report: the main project switch Visual Inspection Ver 2 
   const v2 = await get(f, 'visual-report?reportNo=VT-2026-014');
   for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix', 'VT2']) assert.ok(v2.includes(label), label);
   assert.ok(!v2.includes('VT Procedure No.') && !v2.includes('PR-VT-004'));
+});
+
+test('mto-logistics-004: a confirmed request with two spools of two projects yields the Service request and the Release note, two project groups each and three signature blocks', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-service-docs-'));
+  const store = new Store(':memory:'); seed(store); seedMtoLogistics(store, SYSTEM);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const documents = documentStorage(store, dir, 'database');
+  const iso7 = store.get('isometrics', 'iso-7'); store.update('isometrics', 'iso-7', { assetTag: 'TAG-07', tracing: 'ST-2', paintSpec: 'A10', pwht: true }, iso7._version, SYSTEM);
+  const head = runAction(store, 'service', { spoolIds: ['spool-1', 'spool-7'], companyId: 'service-pwht', note: 'Pick up Monday' }, { id: 'u1', name: 'Matej Spisak' }).records![0];
+  const rows = Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key, true)])) as Record<string, Row[]>;
+  const request = requestOf(rows, head.id)!;
+  const model = serviceRequestDocumentData(rows, request);
+  assert.deepEqual(model.groups.map(group => group.project).sort(), [String(store.get('projects', 'project-cooling').internnumber), String(store.get('projects', 'project-skid').internnumber)].sort());
+  const skid = model.groups.find(group => group.projectId === 'project-skid')!;
+  assert.deepEqual(skid.lines[0].slice(1), [String(store.get('isometrics', 'iso-7').isoNo), 'TAG-07', String(store.get('isometrics', 'iso-7').drawingNo ?? ''), 'SP-007', String(store.get('spools', 'spool-7').diameter ?? ''), 'A10', 'YES', String(store.get('isometrics', 'iso-7').chemicalClean ?? ''), 'YES']);
+  assert.equal(tracingFlag(''), 'NO'); assert.equal(tracingFlag('N/A'), 'NO'); assert.equal(tracingFlag('ST-2'), 'YES');
+  assert.match(serviceRequestFileBase(request.date, siteNumber(rows.sites, request.siteId), request.number), /^\d{8}_S[1-9]\d*_R\d{5}$/);
+  assert.equal(serviceRequestFileBase('2024-06-28', 1, '00002'), '20240628_S1_R00002');
+  const texts = (layout: Layout) => layout.pages.flatMap(page => page.texts.map(item => item.text));
+  const input = { model, company: null, generatedAt: new Date('2026-11-16T10:00:00Z'), qr: `request_id=${head.id}` };
+  const serviceRequest = await serviceRequestPdf(input);
+  for (const label of ['Service request', 'Report no.', 'Company', 'Added by', 'Date', 'Note', 'Pick up Monday', 'Matej Spisak', ...SERVICE_REQUEST_COLUMNS]) assert.ok(texts(serviceRequest.layout).includes(label), label);
+  assert.equal(texts(serviceRequest.layout).filter(text => text.startsWith('Project: ')).length, 2, 'two project groups');
+  assert.ok(serviceRequest.layout.pages[0].images >= 1, 'the QR code');
+  const release = await coatingReleasePdf(input);
+  for (const page of release.layout.pages) for (const title of ['Contractor / Supplier', 'Client', 'NoBo']) assert.ok(page.texts.some(item => item.text === title), `${title} in the footer of every page`);
+  assert.equal(texts(release.layout).filter(text => text.startsWith('Project: ')).length, 2);
+  assert.ok(texts(release.layout).includes('Release note'));
+  // Signed: names, dates and the three images go into the footer.
+  const png = new Uint8Array(PNG);
+  const signed = await coatingReleasePdf({ ...input, signatures: { contractor: { name: 'Ivo Contractor', date: '2026-11-12', image: png }, client: { name: 'Ana Client', date: '2026-11-12', image: png }, nobo: { name: 'Nora NoBo', date: '2026-11-13', image: png } } });
+  for (const text of ['Ivo Contractor', 'Ana Client', 'Nora NoBo', '13.11.2026.']) assert.ok(texts(signed.layout).includes(text), text);
+  assert.equal(signed.layout.pages[0].images - release.layout.pages[0].images, 3, 'three signature images');
+  // Both files through the server builder, named after the request.
+  const built = await buildServiceRequestDocuments(store, documents, rows, request, new Date());
+  assert.match(built.serviceRequest.name, /^\d{8}_S\d+_R\d{5}-ServiceRequest\.pdf$/); assert.match(built.coatingRelease.name, /^\d{8}_S\d+_R\d{5}-CoatingRelease\.pdf$/);
+  assert.equal(Buffer.from(built.serviceRequest.bytes).subarray(0, 5).toString('latin1'), '%PDF-');
+  // Include isometric drawings in PDF: the drawing of each isometric is appended.
+  const drawing = await serviceRequestPdf({ ...input, drawings: [{ name: 'iso-7.png', bytes: png }] });
+  assert.equal(drawing.appended, 1); assert.equal((await readPdf(drawing.bytes)).pages.length, serviceRequest.layout.pages.length + 1);
 });

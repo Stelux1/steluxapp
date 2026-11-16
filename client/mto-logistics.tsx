@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowRight, Check, Download, Loader2, LogOut, MapPin, PackageCheck, PencilLine, Play, Printer, RefreshCw, Send, SlidersHorizontal, Undo2, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, Check, Download, FileText, Loader2, LogOut, MapPin, PackageCheck, PencilLine, Play, PenLine, Printer, RefreshCw, Send, SlidersHorizontal, Undo2, Upload, X } from 'lucide-react';
 import { materialRecord } from '../shared/materials.ts';
 import { DEFAULT_PERCENT_RANGE, EXECUTION_EXPORT_COLUMNS, EXECUTION_TYPES, PERCENT_CHIPS, PICKLIST_ARCHIVE_COLUMNS, PICKLIST_NOTE_MAX, START_CONFIRM, UNDO_EXECUTION_CONFIRM, archiveDefaultRange, canStartAt, defaultMaterialGroup, executionBoard, executionTypePhaseId, laydownContent, laydownHistory, materialCurrentLabel, materialGroups, materialHistory, materialServiceRows, pickListReports, requestArchive, spoolHistory, spoolNames, spoolRequestNumbers, spoolRows, undoRefusal, type ArchiveRequest, type BoardRow, type IsoStatus, type MaterialServiceFilters, type MaterialServiceRow, type PickListReport, type SpoolFilters, type SpoolRow } from '../shared/mto-logistics.ts';
 import type { Row } from '../shared/types.ts';
 import { useWorkspace, activeRows } from './context.tsx';
-import { apiBlob, apiUrl, formatDate, formatNumber, post, type ApiError } from './api.ts';
+import { api, apiBlob, apiUrl, formatDate, formatNumber, post, type ApiError } from './api.ts';
 import { Badge, EmptyState, FieldInput, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { PdfDocumentButton, PickListPdfButton } from './pdf-documents.tsx';
+import { SignaturePad } from './signatures.tsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const includes = (values: unknown[], query: string) => !query || values.some(value => String(value ?? '').toLowerCase().includes(query.toLowerCase()));
@@ -473,11 +474,117 @@ function MaterialHistoryDialog({ entry, onClose }: { entry: MaterialServiceRow; 
 
 export const ARCHIVE_TYPES: { value: 'Spool' | 'Material'; label: string }[] = [{ value: 'Spool', label: 'Service request' }, { value: 'Material', label: 'Service request - Materials' }];
 /**
- * The Options of an archive row. Kept in one place: the documents of a request (print, sign online, upload) join the download
- * of the files attached to it here.
+ * The Options of an archive row. Kept in one place. A spool request (Service request) has Print, Print (Coating release),
+ * Sign online, Upload and Download (the signed or uploaded document, once there is one); every request downloads the
+ * other files attached to it. The server checks every right again.
  */
-function RequestOptions({ request }: { request: ArchiveRequest }) {
-  return <>{request.documents.map(document => <a key={document.id} className="btn small" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
+function RequestOptions({ request, onSign, onUpload }: { request: ArchiveRequest; onSign: () => void; onUpload: () => void }) {
+  const { canRecord } = useWorkspace(); const record = { id: request.headId } as Row;
+  const print = canRecord('service_requests', 'print', record), sign = canRecord('service_requests', 'edit', record), upload = canRecord('service_requests', 'import', record);
+  return <>{request.kind === 'Spool' && print && <>
+      <a className="btn small" href={documentUrl(request, 'service-request')} target="_blank" rel="noopener" title="Print" aria-label={`Print service request ${request.number}`}><Printer size={14}/></a>
+      <a className="btn small" href={documentUrl(request, 'coating-release')} target="_blank" rel="noopener" title="Print (Coating release)" aria-label={`Print the coating release of ${request.number}`}><FileText size={14}/></a>
+      {(sign || request.signOff) && <button type="button" className="btn small" title="Sign online" aria-label={`Sign service request ${request.number} online`} onClick={onSign}><PenLine size={14}/></button>}
+      {upload && !request.signOff && <button type="button" className="btn small" title="Upload" aria-label={`Upload the signed document of ${request.number}`} onClick={onUpload}><Upload size={14}/></button>}
+      {request.files.signed && <a className="btn small" href={documentUrl(request, 'signed')} target="_blank" rel="noopener" title="Download" aria-label={`Download the signed document of ${request.number}`}><Download size={14}/></a>}
+    </>}
+    {request.documents.map(document => <a key={document.id} className="btn small" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
+}
+const documentUrl = (request: ArchiveRequest, kind: 'service-request' | 'coating-release' | 'signed') => apiUrl(`/service-requests/${encodeURIComponent(request.headId)}/document/${kind}`);
+const blobAsDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('The drawing could not be read.')); reader.readAsDataURL(blob); });
+type Reader = (() => Promise<Blob>) | null;
+type Method = 'Signature' | 'Initials' | 'Draw';
+
+/** The signed-in account's own saved signature or initials, for the Contractor / Supplier (`missing` when none is saved). */
+function useSavedSignature(kind: Method) {
+  const [state, setState] = useState<{ url: string; loading: boolean; missing: boolean }>({ url: '', loading: false, missing: false });
+  useEffect(() => {
+    if (kind === 'Draw') { setState({ url: '', loading: false, missing: false }); return; }
+    let url = '', cancelled = false; setState({ url: '', loading: true, missing: false });
+    apiBlob(`/service-requests/saved-signature/${kind}`).then(blob => { if (cancelled) return; url = URL.createObjectURL(blob); setState({ url, loading: false, missing: false }); })
+      .catch(() => { if (!cancelled) setState({ url: '', loading: false, missing: true }); });
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [kind]);
+  return state;
+}
+
+/**
+ * Sign online ("Sign service request"): Report no. · Company, Note, and the Contractor / Supplier, Client and NoBo blocks
+ * (Name*, Date, Signature*). Sign & save PDF writes the three signatures into the Release note and stores it; a signed
+ * request opens read-only with "Already signed" and its Signed PDF.
+ */
+function SignOnlineDialog({ request, onClose }: { request: ArchiveRequest; onClose: () => void }) {
+  const { label, refresh, notify, canRecord } = useWorkspace(); const id = useId();
+  const signed = Boolean(request.signOff); const editable = !signed && canRecord('service_requests', 'edit', { id: request.headId } as Row);
+  const stored = request.signature; const day = signed ? '' : today();
+  const [note, setNote] = useState(request.note);
+  const [values, setValues] = useState({ contractorName: stored.contractorName, contractorDate: stored.contractorDate || day, clientName: stored.clientName, clientDate: stored.clientDate || day, noboName: stored.noboName, noboDate: stored.noboDate || day });
+  const [method, setMethod] = useState<Method>('Draw'); const [cleared, setCleared] = useState(0);
+  const [pads, setPads] = useState<{ contractor: Reader; client: Reader; nobo: Reader }>({ contractor: null, client: null, nobo: null });
+  const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
+  const saved = useSavedSignature(method);
+  const set = (name: keyof typeof values, value: string) => setValues(old => ({ ...old, [name]: value }));
+  const pad = (name: keyof typeof pads) => (read: Reader) => setPads(old => old[name] === read ? old : { ...old, [name]: read });
+  async function submit(event: FormEvent) {
+    event.preventDefault(); if (!editable) return; setBusy(true); setError(''); setFields({});
+    try {
+      const drawn = async (read: Reader) => read ? blobAsDataUrl(await read()) : '';
+      await post(`/service-requests/${encodeURIComponent(request.headId)}/sign`, { note, ...values, contractorMethod: method, contractorSignature: method === 'Draw' ? await drawn(pads.contractor) : '', clientSignature: await drawn(pads.client), noboSignature: await drawn(pads.nobo) });
+      await refresh(); notify(`Service request ${request.number} signed. The signed Release note is stored in the archive.`); onClose();
+    } catch (cause) { setError(failure(cause)); setFields((cause as ApiError).fields || {}); } finally { setBusy(false); }
+  }
+  const text = (name: keyof typeof values, title: string, required = false) => <div className="field"><label htmlFor={`${id}-${name}`}>{title}{required && <span className="required"> *</span>}</label>
+    <input id={`${id}-${name}`} type={name.endsWith('Date') ? 'date' : 'text'} value={values[name]} readOnly={!editable} maxLength={200} aria-invalid={Boolean(fields[name])} aria-describedby={fields[name] ? `${id}-${name}-error` : undefined} onChange={event => set(name, event.target.value)}/>
+    {fields[name] && <small id={`${id}-${name}-error`} className="field-error">{fields[name]}</small>}</div>;
+  const problem = (name: string) => fields[name] ? <small className="field-error" role="alert">{fields[name]}</small> : null;
+  const required = (title: string) => <span className="field-label">{title}<span className="required"> *</span></span>;
+  const what = method === 'Signature' ? 'signature' : 'initials';
+  return <Modal title="Sign service request" subtitle={`Report no. ${request.number} · ${label('service_companies', request.companyId)}`} onClose={onClose} wide><form onSubmit={event => void submit(event)} noValidate><div className="modal-body">
+    {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+    {request.signOff && <p role="status"><Badge color="green">Already signed</Badge> <span className="muted">{request.signOff.via === 'Upload' ? 'A signed scan was uploaded' : 'Signed online'}{request.signOff.by ? ` by ${request.signOff.by}` : ''} · {formatStamp(request.signOff.at)}. The form is read-only.</span></p>}
+    <div className="form-grid"><div className="field full-width"><label htmlFor={`${id}-note`}>Note</label><textarea id={`${id}-note`} rows={3} maxLength={2000} value={note} readOnly={!editable} onChange={event => setNote(event.target.value)}/></div></div>
+    <fieldset className="field full-width"><legend>Contractor / Supplier</legend><div className="form-grid">
+      {text('contractorName', 'Name', true)}{text('contractorDate', 'Date')}
+      {editable && <div className="field full-width">{required('Signature')}
+        <div className="table-tabs" role="group" aria-label="Contractor / Supplier signature">{(['Signature', 'Initials', 'Draw'] as const).map(option => <button key={option} type="button" className={method === option ? 'selected' : ''} aria-pressed={method === option} onClick={() => setMethod(option)}>{option}</button>)}
+          <button type="button" onClick={() => { setMethod('Draw'); setCleared(count => count + 1); setPads(old => ({ ...old, contractor: null })); }}>Clear</button></div>
+        {method === 'Draw' ? <SignaturePad key={cleared} label="Contractor / Supplier signature" disabled={busy} onChange={pad('contractor')}/>
+          : saved.loading ? <p role="status"><Loader2 size={14} className="spin"/>Loading your saved {what}…</p>
+          : saved.url ? <figure className="signature-frame"><img src={saved.url} alt={`Your saved ${what}`}/></figure>
+          : <p className="muted" role="status">You have no saved {what}. Save one under System → Signatures, or draw.</p>}
+        {problem('contractorSignature')}</div>}
+    </div></fieldset>
+    <fieldset className="field full-width"><legend>Client</legend><div className="form-grid">
+      {text('clientName', 'Client name', true)}{text('clientDate', 'Date')}
+      {editable && <div className="field full-width">{required('Client signature')}<SignaturePad label="Client signature" disabled={busy} onChange={pad('client')}/>{problem('clientSignature')}</div>}
+    </div></fieldset>
+    <fieldset className="field full-width"><legend>NoBo</legend><div className="form-grid">
+      {text('noboName', 'Name', true)}{text('noboDate', 'Date')}
+      {editable && <div className="field full-width">{required('Signature')}<SignaturePad label="NoBo signature" disabled={busy} onChange={pad('nobo')}/>{problem('noboSignature')}</div>}
+    </div></fieldset>
+    {!signed && !editable && <p className="muted">Your permission profile does not allow signing this request.</p>}
+  </div>
+  <div className="modal-footer">
+    <a className="btn" href={documentUrl(request, 'coating-release')} target="_blank" rel="noopener"><FileText size={15}/>View Release note PDF</a>
+    {request.files.signed && <a className="btn" href={documentUrl(request, 'signed')} target="_blank" rel="noopener"><Download size={15}/>Signed PDF</a>}
+    {editable && <button className="btn primary" disabled={busy}>{busy ? <Loader2 size={15} className="spin"/> : <PenLine size={15}/>}Sign &amp; save PDF</button>}
+    <button type="button" className="btn" disabled={busy} onClick={onClose}>Close</button></div></form></Modal>;
+}
+
+/** Upload signed doc: attach a scanned signed PDF to the request (the request is then signed and read-only). */
+function UploadSignedDialog({ request, onClose }: { request: ArchiveRequest; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace(); const id = useId();
+  const [file, setFile] = useState<File | null>(null); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  function choose(next: File | null) { setError(''); if (next && (next.type !== 'application/pdf' || !/\.pdf$/i.test(next.name))) { setFile(null); setError('Choose a PDF file.'); return; } setFile(next); }
+  async function submit(event: FormEvent) {
+    event.preventDefault(); if (!file) { setError('Choose the signed PDF.'); return; } setBusy(true); setError('');
+    try { const body = new FormData(); body.set('file', file, file.name); await api(`/service-requests/${encodeURIComponent(request.headId)}/upload`, { method: 'POST', body }); await refresh(); notify(`Signed document of ${request.number} uploaded.`); onClose(); }
+    catch (cause) { setError(failure(cause)); } finally { setBusy(false); }
+  }
+  return <Modal title="Upload signed doc" subtitle={`Report no. ${request.number}`} onClose={onClose}><form onSubmit={event => void submit(event)} noValidate><div className="modal-body">
+    {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+    <div className="field"><label htmlFor={`${id}-file`}>Signed document (PDF)<span className="required"> *</span></label><input id={`${id}-file`} type="file" accept="application/pdf,.pdf" onChange={event => choose(event.target.files?.[0] || null)}/>{file && <small className="field-hint">{file.name}</small>}</div>
+  </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !file}>{busy ? <Loader2 size={15} className="spin"/> : <Upload size={15}/>}Upload</button></div></form></Modal>;
 }
 
 export function RequestArchive() {
@@ -485,8 +592,10 @@ export function RequestArchive() {
   const range = useMemo(() => archiveDefaultRange(today()), []);
   const first = { kind: 'Spool' as 'Spool' | 'Material', from: range.from, to: range.to, sort: 'desc' as 'desc' | 'asc' };
   const [draft, setDraft] = useState(first); const [applied, setApplied] = useState(first);
+  const [dialog, setDialog] = useState<{ kind: 'sign' | 'upload'; key: string } | null>(null);
   if (!canRecord('service_requests')) return <Restricted what="the request archive"/>;
   const list = requestArchive(rows, applied);
+  const open = dialog ? requestArchive(rows).find(request => request.key === dialog.key) : undefined;
   return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Request archive"/>
     <section className="panel execution-panel">
       <form className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied(draft); }}>
@@ -496,9 +605,11 @@ export function RequestArchive() {
         <div className="field"><label htmlFor="archive-to">To Date</label><input id="archive-to" type="date" value={draft.to} min={draft.from || undefined} onChange={event => setDraft(old => ({ ...old, to: event.target.value }))}/></div>
         <button className="btn primary small" type="submit"><Check size={15}/>Filter</button></form>
       <TableScroll><table className="data-table execution-table"><thead><tr><th>Date</th><th>Report No.</th><th>Company</th><th>Added by</th><th className="actions-cell">Options</th></tr></thead>
-        <tbody>{list.map(request => <tr key={request.number}><td>{formatStamp(request.dateTime || request.date)}</td><td>{request.number}</td><td>{label('service_companies', request.companyId)}</td><td>{request.addedBy || '—'}</td>
-          <td className="actions-cell"><RequestOptions request={request}/></td></tr>)}</tbody></table></TableScroll>
+        <tbody>{list.map(request => <tr key={request.key}><td>{formatStamp(request.dateTime || request.date)}</td><td>{request.number}</td><td>{label('service_companies', request.companyId)}</td><td>{request.addedBy || '—'}</td>
+          <td className="actions-cell"><div className="mto-options request-options"><RequestOptions request={request} onSign={() => setDialog({ kind: 'sign', key: request.key })} onUpload={() => setDialog({ kind: 'upload', key: request.key })}/></div></td></tr>)}</tbody></table></TableScroll>
       {!list.length && <EmptyState title="No requests found" description="Service requests appear here once spools or materials are sent to a service company."/>}
       <div className="table-footer"><span>{list.length} request{list.length === 1 ? '' : 's'}</span></div>
-    </section></div>;
+    </section>
+    {open && dialog?.kind === 'sign' && <SignOnlineDialog request={open} onClose={() => setDialog(null)}/>}
+    {open && dialog?.kind === 'upload' && <UploadSignedDialog request={open} onClose={() => setDialog(null)}/>}</div>;
 }
