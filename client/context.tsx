@@ -19,7 +19,7 @@ interface ProjectSelection {
 interface WorkspaceContext extends Bootstrap, ProjectSelection { hasFeature: (key: string) => boolean; refresh: () => Promise<void>; notify: (message: string) => void; can: (module: Module, level?: number) => boolean; canRecord:(resource:string,verb?:PermissionVerb,row?:Row)=>boolean;canRun:(key:string,data?:Record<string,unknown>)=>boolean;canArea:(key:string,verb?:PermissionVerb)=>boolean;canReadReport:(key:string,verb?:PermissionVerb)=>boolean;label: (resource: string, id: unknown) => string; openRecord: (resource: string, id: string) => void; detail: {resource: string; id: string} | null; closeRecord: () => void; }
 const Context = createContext<WorkspaceContext | null>(null);
 export const useWorkspace = () => { const value = useContext(Context); if (!value) throw new Error('Workspace is unavailable.'); return value; };
-export function WorkspaceProvider({ user, onUnauthenticated, children }: { user: User; onUnauthenticated: () => void; children: ReactNode }) {
+export function WorkspaceProvider({ user, onUnauthenticated, children }: { user: User; onUnauthenticated: (ended?: boolean) => void; children: ReactNode }) {
   const navigate = useNavigate(); const pilotKey = usePilot()?.pilot.key;
   const [selectedSite, setSelectedSite] = useState(() => sessionStorage.getItem(`blitzkrieg-project-${user.id}`) || '');
   const [data, setData] = useState<Bootstrap>({ user, rows: {}, activity: [] });
@@ -31,7 +31,7 @@ export function WorkspaceProvider({ user, onUnauthenticated, children }: { user:
   const pilotRows = useMemo(() => pilotScope(data.rows, pilotKey), [data.rows, pilotKey]);
   const scopedRows = useMemo(() => projectScopeEnabled ? projectScope(pilotRows, siteId) : pilotRows, [pilotRows, siteId, projectScopeEnabled]);
   const selectSite = (id: string) => { setSelectedSite(id); setDetail(null); sessionStorage.setItem(`blitzkrieg-project-${user.id}`, id); };
-  const refresh = useCallback(async () => { try { const next = await api<Bootstrap>('/bootstrap'); configureCatalog(next.user.availability); setData(next); setReady(true); setError(''); } catch (e) { const failure = e as { status: number; code?: string }; if (failure.status === 401 || failure.code === 'pilot') onUnauthenticated(); else setError((e as Error).message); } }, [onUnauthenticated]);
+  const refresh = useCallback(async () => { try { const next = await api<Bootstrap>('/bootstrap'); configureCatalog(next.user.availability); setData(next); setReady(true); setError(''); } catch (e) { const failure = e as { status: number; code?: string }; if (failure.status === 401 || failure.code === 'pilot') onUnauthenticated(failure.status === 401); else setError((e as Error).message); } }, [onUnauthenticated]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 4500); return () => clearTimeout(timer); }, [toast]);
   const label = (resource: string, id: unknown) => {

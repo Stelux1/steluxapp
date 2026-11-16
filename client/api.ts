@@ -1,4 +1,5 @@
 import { splitPilotPath } from '../shared/release.ts';
+import { REFUSAL_TEXTS, internalText } from '../shared/refusal.ts';
 
 export class ApiError extends Error {
   /** `code` is `pilot` when the server refuses the current pilot (or a workspace request without one). */
@@ -13,18 +14,32 @@ export const currentPilot = () => pilotRequests ? splitPilotPath(window.location
 export function apiUrl(path: string) { const pilot = currentPilot(); return `/api${path}${pilot ? `${path.includes('?') ? '&' : '?'}pilot=${pilot}` : ''}`; }
 async function request(url: string, options: RequestInit = {}) {
   const pilot = currentPilot();
-  return fetch('/api' + url, { credentials: 'same-origin', ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), 'X-Stelux-Request': '1', ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...options.headers } });
+  try { return await fetch('/api' + url, { credentials: 'same-origin', ...options, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), 'X-Stelux-Request': '1', ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...options.headers } }); }
+  catch { throw new ApiError(REFUSAL_TEXTS.unreachable, 0); }
+}
+/** The page listens for this to return to the sign-in form with one sentence. */
+export const SESSION_ENDED = 'blitzkrieg:session-ended';
+/** The body of an answer as an object; an answer that is not JSON (gateway page, server down) is never shown as parser text. */
+async function readBody(response: Response): Promise<Record<string, any> | undefined> {
+  try { const body = await response.json(); return body && typeof body === 'object' ? body : undefined; } catch { return undefined; }
+}
+/** The sentence for a refused answer: the server's own sentence when it sent one, otherwise a plain one. */
+function refusal(response: Response, body: Record<string, any> | undefined, fallback: string, url: string) {
+  if (response.status === 401 && !url.startsWith('/auth/')) { if (typeof window !== 'undefined') window.dispatchEvent(new Event(SESSION_ENDED)); return new ApiError(REFUSAL_TEXTS.sessionEnded, 401, undefined, body?.code); }
+  const sentence = typeof body?.error === 'string' && body.error && !internalText(body.error) ? body.error : response.status >= 500 || !body ? REFUSAL_TEXTS.unreachable : fallback;
+  return new ApiError(sentence, response.status, body?.fields, body?.code);
 }
 export async function api<T = Record<string, unknown>>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await request(url, options);
-  const body = await response.json();
-  if (!response.ok) throw new ApiError(body.error || 'The request failed.', response.status, body.fields, body.code);
-  return body;
+  const body = await readBody(response);
+  if (!response.ok) throw refusal(response, body, 'The request failed.', url);
+  if (!body) throw new ApiError(REFUSAL_TEXTS.unreachable, response.status);
+  return body as T;
 }
 /** A file the account may read, as a blob (e.g. an image preview), requested with the current pilot. */
 export async function apiBlob(url: string, options: RequestInit = {}): Promise<Blob> {
   const response = await request(url, options);
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new ApiError(body.error || 'The file could not be loaded.', response.status, body.fields, body.code); }
+  if (!response.ok) throw refusal(response, await readBody(response), 'The file could not be loaded.', url);
   return response.blob();
 }
 export const post = <T = Record<string, unknown>>(url: string, body: unknown) => api<T>(url, { method: 'POST', body: JSON.stringify(body) });

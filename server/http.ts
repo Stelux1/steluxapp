@@ -11,6 +11,7 @@ import { Store, AppError } from './store.ts';
 import { runAction } from './workflows.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { ACTIONS } from '../shared/actions.ts';
+import { refusalBody } from '../shared/refusal.ts';
 import { RELATIONS,relationFields } from '../shared/welding.ts';
 import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/reports.ts';
 import { canResource,canReport,REPORT_RESOURCES } from '../shared/permissions.ts';
@@ -389,11 +390,11 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const translated = store.translate(error);
     if (translated instanceof AppError) {
-      // Error handlers see no route params, so the resource comes from the path; only delivered fields may be named.
-      const key=String(_req.params.resource||/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||''||(/^\/api\/actions\/(?:save-weld|add-welds|mass-edit-welds|reorder-welds)$/.test(_req.path)?'welds':''));
-      const fields=translated.fields?Object.fromEntries(Object.entries(translated.fields).filter(([name])=>access.field(key,name))):undefined;
-      const message=availability&&translated.status===409?'This record is in use or has changed. Refresh and check its linked records.':availability&&translated.fields&&!Object.keys(fields||{}).length?'Please check the record and try again.':translated.message;
-      res.status(translated.status).json({ error: message, ...(fields&&Object.keys(fields).length?{fields}:{}), ...(translated.code?{code:translated.code}:{}) });
+      // Error handlers see no route params. Record routes name their resource in the path and may only name delivered fields; action routes name the fields of their own dialog.
+      const recordKey=/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||(/^\/api\/actions\/(?:save-weld|add-welds|mass-edit-welds|reorder-welds)$/.test(_req.path)?'welds':'');
+      const key=String(_req.params.resource||recordKey);
+      const answer=refusalBody(translated,{hosted:Boolean(availability),deliver:key?name=>access.field(key,name):undefined});
+      res.status(answer.status).json(answer.body);
     }
     else if (translated instanceof multer.MulterError) res.status(422).json({ error: 'The file is too large or could not be uploaded.' });
     else if (translated instanceof SyntaxError) res.status(400).json({ error: 'The request contains invalid JSON.' });
