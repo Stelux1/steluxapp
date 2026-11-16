@@ -34,6 +34,7 @@ import { FLAG_BULK_RESOURCES, flagBulkAllowed } from '../shared/welder-data.ts';
 import { withLegacyValues } from './welder-data.ts';
 import { addNotification, bellOf, markAllRead, markRead, type Viewer } from './notifications.ts';
 import { siteOfRecord } from './weld-catalogs.ts';
+import { weldEditHistory } from './weld-entry.ts';
 import { companyForDocuments } from './pdf/company.ts';
 import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate.ts';
 import { reportWorkbook } from './report-export.ts';
@@ -218,6 +219,12 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if(resource.key==='attachments')checkResourcePermission(req,String(record.entityType),'show',store.get(String(record.entityType),record.entityId,true));
     const before=req.query.before===undefined?Number.MAX_SAFE_INTEGER:Number(req.query.before);
     const history=store.history(resource.key,record.id,before);res.setHeader('Cache-Control','no-store');res.json({...history,events:visibleAudit(req,history.events)});
+  });
+  /** Previous edits of Edit weld: the reasons entered for edits of a weld with NDT or PWHT in progress (server/weld-entry.ts). */
+  app.get('/api/weld-history/:id', (req, res) => {
+    if (availability && !availability.actions['save-weld']) throw new AppError(404, 'This resource could not be found.');
+    const record = access.record('welds', String(req.params.id), true); checkResourcePermission(req, 'welds', 'show', record);
+    res.setHeader('Cache-Control', 'no-store'); res.json({ edits: weldEditHistory(store, record.id) });
   });
   /** Reports only the Export weld data page downloads (shared/pilots.ts); LISL is left out, Data LISL exports it too. */
   const EXPORT_WELD_DATA_REPORTS = ['wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'];

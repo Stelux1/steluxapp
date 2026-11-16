@@ -87,6 +87,8 @@ export const weldResults = (results: Row[] | null | undefined, weldId: string, t
 export const weldRequests = (requests: Row[] | null | undefined, weldId: string, types: string[]) => live(requests).filter(row => row.weldId === weldId && types.includes(textOf(row.type))).sort(newest);
 /** The request a weld's NDT dialog edits: its newest request of that type that is not cancelled. */
 export const currentRequest = (requests: Row[] | null | undefined, weldId: string, type: string) => weldRequests(requests, weldId, [type]).find(row => row.status !== 'Cancelled');
+/** The weld has NDT (Pre) or Pre-HT / PWHT in progress: one of those requests is still Open (Edit weld then asks for a reason). */
+export const ndtOrPwhtInProgress = (requests: Row[] | null | undefined, weldId: string) => weldRequests(requests, weldId, [...NDT_TYPES, ...PWHT_TYPES]).some(row => row.status === 'Open');
 /** Latest outcome of one stored type. */
 export const latestResult = (results: Row[] | null | undefined, weldId: string, type: string) => weldResults(results, weldId, [type])[0];
 /** ReWeld? is ticked on the results of the request the latest result belongs to (the dialog stores it with the NA). */

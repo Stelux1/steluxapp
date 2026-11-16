@@ -195,7 +195,7 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     for (const key of Object.keys(SITE_OWNED)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), 'siteId'])];
     // Weld table and weld entry on the isometric: the entry fields of a weld and the actions behind the form.
     deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer'));
-    availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS];
+    availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS, 'tracer', 'note', 'defaultDiameter'];
     availability.actions['add-welds'] = fields('isoId start end diameterId');
     availability.actions['mass-edit-welds'] = fields('weldIds changes versions');
     availability.actions['reorder-welds'] = fields('isoId weldIds');

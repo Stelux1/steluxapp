@@ -3,6 +3,7 @@ import { mandatoryFields, projectCertificates, wpsValidation } from './site-sett
 import { certificatesForProject as projectCertificatesOf } from './welder-data.ts';
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
 import { INSPECTION_MASS_EDIT_FIELDS } from './inspections.ts';
+import { nonWeldCode, type NonWeldCode } from './weld-codes.ts';
 
 /**
  * Weld table and weld entry on the isometric (Weld Pilot). Pure functions over plain rows: the server uses them
@@ -17,8 +18,13 @@ const text = (value: unknown) => String(value ?? '').trim();
 const present = (value: unknown) => value !== undefined && value !== null && text(value) !== '';
 const naturalCompare = (a: unknown, b: unknown) => text(a).localeCompare(text(b), 'en', { numeric: true, sensitivity: 'base' });
 
-/** The two values of a charge number that mean "this side is not new material". */
-export const SIDE_VALUES = ['EXISTING', 'CONN ISO'] as const;
+/** The 13 fixed part placeholders of the charge number lists (reference __wsappsFixedCharges, after CONN ISO and EXISTING). */
+export const CHARGE_PLACEHOLDERS = ['1 / Pipe', '2 / Elbow 45', '3 / Elbow 90', '4 / Flange', '5 / Tee', '6 / Reducer', '7 / Nipple', '8 / Valve', '9 / Cap', '10 / Swivel Flange', '11 / Swivel Male', '12 / Ball race', '13 / Female Flange'] as const;
+/**
+ * The fixed values of a charge number that mean "this side is not certified new material", in the reference order:
+ * CONN ISO, EXISTING, then the 13 part placeholders. Stored in the charge number like EXISTING, without a certificate.
+ */
+export const SIDE_VALUES = ['CONN ISO', 'EXISTING', ...CHARGE_PLACEHOLDERS] as const;
 export const isSideValue = (value: unknown) => SIDE_VALUES.includes(text(value) as typeof SIDE_VALUES[number]);
 export const WELDERS = ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id'] as const;
 export const hasWelder = (weld: Values) => WELDERS.some(name => present(weld[name]));
@@ -165,7 +171,8 @@ export function weldLock(weld: Values, context: LockContext): WeldLock {
  * explicit length) and Charge number 1 and 2 are required. Returns a message per missing field.
  */
 export function missingMandatoryFields(site: SiteLike, weld: Values): Record<string, string> {
-  if (!mandatoryFields(site) || !hasWelder(weld)) return {};
+  // A GAP / SP / E / B number is no weld: it has no welder data to complete (reference: special numbers skip the check).
+  if (!mandatoryFields(site) || !hasWelder(weld) || nonWeldCode(weld.weldNo)) return {};
   const missing: Record<string, string> = {};
   const need = (name: string, label: string, filled: boolean) => { if (!filled) missing[name] = `${label} is required once a welder is assigned.`; };
   need('typeId', 'Weld type', present(weld.typeId)); need('wpsId', 'WPS number', present(weld.wpsId)); need('date', 'Weld date', present(weld.date));
@@ -216,6 +223,214 @@ export function certificateErrors(site: SiteLike, weld: Values, sides: number[],
   const errors: Record<string, string> = {}, offered = new Set(certificatesForProject(certificates, projectId, context).map(row => row.id));
   for (const side of sides) { const id = text(weld[`certificate${side}Id`]); if (id && !offered.has(id)) errors[`certificate${side}Id`] = 'This certificate is not linked to the project.'; }
   return errors;
+}
+
+/** Reference getAllCerts `selectable`: a certificate can be chosen only when it is both Controlled and Accepted. */
+export const CERTIFICATE_NOT_SELECTABLE = 'This certificate cannot be selected: both Controlled and Accepted must be enabled.';
+export const certificateSelectable = (certificate?: Values | null) => Boolean(certificate) && certificate!.controlled === true && certificate!.accepted === true;
+/** A chosen certificate that is not both Controlled and Accepted is refused (the form offers it disabled). */
+export function certificateSelectionErrors(weld: Values, sides: number[], certificates: Row[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const side of sides) {
+    const id = text(weld[`certificate${side}Id`]); if (!id) continue;
+    const certificate = certificates.find(row => row.id === id);
+    if (certificate && !certificateSelectable(certificate)) errors[`certificate${side}Id`] = CERTIFICATE_NOT_SELECTABLE;
+  }
+  return errors;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Add weld / Edit weld form (reference #addWeld and #editWeld)
+
+/** The one sentence of the reference when mandatory fields are missing (the fields themselves are marked red). */
+export const WELD_MANDATORY_MESSAGE = 'Fill Weld type, WPS, Weld Date, Dia., Charge number 1 and Charge number 2 before saving.';
+export const DUPLICATE_WELDER = 'This welder is already selected in another field.';
+/** The welder fields holding a welder that an earlier welder field already holds (reference change.dupwelder). */
+export function duplicateWelderErrors(weld: Values): Record<string, string> {
+  const errors: Record<string, string> = {}, seen = new Set<string>();
+  for (const name of WELDERS) { const id = text(weld[name]); if (!id) continue; if (seen.has(id)) errors[name] = DUPLICATE_WELDER; seen.add(id); }
+  return errors;
+}
+
+/** Weld Date of a new weld: today (reference __wsappsWeldSuggestFillEmptyDate on opening Add weld). */
+export const newWeldDefaults = (today: string): Values => ({ date: today });
+/** Edit weld "Add new" is enabled only once Weld no. was changed to a number the isometric does not have yet. */
+export function addNewEnabled(weldNo: unknown, original: unknown, existing: unknown[]): boolean {
+  const current = text(weldNo);
+  return current !== '' && current !== text(original) && !existing.map(text).includes(current);
+}
+
+export interface WeldFormField { name: string; label: string; }
+const field = (name: string, label: string): WeldFormField => ({ name, label });
+/**
+ * The fields of Add weld and Edit weld in their three columns, in the reference order (captures add-weld-open and
+ * edit-weld-001). Length in mm follows Dia. only when Dia. is "-- Length in mm --"; NDT percent (Edit only) only then
+ * with NDT Req. ticked. Weld process is never shown (the stored field stays).
+ */
+export function weldFormLayout(mode: 'add' | 'edit'): WeldFormField[][] {
+  const flags = [field('ndoReqPre', 'NDT Req. Pre'), field('ndoReq', 'NDT Req.'), ...(mode === 'edit' ? [field('ndtpercent', 'NDT percent')] : []), field('pwhtReqPre', 'Pre-HT'), field('pwhtReq', 'PWHT Req.'), field('repair', 'Repair'), field('tracer', 'Tracer')];
+  if (mode === 'add') return [
+    [field('weldNo', 'Weld no.'), field('typeId', 'Weld type'), field('welder1Id', 'Welder'), field('welder3Id', 'Welder 3'), field('coating1Id', 'Coating 1'), field('wire1Id', 'Welding wire 1'), field('pos1', 'Pos 1'), field('chargeNo1', 'Charge number 1')],
+    [field('wpsId', 'WPS number'), field('welder2Id', 'Welder 2'), field('welder4Id', 'Welder 4'), field('coating2Id', 'Coating 2'), field('wire2Id', 'Welding wire 2'), field('pos2', 'Pos 2'), field('chargeNo2', 'Charge number 2')],
+    [field('datefit', 'Fitup date'), field('date', 'Weld Date'), field('diameterId', 'Dia.'), field('dialen', 'Length in mm'), field('spoolId', 'Spool'), ...flags],
+  ];
+  return [
+    [field('weldNo', 'Weld no.'), field('typeId', 'Weld type'), field('welder1Id', 'Welder'), field('welder3Id', 'Welder 3'), field('coating1Id', 'Coating 1'), field('coatingWeldId', 'Coating weld'), field('kr', 'KR'), field('fp', 'FP'), field('wire1Id', 'Welding wire 1'), field('pos1', 'Pos 1'), field('chargeNo1', 'Charge number 1'), field('updatePrev', 'Upd. prev. weld')],
+    [field('wpsId', 'WPS number'), field('welder2Id', 'Welder 2'), field('welder4Id', 'Welder 4'), field('coating2Id', 'Coating 2'), field('sleeve', 'Sleeve'), field('insLength', 'Ins. length 1'), field('insLength2', 'Ins. length 2'), field('wire2Id', 'Welding wire 2'), field('pos2', 'Pos 2'), field('chargeNo2', 'Charge number 2'), field('updateNext', 'Upd. next weld')],
+    [field('datefit', 'Fitup Date'), field('date', 'Weld Date'), field('diameterId', 'Dia.'), field('dialen', 'Length in mm'), field('spoolId', 'Spool'), ...flags],
+  ];
+}
+/** Edit weld: the tracer is linked through NDT and the dashboard, so its checkbox is disabled with this tooltip. */
+export const EDIT_TRACER_HINT = 'Tracer is assigned via NDT / dashboard, not here.';
+
+/** The weld fields a GAP / SP / E / B number clears (reference #weldNo input handler); the server ignores them too. */
+export function specialWeldCleared(code: NonWeldCode | null): string[] {
+  if (!code) return [];
+  const cleared = ['processId', 'typeId', 'wpsId', 'coating1Id', 'coating2Id', ...WELDERS, 'wire1Id', 'wire2Id', 'chargeNo2', 'certificate2Id', 'material2Id'];
+  if (code !== 'B' && code !== 'SP') cleared.push('spoolId');
+  if (code === 'GAP' || code === 'SP') cleared.push('chargeNo1', 'certificate1Id', 'material1Id');
+  return cleared;
+}
+/**
+ * The form fields a GAP / SP / E / B number hides. Add weld: what it clears; Weld no., the dates, Dia., Pos 1/2 and the
+ * checkboxes stay. Edit weld hides every weld block, leaving Weld no., Pos 1 and Charge number 1 (B adds Spool; SP shows
+ * Weld no. and Spool only).
+ */
+export function specialWeldHidden(code: NonWeldCode | null, mode: 'add' | 'edit'): Set<string> {
+  if (!code) return new Set();
+  if (mode === 'add') return new Set(specialWeldCleared(code).filter(name => !/^(certificate|material)\d/.test(name)));
+  const keep = code === 'SP' ? ['weldNo', 'spoolId'] : ['weldNo', 'pos1', 'chargeNo1', ...(code === 'B' ? ['spoolId'] : [])];
+  return new Set(weldFormLayout('edit').flat().map(item => item.name).filter(name => !keep.includes(name)));
+}
+
+// ----- option texts
+
+/** WPS option: "<WPS number> | <process> (<designation>)" in Add / Edit weld, "<process> | <WPS number> (<designation>)" in Mass edit. */
+export function wpsLabel(wps: Values, mode: 'form' | 'mass' = 'form'): string {
+  const [number, process, designation] = [text(wps.name), text(wps.method), text(wps.definition)];
+  const head = mode === 'mass' ? [process, number] : [number, process];
+  return `${head.filter(Boolean).join(' | ')}${designation ? ` (${designation})` : ''}`;
+}
+/** Welding wire option: "<charge number> / <rod type> / <type of material> / <diameter> mm" (reference "110 / ad / sddfs / 225.0 mm"). */
+export function wireLabel(wire: Values, materialType = ''): string {
+  const diameter = present(wire.diameter) && Number.isFinite(Number(wire.diameter)) ? `${Number(wire.diameter).toFixed(1)} mm` : '';
+  return [text(wire.chargeNo || wire.name), text(wire.classification), text(materialType || wire.typeMaterial), diameter].join(' / ');
+}
+/** What a certificate's option and detail table read: its diameter row, type of material, material part and material. */
+export interface CertificateLookups { diameters?: Map<string, Values>; materialTypes?: Map<string, Values>; materialParts?: Map<string, Values>; materials?: Map<string, Values>; }
+const lookup = (map: Map<string, Values> | undefined, id: unknown, key: string) => text(map?.get(text(id))?.[key]);
+const certificateDiameter = (certificate: Values, lookups: CertificateLookups) => lookup(lookups.diameters, certificate.diameterId, 'diameter') || text(certificate.diameter);
+/** Certificate option: "Charge number / Dia. / Schedule / Material part / Type of material / Material No" (empty parts keep their place). */
+export function certificateLabel(certificate: Values, lookups: CertificateLookups = {}): string {
+  return [text(certificate.chargeNo || certificate.name), certificateDiameter(certificate, lookups), text(certificate.schedule), lookup(lookups.materialParts, certificate.materialPartId, 'name') || text(certificate.materialDescription), lookup(lookups.materialTypes, certificate.materialTypeId, 'name') || text(certificate.materialCode), lookup(lookups.materials, certificate.materialId, 'materialNo')].join(' / ');
+}
+/** The read-only table under a chosen certificate: Index number, Material (type of material), Description (material part), Diameter. */
+export function chargeDetails(certificate: Values | null | undefined, lookups: CertificateLookups = {}): [string, string][] {
+  if (!certificate) return [];
+  return [['Index number', text(certificate.indexNo)], ['Material', lookup(lookups.materialTypes, certificate.materialTypeId, 'name') || text(certificate.materialCode)], ['Description', lookup(lookups.materialParts, certificate.materialPartId, 'name') || text(certificate.materialDescription)], ['Diameter', certificateDiameter(certificate, lookups)]];
+}
+export interface ChargeOption { value: string; label: string; disabled?: boolean; }
+/**
+ * A charge number list. Add weld and Mass edit: the certificates, then CONN ISO, EXISTING and the 13 placeholders;
+ * Edit weld: the fixed values first. Certificates that are not Controlled + Accepted are offered disabled.
+ */
+export function chargeOptionList(certificates: Values[], mode: 'add' | 'edit', lookups: CertificateLookups = {}): ChargeOption[] {
+  const fixed = SIDE_VALUES.map(value => ({ value: value as string, label: value as string }));
+  const certs = certificates.map(row => ({ value: text(row.id), label: certificateLabel(row, lookups), ...(certificateSelectable(row) ? {} : { disabled: true }) }));
+  return mode === 'edit' ? [...fixed, ...certs] : [...certs, ...fixed];
+}
+/** Dia. options in the reference order: plain text order of their labels (code points, so "1,5" < "1.5" < "10"). */
+export const diameterTextOrder = <T extends { label: string }>(options: T[]) => [...options].sort((a, b) => a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
+
+// ----- Dia. against the charges (reference __wsappsValidateWeldDiameterConsistency)
+
+export const DIAMETER_MESSAGES = {
+  mismatch: (sizes: string) => `Dia. must equal the diameter of charge 1/2 (${sizes}).`,
+  required: (sizes: string) => `Dia. must be chosen and match the diameter of charge 1/2 (${sizes}).`,
+  pick: 'Choose a default diameter when charge 1 and charge 2 differ.',
+};
+/** An inch size as one comparable text: quotes and spaces dropped, decimal comma read as a point, numbers rounded to 4 decimals. */
+export function normalizeSizeInch(value: unknown): string {
+  let size = text(value).replace(/[″”"]/g, '').replace(/\s+/g, '').replace(',', '.');
+  if (size !== '' && /^-?\d+(\.\d+)?$/.test(size)) size = String(Math.round(parseFloat(size) * 10000) / 10000);
+  return size;
+}
+/** One end of a size label: 1.1/2 (one and a half), 3/4, 2 or 2,5. */
+export function parseInchSize(token: string): string {
+  const value = token.trim(), mixed = /^(\d+)\.(\d+)\/(\d+)$/.exec(value), fraction = /^(\d+)\/(\d+)$/.exec(value);
+  if (mixed && Number(mixed[3]) !== 0) return normalizeSizeInch(String(Number(mixed[1]) + Number(mixed[2]) / Number(mixed[3])));
+  if (fraction && Number(fraction[2]) !== 0) return normalizeSizeInch(String(Number(fraction[1]) / Number(fraction[2])));
+  return /^\d+([.,]\d+)?$/.test(value) ? normalizeSizeInch(value) : '';
+}
+/** The ends of a composite size such as 4"x2" (a reducer); none for a single size. */
+export function compositeEnds(label: unknown): string[] {
+  const value = text(label).replace(/[″”"]/g, '').replace(/\s+/g, '').replace(/×/g, 'x');
+  if (!value.toLowerCase().includes('x')) return [];
+  const sizes: string[] = [];
+  for (const part of value.split(/x/i)) { if (!part) continue; const size = parseInchSize(part); if (!size) return []; sizes.push(size); }
+  return sizes.length >= 2 ? sizes : [];
+}
+/** The sizes a certificate allows: its diameter's Size in inches, else its diameter label read as a size, and composite ends. */
+export function certificateSizes(certificate: Values, diameter?: Values | null): string[] {
+  const label = text(diameter?.diameter) || text(certificate.diameter);
+  const primary = normalizeSizeInch(diameter?.sizeinch) || (compositeEnds(label).length ? '' : parseInchSize(label.replace(/[″”"]/g, '')));
+  return [...new Set([primary, ...compositeEnds(label)].filter(Boolean))];
+}
+export interface DiameterAllowance { ok: boolean; reason: '' | 'pick' | 'required' | 'mismatch'; needsRadio: boolean; choices: string[]; label: string; }
+/** The reference allowance: shared sizes of both charges, else either with a Default diameter choice. */
+export function diameterAllowance(set1: string[], set2: string[], diaSize: string, radioSize: string): DiameterAllowance {
+  const one = [...new Set(set1.map(normalizeSizeInch).filter(Boolean))], two = [...new Set(set2.map(normalizeSizeInch).filter(Boolean))];
+  const dia = normalizeSizeInch(diaSize), radio = normalizeSizeInch(radioSize);
+  let allowed: string[] = [], needsRadio = false;
+  if (one.length && two.length) { const shared = one.filter(size => two.includes(size)); if (shared.length) allowed = shared; else { allowed = [...new Set([...one, ...two])]; needsRadio = true; } }
+  else allowed = one.length ? one : two;
+  const choices = [...allowed];
+  let label = allowed.join(' / ');
+  if (needsRadio) {
+    if (!radio || !allowed.includes(radio)) return { ok: false, reason: 'pick', needsRadio, choices, label };
+    allowed = [radio]; label = radio;
+  }
+  if (!allowed.length) return { ok: true, reason: '', needsRadio: false, choices: [], label: '' };
+  if (!dia) return { ok: false, reason: 'required', needsRadio, choices, label };
+  if (!allowed.includes(dia)) return { ok: false, reason: 'mismatch', needsRadio, choices, label };
+  return { ok: true, reason: '', needsRadio, choices, label };
+}
+export interface DiameterContext { certificates: Map<string, Values>; diameters: Map<string, Values>; }
+/**
+ * Dia. must be a size of the chosen certificate(s). Skipped for a GAP / SP / E / B number, for an explicit length, and
+ * when no side holds a certificate (CONN ISO, EXISTING and the placeholders are not checked). `defaultDiameter` is
+ * the Default diameter choice when the two certificates have no size in common.
+ */
+export function weldDiameterCheck(weld: Values, context: DiameterContext): DiameterAllowance {
+  const pass: DiameterAllowance = { ok: true, reason: '', needsRadio: false, choices: [], label: '' };
+  if (nonWeldCode(weld.weldNo) || weld.lengthMode === 'Length in mm') return pass;
+  const sizes = (side: 1 | 2) => { const certificate = context.certificates.get(text(weld[`certificate${side}Id`])); return certificate && !isSideValue(weld[`chargeNo${side}`]) ? certificateSizes(certificate, context.diameters.get(text(certificate.diameterId))) : []; };
+  const set1 = sizes(1), set2 = sizes(2);
+  if (!set1.length && !set2.length) return pass;
+  const row = context.diameters.get(text(weld.diameterId));
+  const dia = row ? normalizeSizeInch(row.sizeinch) || normalizeSizeInch(row.diameter) : '';
+  return diameterAllowance(set1, set2, dia, text(weld.defaultDiameter));
+}
+/** The field messages of a failed Dia. check. */
+export function diameterErrors(weld: Values, context: DiameterContext): Record<string, string> {
+  const check = weldDiameterCheck(weld, context);
+  if (check.ok) return {};
+  // Reported on Dia. (a weld field): the Default diameter choice is no stored field.
+  return { diameterId: check.reason === 'pick' ? DIAMETER_MESSAGES.pick : check.reason === 'required' ? DIAMETER_MESSAGES.required(check.label) : DIAMETER_MESSAGES.mismatch(check.label) };
+}
+
+// ----- the reason for editing (reference #editWeldNoteRequired) and Previous edits
+
+export const EDIT_REASON_WARNING = 'Weld has NDT or PWHT in progress';
+export const EDIT_REASON_LABEL = 'You MUST enter reason for editing weld';
+export const EDIT_REASON_MAX = 2000;
+/** The reason of an edit, as stored: plain text, trimmed. Empty when only markup or spaces were entered. */
+export const editReason = (value: unknown) => text(value).replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim();
+/** A Previous edits row: "dd.mm.yyyy hh:mm:ss" in the viewer's time. */
+export function editHistoryDate(iso: string): string {
+  const date = new Date(iso); if (Number.isNaN(date.getTime())) return '';
+  const two = (value: number) => String(value).padStart(2, '0');
+  return `${two(date.getDate())}.${two(date.getMonth() + 1)}.${date.getFullYear()} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

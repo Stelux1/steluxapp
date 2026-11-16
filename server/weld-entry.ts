@@ -3,9 +3,12 @@ import { availableWps } from '../shared/welding.ts';
 import type { Row } from '../shared/types.ts';
 import { inOwnerSite } from '../shared/welder-data.ts';
 import {
-  MASS_EDIT_FIELDS, WELD_ENTRY_FIELDS, certificateErrors, hasWelder, lockContext, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent, orderedWelds,
-  planWeldRange, readMassEdit, weldLock, welderWpsErrors,
+  EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_TRACER_HINT, MASS_EDIT_FIELDS, WELDERS, WELD_ENTRY_FIELDS, WELD_MANDATORY_MESSAGE, certificateErrors, certificateSelectionErrors,
+  diameterErrors, duplicateWelderErrors, editReason, hasWelder, lockContext, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent, orderedWelds,
+  planWeldRange, readMassEdit, specialWeldCleared, weldLock, welderWpsErrors,
 } from '../shared/weld-entry.ts';
+import { nonWeldCode } from '../shared/weld-codes.ts';
+import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
 
 /**
  * Server side of the weld table and weld entry (Weld Pilot): the entry rules, the lock, and the actions behind the
@@ -15,6 +18,7 @@ import {
 type Values = Record<string, unknown>;
 export const WELD_ENTRY_ACTIONS = new Set(['save-weld', 'add-welds', 'mass-edit-welds', 'reorder-welds']);
 
+const present = (value: unknown) => value !== undefined && value !== null && String(value).trim() !== '';
 const norm = (value: unknown) => value === undefined || value === null ? '' : JSON.stringify(value);
 const changed = (input: Values, existing: Row | undefined, names: readonly string[]) => !existing || names.some(name => Object.hasOwn(input, name) && norm(input[name]) !== norm(existing[name]));
 const fail = (errors: Record<string, string>) => {
@@ -64,7 +68,13 @@ export function assertInspectionUnlocked(store: Store, key: string, data: Values
  * stored weld. A rule is evaluated when the request creates the weld or touches a field the rule concerns, so an
  * unrelated edit of an older incomplete weld is not blocked by it.
  */
-export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
+/**
+ * `mode` says who writes: the Add / Edit weld form (`form`), the plain record routes (`record`), Mass edit (`mass`) or
+ * the charge copied to a neighbour by Upd. prev. / next weld (`neighbour`). Mass edit may set the tracer flag and is
+ * not held to the Dia. check (the reference's mass edit has neither rule); the copy to a neighbour is not either.
+ */
+export type WeldEntryMode = 'form' | 'record' | 'mass' | 'neighbour';
+export function assertWeldEntry(store: Store, input: Values, existing?: Row, mode: WeldEntryMode = 'record') {
   const merged: Values = { ...existing, ...Object.fromEntries(Object.entries(input).filter(([name]) => name !== '_version')) };
   if (!merged.isoId) return;
   let iso: Row, project: Row, site: Row;
@@ -74,7 +84,10 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
   // (d) lock: the stored weld and the weld as it would become.
   const context = lockContextOf(store);
   for (const weld of existing ? [existing, merged] : [merged]) { const lock = weldLock(weld, context); if (lock.locked) throw new AppError(423, lock.reason); }
-  if (existing ? input.tracer !== undefined && Boolean(input.tracer) !== Boolean(existing.tracer) : merged.tracer === true) errors.tracer = 'The tracer flag is set by the tracer workflow.';
+  // Tracer: ticked in Add weld and Mass edit (reference); Edit weld shows it disabled, so an edit cannot change it.
+  if (existing && mode !== 'mass' && input.tracer !== undefined && Boolean(input.tracer) !== Boolean(existing.tracer)) errors.tracer = EDIT_TRACER_HINT;
+  if (input.tracer !== undefined && typeof input.tracer !== 'boolean') errors.tracer = 'Choose Yes or No.';
+  if (changed(input, existing, WELDERS)) Object.assign(errors, duplicateWelderErrors(merged));
   if (changed(input, existing, ['wpsId', 'isoId']) && merged.wpsId) {
     try {
       const wps = store.get('wps', merged.wpsId);
@@ -83,7 +96,8 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
     } catch { errors.wpsId = 'Choose an active WPS.'; }
   }
   // (a) mandatory fields
-  if (changed(input, existing, ['typeId', 'wpsId', 'date', 'lengthMode', 'diameterId', 'dialen', 'chargeNo1', 'chargeNo2', 'certificate1Id', 'certificate2Id', 'welder1Id', 'welder2Id', 'welder3Id', 'welder4Id'])) Object.assign(errors, missingMandatoryFields(site, merged));
+  const missing = changed(input, existing, ['weldNo', 'typeId', 'wpsId', 'date', 'lengthMode', 'diameterId', 'dialen', 'chargeNo1', 'chargeNo2', 'certificate1Id', 'certificate2Id', 'welder1Id', 'welder2Id', 'welder3Id', 'welder4Id']) ? missingMandatoryFields(site, merged) : {};
+  Object.assign(errors, missing);
   // (b) validation on WPS
   if (changed(input, existing, ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id', 'wpsId', 'date']) && hasWelder(merged) && merged.wpsId) {
     let wps: Row | undefined; try { wps = store.get('wps', merged.wpsId, true); } catch { /* reported above */ }
@@ -92,8 +106,28 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
   }
   // (c) project certificates
   const sides = [1, 2].filter(side => changed(input, existing, [`certificate${side}Id`]) && merged[`certificate${side}Id`]);
-  if (sides.length) Object.assign(errors, certificateErrors(site, merged, sides, store.list('certifications'), String(project.id), { links: store.list('certificate_projects') }));
-  if (Object.keys(errors).length) throw fail(errors);
+  if (sides.length) {
+    const certificates = store.list('certifications', true);
+    // A certificate of another project is "not linked"; one of the project that is not Controlled + Accepted "cannot be selected".
+    const linked = certificateErrors(site, merged, sides, store.list('certifications'), String(project.id), { links: store.list('certificate_projects') });
+    Object.assign(errors, certificateSelectionErrors(merged, sides, certificates), linked);
+  }
+  // Dia. against the chosen certificates (with the Default diameter choice when the two differ).
+  if ((mode === 'form' || mode === 'record') && changed(input, existing, ['weldNo', 'lengthMode', 'diameterId', 'chargeNo1', 'chargeNo2', 'certificate1Id', 'certificate2Id', 'defaultDiameter'])) {
+    for (const [name, message] of Object.entries(diameterErrors(merged, { certificates: new Map(store.list('certifications', true).map(row => [row.id, row])), diameters: new Map(store.list('diameters', true).map(row => [row.id, row])) }))) errors[name] ??= message;
+  }
+  if (!Object.keys(errors).length) return;
+  // The form answers missing mandatory fields with the reference's one sentence; the fields are marked.
+  if (mode === 'form' && Object.keys(missing).length) throw new AppError(422, WELD_MANDATORY_MESSAGE, errors);
+  throw fail(errors);
+}
+
+/** Previous edits of Edit weld: the reasons entered when editing a weld with NDT or PWHT in progress, newest first. */
+export const EDIT_REASON_ACTION = 'edit-reason';
+export function weldEditHistory(store: Store, weldId: string): { date: string; comment: string; user: string }[] {
+  const sequence = store.db.dialect === 'postgres' ? 'sequence' : 'rowid';
+  const rows = store.db.prepare(`SELECT summary, actor_name, created_at FROM audit WHERE entity_type=? AND entity_id=? AND action=? ORDER BY ${sequence} DESC LIMIT 200`).all('welds', weldId, EDIT_REASON_ACTION) as Record<string, unknown>[];
+  return rows.map(row => ({ date: String(row.created_at), comment: String(row.summary), user: String(row.actor_name) }));
 }
 
 const pick = (data: Values, names: readonly string[]) => Object.fromEntries(names.filter(name => data[name] !== undefined).map(name => [name, data[name]]));
@@ -115,10 +149,20 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       if (!existing && !data.isoId) throw new AppError(422, 'Choose an isometric.', { isoId: 'Isometric is required.' });
       const isoId = existing?.isoId ?? data.isoId;
       for (const flag of ['updatePrev', 'updateNext']) if (data[flag] !== undefined && typeof data[flag] !== 'boolean') throw new AppError(422, 'Choose Yes or No.', { [flag]: 'Choose Yes or No.' });
-      const input: Values = pick(data, WELD_ENTRY_FIELDS);
+      const input: Values = pick(data, [...WELD_ENTRY_FIELDS, 'tracer']);
+      // A GAP / SP / E / B number is no weld: the weld fields the form hides for it are ignored (stored empty).
+      const code = nonWeldCode(input.weldNo ?? existing?.weldNo);
+      if (code) for (const name of specialWeldCleared(code)) { if (Object.hasOwn(input, name) || (existing && input.weldNo !== undefined && present(existing[name]))) input[name] = ''; }
+      if (!existing) for (const name of Object.keys(input)) if (input[name] === '' && name !== 'weldNo') delete input[name];
       const merged: Values = { ...existing, ...input, isoId };
       if (changed(input, existing, ['lengthMode', 'ndoReq', 'ndtpercent'])) { const percent = normalizedNdtPercent(merged); if (percent !== (merged.ndtpercent === '' || merged.ndtpercent === undefined ? null : merged.ndtpercent)) input.ndtpercent = percent === null ? '' : percent; }
-      assertWeldEntry(store, { ...input, isoId }, existing);
+      // Editing a weld with NDT or PWHT in progress needs a reason; it is kept in the weld's history (Previous edits).
+      // The reason is no weld field, so its refusals carry no field hint (the form marks the reason box itself).
+      if (data.note !== undefined && typeof data.note !== 'string') throw new AppError(422, 'Enter the reason for editing as text.');
+      const reason = editReason(data.note);
+      if (reason.length > EDIT_REASON_MAX) throw new AppError(422, `The reason for editing has at most ${EDIT_REASON_MAX} characters.`);
+      const defaultDiameter = data.defaultDiameter === undefined ? {} : { defaultDiameter: String(data.defaultDiameter) };
+      assertWeldEntry(store, { ...input, isoId, ...defaultDiameter }, existing, 'form');
       // Neighbours in table order: this weld's charge goes to the adjoining side of the previous / next weld.
       const neighbours: { weld: Row; patch: Values }[] = [];
       if (data.updatePrev === true || data.updateNext === true) {
@@ -132,8 +176,10 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
           neighbours.push({ weld, patch });
         }
       }
-      for (const { weld, patch } of neighbours) { assertWeldEntry(store, { ...patch, isoId: weld.isoId }, weld); }
+      for (const { weld, patch } of neighbours) { assertWeldEntry(store, { ...patch, isoId: weld.isoId }, weld, 'neighbour'); }
+      if (existing && !reason && ndtOrPwhtInProgress(store.list('inspection_requests'), existing.id)) throw new AppError(422, EDIT_REASON_LABEL);
       const record = existing ? store.update('welds', existing.id, input, existing._version, actor) : store.create('welds', { ...input, isoId, sortOrder: nextSortOrder(store, isoId, actor) }, actor);
+      if (existing && reason) store.audit('welds', existing.id, EDIT_REASON_ACTION, reason, actor);
       const updated = neighbours.map(({ weld, patch }) => store.update('welds', weld.id, patch, store.get('welds', weld.id)._version, actor));
       return { resource: 'welds', record, records: [record, ...updated] };
     }
@@ -158,7 +204,7 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       const records = (ids as string[]).map(id => {
         const weld = store.get('welds', id);
         if (versions[id] !== undefined && versions[id] !== weld._version) throw new AppError(409, `Weld ${weld.weldNo} changed since you opened it. Refresh and try again.`);
-        try { assertWeldEntry(store, changes, weld); } catch (error) { if (error instanceof AppError) throw new AppError(error.status, `Weld ${weld.weldNo}: ${error.message}`, error.fields); throw error; }
+        try { assertWeldEntry(store, changes, weld, 'mass'); } catch (error) { if (error instanceof AppError) throw new AppError(error.status, `Weld ${weld.weldNo}: ${error.message}`, error.fields); throw error; }
         const patch: Values = { ...changes }; const merged = { ...weld, ...patch };
         if (changed(patch, weld, ['lengthMode', 'ndoReq', 'ndtpercent'])) { const percent = normalizedNdtPercent(merged); if (percent === null && weld.ndtpercent !== undefined && weld.ndtpercent !== null && weld.ndtpercent !== '') patch.ndtpercent = ''; }
         return store.update('welds', weld.id, patch, weld._version, actor);
