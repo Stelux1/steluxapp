@@ -1,0 +1,29 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { PDF_MENU, pdfEntries } from '../client/pdf-reports.tsx';
+import { PDF_DOCUMENTS } from '../server/pdf/documents.ts';
+import { NDT_FORM_COLUMNS, COLUMN_TABLE } from '../shared/pdf-ndt-columns.ts';
+
+test('the Reports menu of the Weld isometric page lists the documents in the order of the reference', () => {
+  assert.deepEqual(pdfEntries('weld', 'isometric').map(entry => entry.label), [
+    'LISL Report', 'LISL Report (A3)', 'LISL Report [GU]', 'LISL Report [MV]', 'LISL Report [ISS]', 'LISL Report [WQ]', 'LISL Report [WQ ver 2]',
+    'LISL Report [GU Rev 2]', 'LISL Report [GU Rev 3]', 'Blank LISL template', 'Weld card', 'Weld labels',
+  ]);
+  assert.deepEqual(pdfEntries('mto', 'materials').map(entry => entry.label), ['MTO report']);
+  assert.deepEqual(pdfEntries('mto', 'isometric'), [], 'MTO Pilot has no LISL menu');
+  assert.deepEqual(pdfEntries('weld', 'certifications').map(entry => entry.label), ['Certification index']);
+  assert.deepEqual(pdfEntries('mto', 'certifications').map(entry => entry.label), ['Certification index']);
+});
+
+test('every menu entry has a document on the server, and every document a menu entry', () => {
+  const documents = PDF_DOCUMENTS.map(document => document.key).sort(), menu = PDF_MENU.map(entry => entry.key).sort();
+  assert.deepEqual(menu, documents);
+});
+
+test('one NDT column module: every form column has an id and a label, the [GU] table is derived from its columns', () => {
+  for (const [form, columns] of Object.entries(NDT_FORM_COLUMNS)) {
+    assert.ok(columns.length > 0, form);
+    assert.equal(new Set(columns.map(column => column.id)).size, columns.length, `${form}: unique ids`);
+  }
+  assert.equal(COLUMN_TABLE.NDT.MT, 'MTPT'); assert.equal(COLUMN_TABLE['NDT PRE'].MT, 'MTPT_PRE'); assert.equal(COLUMN_TABLE.PWHT.any, 'PWHT');
+});

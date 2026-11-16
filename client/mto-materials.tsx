@@ -1,5 +1,5 @@
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ChevronDown, Download, Loader2, MoreHorizontal, Pencil, Plus, Printer, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, Download, Loader2, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import { materialRecord } from '../shared/materials.ts';
 import { PROGRESS_CLASSES, isoMaterialInputErrors, materialLineStatuses, materialStatus } from '../shared/mto-materials.ts';
@@ -10,6 +10,7 @@ import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScrol
 import { BulkEditor, RecordEditor } from './dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
 import { MaterialQuantityLogDialog } from './material-quantity-log.tsx';
+import { MtoPrintButton } from './pdf-mto-print.tsx';
 
 const text = (value: unknown) => String(value ?? '');
 const byText = (a: unknown, b: unknown) => text(a).localeCompare(text(b), 'en', { numeric: true });
@@ -92,7 +93,7 @@ export function IsoMaterialsPanel({ iso, onAttachments, onAudit, onPhase }: Pane
       </div></div>
     <div className="mto-toolbar">
       <div className="field"><label htmlFor={`type-filter-${iso.id}`}>Type</label><div className="select-wrap"><select id={`type-filter-${iso.id}`} value={typeFilter} onChange={event => { setTypeFilter(event.target.value); setSelected([]); }}><option value="">All types</option>{phases.map(phase => <option key={phase.id} value={phase.id}>{text(phase.name)}</option>)}<option value="none">No type</option></select><ChevronDown size={14}/></div></div>
-      <div className="heading-actions">{canReadReport('mto', 'export') && <><a className="btn" href={reportUrl}><Download size={15}/>CSV</a><a className="btn" href={`${reportUrl}&format=xlsx`}><Download size={15}/>Excel</a></>}{canReadReport('mto', 'print') && <button className="btn" onClick={() => window.print()}><Printer size={15}/>Print</button>}</div>
+      <div className="heading-actions">{canReadReport('mto', 'export') && <><a className="btn" href={reportUrl}><Download size={15}/>CSV</a><a className="btn" href={`${reportUrl}&format=xlsx`}><Download size={15}/>Excel</a></>}{canReadReport('mto', 'print') && <MtoPrintButton iso={iso}/>}</div>
     </div>
     <TableScroll><table className="data-table mto-lines-table">
       <thead><tr><th>Group</th><th>Mat.no.</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th>Type</th><th className="number-cell">Qty.</th><th>UOM</th><th>Ord.?</th><th className="number-cell">Inv.</th><th className="number-cell">Picked</th><th className="actions-cell">Options</th><th className="select-cell"><input type="checkbox" aria-label="Select all listed materials" checked={listed.length > 0 && listed.every(line => selected.includes(line.id))} onChange={event => setSelected(event.target.checked ? [...new Set([...selected, ...listed.map(line => line.id)])] : selected.filter(id => !listed.some(line => line.id === id)))}/></th></tr></thead>

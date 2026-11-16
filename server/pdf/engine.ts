@@ -199,6 +199,11 @@ export interface TableSpec {
   minLines?: number;
   maxLines?: number;
   headerFill?: Color; headerColor?: Color; rowLine?: Color; zebra?: Color;
+  /**
+   * A header row drawn by the document itself (grouped or bilingual headings). It receives the left edge and the
+   * width of every column; the column `header` texts are then ignored. Repeats on every page like the standard header.
+   */
+  customHeader?: { height: number; draw(canvas: Canvas, x: number, y: number, widths: number[]): void };
 }
 interface TableLayout { widths: number[]; size: number; headerSize: number; pad: number }
 const cellLines = (cell: Cell) => (Array.isArray(cell) ? cell : [cell]).map(line => pdfText(line ?? ''));
@@ -274,9 +279,10 @@ export class PdfBuilder {
   addTable(spec: TableSpec) {
     const layout = this.tableLayout(spec), table = this.tables++, x = this.margins.left;
     const headerLines = Math.max(...spec.columns.map(column => (Array.isArray(column.header) ? column.header : [column.header]).length));
-    const headerHeight = headerLines * lineHeight(layout.headerSize) + 2 * layout.pad;
+    const headerHeight = spec.customHeader?.height ?? headerLines * lineHeight(layout.headerSize) + 2 * layout.pad;
     const drawHeader = () => {
       const { canvas, model } = this.current(); const y = this.cursor;
+      if (spec.customHeader) { spec.customHeader.draw(canvas, x, y, layout.widths); this.cursor += headerHeight; model.tableHeaders++; return; }
       canvas.rect(x, y, this.contentWidth, headerHeight, { fill: spec.headerFill ?? BLACK });
       let left = x;
       spec.columns.forEach((column, i) => {
