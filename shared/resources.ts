@@ -4,7 +4,7 @@ import { SITE_SCOPE_ALL, SITE_SCOPE_OPTIONS, USER_SITES, siteProfilesField, site
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
-import { FLANGE_COLUMNS, FLANGE_FIELDS } from './flanges.ts';
+import { FLANGE_ATTACHMENT_FIELDS, FLANGE_COLUMNS, FLANGE_FIELDS, FLANGE_RECORD_RESOURCES } from './flanges.ts';
 import { HYDROTEST_RESOURCES, SPOOL_TEST_SYSTEM_FIELDS, TEST_SYSTEM_FIELDS } from './hydrotest.ts';
 import { NOTIFICATION_KINDS } from './notifications.ts';
 import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, DEFECT_GROUPS, LEGACY_DEFECT_GROUPS, WELD_LOCATIONS } from './weld-catalogs.ts';
@@ -188,6 +188,8 @@ extend('isometrics', [r('itpId', 'Linked ITP / KNR', 'itps', { hidden: true }), 
 // ITPs page (manual chapter 18): title, scope (decides the isometric slot), active, sort order; revisions are PDF attachments with a revision number (shared/itps.ts).
 extend('itps', [t('title', 'Title'), s('scope', 'Scope', [...ITP_SCOPES], { default: 'Shop+Field' }), b('active', 'Active', { default: true }), n('sortOrder', 'Sort order', { step: 1 })]);
 extend('attachments', [t('revNo', 'Revision number', { hidden: true })]);
+// The registered flange protocol PDF keeps its SHA-256 and the assembly record it was made for (shared/flanges.ts).
+extend('attachments', FLANGE_ATTACHMENT_FIELDS);
 // Punch progress of the isometric (0 / 25 / 50 / 75 / 100 %), entered in the isometric header; empty until entered.
 extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true, legacy: LEGACY_PUNCH_PROGRESS })]);
 extend('wps', [b('active', 'Active', { default: true })]);
@@ -247,6 +249,8 @@ extend('test_systems', TEST_SYSTEM_FIELDS);
 // Test systems are composed at spool level: the spool's own test system (shared/hydrotest.ts).
 extend('spools', SPOOL_TEST_SYSTEM_FIELDS);
 resources.push(...HYDROTEST_RESOURCES);
+// Flange joint assembly record (shared/flanges.ts): append-only record types, written by the record actions only.
+resources.push(...FLANGE_RECORD_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);
 /** Fields above that only the pilots profile shows. */

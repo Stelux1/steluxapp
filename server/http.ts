@@ -24,6 +24,7 @@ import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleasePr
 import { pilotRefused, releaseAccess } from './release-access.ts';
 import { assertSignatureImage } from './signatures.ts';
 import { assertPunchAddAllowed, assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
+import { assertFlangeFileAllowed, registerFlangeRoutes } from './flanges.ts';
 import { ISO_LIST_COLUMNS, flagText } from '../shared/iso-list.ts';
 import { isoSummariesFor } from './iso-summary.ts';
 import { dropCompletionInput } from './releases.ts';
@@ -415,6 +416,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     }catch(error){documents.discard(req.file);throw error;}
   });
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
+  // Flange detail page: assembly record, passes, leak tests, labels, deviations, signatures, protocol PDF and Documents (server/flanges.ts).
+  if (pilots) registerFlangeRoutes(app, { store, documents, access, upload: disk });
   // ITPs page: Add ITP with its PDF, Upload revision, Link ITP / Unlink, Import from isometrics (server/itps.ts).
   if (pilots) registerItpRoutes(app, { store, documents, access, upload: disk });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
@@ -425,6 +428,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);
       if (!req.file) throw new AppError(422, 'Choose a file.');
       if (pilots && key === 'punchlists') assertPunchFileAllowed(store, target, req.body.documentType);
+      if (pilots && key === 'flanges') assertFlangeFileAllowed(req.body.documentType);
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);

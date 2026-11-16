@@ -3,6 +3,7 @@ import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
+import { FLANGE_ATTACHMENT_FIELDS, FLANGE_RECORD_RESOURCES } from './flanges.ts';
 import { CATALOG_SITES, HOSTED_COMPANY_FIELDS, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogField, catalogResource } from './weld-catalogs.ts';
 import { hostedSiteFields } from './site-settings.ts';
 import { itpHostedField } from './itps.ts';
@@ -171,6 +172,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     for (const action of HYDROTEST_ACTIONS) availability.actions[action.key] = action.fields.map(field => field.name);
     // Flange Management (Weld Pilot → Releases): the flange record and its page.
     deliverResource(availability, 'flanges');
+    // The flange detail page: the assembly record types (no menu page of their own) and the protocol PDF's hash on its attachment.
+    for (const resource of FLANGE_RECORD_RESOURCES) availability.resources[resource.key] = resource.fields.map(field => field.name);
+    availability.resources.attachments.push(...FLANGE_ATTACHMENT_FIELDS.map(field => field.name));
     // Weld catalogs and "Enabled on this site" (shared/weld-catalogs.ts). Suppliers, service companies and laydowns gain the
     // enablement wherever they are delivered (the server accepts its request names for every enablement catalog).
     for (const key of WELD_CATALOG_RESOURCES) deliverResource(availability, key);
@@ -313,6 +317,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
   if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
   if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
+  if (availability.features.includes('pilots') && availability.navigation.includes('flanges') && /^\/welding\/flanges\/[^/]+$/.test(pathname)) return true;
   if (pathname === MATERIAL_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('materials')) return true;
   if (pathname === WELDERCARD_PATH && availability.features.includes('pilots') && Object.hasOwn(availability.resources, 'weldercard_options')) return true;
   if (pathname === PQR_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('pqr')) return true;

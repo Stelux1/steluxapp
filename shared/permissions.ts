@@ -3,6 +3,7 @@ import type {Module,PermissionRules,PermissionVerb,Row,User} from './types.ts';
 import { MTO_STOCK_ACTION_SCOPES, MTO_STOCK_SCOPES } from './mto-stock.ts';
 import { actionAvailable, resourceAvailable, rowAvailable, type PilotKey } from './release.ts';
 import { HYDROTEST_ACTION_SCOPES, HYDROTEST_SCOPES } from './hydrotest.ts';
+import { FLANGE_RECORD_SCOPES } from './flanges.ts';
 import { WELDER_DATA_SCOPES } from './welder-data.ts';
 import { inspectionActionScope, TYPED_INSPECTION_ACTIONS } from './inspections.ts';
 import { MTO_ACTION_SCOPES } from './mto-logistics.ts';
@@ -16,6 +17,7 @@ export const RESOURCE_SCOPES:Record<string,string[]>={
 };
 Object.assign(RESOURCE_SCOPES,WELDER_DATA_SCOPES);
 Object.assign(RESOURCE_SCOPES,HYDROTEST_SCOPES);
+Object.assign(RESOURCE_SCOPES,FLANGE_RECORD_SCOPES);
 Object.assign(RESOURCE_SCOPES,MTO_STOCK_SCOPES);
 const MODULE_SCOPES:Record<Module,string[]>={
  general:['4','5','10','37','64','75','93','local-documents'],

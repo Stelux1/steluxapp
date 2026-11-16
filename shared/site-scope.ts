@@ -91,6 +91,7 @@ const via = (...steps: [string, string][]): SiteRule => ({ via: steps });
 const shared = (...steps: [string, string][]): SiteRule => ({ via: steps, orphan: 'global' });
 const ISO: [string, string] = ['isoId', 'isometrics'], PROJECT: [string, string] = ['projectId', 'projects'], SITE: [string, string] = ['siteId', 'sites'];
 const REQUIREMENT: [string, string] = ['requirementId', 'iso_materials'], WAREHOUSE: [string, string] = ['warehouseId', 'warehouses'];
+const FLANGE: [string, string] = ['flangeId', 'flanges'];
 
 export const SITE_RULES: Record<string, SiteRule> = {
   // Workspace
@@ -150,6 +151,9 @@ export const SITE_RULES: Record<string, SiteRule> = {
   visual_reports: via(ISO),
   punchlists: via(ISO, PROJECT),
   flanges: via(ISO),
+  // Flange joint assembly record: every record type follows its flange.
+  flange_records: via(FLANGE), flange_passes: via(FLANGE), flange_bolts: via(FLANGE), flange_leak_tests: via(FLANGE),
+  flange_labels: via(FLANGE), flange_deviations: via(FLANGE), flange_signatures: via(FLANGE), flange_events: via(FLANGE),
   daily_reports: via(PROJECT),
   // Tools (not delivered with pilots): follow the warehouse.
   articles: 'global', clients: shared(WAREHOUSE), tool_stock: shared(WAREHOUSE), rentals: shared(WAREHOUSE), tool_movements: shared(WAREHOUSE),

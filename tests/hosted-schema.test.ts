@@ -293,3 +293,39 @@ test('an older hosted database gets the weldercard tables from the preparation s
   assert.deepEqual(rows(Object.keys(records)), records);
   assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
 });
+
+const FLANGE_RECORD_TABLES = ['flange_records', 'flange_passes', 'flange_bolts', 'flange_leak_tests', 'flange_labels', 'flange_deviations', 'flange_signatures', 'flange_events'];
+test('the flange assembly record types (wave 3) each have a table with their references, a site rule via the flange and the Flanges area', async () => {
+  const { planHostedSchema } = await import('../server/hosted-schema.ts');
+  const { SITE_RULES } = await import('../shared/site-scope.ts');
+  const { RESOURCE_SCOPES } = await import('../shared/permissions.ts');
+  const plan = planHostedSchema({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() });
+  for (const key of FLANGE_RECORD_TABLES) {
+    const resource = RESOURCE_MAP[key];
+    assert.ok(resource, key); assert.ok(plan.tables.includes(key), `${key}: the preparation creates its table`); assert.equal(resource.readonly, true);
+    for (const field of resource.fields.filter(item => item.type === 'ref')) assert.ok(plan.columns.some(column => column.table === key && column.field === field.name && column.target === field.ref), `${key}.${field.name} → ${field.ref}`);
+    assert.deepEqual(SITE_RULES[key], { via: [['flangeId', 'flanges']] }, `${key}: follows its flange`);
+    assert.deepEqual(RESOURCE_SCOPES[key], ['100'], `${key}: the Flanges area`);
+  }
+  assert.ok(plan.indexes.some(index => index.table === 'flange_labels'), 'a QR token is registered once');
+  // Every new index is on a new table: the unique rules of existing record types are untouched.
+  const before = planHostedSchema({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() }, RESOURCES.filter(resource => !FLANGE_RECORD_TABLES.includes(resource.key)));
+  assert.deepEqual(plan.indexes.filter(index => !FLANGE_RECORD_TABLES.includes(index.table)).map(index => index.name), before.indexes.map(index => index.name));
+});
+
+test('an older hosted database gets the eight flange record tables from the preparation step, once, without touching records', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  const store = workspace();
+  for (const key of [...FLANGE_RECORD_TABLES].reverse()) db.exec(`DROP TABLE stelux."${key}" CASCADE`);
+  const records = rows();
+  assert.throws(() => verifyHostedSchema(db), /flange_records/);
+  const result = prepareHostedSchema(db);
+  for (const key of FLANGE_RECORD_TABLES) assert.ok(result.created.tables.includes(key), key);
+  verifyHostedSchema(db);
+  assert.deepEqual(rows(Object.keys(records)), records, 'existing records are unchanged');
+  assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
+  const flange = store.list('flanges')[0];
+  const label = store.create('flange_labels', { flangeId: flange.id, label_number: 'L-1', qr_token: 'QR-1' });
+  assert.equal(count('flange_labels'), 1);
+  assert.throws(() => store.create('flange_labels', { flangeId: label.flangeId, label_number: 'L-2', qr_token: 'QR-1' }), error => (error as { status?: number }).status === 409);
+});

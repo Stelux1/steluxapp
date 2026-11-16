@@ -1,12 +1,72 @@
 /* Flange Management (Weld Pilot → Releases). */
-.flange-standard { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--primary); border-radius: 8px; background: var(--surface-blue); font-size: 13px; }
-.flange-standard-free { border-left-color: #d9a21e; }
-.flange-standard strong { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.flange-standard small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
 .flange-options { display: flex; gap: 2px; justify-content: flex-end; }
 .flanges-page .filters-panel { display: flex; flex-wrap: wrap; gap: 14px; }
 .flanges-page .filters-panel .field { min-width: 180px; flex: 1 1 180px; }
+.flange-sort { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.flange-sort:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .iso-flanges { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 18px; margin-bottom: 18px; }
 .iso-flanges > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .iso-flanges small { color: var(--muted); font-size: 12px; }
 @media (max-width: 480px) { .flanges-page .filters-panel .field { min-width: 0; flex-basis: 100%; } }
+
+/* Flange detail page: master data cards, workflow and release gate, the assembly record and its registrations. */
+.flange-detail .flange-panel { padding: 16px 18px; margin-bottom: 18px; overflow: visible; }
+.flange-detail .flange-panel > h2 { margin: 0 0 6px; font-size: 16px; }
+.flange-detail h3 { margin: 16px 0 8px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.flange-help { margin: 0 0 12px; }
+.flange-muted { color: var(--muted); font-size: 12px; }
+.flange-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.flange-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.flange-card h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.flange-card dl { margin: 0; display: grid; gap: 4px; }
+.flange-card dl > div { display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 1fr); gap: 8px; font-size: 12px; }
+.flange-card dt { color: var(--muted); }
+.flange-card dd { margin: 0; overflow-wrap: anywhere; }
+.flange-cards.compact { margin-bottom: 12px; }
+.flange-info { margin: 12px 0 0; padding: 9px 12px; border: 1px solid var(--line); border-left: 3px solid var(--primary); border-radius: 6px; background: var(--surface-blue); font-size: 12px; }
+.flange-gate { border: 1px solid #f0d9cc; background: #fcf0eb; border-radius: 6px; padding: 10px 12px; font-size: 12px; margin-bottom: 12px; }
+.flange-gate.open { border-color: #dde9cb; background: #f0f6e7; }
+.flange-gate ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.flange-gate li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.flange-gate li.ok svg { color: #4f7a2c; }
+.flange-gate li.missing svg { color: #b3261e; }
+.flange-gate li small { flex-basis: 100%; padding-left: 22px; color: var(--muted); }
+.flange-inline-form, .flange-form-actions, .flange-pair { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.flange-inline-form .field { flex: 1 1 200px; min-width: 0; margin: 0; }
+.flange-inline-form .alert, .flange-grid .alert, .flange-mini-form .alert { flex-basis: 100%; grid-column: 1 / -1; }
+.flange-form-actions { grid-column: 1 / -1; margin-top: 12px; align-items: center; }
+.flange-events { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
+.flange-events li { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.flange-record-form fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; min-width: 0; }
+.flange-record-form legend { font-weight: 600; font-size: 13px; padding: 0 4px; }
+.flange-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 14px; }
+.flange-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin: 6px 0; }
+.flange-check input { margin-top: 2px; flex: none; }
+.flange-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 14px; margin-bottom: 8px; }
+.flange-grid .field { min-width: 0; margin: 0; }
+.flange-grid .field.full-width { grid-column: 1 / -1; }
+.flange-method { display: contents; }
+.flange-form-table input, .flange-form-table select { width: 100%; min-width: 80px; }
+.flange-form-table th[scope="row"] { font-weight: 500; text-align: left; }
+.flange-over { color: #b3261e; font-weight: 600; }
+.flange-final td { font-weight: 600; }
+.flange-signatures { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.flange-signature { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.flange-signature.done p { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; }
+.flange-signature .signature-canvas { max-width: 100%; }
+.flange-registrations { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 8px; }
+.flange-mini-form { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.flange-mini-form .field { margin: 0; min-width: 0; }
+.flange-pair > .field { flex: 1 1 100px; min-width: 0; }
+.flange-section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 0 12px; }
+.flange-section-heading h2 { margin: 0; font-size: 18px; }
+.flange-detail .btn.success, .flange-documents .btn.success { background: #5f8f3e; border-color: #5f8f3e; color: #fff; }
+.flange-detail .btn.danger, .flange-documents .btn.danger, .flange-documents + .modal-footer .btn.danger { background: #b65c55; border-color: #b65c55; color: #fff; }
+.flange-documents { display: grid; gap: 14px; }
+.flange-doc-panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 8px; min-width: 0; }
+.flange-doc-panel.success { border-left: 3px solid #5f8f3e; }
+.flange-doc-panel .field-hint { margin: 0; }
+@media (max-width: 480px) {
+  .flange-detail .flange-panel { padding: 12px; }
+  .flange-cards, .flange-checks, .flange-grid { grid-template-columns: minmax(0, 1fr); }
+}
