@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Check, ChevronDown, Download, FileText, Loader2, Plus, Upload } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, Download, FileText, Loader2, Play, Plus, Upload } from 'lucide-react';
 import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
@@ -21,13 +21,13 @@ import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import { currentRevisionFile } from '../shared/iso-pages.ts';
-import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
+import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, noBudgetText, quantityProgress, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
 import { priorityLabel } from '../shared/priority.ts';
 import { BLOCKER_TITLES } from '../shared/iso-status.ts';
-import { blockerCountText, summaryProgress } from '../shared/iso-summary.ts';
+import { PROGRESS_CARD_TEXTS, blockerCountText, finishSpecification, percentText, quantityBarText, summaryProgress } from '../shared/iso-summary.ts';
+import { startedIsoIds } from '../shared/iso-list.ts';
 import type { Row } from '../shared/types.ts';
 
-const NO_BUDGET_TIP = 'No MTO budget yet. Add materials with a matching component code in MTO to enter progress here.';
 const show = (value: unknown) => String(value ?? '').trim() || '—';
 
 function Card({ title, className = '', aside, children }: { title: string; className?: string; aside?: ReactNode; children: ReactNode }) {
@@ -119,12 +119,12 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     <ProgressCard key={`${iso.id}-${iso._version}`} iso={iso} progress={status.progress} budgets={budgets} editable={canEdit}/>
     <Card title="Status" className="iso-status-card">
       <div className="iso-total" role="group" aria-label="Isometric progress">
-        <strong>{status.progress.total === null ? '—' : `${formatNumber(status.progress.total)} %`}</strong>
+        <strong>{status.progress.total === null ? '—' : percentText(status.progress.total)}</strong>
         <span>{status.progress.configured ? 'of the isometric' : 'weights not configured'}</span>
       </div>
       <Progress value={status.progress.total ?? 0}/>
       <dl className="iso-facts">
-        <Fact label="Quality"><span title={status.quality.percent === null ? 'No NDT result accepted or rejected yet.' : `${status.quality.accepted} accepted, ${status.quality.rejected} rejected`}>{status.quality.percent === null ? '—' : `${formatNumber(status.quality.percent)} %`}</span></Fact>
+        <Fact label="Quality"><span title={status.quality.percent === null ? 'No NDT result accepted or rejected yet.' : `${status.quality.accepted} accepted, ${status.quality.rejected} rejected`}>{status.quality.percent === null ? '—' : percentText(status.quality.percent)}</span></Fact>
         {parts.weldExtras && <Fact label="Blockers">{status.blockers.total
           ? <button className="iso-open-count" aria-haspopup="dialog" onClick={() => setBlockers(true)}>{status.blockers.total} open</button>
           : <span className="iso-clear"><Check size={14} aria-hidden="true"/>0 open</span>}</Fact>}
@@ -150,6 +150,17 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     {revision && <AddRevisionDialog iso={iso} kind={revision} onClose={() => setRevision('')}/>}
     {history && <Modal title="Revision history" subtitle={show(iso.isoNo)} onClose={() => setHistory(false)} wide><div className="modal-body"><DrawingRevisions isoId={iso.id}/></div><div className="modal-footer"><button className="btn" onClick={() => setHistory(false)}>Close</button></div></Modal>}
   </div>;
+}
+
+/**
+ * '[▶ Started]' after the isometric's name once a pick list exists for it (reference weld__iso__00022.txt:1484-1487 and
+ * mto__iso__00022.txt:37-38), in both pilots. Pilots read it from the server summary, as Weld Pilot reads no pick lists.
+ */
+export function IsoStartedTag({ iso }: { iso: Row }) {
+  const { rows, isoSummaries } = useWorkspace();
+  const summary = isoSummaries?.[iso.id];
+  const started = summary ? summary.flags.mtoStarted === true : Boolean(startedIsoIds(rows.picklists)?.has(iso.id));
+  return started ? <span className="iso-started-tag">[<Play size={11} aria-hidden="true"/> Started]</span> : null;
 }
 
 /**
@@ -229,19 +240,19 @@ function ProgressCard({ iso, progress, budgets, editable }: { iso: Row; progress
       const label = phase.key === 'shop' ? 'Shop prefab' : phase.label;
       return <div key={phase.key} className="iso-phase">
         <h3><button aria-expanded={expanded} aria-controls={id} onClick={() => setOpen(expanded ? '' : phase.key)}>
-          <span className="iso-phase-name">{label}</span><span className="iso-phase-value">{phase.percent === null ? '—' : `${formatNumber(phase.percent)} %`}</span><ChevronDown size={16} className="iso-chevron" aria-hidden="true"/></button></h3>
+          <span className="iso-phase-name" title={PROGRESS_CARD_TEXTS.phase[phase.key]}>{label}</span><span className="iso-phase-value" title={PROGRESS_CARD_TEXTS.percent}>{phase.percent === null ? '—' : percentText(phase.percent)}</span><ChevronDown size={16} className="iso-chevron" aria-hidden="true"/></button></h3>
         {expanded && <div id={id} className="iso-phase-body">
           {phase.key === 'site' ? <div className="iso-finish">
-            {ISO_FINISH_ITEMS.map(item => <fieldset key={item.field} disabled={!editable}><legend>{item.label}{item.field === 'paintState' && iso.paintSpec ? <small> · {String(iso.paintSpec)}</small> : null}</legend>
+            {ISO_FINISH_ITEMS.map(item => <fieldset key={item.field} disabled={!editable} title={PROGRESS_CARD_TEXTS.finish}><legend>{item.label}<small title={PROGRESS_CARD_TEXTS.specification}> · {finishSpecification(iso, item.field)}</small></legend>
               <div className="iso-segmented">{ISO_FINISH_STATES.map(state => <label key={state} className={draft[item.field] === state ? 'on' : ''}><input type="radio" name={`${id}-${item.field}`} value={state} checked={draft[item.field] === state} onChange={() => set(item.field, state)}/>{state}</label>)}</div>
               {fieldErrors[item.field] && <small className="field-error">{fieldErrors[item.field]}</small>}</fieldset>)}
           </div> : <div className="iso-quantities">{ISO_QUANTITIES.filter(quantity => quantity.phase === phase.key).map(quantity => {
-            const budget = budgetOf(quantity.phase, quantity.key), inputId = `${id}-${quantity.field}`, entered = Number(draft[quantity.field]);
-            const percent = budget ? `${formatNumber(Math.min(100, (Number.isFinite(entered) ? entered : 0) / budget * 100), 0)} %` : 'N/A · no MTO budget yet';
-            return <div className="iso-quantity" key={quantity.field} title={budget ? undefined : NO_BUDGET_TIP}>
+            const budget = budgetOf(quantity.phase, quantity.key), inputId = `${id}-${quantity.field}`;
+            const percent = quantityBarText(quantity.phase, budget, quantityProgress(draft[quantity.field], budgets, quantity.phase, quantity.key));
+            return <div className="iso-quantity" key={quantity.field} title={budget ? undefined : noBudgetText(quantity.phase, quantity.key)}>
               <label htmlFor={inputId}>{quantity.label} ({quantity.unit})</label>
               <input id={inputId} type="number" min={0} max={budget || undefined} step="any" inputMode="decimal" disabled={!editable || !budget} placeholder={budget ? '' : 'N/A'} value={budget ? draft[quantity.field] : ''} aria-describedby={`${inputId}-note`} aria-invalid={Boolean(fieldErrors[quantity.field])} onChange={event => set(quantity.field, event.target.value)}/>
-              <small id={`${inputId}-note`}>{percent}{budget ? ` of ${formatNumber(budget, 2)}` : ''}</small>
+              <small id={`${inputId}-note`}>{percent}<span title={PROGRESS_CARD_TEXTS.budgetColumn[quantity.phase]}>{budget ? ` of ${formatNumber(budget, 2)}` : ' · —'}</span></small>
               {fieldErrors[quantity.field] && <small className="field-error">{fieldErrors[quantity.field]}</small>}
             </div>; })}</div>}
         </div>}
@@ -249,7 +260,7 @@ function ProgressCard({ iso, progress, budgets, editable }: { iso: Row; progress
     {error && <div className="alert error" role="alert"><AlertCircle size={16}/><span>{error}</span></div>}
     {!editable && <p className="iso-hint">You can view the progress but not change it.</p>}
     {editable && <div className="iso-progress-actions">
-      <button className="btn primary small" disabled={busy || !changed.length} onClick={() => void save()}>{busy && <Loader2 size={14} className="spin"/>}Save</button>
+      <button className="btn primary small" title={PROGRESS_CARD_TEXTS.save} disabled={busy || !changed.length} onClick={() => void save()}>{busy && <Loader2 size={14} className="spin"/>}Save</button>
       <button className="btn small" disabled={busy} onClick={setAll}>Set all to 100%</button>
       {changed.length > 0 && <span className="iso-unsaved" role="status">Unsaved changes</span>}
     </div>}

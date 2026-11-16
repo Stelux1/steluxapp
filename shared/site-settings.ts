@@ -6,7 +6,6 @@
 type SiteLike = Record<string, unknown> | undefined | null;
 
 export const FLANGE_STANDARDS = ['No catalog (free entry)', 'ASME B16.5 torque table (2012)', 'Gasunie CSW-43 table B'];
-export const MATERIAL_DISPLAYS = ['Materials added to isometrics', 'Pick-list status'];
 export const DEFECT_NORMS = ['No norm selected', 'ISO 6520-1', 'ASME B31.3', 'API 1104'];
 export const NDT_MEASUREMENTS = ['Inch-weighted', 'Per weld'];
 export const RELEASE_DOC_DRAWINGS = ['Drawing no + iso', 'Prefix + iso'];
@@ -44,7 +43,12 @@ export const wpsValidation = (site: SiteLike) => flag(site, 'wpsValidation');
 /** "Project-specific Material Certificates": only certificates linked to the project are offered and printed. */
 export const projectCertificates = (site: SiteLike) => flag(site, 'projectCertificates');
 export const flangeStandard = (site: SiteLike) => FLANGE_STANDARDS.find(option => option === text(site, 'flangeStandard')) || FLANGE_STANDARDS[0];
-export const materialDisplay = (site: SiteLike): 'isometric' | 'pick-list' => text(site, 'materialDisplay') === MATERIAL_DISPLAYS[1] ? 'pick-list' : 'isometric';
+/**
+ * "Material Management Display Setting" (check box, unticked by default): ticked, the M indicator of the isometrics list
+ * lights up once materials are added to an isometric; unticked, once a pick list exists (shared/iso-list.ts). Only the
+ * check box `materialManagementDisplay` is read: a value of the earlier select (`materialDisplay`) reads as unticked.
+ */
+export const materialManagementDisplay = (site: SiteLike) => flag(site, 'materialManagementDisplay');
 /** The chosen defect norm, or null when none is selected. */
 export const defectNorm = (site: SiteLike): string | null => { const value = text(site, 'defectNorm'); return DEFECT_NORMS.slice(1).includes(value) ? value : null; };
 /** Repair performance limit in percent; an empty value means 5. */

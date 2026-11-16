@@ -450,15 +450,14 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   assert.notEqual(weld.isoSummaries!['iso-1'].materialStatus.percent, null);
   assert.equal(weld.rows.iso_materials, undefined, 'while Weld Pilot reads no material lines');
   for (const path of ['/records/welds', '/records/inspection_results', '/records/releases', '/history/welds/weld-1', '/reports/lisl', '/export/welds']) assert.equal(await status(await m.request(path, { pilot: 'mto' })), 403, path);
-  // The isometrics export gives the same flags in both pilots (no n/a caused by the pilot).
-  const FLAG_COLUMNS = ['NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'];
-  const flagsExported = async (as: ReturnType<typeof f.client>, pilot: string) => { const [header, line] = (await (await as.request('/export/isometrics?format=csv&ids=iso-3', { pilot })).text()).trim().split('\n').map(text => text.split(',')); return FLAG_COLUMNS.map(column => line[header.indexOf(column)]); };
-  const exported = await flagsExported(m, 'mto');
-  assert.deepEqual(exported, await flagsExported(a, 'weld')); assert.deepEqual(exported, ['Yes', 'No', 'No', 'No', 'No', 'Yes', 'Yes', 'No']);
+  // The isometrics export gives the same rows in both pilots: the reference's columns, without the flag columns.
+  const exportedIn = async (as: ReturnType<typeof f.client>, pilot: string) => (await (await as.request('/export/isometrics?format=csv&ids=iso-3', { pilot })).text()).trim();
+  const exported = await exportedIn(m, 'mto');
+  assert.equal(exported, await exportedIn(a, 'weld')); assert.equal(exported.split('\n')[0], 'Project,ISO No,IRN,ITP No,ITP No 2,P.Class,Prio.');
   // A change made in one pilot shows in the other's next bootstrap (what refresh() reloads).
-  assert.equal(mto.isoSummaries!['iso-1'].flags.w, false);
-  assert.equal(await status(await m.request('/actions/phases', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-1'], prefab_welds: 'Complete' } })), 201);
-  assert.equal((await bootstrap(a, 'weld')).isoSummaries!['iso-1'].flags.w, true); assert.equal((await bootstrap(m, 'mto')).isoSummaries!['iso-1'].flags.w, true);
+  assert.equal(mto.isoSummaries!['iso-1'].kpi.documentation, false);
+  assert.equal(await status(await m.request('/actions/phases', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-1'], prefab_doc: 'Complete', field_doc: 'Complete' } })), 201);
+  assert.equal((await bootstrap(a, 'weld')).isoSummaries!['iso-1'].kpi.documentation, true); assert.equal((await bootstrap(m, 'mto')).isoSummaries!['iso-1'].kpi.documentation, true);
   // An account that cannot read isometrics gets no summaries.
   const blind = f.account('No isometrics', { profileId: f.profile('Materials without project data', { generalPermission: NONE, materialsPermission: RW, weldingPermission: RW }) });
   const b = f.client(); await b.login(blind.email);

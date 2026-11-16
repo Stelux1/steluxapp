@@ -17,5 +17,10 @@ export function priorityLabel(value: unknown): string {
   const text = typeof value === 'string' ? value.trim() : '';
   return LEGACY_PRIORITY[text] ?? text;
 }
+/** The isometrics list cell (reference renderer): "Prio 3" → "P3", no priority → "-". */
+export function priorityShort(value: unknown): string {
+  const match = /^Prio (\d+)$/.exec(priorityLabel(value));
+  return match && Number(match[1]) > 0 ? `P${match[1]}` : '-';
+}
 /** What a select stores for an option: "No priority" is stored as the empty value. */
 export const priorityStored = (option: string) => option === NO_PRIORITY ? '' : option;

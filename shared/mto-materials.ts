@@ -20,8 +20,24 @@ export type ProgressClass = typeof PROGRESS_CLASSES[number];
 /** The progress driver each class feeds. */
 export const PROGRESS_CLASS_DRIVER: Record<ProgressClass, QuantityKey> = { Pipe: 'materialPipe', Supports: 'supports', Appendages: 'appendages' };
 
-/** The class of a requirement line, taken from its material (catalog, custom or inline). Empty when the material has none. */
+/** Component code (CC) → the class it feeds (reference "Component code (ISO progress) (1=pipe, 2=supports, 3=appendages)"). */
+export const COMPONENT_CODE_CLASS: Record<string, ProgressClass> = { '1': 'Pipe', '2': 'Supports', '3': 'Appendages' };
+/**
+ * The component code in effect on a requirement line: the line's own CC once the line carries one (a custom line, or a
+ * line whose CC was set on the line, also when set to empty); otherwise its catalog material's CC, as if Add had copied it.
+ */
+export function componentCodeOf(rows: Rows, requirement: Row): string {
+  if (requirement.componentCode !== undefined && requirement.componentCode !== null) return text(requirement.componentCode);
+  return text(materialRecord(rows, requirement)?.componentCode);
+}
+/**
+ * The class of a requirement line: CC 1 / 2 / 3 of the line (see `componentCodeOf`). Older records whose CC is not
+ * 1 / 2 / 3 read the earlier "Progress class" (of the custom line or of its material) instead, so nothing needs a write.
+ * Undefined when neither classifies the line.
+ */
 export function progressClassOf(rows: Rows, requirement: Row): ProgressClass | undefined {
+  const byCode = COMPONENT_CODE_CLASS[componentCodeOf(rows, requirement)];
+  if (byCode) return byCode;
   // A custom line carries its own class (its identity record in custom_materials only snapshots it).
   const source = requirement.customMaterial && !requirement.materialId ? requirement : materialRecord(rows, requirement);
   const value = text(source?.progressClass);
@@ -45,22 +61,32 @@ export function phaseLocation(phase?: Row): QuantityPhase | undefined {
 }
 
 /**
- * Budgets of the progress drivers of an isometric: the quantity of its requirement lines whose material has a
- * progress class, split by the Shop / Field location of the line's operation phase. Quantities are summed as
- * entered (no unit conversion). Lines without a class, without a Shop / Field phase or without quantity count
- * for nothing. Undefined while no line produces a budget (the drivers then stay out of scope), and without rows.
+ * Budgets of the progress drivers of an isometric (weld__general__project-sites.txt:157-163): the quantity of its
+ * requirement lines classified by component code (`progressClassOf`), by the Shop / Field location of the line's
+ * operation phase. `shop` is the Shop-typed MTO; `field` is the whole ISO (Shop- plus Field-typed lines), since shop
+ * prefab is installed again in the field. `issued` is the picked quantity of the same lines (`requirementExecution`),
+ * the ceiling of what counts: present only when `rows` holds pick lists. Quantities are summed as entered (no unit
+ * conversion). Lines without a class, without a Shop / Field phase or without quantity count for nothing. Undefined
+ * while no line produces a budget (the drivers then stay out of scope), and without rows.
  */
 export function isoBudgets(isometric: Row, rows?: Rows): ProgressBudgets | undefined {
   if (!rows) return undefined;
   const phases = new Map(live(rows, 'operation_phases').map(phase => [phase.id, phase]));
-  const budgets: ProgressBudgets = {};
+  const pickedOf = Array.isArray(rows.picklists) ? new Map(requirementExecution({ ...rows, isometrics: [isometric] }, { isoId: isometric.id }).map(entry => [entry.requirement.id, entry.picked])) : null;
+  const budgets: ProgressBudgets = {}, issued: NonNullable<ProgressBudgets['issued']> = {};
+  const bump = (target: Partial<Record<QuantityKey, number>>, driver: QuantityKey, value: number) => { target[driver] = round((target[driver] || 0) + value); };
   for (const line of live(rows, 'iso_materials').filter(line => line.isoId === isometric.id)) {
     const quantity = Number(line.quantity), cls = progressClassOf(rows, line), location = phaseLocation(phases.get(String(line.phaseId)));
     if (!cls || !location || !(quantity > 0)) continue;
-    const driver = PROGRESS_CLASS_DRIVER[cls], phase = budgets[location] ||= {};
-    phase[driver] = round((phase[driver] || 0) + quantity);
+    const driver = PROGRESS_CLASS_DRIVER[cls], picked = Math.max(0, pickedOf?.get(line.id) ?? 0);
+    // Shop counts the Shop-typed lines; Field counts every line (the whole ISO).
+    for (const phase of location === 'shop' ? ['shop', 'field'] as const : ['field'] as const) {
+      bump(budgets[phase] ||= {}, driver, quantity);
+      if (pickedOf) bump(issued[phase] ||= {}, driver, picked);
+    }
   }
-  return Object.keys(budgets).length ? budgets : undefined;
+  if (!Object.keys(budgets).length) return undefined;
+  return pickedOf ? { ...budgets, issued } : budgets;
 }
 
 // ----- coverage ---------------------------------------------------------------------------------------------------

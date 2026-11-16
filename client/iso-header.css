@@ -96,6 +96,11 @@
 .iso-flag.no { color: #b3261e; background: #fdecea; }
 .iso-flag.ready { color: #b35c00; background: #fff1e0; }
 .iso-flag.na { color: var(--muted); }
+.data-table tr.iso-row-complete > td { background: #f1faf4; }
+.data-table tr.iso-row-critical > td { background: #fdf3f2; }
+.data-table tr.iso-row-critical > td:first-child { box-shadow: inset 3px 0 0 #b3261e; }
+.data-table tr.iso-row-complete > td:first-child { box-shadow: inset 3px 0 0 #1a7f4b; }
+.iso-started-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: 10px; padding: 1px 8px; border-radius: 4px; background: var(--line); color: var(--muted); font-size: 13px; font-weight: 600; vertical-align: middle; }
 .data-table th.flag-cell, .data-table td.flag-cell { text-align: center; padding-inline: 6px; }
 .data-table .column-filters td { padding: 4px 8px 8px; background: var(--surface, #fff); border-bottom: 1px solid var(--line); }
 .column-filter-input { width: 100%; min-width: 84px; padding: 5px 8px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: inherit; }

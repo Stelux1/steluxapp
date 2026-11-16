@@ -5,6 +5,7 @@ import { materialStatus } from './mto-materials.ts';
 import { punchCounts, type PunchCounts } from './punch.ts';
 import { hydrotestState } from './hydrotest.ts';
 import { isoFlags, isoKpiFacts, isoListContext, type IsoFlags, type IsoKpiFacts } from './iso-list.ts';
+import { wdiProgress } from './wdi.ts';
 
 /**
  * The summary of one isometric: the numbers its header and the isometrics list show, as aggregates only.
@@ -24,12 +25,12 @@ export interface IsoSummary {
   progress: {
     /** False while the site has no progress weights. */
     configured: boolean;
-    /** Shop / Field / Site, one decimal; null while nothing of the phase is in scope. */
+    /** Shop / Field / Site, one decimal (0 while nothing weighted of the phase is in scope); null only while not configured. */
     phases: { key: PhaseKey; percent: number | null }[];
-    /** The isometric's percentage, one decimal. */
+    /** The isometric's percentage, one decimal; null only while not configured. */
     total: number | null;
   };
-  /** Accepted NDT results / (accepted + rejected). */
+  /** Accepted NDT / NDT PRE results ÷ (accepted + NA) over the welds that are not repair welds (`isoQuality`). */
   quality: { percent: number | null; accepted: number; rejected: number };
   /** "N open" and what each group adds to it, without the items. */
   blockers: { total: number; groups: { key: BlockerKey; count: number }[] };
@@ -80,6 +81,10 @@ export interface IsoSummarySource {
   /** Reservations and every isometric of the workspace: the free stock of Material status % leaves out what others reserved or claim. */
   reservations?: Row[] | null;
   allIsometrics?: Row[] | null;
+  /** Calculation lines (E), documents and drawing revisions (Doc.); absent or null when not delivered. */
+  calculations?: Row[] | null;
+  attachments?: Row[] | null;
+  revisions?: Row[] | null;
   /** The calculation feature is delivered: the E flag exists. */
   planning: boolean;
 }
@@ -112,7 +117,11 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
     const system = namedTestSystems.get(String(iso.testSystemId ?? ''));
     return system && (!system.projectId || system.projectId === iso.projectId) ? String(system.name).trim() : undefined;
   };
-  const context = isoListContext({ welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, planning: source.planning });
+  const context = isoListContext({
+    welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, planning: source.planning,
+    picklists: source.picklists ?? null, requirements: source.requirements, calculations: source.planning ? source.calculations ?? null : null,
+    attachments: source.attachments ?? null, revisions: source.revisions ?? null, projects: source.projects, sites: source.sites,
+  });
   const output: Record<string, IsoSummary> = {};
   for (const iso of source.isometrics) {
     const site = sites.get(String(projects.get(String(iso.projectId))?.siteId)) ?? null;
@@ -120,7 +129,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       iso, site, welds: welds.get(iso.id) || [], weldTypes: source.weldTypes || [], diameters: source.diameters || [], results: results.get(iso.id) || [],
       releases: source.releases ? releases.get(iso.id) || [] : null, punch: source.punch ? punch.get(iso.id) || [] : null,
       testSystems: source.testSystems ?? null, hydrotestRequests: source.hydrotestRequests ?? null, spools: source.spools ? spools.get(iso.id) || [] : null, hydrotestResults: source.hydrotestResults ?? null,
-      budgets: source.requirements ? isoBudgets(iso, { iso_materials: requirements.get(iso.id) || [], materials: source.materials || [], custom_materials: source.customMaterials || [], operation_phases: source.operationPhases || [] }) : undefined,
+      budgets: source.requirements ? isoBudgets(iso, { iso_materials: requirements.get(iso.id) || [], materials: source.materials || [], custom_materials: source.customMaterials || [], operation_phases: source.operationPhases || [], ...(source.picklists ? { picklists: source.picklists } : {}) }) : undefined,
     };
     const blockers = isoBlockers(input), quality = isoQuality(input), progress = isoProgress(input), flags = isoFlags(iso, context);
     const material = source.requirements && source.materials ? materialStatus(iso, materialRows(source, iso, requirements.get(iso.id) || [])).percent : null;
@@ -145,6 +154,42 @@ function materialRows(source: IsoSummarySource, iso: Row, requirements: Row[]): 
   return { isometrics: source.allIsometrics || source.isometrics, projects: source.projects, iso_materials: requirements, materials: source.materials || [], custom_materials: source.customMaterials || [],
     orders: source.orders || [], order_lines: source.orderLines || [], stock: source.stock || [], picklists: source.picklists || [], reservations: source.reservations || [] };
 }
+
+/**
+ * Status (%) of each project in the Projects list: the weld completion of its isometrics (`wdiProgress`, shared/wdi.ts,
+ * the figure Weld Pilot has always shown). Computed on the server from every weld, so MTO Pilot, which reads no welds,
+ * shows the same figure. Only a number per project leaves.
+ */
+export function projectStatuses(source: { projects: Row[]; isometrics: Row[]; welds: Row[] | null; diameters: Row[] | null }): Record<string, number> {
+  const isoProject = new Map(source.isometrics.filter(iso => !iso._archived).map(iso => [iso.id, String(iso.projectId)]));
+  const byProject = groupBy((source.welds || []).filter(weld => isoProject.has(String(weld.isoId))), weld => isoProject.get(String(weld.isoId))!);
+  return Object.fromEntries(source.projects.map(project => [project.id, wdiProgress(byProject.get(project.id) || [], source.diameters || []).percent]));
+}
+
+/** A percentage as the reference writes it: one decimal at most and no space before the sign ('0%', '72.7%'). */
+export const percentText = (value: number) => `${Math.round((Number(value) || 0) * 10) / 10}%`;
+
+/** Texts of the Progress card (reference weld__iso__0001__progress-card.txt; Field and Site tips from _interactive/I1). */
+export const PROGRESS_CARD_TEXTS = {
+  phase: {
+    shop: 'Shop prefab phase (welds, NDT, shop-typed material).',
+    field: 'Field erection phase (pipe, welds, NDT, supports, appendages, punch).',
+    site: 'Site is its own share of the total (Shop + Field + Site = 100%). Hydrotest and Paint/Tracing split the Site phase.',
+  } as Record<PhaseKey, string>,
+  percent: 'Weighted completion of this phase. Same source as Status and BBE.',
+  budgetColumn: { shop: 'Ceiling: Shop issued / Shop MTO', field: 'Budget (MTO)' },
+  specification: 'Specification',
+  finish: 'Mark as done, or N/A when paint, tracing or insulation is not required on this ISO.',
+  save: 'Save shop, field and site values.',
+};
+/** The bar text of a quantity row: its share in whole percent, or without a budget 'N/A' (Shop) / '0%' (Field) as in the reference. */
+export function quantityBarText(phase: 'shop' | 'field', budget: number, progress: number | null): string {
+  if (!budget) return phase === 'shop' ? 'N/A' : '0%';
+  return `${Math.round((progress ?? 0) * 100)}%`;
+}
+/** The Specification of each Site row: Paint spec., Tracing Spec and Insulation of the isometric ('—' when empty). */
+export const FINISH_SPECIFICATION_FIELDS: Record<string, string> = { paintState: 'paintSpec', tracingState: 'tracing', insulationState: 'insulation' };
+export const finishSpecification = (iso: Row, finishField: string) => String(iso[FINISH_SPECIFICATION_FIELDS[finishField]] ?? '').trim() || '—';
 
 /** The progress card's view of a summary (no driver detail: the summary does not carry it). */
 export const summaryProgress = (summary: IsoSummary): IsoProgress => ({

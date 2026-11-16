@@ -1,5 +1,5 @@
 import { projectRow, resourceAvailable, rowAvailable } from '../shared/release.ts';
-import { isoSummaries, type IsoSummary } from '../shared/iso-summary.ts';
+import { isoSummaries, projectStatuses, type IsoSummary } from '../shared/iso-summary.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { Store } from './store.ts';
 
@@ -30,6 +30,18 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
     releases: load('releases'), punch: load('punchlists'), testSystems: resourceAvailable(availability, 'test_systems') ? store.list('test_systems', true).filter(row => rowAvailable(availability, 'test_systems', row)) : null, hydrotestRequests: load('hydrotest_requests'), spools: load('spools'), hydrotestResults: load('hydrotest_results'), requirements: load('iso_materials'),
     materials: load('materials'), customMaterials: load('custom_materials'), operationPhases: load('operation_phases'),
     orders: load('orders'), orderLines: load('order_lines'), stock: load('stock'), picklists: load('picklists'), reservations: load('reservations'), allIsometrics: load('isometrics'),
+    calculations: load('calculation_lines'), attachments: load('attachments'), revisions: load('revisions'),
     planning: Boolean(availability?.features.includes('project-planning')),
   });
+}
+
+/**
+ * The same crossing for the Projects list: Status (%) of each of the caller's visible `projects`, from every weld of
+ * their isometrics (shared/iso-summary.ts `projectStatuses`), so MTO Pilot shows the figure Weld Pilot shows. Only one
+ * number per project leaves.
+ */
+export function projectStatusesFor(store: Store, availability: Availability | undefined, projects: Row[]): Record<string, number> {
+  if (!projects.length || !resourceAvailable(availability, 'welds')) return {};
+  const load = (key: string) => resourceAvailable(availability, key) ? store.list(key, true).filter(row => rowAvailable(availability, key, row)).map(row => projectRow(availability, key, row)) : null;
+  return projectStatuses({ projects, isometrics: load('isometrics') || [], welds: (load('welds') || []).filter(row => !row._archived), diameters: load('diameters') });
 }
