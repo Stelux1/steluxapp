@@ -19,7 +19,8 @@ import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/r
 import { canResource,canReport,canScope,REPORT_RESOURCES } from '../shared/permissions.ts';
 import type { Row, Module } from '../shared/types.ts';
 import { pilotProfileErrors, withNewUserDefaults } from '../shared/access-ui.ts';
-import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, assertPasswordStrength, passwordHash, passwordMatches, sessionCookie, signInLimiter, type AuthRequest } from './auth.ts';
+import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, endSession, ensureAdministrator, hashToken, newSession, assertPasswordStrength, passwordHash, passwordMatches, sessionCookie, signInLimiter, sessionSite, setSessionSite, setTokenSite, type AuthRequest } from './auth.ts';
+import { assertRightsWrite, assertUserInput, siteArchiveInput, assertSiteArchive } from './user-admin.ts';
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
@@ -99,7 +100,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const requiresSetup = needsSetup();
     const session = store.db.prepare('SELECT user_id FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(sessionCookie(req, cookieName)), new Date().toISOString()) as { user_id: string } | undefined;
     let user; try { if (session) user = presentUser(session.user_id); } catch { /* expired or deactivated */ }
-    res.setHeader('Cache-Control', 'no-store'); res.json({ requiresSetup, user: user || null, sampleWorkspace: options.sampleWorkspace !== false, ...(availability ? { availability } : {}) });
+    // Pilots: the main project of this session, so every open tab can tell when another one changed it.
+    const currentSite = pilots && user ? { currentSiteId: sessionSite(store, req, cookieName) } : {};
+    res.setHeader('Cache-Control', 'no-store'); res.json({ requiresSetup, user: user || null, sampleWorkspace: options.sampleWorkspace !== false, ...(availability ? { availability } : {}), ...currentSite });
   });
   app.post('/api/auth/setup', (req, res) => {
     const user = store.transaction(() => {
@@ -123,7 +126,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   });
   app.use('/api', authMiddleware(store, cookieName));
   /** Requests that never need a pilot: sign-out and password change work from the selector and from any pilot. */
-  const ACCOUNT_ROUTES = new Set(['POST /auth/logout', 'POST /auth/password']);
+  const ACCOUNT_ROUTES = new Set(['POST /auth/logout', 'POST /auth/password', 'POST /auth/site']);
   /** Requests a limited account may make in a pilot before it chose one of its main projects. */
   const CHOICE_ROUTES = new Set(['GET /bootstrap', 'GET /notifications', 'GET /company-logo']);
   app.use('/api', (req, _res, next) => {
@@ -144,7 +147,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
           // The main project the request works in (server/site-scope.ts `activeSite`): a limited account works with that
           // main project's profile and reaches that main project only.
           const pilot = access.pilotOf(id, header ?? query);
-          const active = activeSite(store, req, store.get('users', id), pilot);
+          const active = activeSite(store, req, store.get('users', id), pilot, (req as AuthRequest).sessionSiteId);
           if (active.choose) {
             // Several main projects and none chosen: only the choice (and the bell) may be loaded.
             if (!CHOICE_ROUTES.has(route)) throw siteRefused('Choose a main project to continue.');
@@ -166,28 +169,41 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     runInSiteScope(scope, next);
   });
   app.param('resource', (_req, _res, next, key) => { try { access.resource(key); next(); } catch (error) { next(error); } });
-  app.post('/api/auth/logout', (req, res) => { store.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashToken(sessionCookie(req, cookieName))); res.clearCookie(cookieName, { path: '/' }); res.json({ ok: true }); });
+  app.post('/api/auth/logout', (req, res) => { endSession(store, req, cookieName); res.clearCookie(cookieName, { path: '/' }); res.json({ ok: true }); });
+  // Pilots: "Change site" (account menu) and the main-project choice set the main project of the whole session: every pilot
+  // and every tab of it works there from its next request (server/site-scope.ts `activeSite`). Only one of the account's
+  // own main projects can be chosen; '' forgets the choice.
+  app.post('/api/auth/site', (req, res) => {
+    if (!pilots) throw new AppError(404, 'This API endpoint does not exist.');
+    const siteId = req.body?.siteId;
+    if (typeof siteId !== 'string' || siteId.length > 200) throw new AppError(422, 'Choose a main project.');
+    if (siteId && !access.mainProjects((req as AuthRequest).user.id).some(site => site.id === siteId)) throw siteRefused();
+    setSessionSite(store, req, siteId, cookieName); res.json({ siteId });
+  });
   app.post('/api/auth/password', (req, res) => {
     const user = (req as AuthRequest).user;
     const old = store.db.prepare('SELECT hash FROM credentials WHERE user_id=?').get(user.id) as { hash: string };
     if (!passwordMatches(req.body.currentPassword, old.hash)) throw new AppError(422, 'Current password is incorrect.');
     if (pilots) assertPasswordStrength(req.body.password);
     const hash = passwordHash(req.body.password);
+    // Every session of the account ends; the new session of this browser keeps its main project (pilots).
+    const site = pilots ? (req as AuthRequest).sessionSiteId || '' : '';
     store.transaction(() => { store.db.prepare('UPDATE credentials SET hash=? WHERE user_id=?').run(hash, user.id); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id); });
-    newSession(store, user.id, res, cookieName); res.json({ ok: true });
+    const token = newSession(store, user.id, res, cookieName); if (site) setTokenSite(store, token, site); res.json({ ok: true });
   });
   app.get('/api/bootstrap', (req, res) => {
     const user = (req as AuthRequest).user;
-    if (pilots && !user.pilot) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: {}, activity: [], mainProjects: access.mainProjects(user.id) }); return; }
+    const sessionSiteId = pilots ? { sessionSiteId: (req as AuthRequest).sessionSiteId || '' } : {};
+    if (pilots && !user.pilot) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: {}, activity: [], mainProjects: access.mainProjects(user.id), ...sessionSiteId }); return; }
     // A limited account with several main projects: the choice of its main projects (each read with its own profile).
     const choice = pilots && user.pilot && user.siteLimited && (user.siteRequired || user.siteId) ? access.choiceRows(user.id, user.pilot) : undefined;
     const siteRows = choice && (choice.sites || []).length > 1 ? { siteRows: choice } : {};
-    if (user.siteRequired) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: choice || {}, activity: [], ...siteRows }); return; }
+    if (user.siteRequired) { res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows: choice || {}, activity: [], ...siteRows, ...sessionSiteId }); return; }
     const rows = Object.fromEntries(RESOURCES.filter(r =>r.key==='attachments'||canResource(user,r.key)).map(r => [r.key, readableRows(req, r.key, true)]));
     const activity = visibleAudit(req, store.activity(100));
     // Pilots: one summary per visible isometric (the same numbers in both pilots) and what Copy isometrics may carry.
     const extra = pilots && user.pilot ? { isoSummaries: rows.isometrics ? isoSummariesFor(store, availability, pilotIsometrics(rows.isometrics, user.pilot)) : {}, copyParts: access.copyParts(user.id, user.siteId) } : {};
-    res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra, ...siteRows });
+    res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra, ...siteRows, ...sessionSiteId });
   });
   // The company logo of Company data, for the application selector (any signed-in account: it is the workspace's own branding).
   app.get('/api/company-logo', (req, res) => {
@@ -259,13 +275,14 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'punchlists') assertPunchAddAllowed(store, req.body, (req as unknown as AuthRequest).user);
-    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body); assertSiteProfiles(store, req.body); checkUserApplications(req.body); }
+    if (pilots && resource.key === 'users') { assertUserInput((req as unknown as AuthRequest).user, req.body); assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body); assertSiteProfiles(store, req.body); checkUserApplications(req.body); }
+    const archiveSite = pilots && resource.key === 'sites' ? siteArchiveInput(req.body) : undefined;
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (pilots) checkIsoWrite(store, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     // Add material (pilots): it belongs to the main project it is added on; an existing Material No is linked there or refused.
     if (pilots && resource.key === 'materials') { const added = addMaterialOnSite(store, req.body, actorOf(req)); res.status(added.linked ? 200 : 201).json({ record: access.project(resource.key, added.record), linked: added.linked }); return; }
-    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } return row; });
+    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {
@@ -278,9 +295,13 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
     if (pilots && resource.key === 'iso_materials') assertIsoMaterialRecordEdit(req.body, access.record(resource.key, String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
-    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); checkUserApplications(req.body, access.record(resource.key, String(req.params.id))); }
+    if (pilots && resource.key === 'users') { assertUserInput((req as unknown as AuthRequest).user, req.body, access.record(resource.key, String(req.params.id))); assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); checkUserApplications(req.body, access.record(resource.key, String(req.params.id))); }
+    const archiveSite = pilots && resource.key === 'sites' ? siteArchiveInput(req.body) : undefined;
+    const before = pilots && (resource.key === 'users' || resource.key === 'profiles') ? access.record(resource.key, String(req.params.id)) : undefined;
     const row = store.transaction(() => {
-      const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
+      let row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
+      if (before) assertRightsWrite(store, (req as unknown as AuthRequest).user, resource.key, before, row);
+      if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); }
       if (pilots && resource.key === 'itps') syncItpXRay(store, row, actorOf(req));
       if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, row);
       if (resource.key === 'users' && req.body.password) { store.db.prepare('INSERT INTO credentials VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash').run(row.id, passwordHash(req.body.password)); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.id); }

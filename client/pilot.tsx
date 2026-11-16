@@ -5,7 +5,7 @@ import { NO_RIGHTS_TEXT, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, 
 import { pageAvailable } from '../shared/release.ts';
 import type { User } from '../shared/types.ts';
 import { RESOURCES, RESOURCE_MAP } from './catalog.ts';
-import { useWorkspace } from './context.tsx';
+import { useOptionalWorkspace, useWorkspace } from './context.tsx';
 import { resourcePath } from './records.tsx';
 import { EmptyState, Modal } from './components.tsx';
 import { Wordmark } from './brand.tsx';
@@ -54,11 +54,11 @@ export function PilotRoot({ user, onLogout, children }: { user: User; onLogout: 
   return <PilotContext.Provider value={value}><BrowserRouter key={pilot} basename={`/${pilot}`}>{children}</BrowserRouter></PilotContext.Provider>;
 }
 
-/** Header of the selector and the no-access screen: the account and Sign out. */
+/** Header of the selector and the no-access screen: the account and Logout (reference wording). */
 function AccountBar({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function logout() { setBusy(true); setError(''); try { await post('/auth/logout', {}); window.history.replaceState(null, '', '/'); onLogout(); } catch (e) { setError((e as Error).message); setBusy(false); } }
-  return <><header className="pilot-select-top"><Wordmark/><div className="pilot-select-user"><span><strong>{user.name}</strong><small>{user.email}</small></span><button type="button" className="btn small" onClick={() => void logout()} disabled={busy}>{busy ? <Loader2 size={14} className="spin"/> : <LogOut size={14}/>}Sign out</button></div></header>{error && <div className="alert error" role="alert">{error}</div>}</>;
+  return <><header className="pilot-select-top"><Wordmark/><div className="pilot-select-user"><span><strong>{user.name}</strong><small>{user.email}</small></span><button type="button" className="btn small" onClick={() => void logout()} disabled={busy}>{busy ? <Loader2 size={14} className="spin"/> : <LogOut size={14}/>}Logout</button></div></header>{error && <div className="alert error" role="alert">{error}</div>}</>;
 }
 
 /** A pilot URL the account may not enter (not enabled for it, or its profile does not open the pilot). */
@@ -100,7 +100,7 @@ export function PilotSelector({ user, pilots, onOpen, onLogout, logo, sizing }: 
         <a className="pilot-tile" href={`/${pilot.key}`} style={{ '--pilot-color': pilot.color } as React.CSSProperties} onClick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return; event.preventDefault(); onOpen(pilot.key); }}>
           <span className="pilot-tile-icon"><Icon size={26}/></span><span className="pilot-tile-text"><strong>{pilot.title}</strong><small>{pilot.description}</small></span><ArrowRight size={18}/>
         </a></li>; })}</ul>
-        : <section className="panel pilot-select-empty"><EmptyState title="No workspace is open to your account" description="Your account is not enabled for Weld Pilot or MTO Pilot, or its profiles do not include welding or materials access. Ask your administrator to enable a workspace for your account."/></section>}
+        : <section className="panel pilot-select-empty"><EmptyState title="No workspace is open to your account" description="Your account is not enabled for Weld Pilot or MTO Pilot. Ask your administrator to enable a workspace for your account."/></section>}
     </main>
   </div>;
 }
@@ -114,9 +114,21 @@ export function usePilotNoRights(pathname: string) {
   if (projectScopeEnabled && !siteId) return false;
   return pilotPageState(state.pilot, pathname, { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport, canArea }) === 'no-rights';
 }
+/**
+ * Where "Go to dashboard" of the no-rights page leads: the dashboard when the profile opens it, otherwise the first menu page
+ * it opens, or nowhere (no button) when it opens none, so the button never leads to another no-rights page.
+ */
+export function pilotHomePath(pilot: Pilot, rights: MenuRights): { path: string; label: string } | null {
+  if (pilotPageState(pilot, '/dashboard', rights) !== 'no-rights') return { path: '/dashboard', label: 'Go to dashboard' };
+  const open = pilot.groups.flatMap(group => group.items).find(item => !item.action && pilotItemState(item, rights) === 'open');
+  const path = open && pilotItemPath(open);
+  return open && path ? { path, label: `Go to ${open.label}` } : null;
+}
 /** The page of a menu item the profile may not open (the server refuses its data in any case). */
 export function PilotNoRights() {
-  return <div className="page pilot-no-access pilot-no-rights" role="alert"><span className="pilot-no-access-icon"><ShieldAlert size={22}/></span><EmptyState title={NO_RIGHTS_TEXT} description="Ask an administrator to add the right to your permission profile." action={<Link className="btn" to="/dashboard">Go to dashboard</Link>}/></div>;
+  const state = usePilot(), workspace = useOptionalWorkspace();
+  const home = state && workspace ? pilotHomePath(state.pilot, { delivered: path => pageAvailable(workspace.user.availability, path, RESOURCES), canRecord: workspace.canRecord, canReadReport: workspace.canReadReport, canArea: workspace.canArea }) : { path: '/dashboard', label: 'Go to dashboard' };
+  return <div className="page pilot-no-access pilot-no-rights" role="alert"><span className="pilot-no-access-icon"><ShieldAlert size={22}/></span><EmptyState title={NO_RIGHTS_TEXT} description="Ask an administrator to add the right to your permission profile." action={home ? <Link className="btn" to={home.path}>{home.label}</Link> : undefined}/></div>;
 }
 const queryOf = (path: string) => path.includes('?') ? path.slice(path.indexOf('?')) : '';
 

@@ -6,7 +6,7 @@ import { SIGNATURE_KINDS } from '../shared/signatures.ts';
 import { punchWriteError } from '../shared/punch.ts';
 import type { Availability, AuditEvent, Module, Row, User } from '../shared/types.ts';
 import { Store, AppError } from './store.ts';
-import { effectiveProfileId, publicUser } from './auth.ts';
+import { effectiveProfileId, pilotHides, publicUser } from './auth.ts';
 import { availableWps, RELATIONS, relationMatches } from '../shared/welding.ts';
 import { WPS_COPY_FIELDS } from '../shared/wps.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
@@ -15,6 +15,7 @@ import { deleteRefusal, guardIrn, guardSiteIrn } from './iso-pages.ts';
 import { allowedSites, inSiteScope, isSiteRefusal, singleSiteScope, siteScopeFor, withSiteScope } from './site-scope.ts';
 import { STANDARD_DOCUMENT_MESSAGE, isStandardAttachmentName } from '../shared/weld-catalogs.ts';
 
+export const SITE_DELETE_REFUSED = 'This project site still has projects and cannot be deleted. Delete its projects first.';
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
 export const pilotRefused = (message = 'Your account does not have access to this application workspace.') => new AppError(403, message, undefined, 'pilot');
@@ -39,6 +40,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
   }
   function visible(account: User, key: string, row: Row): boolean {
     if (!rowAvailable(availability, key, row)) return false;
+    // Storehouses are MTO Pilot records: a Weld Pilot request never receives them (w1-left-6).
+    if (pilotHides(account, key)) return false;
     // Access per project site: a limited request sees only records of its main projects and records of none.
     if (!inSiteScope(key, row)) return false;
     if (key !== 'attachments') return canResource(account, key, 'show', row);
@@ -120,6 +123,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (pilots && key === 'welds') assertWeldUnlocked(store, row);
     // Delete in the reference: an isometric with welds, materials, reservations, calculations or started work, and a project that is not blank, stay (422: its sentence reaches the user).
     if (pilots && !row._archived) { const refusal = deleteRefusal(store, key, row); if (refusal) throw new AppError(422, refusal); }
+    // Delete project site (reference "Delete project site" / "Are you sure?"): refused while the site still has projects.
+    if (pilots && key === 'sites' && !row._archived && store.list('projects').some(project => project.siteId === row.id)) throw new AppError(409, SITE_DELETE_REFUSED);
     // The documents the reference ships cannot be deleted.
     if (pilots && key === 'attachment_names' && !row._archived && isStandardAttachmentName(row)) throw new AppError(422, STANDARD_DOCUMENT_MESSAGE);
   }
@@ -174,7 +179,9 @@ export function releaseAccess(store: Store, availability?: Availability) {
     const account = inPilot(id, pilot, siteId);
     if (!account) throw pilotRefused();
     const limited = allowedSites(store, store.get('users', id), pilot) !== 'all';
-    return { ...account, pilots: enterable(id), ...(limited ? { siteLimited: true } : {}), ...(limited && siteId ? { siteId } : {}) };
+    // The main project of the request: a limited account's is the one its profile was evaluated for; an account that reaches
+    // every main project works in its session's main project (it changes nothing of its rights).
+    return { ...account, pilots: enterable(id), ...(limited ? { siteLimited: true } : {}), ...(siteId ? { siteId } : {}) };
   }
   /**
    * A limited account with several main projects before it chose one: no rights at all (every route refuses it), only

@@ -9,6 +9,7 @@ import { RELATIONS,RELATION_RESOURCES,relationIds,availableWps } from './catalog
 import { ACTIONS } from './catalog.ts';
 import type { Row, Field, Resource, AuditEvent } from '../shared/types.ts';
 import { useWorkspace, activeRows } from './context.tsx';
+import { canChangeRights } from '../shared/permissions.ts';
 import { api, post, formatDate, formatNumber, apiUrl } from './api.ts';
 import { Badge, Cell, EmptyState, FieldInput, Modal, SearchInput, Dropdown, TableScroll } from './components.tsx';
 import { BulkEditor, ImportDialog, RecordEditor, WorkflowDialog } from './dialogs.tsx';
@@ -88,7 +89,8 @@ export function TablePage({ resourceKey, scopeProjectId = '', headingExtra }: {r
   const columnLabel = (key: string, fallback: string) => (isoList && ISO_LIST_COLUMNS.find(column => column.key === key)?.label) || fallback;
   const [columns, setColumns] = useState(defaultColumns); const [editor, setEditor] = useState<Row | 'new' | null>(null); const [action, setAction] = useState<string | null>(null); const [importing, setImporting] = useState(false); const [bulk, setBulk] = useState(false);
   const [archiving, setArchiving] = useState<Row | null>(null); const [bulkArchiving, setBulkArchiving] = useState(false);
-  const writable = canRecord(def.key,'edit') && !def.readonly;const creatable=canRecord(def.key,'insert')&&!def.readonly;
+  // Hosted: a new account always gets a profile, which needs Edit on both User accounts and Profiles (server/user-admin.ts).
+  const writable = canRecord(def.key,'edit') && !def.readonly;const creatable=canRecord(def.key,'insert')&&!def.readonly&&!(hosted&&def.key==='users'&&!canChangeRights(user));
   // Welding wires and certificates (hosted): a project select in the toolbar, and a bar that sets Controlled / Accepted on the ticked rows.
   const flagBulk = hosted && FLAG_BULK_RESOURCES.includes(resourceKey), projectToolbar = hosted && PROJECT_TOOLBAR_RESOURCES.includes(resourceKey); const [notice, setNotice] = useState('');
   const visibleActions = (def.actions || []).filter(key => canRun(key));

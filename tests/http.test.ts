@@ -9,6 +9,10 @@ import { Store } from '../server/store.ts';
 import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import type { Row } from '../shared/types.ts';
+import { SYSTEM } from '../server/store.ts';
+import { passwordHash } from '../server/auth.ts';
+import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
+import { SITE_SCOPE_SPECIFIC, USER_SITES } from '../shared/site-scope.ts';
 async function fixture(t: {after: (fn: () => Promise<void>) => void}) {
   const dir = mkdtempSync(join(tmpdir(), 'stelux-http-')); const s = new Store(join(dir, 'test.sqlite')); seed(s);
   const server: Server = createApp(s, dir).listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -188,4 +192,70 @@ test('a page address is answered with the client even when the installation fold
     const response = await fetch(base + path);
     assert.equal(response.status, 200, path); assert.match(await response.text(), /<title>client<\/title>/, path);
   }
+});
+
+// ----- shell-general-015: the main project belongs to the sign-in session (hosted profile) --------------------------------
+test('Change site sets the main project of the session: every tab and pilot follows, a foreign site is refused, a new sign-in asks again', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'stelux-http-')); const s = new Store(join(dir, 'test.sqlite')); seed(s);
+  const server: Server = createApp(s, dir, { releaseProfile: HOSTED_RELEASE_PROFILE, serveClient: false }).listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); s.close(); rmSync(dir, { recursive: true, force: true }); });
+  const origin = `http://127.0.0.1:${(server.address() as {port: number}).port}`;
+  /** One browser: tabs share its cookie and nothing else (no header names a main project). */
+  const browser = () => {
+    let cookie = '';
+    const request = async (path: string, { method = 'GET', pilot, data }: { method?: string; pilot?: string; data?: unknown } = {}) => {
+      const response = await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
+      const set = response.headers.get('set-cookie'); if (set) cookie = set.split(';')[0];
+      return response;
+    };
+    return { request };
+  };
+  const password = 'Session-Site-Password';
+  const admin = browser();
+  assert.equal((await admin.request('/auth/setup', { method: 'POST', data: { name: 'Session admin', email: 'session-admin@example.test', password } })).status, 201);
+  // A limited account with two main projects: its profile depends on the main project.
+  const user = s.create('users', { name: 'Two sites', email: 'two-sites@example.test', profileId: 'profile-admin', active: true, weldSiteScope: SITE_SCOPE_SPECIFIC, mtoSiteScope: SITE_SCOPE_SPECIFIC });
+  for (const pilot of ['weld', 'mto']) for (const siteId of ['site-north', 'site-river']) s.create(USER_SITES, { userId: user.id, pilot, siteId }, SYSTEM);
+  s.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
+  const tab = browser();
+  assert.equal((await tab.request('/auth/login', { method: 'POST', data: { email: 'two-sites@example.test', password } })).status, 200);
+  type Boot = { user: { siteId?: string; siteRequired?: boolean }; sessionSiteId?: string };
+  const boot = async (pilot: string) => await (await tab.request('/bootstrap', { pilot })).json() as Boot;
+  assert.equal((await boot('weld')).user.siteRequired, true, 'no main project after sign-in: the choice is asked');
+  // Choose North, then Change site to Riverside: a later request without any client state works in Riverside, in both pilots.
+  assert.equal((await tab.request('/auth/site', { method: 'POST', data: { siteId: 'site-north' } })).status, 200);
+  assert.equal((await boot('weld')).user.siteId, 'site-north');
+  assert.equal((await tab.request('/auth/site', { method: 'POST', pilot: 'weld', data: { siteId: 'site-river' } })).status, 200);
+  for (const pilot of ['weld', 'mto']) { const body = await boot(pilot); assert.equal(body.user.siteId, 'site-river', pilot); assert.equal(body.sessionSiteId, 'site-river'); }
+  assert.equal((await (await tab.request('/auth/status')).json()).currentSiteId, 'site-river', 'every tab can see the change');
+  const riverOnly = await (await tab.request('/records/isometrics', { pilot: 'weld' })).json() as { rows: Row[] };
+  assert.ok(riverOnly.rows.length && riverOnly.rows.every(row => ['iso-4', 'iso-5', 'iso-6'].includes(row.id)));
+  // A password change ends the other sessions; this browser's new session keeps its main project.
+  assert.equal((await tab.request('/auth/password', { method: 'POST', data: { currentPassword: password, password: 'Session-Site-Password-2' } })).status, 200);
+  assert.equal((await boot('weld')).user.siteId, 'site-river');
+  assert.equal((await tab.request('/auth/password', { method: 'POST', data: { currentPassword: 'Session-Site-Password-2', password } })).status, 200);
+  // Only one of the account's own main projects can be chosen.
+  const other = s.create('sites', { name: 'Third yard', address: '1 Third Street' });
+  const refused = await tab.request('/auth/site', { method: 'POST', data: { siteId: other.id } });
+  assert.equal(refused.status, 403); assert.equal((await refused.json()).code, 'site');
+  assert.equal((await tab.request('/auth/site', { method: 'POST', data: { siteId: 42 } })).status, 422);
+  assert.equal((await boot('weld')).user.siteId, 'site-river', 'unchanged after a refused choice');
+  // An account that reaches every main project works there too (its rights do not change).
+  assert.equal((await admin.request('/auth/site', { method: 'POST', data: { siteId: 'site-north' } })).status, 200);
+  const adminBoot = await (await admin.request('/bootstrap', { pilot: 'weld' })).json() as Boot & { rows: Record<string, Row[]> };
+  assert.equal(adminBoot.user.siteId, 'site-north'); assert.ok(adminBoot.rows.isometrics.some(row => row.id === 'iso-4'), 'still every main project');
+  // A new sign-in has no main project; signing out removes it with the session.
+  const sessionSites = () => Number((s.db.prepare("SELECT count(*) AS n FROM sessions WHERE token_hash LIKE 'site:%'").get() as { n: number }).n);
+  assert.equal(sessionSites(), 2);
+  assert.equal((await tab.request('/auth/logout', { method: 'POST', data: {} })).status, 200);
+  assert.equal(sessionSites(), 1);
+  assert.equal((await tab.request('/auth/login', { method: 'POST', data: { email: 'two-sites@example.test', password } })).status, 200);
+  assert.equal((await (await tab.request('/auth/status')).json()).currentSiteId, '');
+  const fresh = await boot('weld'); assert.equal(fresh.user.siteRequired, true); assert.equal(fresh.sessionSiteId, '');
+  // A session row of a main project never signs anyone in.
+  const row = s.db.prepare("SELECT token_hash FROM sessions WHERE token_hash LIKE 'site:%'").get() as { token_hash: string };
+  assert.equal((await fetch(`${origin}/api/bootstrap`, { headers: { Cookie: `blitzkrieg_session=${row.token_hash}`, 'X-Stelux-Pilot': 'weld' } })).status, 401);
+  // Other profiles have no session main project.
+  const full = await fixture(t); await full.setup();
+  assert.equal((await full.request('/auth/site', 'POST', { siteId: 'site-north' })).status, 404);
 });

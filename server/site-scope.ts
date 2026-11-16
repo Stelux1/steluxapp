@@ -45,7 +45,11 @@ export class SiteScope {
   private linkLists = new Map<string, Row[]>();
   /** While the scope resolves a parent itself, its own `store.get` calls are not checked. */
   private resolving = 0;
-  constructor(private store: Store, readonly pilot: ScopePilot, readonly allowed: Set<string> | 'all', readonly off: ReadonlySet<string> = new Set()) {}
+  /**
+   * `focus`: the main project an account that reaches every main project works in (its session's main project). Records
+   * in FOCUSED_RESOURCES then follow it as well, as they do for a limited account.
+   */
+  constructor(private store: Store, readonly pilot: ScopePilot, readonly allowed: Set<string> | 'all', readonly off: ReadonlySet<string> = new Set(), readonly focus = '') {}
   /** A record by id from one read of its collection per request; records written during the request are read directly. */
   private lookup(key: string, id: string): Row | undefined {
     if (!RESOURCE_MAP[key]) return undefined;
@@ -111,7 +115,7 @@ export class SiteScope {
     const site = this.siteOf(key, row);
     if (site === OFF) return false;
     const allowed = this.allowed;
-    if (allowed === 'all') return true;
+    if (allowed === 'all') return !this.focus || !FOCUSED_RESOURCES.includes(key) || site === this.focus || site.startsWith(SEVERAL) && site.slice(SEVERAL.length).split('\u0000').includes(this.focus);
     if (site.startsWith(SEVERAL)) return site.slice(SEVERAL.length).split('\u0000').some(id => allowed.has(id));
     return site === GLOBAL || site !== UNRESOLVED && allowed.has(site);
   }
@@ -129,6 +133,11 @@ export class SiteScope {
     throw siteRefused();
   }
 }
+/**
+ * Records that follow the open main project for every account, also one that reaches every main project: the Request
+ * archive (MTO Pilot service requests, scn-SC-D6) lists, opens and completes the requests of the open main project only.
+ */
+export const FOCUSED_RESOURCES = ['service_requests'];
 export const siteRefused = (message = 'This record belongs to a main project your account cannot access.') => new AppError(403, message, undefined, SITE_REFUSED);
 export const isSiteRefusal = (error: unknown) => error instanceof AppError && error.code === SITE_REFUSED;
 
@@ -148,7 +157,7 @@ export function siteScopeFor(store: Store, account: Row, pilot: ScopePilot): Sit
   return allowed === 'all' ? undefined : new SiteScope(store, pilot, allowed);
 }
 
-/** Request header naming the main project the browser tab works in (plain download links carry `?site=` instead). */
+/** Request header naming a main project (API clients; the application relies on the session's main project instead). Plain links may carry `?site=`. */
 export const SITE_HEADER = 'x-stelux-site';
 export interface ActiveSite {
   /** The account is limited to specific project sites in this pilot. */
@@ -161,23 +170,30 @@ export interface ActiveSite {
   scope?: SiteScope;
 }
 /**
- * THE resolution of the active main project of a request (one function, so a later change can read it from the server
- * session instead of the header). For an account limited to specific project sites in the pilot:
- * - the requested main project must be one of its own (403 `site` otherwise, also for a forged header);
+ * THE resolution of the active main project of a request. The main project is the one chosen for the sign-in session
+ * (`sessionSite`, server/auth.ts), so it is the same for every pilot and every tab of that session; an explicit header or
+ * `?site=` names one instead. For an account limited to specific project sites in the pilot:
+ * - a named main project must be one of its own (403 `site` otherwise, also for a forged header); the session's main
+ *   project counts only where it is one of its own in this pilot (otherwise none is chosen here);
  * - without one, its only main project applies; with several, none is active and only the choice may be loaded;
  * - the request then reaches that one main project only, so rights of one main project never act on another.
- * An account that reaches every main project is not narrowed (the header is ignored). Either way, records of projects
- * switched off for the pilot are out of reach.
+ * An account that reaches every main project is not narrowed, except that FOCUSED_RESOURCES follow its main project.
+ * Either way, records of projects switched off for the pilot are out of reach.
  */
-export function activeSite(store: Store, req: Request, account: Row, pilot: ScopePilot): ActiveSite {
+export function activeSite(store: Store, req: Request, account: Row, pilot: ScopePilot, sessionSiteId = ''): ActiveSite {
   const header = req.headers[SITE_HEADER], query = ['GET', 'HEAD'].includes(req.method) ? req.query.site : undefined;
   if (header !== undefined && query !== undefined && header !== query) throw siteRefused();
-  const requested = header ?? query;
-  if (requested !== undefined && typeof requested !== 'string') throw siteRefused();
+  const named = header ?? query;
+  if (named !== undefined && typeof named !== 'string') throw siteRefused();
   const off = offProjects(store, pilot);
   const allowed = allowedSites(store, account, pilot);
-  if (allowed === 'all') return { limited: false, choose: false, scope: off.size ? new SiteScope(store, pilot, 'all', off) : undefined };
-  if (requested && !allowed.has(requested)) throw siteRefused();
+  if (allowed === 'all') {
+    const chosen = named || sessionSiteId;
+    const focus = chosen && store.list('sites').some(site => site.id === chosen) ? chosen : '';
+    return { limited: false, ...(focus ? { siteId: focus } : {}), choose: false, scope: off.size || focus ? new SiteScope(store, pilot, 'all', off, focus) : undefined };
+  }
+  if (named && !allowed.has(named)) throw siteRefused();
+  const requested = named || (sessionSiteId && allowed.has(sessionSiteId) ? sessionSiteId : '');
   const siteId = requested || (allowed.size === 1 ? [...allowed][0] : undefined);
   if (siteId) return { limited: true, siteId, choose: false, scope: new SiteScope(store, pilot, new Set([siteId]), off) };
   return { limited: true, choose: allowed.size > 1, scope: new SiteScope(store, pilot, new Set(), off) };

@@ -20,7 +20,7 @@ import type { Row } from '../shared/types.ts';
 import { actorOf, checkResourcePermission, type AuthRequest } from './auth.ts';
 import type { documentStorage } from './documents.ts';
 import type { releaseAccess } from './release-access.ts';
-import { keepSiteScope, scopeRows } from './site-scope.ts';
+import { inSiteScope, keepSiteScope, scopeRows, siteRefused } from './site-scope.ts';
 import { AppError, type Store } from './store.ts';
 
 const text = (value: unknown) => value === null || value === undefined ? '' : String(value).trim();
@@ -86,7 +86,10 @@ export function registerCertificationRoutes({ app, store, documents, access, rea
   const user = (req: Request) => (req as unknown as AuthRequest).user;
   /** A main project the request may reach (unknown otherwise), from the body or the query. */
   function siteOf(req: Request, value: unknown): Row {
-    const site = typeof value === 'string' && value ? scopeRows('sites', store.list('sites')).find(row => row.id === value && access.visible(user(req), 'sites', row)) : undefined;
+    // A main project out of the account's reach gets the same answer as on the record routes (403 `site`).
+    const named = typeof value === 'string' && value ? store.list('sites').find(row => row.id === value) : undefined;
+    if (named && !inSiteScope('sites', named)) throw siteRefused();
+    const site = named && scopeRows('sites', [named]).length && access.visible(user(req), 'sites', named) ? named : undefined;
     if (!site) throw new AppError(404, 'This main project could not be found.');
     return site;
   }

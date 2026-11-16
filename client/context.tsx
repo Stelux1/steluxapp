@@ -3,7 +3,7 @@ import type { Bootstrap, Module, Row, User } from '../shared/types.ts';
 import { RESOURCE_MAP, configureCatalog } from './catalog.ts';
 import { hasFeature } from '../shared/release.ts';
 import { Wordmark } from './brand.tsx';
-import { api, configureActiveSite, currentSite } from './api.ts';
+import { api, chooseSite } from './api.ts';
 import { canResource,canAction,canScope,canReport } from '../shared/permissions.ts';
 import { pilotScope, projectScope } from '../shared/project-scope.ts';
 import { pqrNumber } from '../shared/wps.ts';
@@ -21,8 +21,12 @@ const Context = createContext<WorkspaceContext | null>(null);
 export const useWorkspace = () => { const value = useContext(Context); if (!value) throw new Error('Workspace is unavailable.'); return value; };
 export function WorkspaceProvider({ user, onUnauthenticated, children }: { user: User; onUnauthenticated: (ended?: boolean) => void; children: ReactNode }) {
   const navigate = useNavigate(); const pilotKey = usePilot()?.pilot.key;
-  // The active main project of this tab; every request carries it (client/api.ts `configureActiveSite`).
-  const [selectedSite, setSelectedSite] = useState(() => { const stored = sessionStorage.getItem(`blitzkrieg-project-${user.id}`) || ''; configureActiveSite(stored); return stored; });
+  // Pilots: the active main project is the one of the sign-in session, kept by the server for every pilot and tab
+  // (client/api.ts `chooseSite`); `pendingSite` shows a new choice until the workspace is loaded again. Other profiles keep
+  // the main project of this tab.
+  const sessionSites = Boolean(user.availability?.features.includes('pilots'));
+  const [selectedSite, setSelectedSite] = useState(() => sessionSites ? '' : sessionStorage.getItem(`blitzkrieg-project-${user.id}`) || '');
+  const [pendingSite, setPendingSite] = useState<string | null>(null);
   const [data, setData] = useState<Bootstrap>({ user, rows: {}, activity: [] });
   const [ready, setReady] = useState(false); const [error, setError] = useState('');
   const [toast, setToast] = useState(''); const [detail, setDetail] = useState<{resource: string; id: string} | null>(null);
@@ -30,26 +34,40 @@ export function WorkspaceProvider({ user, onUnauthenticated, children }: { user:
   const choosing = Boolean(data.user.siteRequired);
   const projectScopeEnabled = Boolean(data.user.availability?.features.includes('lisl') && (choosing || canResource(data.user, 'sites') && canResource(data.user, 'projects')));
   // A limited account works in the main project the server evaluated its profile for; others choose freely.
-  const siteId = choosing ? '' : data.user.siteLimited && data.user.siteId ? data.user.siteId : projectScopeEnabled && data.rows.sites?.some(site => site.id === selectedSite && !site._archived) ? selectedSite : '';
+  const chosenSite = sessionSites ? pendingSite ?? data.user.siteId ?? '' : selectedSite;
+  const siteId = choosing ? '' : data.user.siteLimited && data.user.siteId ? data.user.siteId : projectScopeEnabled && data.rows.sites?.some(site => site.id === chosenSite && !site._archived) ? chosenSite : '';
   // Projects switched off for the current pilot are left out everywhere in the workspace (outside pilots: no change).
   // A limited account with several main projects also gets the choice of all of them (each read with its own profile).
   const pilotRows = useMemo(() => { const rows = pilotScope(data.rows, pilotKey); return data.siteRows ? { ...rows, ...pilotScope(data.siteRows, pilotKey) } : rows; }, [data.rows, data.siteRows, pilotKey]);
   const scopedRows = useMemo(() => projectScopeEnabled ? projectScope(data.siteRows ? pilotScope(data.rows, pilotKey) : pilotRows, siteId) : pilotRows, [data.rows, data.siteRows, pilotKey, pilotRows, siteId, projectScopeEnabled]);
   const refresh = useCallback(async () => {
-    const load = () => api<Bootstrap>('/bootstrap');
     try {
-      let next: Bootstrap;
-      try { next = await load(); } catch (e) {
-        // The stored main project is no longer one of this account's: start again without one.
-        if ((e as { code?: string }).code !== 'site' || !currentSite()) throw e;
-        configureActiveSite(''); setSelectedSite(''); sessionStorage.removeItem(`blitzkrieg-project-${user.id}`); next = await load();
-      }
-      configureCatalog(next.user.availability); setData(next); setReady(true); setError('');
+      const next = await api<Bootstrap>('/bootstrap');
+      configureCatalog(next.user.availability); setData(next); setPendingSite(null); setReady(true); setError('');
     } catch (e) { const failure = e as { status: number; code?: string }; if (failure.status === 401 || failure.code === 'pilot') onUnauthenticated(failure.status === 401); else setError((e as Error).message); }
   }, [onUnauthenticated, user.id]);
   // A limited account's profile depends on the main project, so choosing another one loads the workspace again.
-  const selectSite = (id: string) => { setSelectedSite(id); setDetail(null); configureActiveSite(id); sessionStorage.setItem(`blitzkrieg-project-${user.id}`, id); if (id && data.user.siteLimited && id !== data.user.siteId) void refresh(); };
+  const selectSite = (id: string) => {
+    setDetail(null);
+    if (!sessionSites) { setSelectedSite(id); sessionStorage.setItem(`blitzkrieg-project-${user.id}`, id); return; }
+    // The server checks the choice; the workspace then loads again in that main project (a limited account's profile depends on it).
+    setPendingSite(id);
+    chooseSite(id).then(() => refresh(), (e: Error) => { setPendingSite(null); setError(e.message); });
+  };
   useEffect(() => { void refresh(); }, [refresh]);
+  // Another tab (or the other pilot) of this session may have changed the main project: check when this tab is shown again.
+  const sessionSiteId = data.sessionSiteId ?? '';
+  useEffect(() => {
+    if (!sessionSites || !ready) return;
+    let checking = false;
+    const check = async () => {
+      if (document.hidden || checking) return; checking = true;
+      try { const status = await api<{ currentSiteId?: string }>('/auth/status'); if ((status.currentSiteId ?? '') !== sessionSiteId) await refresh(); } catch { /* the next request reports it */ } finally { checking = false; }
+    };
+    const visible = () => { void check(); };
+    document.addEventListener('visibilitychange', visible); window.addEventListener('focus', visible);
+    return () => { document.removeEventListener('visibilitychange', visible); window.removeEventListener('focus', visible); };
+  }, [sessionSites, ready, sessionSiteId, refresh]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 4500); return () => clearTimeout(timer); }, [toast]);
   const label = (resource: string, id: unknown) => {
     const row = data.rows[resource]?.find(r => r.id === id); if (!row) return id ? 'Unavailable record' : '—';
@@ -67,4 +85,6 @@ export function WorkspaceProvider({ user, onUnauthenticated, children }: { user:
     {toast && <div className="toast" role="status"><span>✓</span>{toast}<button aria-label="Dismiss notification" onClick={() => setToast('')}>×</button></div>}
   </Context.Provider>;
 }
+/** The workspace, or null outside it (components that are also shown without a workspace). */
+export const useOptionalWorkspace = () => useContext(Context);
 export const activeRows = (rows: Record<string, Row[]>, key: string) => (rows[key] || []).filter(r => !r._archived);

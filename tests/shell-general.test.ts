@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createElement } from 'react';
@@ -26,7 +26,9 @@ import { companyFormLabels, logoSizing } from '../shared/pdf-company.ts';
 import { NOTIFICATION_LIMIT, NO_NOTIFICATIONS, safeNotificationLink, unreadNotifications, visibleNotifications } from '../shared/notifications.ts';
 import { canResource } from '../shared/permissions.ts';
 import { SITE_SCOPE_SPECIFIC, USER_SITES } from '../shared/site-scope.ts';
-import { PilotNoRights, PilotSelector } from '../client/pilot.tsx';
+import { PilotNoRights, PilotSelector, pilotHomePath } from '../client/pilot.tsx';
+import { SITE_DELETE, SITE_DELETE_BLOCKED, siteHasProjects } from '../client/sites-page.tsx';
+import { SITE_DELETE_REFUSED } from '../server/release-access.ts';
 import { PasswordStrengthMeter } from '../client/shell-parts.tsx';
 import type { Bootstrap, Row, User } from '../shared/types.ts';
 
@@ -362,4 +364,67 @@ test('the logo sizing: older records read the reference defaults, values are cla
   const render = (sizing?: { maxHeight: number; paddingTop: number; paddingBottom: number }) => renderToStaticMarkup(createElement(PilotSelector, { user, pilots: PILOTS, onOpen: () => undefined, onLogout: () => undefined, logo: '/logo.png', sizing }));
   assert.match(render({ maxHeight: 120, paddingTop: 8, paddingBottom: 24 }), /<img[^>]+style="max-height:120px;padding-top:8px;padding-bottom:24px"/);
   assert.doesNotMatch(render(), /<img[^>]+style=/, 'without saved sizing the stylesheet keeps its size');
+});
+
+// ----- shell-general-003: Delete project site and the Archived checkbox ----------------------------------------------------
+test('Project settings end with the Archived checkbox (hosted only); Delete project site reads "Are you sure?"', () => {
+  const settings = site.fields.filter(item => item.section === 'Project settings' && !item.hidden);
+  assert.equal(settings.at(-1)?.name, 'archived', 'the last field of Project settings');
+  assert.deepEqual([field('archived').label, field('archived').type], ['Archived', 'checkbox']);
+  assert.ok(field('archived').hint && field('archived').hint!.length < 120, 'a short help text of our own');
+  assert.equal(RESOURCE_MAP.sites.fields.find(item => item.name === 'archived')?.hidden, true, 'other profiles do not show it');
+  assert.equal(projectResource(availabilityFor('welding-demo'), RESOURCE_MAP.sites).fields.some(item => item.name === 'archived'), false);
+  assert.deepEqual(SITE_DELETE, { title: 'Delete project site', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' });
+  assert.equal(SITE_DELETE_BLOCKED, SITE_DELETE_REFUSED, 'the dialog and the server say the same');
+  assert.equal(siteHasProjects([row('p1', { siteId: 'a' }), row('p2', { siteId: 'b', _archived: true })], 'a'), true);
+  assert.equal(siteHasProjects([row('p2', { siteId: 'b', _archived: true })], 'b'), false, 'a deleted (archived) project does not count');
+});
+test('hosted: deleting an empty project site succeeds, a site with projects gets 409; ticking Archived moves a site to the archived list', async t => {
+  const f = await fixture(t);
+  const created = await f.admin.request('/records/sites', 'POST', { name: 'Empty yard', address: '9 Empty Road' }); assert.equal(created.status, 201);
+  const empty = (await json<{ record: Row }>(created)).record;
+  assert.equal(empty._archived, false); assert.notEqual(empty.archived, true, 'the archive state lives in the record itself, not in the field');
+  const deleted = await f.admin.request(`/records/sites/${empty.id}/archive`, 'POST', { _version: empty._version });
+  assert.equal(deleted.status, 200); assert.equal((await json<{ record: Row }>(deleted)).record._archived, true);
+  assert.ok(!f.store.list('sites').some(item => item.id === empty.id), 'gone from the active list');
+  const north = f.store.get('sites', NORTH);
+  const refused = await f.admin.request(`/records/sites/${NORTH}/archive`, 'POST', { _version: north._version });
+  assert.equal(refused.status, 409); assert.equal((await json<{ error: string }>(refused)).error, SITE_DELETE_REFUSED);
+  assert.ok(f.store.list('sites').some(item => item.id === NORTH));
+  // The Archived checkbox: on save, the site moves to the archived list (Show archived sites).
+  const other = (await json<{ record: Row }>(await f.admin.request('/records/sites', 'POST', { name: 'Old yard', address: '3 Old Road' }))).record;
+  const ticked = await f.admin.request(`/records/sites/${other.id}`, 'PUT', { name: 'Old yard', archived: true, _version: other._version });
+  assert.equal(ticked.status, 200); const saved = (await json<{ record: Row }>(ticked)).record;
+  assert.equal(saved._archived, true); assert.notEqual(f.store.get('sites', other.id, true).archived, true);
+  assert.deepEqual(siteListRows(f.store.list('sites', true), { archived: true, query: '', sort: SITE_DEFAULT_SORT }).filter(item => item.id === other.id).map(item => item.name), ['Old yard']);
+  assert.ok(!siteListRows(f.store.list('sites', true), { archived: false, query: '', sort: SITE_DEFAULT_SORT }).some(item => item.id === other.id));
+  // Ticked in Add project site: saved straight into the archived list. Unticked: nothing changes.
+  const addArchived = await f.admin.request('/records/sites', 'POST', { name: 'Archived at once', address: '4 Old Road', archived: true }); assert.equal(addArchived.status, 201);
+  assert.equal((await json<{ record: Row }>(addArchived)).record._archived, true);
+  const kept = (await json<{ record: Row }>(await f.admin.request('/records/sites', 'POST', { name: 'Kept yard', address: '5 Road', archived: false }))).record;
+  assert.equal(kept._archived, false);
+  // Archiving needs the Delete right on Project sites, as the delete icon does.
+  const editor = await f.account('Site editor', { profileId: f.profile('Sites edit, no delete', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '4': ['show', 'insert', 'edit'] }) }) });
+  const keptRow = f.store.get('sites', kept.id);
+  assert.equal((await editor.as.request(`/records/sites/${kept.id}`, 'PUT', { archived: true, _version: keptRow._version })).status, 403);
+  assert.equal(f.store.get('sites', kept.id)._archived, false, 'the save is rolled back');
+  assert.equal((await editor.as.request(`/records/sites/${kept.id}/archive`, 'POST', { _version: keptRow._version })).status, 403);
+});
+
+// ----- w1-left-12 and the selector / no-rights texts ------------------------------------------------------------------------
+test('pilots say Logout and Change site; the selector no longer mentions profiles; Go to dashboard never leads to another no-rights page', () => {
+  const user = { id: 'u', name: 'Uma', email: 'uma@example.test', profileId: 'p', permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0 } } as User;
+  const selector = renderToStaticMarkup(createElement(PilotSelector, { user, pilots: [], onOpen: () => undefined, onLogout: () => undefined, logo: '' }));
+  assert.match(selector, />Logout</); assert.doesNotMatch(selector, /Sign out/);
+  assert.match(selector, /Your account is not enabled for Weld Pilot or MTO Pilot\. Ask your administrator/); assert.doesNotMatch(selector, /welding or materials access/);
+  const source = (file: string) => readFileSync(join(process.cwd(), 'client', file), 'utf8');
+  assert.match(source('shell-parts.tsx'), /user-menu-heading">Change site</);
+  assert.match(source('App.tsx'), /pilot \? 'Change site' : 'Change project'/); assert.match(source('App.tsx'), /pilot \? 'Logout' : 'Sign out'/);
+  const weld = PILOT_MAP.weld;
+  const base: MenuRights = { delivered: () => true, canRecord: () => false, canReadReport: () => false, canArea: () => false };
+  assert.equal(pilotHomePath(weld, base), null, 'nothing open: no button');
+  assert.deepEqual(pilotHomePath(weld, { ...base, canRecord: key => key === 'sites' }), { path: '/workspace/sites', label: 'Go to Project sites' }, 'no dashboard area 35: the first open page');
+  assert.deepEqual(pilotHomePath(weld, { ...base, canArea: key => key === '35' }), { path: '/dashboard', label: 'Go to dashboard' });
+  const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(PilotNoRights)));
+  assert.match(html, /Go to dashboard/, 'outside a workspace the button stays');
 });

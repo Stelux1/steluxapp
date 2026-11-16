@@ -72,7 +72,9 @@ export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: 
   /** Pilots profile: which parts Copy isometrics may carry for this account. */
   copyParts?: import('./permissions.ts').CopyParts;
   /** Pilots profile, limited account with several main projects: the main-project choice (each main project read with its own profile). */
-  siteRows?: Record<string, Row[]>; }
+  siteRows?: Record<string, Row[]>;
+  /** Pilots profile: the main project chosen for the sign-in session ('' while none is), shared by every pilot and tab. */
+  sessionSiteId?: string; }
 export interface ActionField extends Field { multiple?: boolean; /** Checkbox field that the "ALL" option of this multi-select stands for. */ allField?: string; }
 export interface ActionDefinition { key: string; title: string; description: string; module: Module; fields: ActionField[]; submit: string; }
 export const labelOf = (row: Row | undefined, resource: Resource) => row ? String(row[resource.display] || row.name || row.id) : '—';
