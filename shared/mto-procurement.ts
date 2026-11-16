@@ -19,12 +19,13 @@ export const PROCUREMENT_PAGES = [
 ] as const;
 export const PROCUREMENT_PATHS: string[] = PROCUREMENT_PAGES.map(page => page.path);
 
-/** Resources and actions the hosted profile delivers for these pages. Records only: no menu page of their own. */
+/**
+ * Resources and actions the hosted profile delivers for these pages. Records only: no menu page of their own.
+ * Orders, order lines and stock are shared with the other MTO flows and delivered once, with every field, in
+ * `availabilityFor()` (shared/release.ts).
+ */
 export const PROCUREMENT_RESOURCE_FIELDS: Record<string, string[]> = {
-  orders: ['number', 'projectId', 'supplierId', 'date', 'status', 'note'],
-  order_lines: ['orderId', 'materialId', 'customMaterialId', 'requirementId', 'isoId', 'materialNo', 'description', 'uom', 'dia', 'lbs', 'quantity', 'received'],
   receipts: ['orderId', 'lineId', 'materialId', 'customMaterialId', 'warehouseId', 'supplierId', 'chargeNo', 'quantity', 'date', 'correction', 'correctsId', 'note'],
-  stock: ['materialId', 'customMaterialId', 'warehouseId', 'chargeNo', 'quantity'],
   suppliers: ['name', 'address', 'zip', 'residence', 'phone', 'email', 'description'],
   warehouses: ['name', 'siteId', 'use'],
 };

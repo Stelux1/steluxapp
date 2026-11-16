@@ -203,13 +203,13 @@ export const MTO_STOCK_ACTION_SCOPES: Record<string, [string, 'insert' | 'edit' 
 
 const names = (key: string, resources: Resource[]) => resources.find(resource => resource.key === key)!.fields.map(f => f.name);
 /**
- * Delivers storehouses, inventory and transfer orders to a profile. Movements and transfer order items have no
- * page of their own (the inventory log and the order dialog read them), so they are delivered as data only.
+ * Delivers storehouses and transfer orders to a profile. Transfer order items have no page of their own (the order
+ * dialog reads them), so they are delivered as data only. Stock (the Material inventory page) and movements (the
+ * inventory log) are shared with the other MTO flows and delivered once in `availabilityFor()` (shared/release.ts).
  */
 export function deliverMtoStock(availability: Availability, resources: Resource[], deliver: (availability: Availability, key: string, names?: string[]) => void) {
   deliver(availability, 'warehouses', ['name', 'address', 'zip', 'residence', 'phone', 'email', 'description']);
-  deliver(availability, 'stock');
   deliver(availability, 'transfer_orders');
-  for (const key of ['movements', 'transfer_order_items']) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names(key, resources)])];
+  for (const key of ['transfer_order_items']) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names(key, resources)])];
   for (const def of defs) availability.actions[def.key] = def.fields.map(f => f.name);
 }

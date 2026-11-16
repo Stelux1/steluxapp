@@ -83,9 +83,28 @@ export interface MaterialStatus {
  * all warehouses and is not divided between isometrics that need the same material.
  */
 export function materialStatus(isometric: Row, rows: Rows): MaterialStatus {
-  const lines = [...materialLineStatuses(rows, text(isometric.id)).values()].map(line => ({ requirementId: line.requirementId, required: line.required, covered: round(Math.min(line.required, line.picked + line.inventory)) }));
-  const required = round(lines.reduce((sum, line) => sum + line.required, 0)), covered = round(lines.reduce((sum, line) => sum + line.covered, 0));
+  const inputs = [...materialLineStatuses(rows, text(isometric.id)).values()].map(line => ({ requirementId: line.requirementId, required: line.required, picked: line.picked, available: line.inventory }));
+  const lines = inputs.map(line => ({ requirementId: line.requirementId, required: line.required, covered: coveredQuantity(line) }));
+  const { required, covered } = materialCoverage(inputs);
   return { required, covered, percent: required > 0 ? Math.round(covered / required * 1000) / 10 : null, lines };
+}
+
+/** One requirement line as the coverage rule sees it: what is required, what was picked, and what is available for it. */
+export interface CoverageLine { required: number; picked: number; available: number }
+/** The covered quantity of one line: min(required, picked + available), never below zero. */
+export const coveredQuantity = (line: CoverageLine) => round(Math.min(Math.max(0, line.required), Math.max(0, line.picked) + Math.max(0, line.available)));
+/**
+ * The single material-coverage rule of the MTO Pilot: covered and required summed over the lines. `materialStatus()`
+ * (the isometric's Materials tab and header) and the Isometric execution page (`shared/mto-logistics.ts`) both use it;
+ * they differ only in what counts as available (all inventory there, free stock plus own reservations here).
+ */
+export function materialCoverage(lines: CoverageLine[]): { required: number; covered: number } {
+  return { required: round(lines.reduce((sum, line) => sum + Math.max(0, line.required), 0)), covered: round(lines.reduce((sum, line) => sum + coveredQuantity(line), 0)) };
+}
+/** Coverage in whole percent, rounded DOWN so 100 % means complete (the Isometric execution bands). Null when nothing is required. */
+export function materialStatusPercent(lines: CoverageLine[]): number | null {
+  const { required, covered } = materialCoverage(lines);
+  return required > 0 ? Math.min(100, Math.floor(round(covered / required * 100))) : null;
 }
 
 // ----- input checks used by the add-material forms and by the server -------------------------------------------------
@@ -118,8 +137,11 @@ export function isoMaterialInputErrors(input: Record<string, unknown>, options: 
 
 // ----- delivery to the hosted profile -------------------------------------------------------------------------------
 
-/** Resources delivered as data only: their own pages belong to other flows, the Ord.? / Inv. / Picked columns read them. */
-export const MTO_DATA_RESOURCES = ['custom_materials', 'orders', 'order_lines', 'stock', 'movements', 'picklists', 'material_quantity_changes'];
+/**
+ * Resources delivered as data only by this flow. Orders, order lines, stock, movements and pick lists, which the
+ * Ord.? / Inv. / Picked columns also read, are delivered once for every MTO flow in `availabilityFor()` (shared/release.ts).
+ */
+export const MTO_DATA_RESOURCES = ['custom_materials', 'material_quantity_changes'];
 /** Resources with a page in the MTO menu that this flow owns or needs as reference lists. */
 export const MTO_PAGE_RESOURCES = ['materials', 'material_parts', 'material_types', 'suppliers', 'operation_phases'];
 

@@ -1,5 +1,6 @@
 import type { ActionDefinition, ActionField, Availability, PermissionVerb, Row } from './types.ts';
 import { materialIdentity, materialRecord, requirementExecution } from './materials.ts';
+import { materialStatusPercent, type CoverageLine } from './mto-materials.ts';
 
 /**
  * Isometric execution, pick lists and logistics (MTO Pilot).
@@ -48,10 +49,10 @@ export function deliverMtoLogistics(availability: Availability, deliver: (availa
   deliver(availability, 'laydowns', names('name'));
   deliver(availability, 'material_laydowns', names('name'));
   // Records read by the pages below (the archives open on their resource paths, so they are pages as well).
-  deliver(availability, 'picklists');
+  // Pick lists (the Pick List archive page) and stock are shared with the other MTO flows and delivered once in
+  // `availabilityFor()` (shared/release.ts).
   deliver(availability, 'service_requests', names('number name spoolId requirementId companyId laydownId materialLaydownId date completedAt status note includeDrawings'));
-  // Records without a page of their own. `stock` is read-only here: only what the material status needs.
-  merge(availability, 'stock', names('materialId customMaterialId chargeNo quantity'));
+  // Records without a page of their own.
   merge(availability, 'reservations', names('isoId requirementId materialId customMaterialId quantity date status note'));
   merge(availability, 'material_locations', names('requirementId laydownId companyId date'));
   merge(availability, 'material_location_events', names('number requirementId type laydownId companyId requestId date note'));
@@ -67,18 +68,13 @@ export function deliverMtoLogistics(availability: Availability, deliver: (availa
 
 // ---- Material status -----------------------------------------------------------------------------------------------
 
-export interface StatusInput { required: number; picked: number; available: number }
+export type StatusInput = CoverageLine;
 /**
- * UNVERIFIED. Percentage of an isometric's requirements that are covered: covered = min(required, picked + available
- * inventory) summed over the lines, divided by the summed requirement, rounded DOWN so 100 % means complete.
- * Null when there is nothing required. Replace by the shared definition (shared/mto-materials.ts) when it exists.
+ * UNVERIFIED reference rule. Percentage of an isometric's requirements that are covered, rounded down. The rule
+ * itself lives once in shared/mto-materials.ts (`materialCoverage`); here available = free stock plus the
+ * isometric's own reservations, and picked includes untaken pick-list claims.
  */
-export function materialStatus(lines: StatusInput[]): number | null {
-  const required = lines.reduce((sum, line) => sum + Math.max(0, line.required), 0);
-  if (required <= 0) return null;
-  const covered = lines.reduce((sum, line) => sum + Math.min(Math.max(0, line.required), Math.max(0, line.picked) + Math.max(0, line.available)), 0);
-  return Math.min(100, Math.floor(round((covered / required) * 100)));
-}
+export const materialStatus = (lines: StatusInput[]): number | null => materialStatusPercent(lines);
 /** Pick-list lines are taken unless they say otherwise: lines issued directly before pick lists existed have no flag. */
 export const isTaken = (line: Row) => line.taken !== false;
 

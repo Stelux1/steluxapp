@@ -85,10 +85,11 @@ const prototypeAvailability: Availability = {
  * Deliver a resource to a profile with all of its fields (or only `names`) and its menu entry. Fields the
  * profile already delivers are kept, so it can extend an existing entry as well as add a new resource.
  */
-export function deliverResource(availability: Availability, key: string, names?: string[]) {
+export function deliverResource(availability: Availability, key: string, names?: string[], options: { page?: boolean } = {}) {
   if (!RESOURCE_MAP[key]) throw new Error(`Unknown resource ${key}.`);
   availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...(names ?? RESOURCE_MAP[key].fields.map(field => field.name))])];
-  if (!availability.navigation.includes(key)) availability.navigation.push(key);
+  // `page: false` delivers the records only: the resource gets no table page (other pages read it).
+  if (options.page !== false && !availability.navigation.includes(key)) availability.navigation.push(key);
 }
 export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => {
   if (profile === 'full') return undefined;
@@ -125,7 +126,13 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
-    // MTO catalogs and the Materials tab of the isometric; orders, stock and picklists are delivered as data for Ord.? / Inv. / Picked.
+    // MTO records that several flows read and write, delivered once with every field: stock is the Material
+    // inventory page, picklists the Pick List archive page; orders, order lines (the procurement pages are reached by
+    // path) and movements (the inventory log) have no table page. Ord.? / Inv. / Picked read all five.
+    deliverResource(availability, 'stock');
+    deliverResource(availability, 'picklists');
+    for (const key of ['orders', 'order_lines', 'movements']) deliverResource(availability, key, undefined, { page: false });
+    // MTO catalogs and the Materials tab of the isometric.
     deliverMtoMaterials(availability, deliverResource, key => RESOURCE_MAP[key].fields.map(field => field.name));
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
