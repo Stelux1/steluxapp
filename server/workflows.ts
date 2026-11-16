@@ -17,6 +17,8 @@ import { isMtoStockAction } from '../shared/mto-stock.ts';
 import { runMtoStock } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
 import { runMtoLogisticsAction } from './mto-logistics.ts';
+import { duplicateSite } from './site-duplicate.ts';
+import { reorderAttachmentNames } from './attachment-names.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -41,6 +43,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
     const ensure = (resource: string, id: unknown) => store.get(resource, id);
     const add = (resource: string, input: Input) => store.create(resource, input, actor);
     const patch = (resource: string, row: Row, input: Input) => store.update(resource, row.id, input, row._version, actor);
+    if (key === 'duplicate-site') return duplicateSite(store, data, actor);
+    if (key === 'reorder-attachment-names') return reorderAttachmentNames(store, data, actor);
     if (key.startsWith('punch-')) return { resource: 'punchlists', record: runPunchAction(store, key, data, actor).record };
     const warehouse = (id: unknown, tool: boolean) => {
       const row = ensure('warehouses', id);

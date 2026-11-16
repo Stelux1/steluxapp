@@ -43,3 +43,56 @@
   .pilot-tiles { grid-template-columns: 1fr; gap: 14px; }
   .pilot-tile { padding: 20px 16px; min-height: 0; }
 }
+
+/* Shell: menu items without rights, application selector logo, bell, account menu, application switcher. */
+.sub-nav-item.no-rights, .nav-rail-button.no-rights { opacity: .55; }
+.sub-nav-item.no-rights:hover, .nav-rail-button.no-rights:hover { opacity: .8; }
+.pilot-select-logo { display: block; max-width: min(260px, 100%); max-height: 72px; object-fit: contain; margin: 0 0 28px; }
+.pilot-no-rights { text-align: center; }
+.bell-trigger { position: relative; }
+.bell-badge { position: absolute; top: -4px; right: -6px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: #d93c1f; color: #fff; font-size: 10px; font-weight: 600; line-height: 17px; text-align: center; box-sizing: border-box; }
+.notification-dropdown { width: 340px; max-width: calc(100vw - 16px); padding: 12px 0; }
+.notification-dropdown .notification-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px 8px; border-bottom: 1px solid var(--line); }
+.notification-dropdown .notification-head h3 { margin: 0; font-size: 15px; }
+.notification-dropdown .notification-head .text-link { padding: 4px 0; min-height: 0; background: none; border: 0; color: var(--primary); font-size: 12px; cursor: pointer; }
+.notification-dropdown .notification-head .text-link:disabled { color: var(--muted); cursor: default; }
+.notification-dropdown > p { margin: 0; padding: 14px 16px; font-size: 13px; color: var(--muted); }
+.notification-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; padding: 10px 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.notification-item.unread { background: #f1f6ff; }
+.notification-item:hover, .notification-item:focus-visible { background: var(--surface-blue, #eaf2ff); }
+.notification-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.notification-item:not(.unread) .notification-title { font-weight: 500; }
+.notification-dot { width: 8px; height: 8px; border-radius: 50%; background: #e67e22; flex-shrink: 0; }
+.notification-item small { font-size: 12px; color: var(--muted); line-height: 1.4; }
+.notification-item .notification-date { font-size: 11px; }
+.user-menu-name { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--ink); }
+.user-menu-heading { display: block; padding: 8px 12px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.user-menu-sites { max-height: 220px; overflow-y: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 6px 0; }
+.dropdown-menu button .menu-gap, .pilot-switcher .menu-gap { display: inline-block; width: 14px; }
+.dropdown-menu button[aria-current="true"] { font-weight: 600; }
+.pilot-switcher { display: inline-flex; margin-left: -4px; }
+@media (max-width: 760px) { .user-menu-name { display: none; } .notification-dropdown { width: min(340px, calc(100vw - 16px)); } }
+/* Change password: strength under the new password. */
+.password-strength { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.password-strength .strength-bar { display: inline-flex; gap: 4px; flex: 1; max-width: 140px; }
+.password-strength .strength-bar i { flex: 1; height: 6px; border-radius: 3px; background: var(--line); }
+.password-strength.level-1 .strength-bar i:nth-child(1) { background: #d93c1f; }
+.password-strength.level-2 .strength-bar i:nth-child(-n+2) { background: #e0a100; }
+.password-strength.level-3 .strength-bar i { background: #2f9e44; }
+.password-strength strong { color: var(--ink); font-weight: 600; min-width: 4.5em; }
+/* Main project form: NDT measurement as radio buttons, weights phase by phase, duplicate options. */
+.radio-field { border: 0; margin: 0; padding: 0; min-width: 0; }
+.radio-field legend { padding: 0; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.radio-option { display: flex; align-items: flex-start; gap: 9px; padding: 4px 0; font-size: 13px; color: var(--ink); cursor: pointer; }
+.radio-option input { margin-top: 3px; }
+.radio-option .field-hint { margin-top: 2px; }
+.weight-group { border-top: 1px solid var(--line); padding-top: 4px; }
+.weight-group:first-of-type { border-top: 0; }
+.weight-sum { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); padding: 2px 0 8px; }
+.weight-sum strong { color: #b42318; font-variant-numeric: tabular-nums; }
+.weight-sum strong.ok { color: #1c7a3a; }
+.weight-note { margin: 8px 0 0; }
+.duplicate-options { border: 0; margin: 0 0 14px; padding: 0; min-width: 0; }
+.duplicate-options legend { padding: 0; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.duplicate-options label { display: flex; align-items: center; gap: 9px; padding: 5px 0; font-size: 13px; color: var(--ink); }
+.modal-footer .duplicate-site-button { margin-right: auto; }

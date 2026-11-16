@@ -3,7 +3,8 @@ import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
-import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
+import { CATALOG_SITES, HOSTED_COMPANY_FIELDS, HOSTED_FIELD_OVERRIDES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
+import { hostedSiteFields } from './site-settings.ts';
 import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
@@ -161,6 +162,11 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // enablement wherever they are delivered (the server accepts its request names for every enablement catalog).
     for (const key of WELD_CATALOG_RESOURCES) deliverResource(availability, key);
     availability.resources[CATALOG_SITES] = fields('resourceKey recordId siteId enabled');
+    // Companies (reference form): name, address, phone and e-mail address only.
+    availability.resources.companies = [...HOSTED_COMPANY_FIELDS];
+    // Duplicate Project site (Edit project site) and the two sortings of Attachment names.
+    availability.actions['duplicate-site'] = fields('siteId parts');
+    availability.actions['reorder-attachment-names'] = fields('mode order');
     // PQR (Weld Pilot → Weld data, first item as in the reference): the page, its reusable attribute values (records only,
     // offered and created from the PQR form) and the WPS–PQR links (Procedure qualifications on the WPS form).
     deliverResource(availability, 'pqr');
@@ -238,10 +244,11 @@ export function projectResource(availability: Availability | undefined, resource
     ...resource, description: descriptions[resource.key] || resource.description,
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
+    ...(pilots && resource.key === 'attachment_names' ? { singular: 'Attachment name' } : {}),
+    fields: (pilots && resource.key === 'sites' ? hostedSiteFields : (list: Field[]) => list)(resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? { ...hostedField(resource.key, f), ...HOSTED_FIELD_OVERRIDES[resource.key]?.[f.name] } : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
-    }),
+    })),
     columns: (listed ?? columns).filter(key => fieldAvailable(availability, resource.key, key)),
     actions: resource.actions?.filter(key => actionAvailable(availability, key)),
     createAction: resource.createAction && actionAvailable(availability, resource.createAction) ? resource.createAction : undefined,

@@ -78,9 +78,10 @@ export function progressTotals(site: SiteLike) {
 
 export interface ProgressValidation { valid: boolean; message: string; fields: Record<string, string>; }
 /**
- * All-empty is valid (weights not configured yet). Once any weight is entered the three phases must total 100,
- * and every phase with a weight above 0 needs activity weights that total 100. Site activities therefore only
- * count when Site is above 0. Weights are whole percentages from 0 to 100.
+ * All-empty is valid (weights never entered: records written before the weights existed, or without them). Once any
+ * weight is entered the three phases must total 100, and the Shop and Field activities each total 100 whatever the
+ * phase weight is. Only Site is excused: its activities count when the Site phase is above 0 (reference: "Site
+ * activities are required only when the Site phase is greater than 0"). Weights are whole percentages from 0 to 100.
  */
 export function validateProgressWeights(site: SiteLike): ProgressValidation {
   const fields: Record<string, string> = {}, issues: string[] = [];
@@ -97,11 +98,55 @@ export function validateProgressWeights(site: SiteLike): ProgressValidation {
     issues.push(message); for (const phase of PROGRESS_PHASES) fields[phase.field] = message;
   }
   for (const phase of PROGRESS_PHASES) {
-    if (weights.phases[phase.key] <= 0 || totals.activities[phase.key] === 100) continue;
+    if (phase.key === 'site' && weights.phases.site <= 0) continue;
+    if (totals.activities[phase.key] === 100) continue;
     const message = `${phase.label} activities must total 100% (now ${totals.activities[phase.key]}%).`;
     issues.push(message); for (const a of phase.activities) fields[a.field] = message;
   }
   return { valid: issues.length === 0, message: issues.join(' '), fields };
+}
+
+// ----- the main project form of the hosted profile (reference "Add project site") -------------------------------------
+/** Label of a weight field in the reference: "Distribution - Shop", "Welds - Shop", … and, for the Site phase, "Hydrotest" / "Paint/Tracing". */
+export const progressLabel = (phase: ProgressPhase, activityKey?: string) => {
+  if (!activityKey) return `Distribution - ${phase.label}`;
+  const found = phase.activities.find(a => a.key === activityKey)!;
+  return phase.key === 'site' ? found.label : `${found.label} - ${phase.label}`;
+};
+/** What a new main project starts with: Shop 50, Field 50, Site 0 and every activity 0. */
+export const PROGRESS_DEFAULTS: Record<string, number> = Object.fromEntries(PROGRESS_PHASES.flatMap(phase => [[phase.field, phase.key === 'site' ? 0 : 50], ...phase.activities.map(a => [a.field, 0])]));
+const SITE_FORM_SECTION = 'Project settings';
+const SITE_CONTACT_LABELS: Record<string, string> = { name: 'Name', address: 'Address', zip: 'Zip code', residence: 'Residence', phone: 'Phone', email: 'Email address' };
+export const NDT_MEASUREMENT_HINTS: Record<string, string> = {
+  [NDT_MEASUREMENTS[0]]: 'A DN500 weld counts more than a DN15 weld.',
+  [NDT_MEASUREMENTS[1]]: '10 welds with NDT required, 1 Accepted = 10% of the NDT weight.',
+};
+interface SiteFormField { name: string; label: string; section?: string; default?: unknown; options?: string[]; control?: 'radio'; optionHints?: Record<string, string> }
+/**
+ * The fields of the main project form as the hosted profile shows them (reference "Add project site"): name and address
+ * data inside the first section "Project settings" with the reference labels, "Repair performance", NDT measurement as
+ * two radio buttons, and the Iso progress weights phase by phase ("Distribution - Shop", its activities, "Distribution -
+ * Field", …) starting at Shop 50 / Field 50 / Site 0. Other profiles keep the shared definitions.
+ */
+export function hostedSiteFields<T extends SiteFormField>(fields: T[]): T[] {
+  const progress = new Set(PROGRESS_FIELDS);
+  const adapted = fields.map(field => {
+    if (SITE_CONTACT_LABELS[field.name]) return { ...field, label: SITE_CONTACT_LABELS[field.name], section: SITE_FORM_SECTION };
+    if (field.name === 'repairLimit') return { ...field, label: 'Repair performance' };
+    if (field.name === 'ndtMeasurement') return { ...field, control: 'radio' as const, optionHints: NDT_MEASUREMENT_HINTS, default: NDT_MEASUREMENTS[0] };
+    if (progress.has(field.name)) {
+      const phase = PROGRESS_PHASES.find(item => item.field === field.name || item.activities.some(a => a.field === field.name))!;
+      const activityKey = phase.activities.find(a => a.field === field.name)?.key;
+      return { ...field, label: progressLabel(phase, activityKey), default: PROGRESS_DEFAULTS[field.name] };
+    }
+    return field;
+  });
+  // Iso progress in the reference order: each phase's distribution, then its activities.
+  const byName = new Map(adapted.map(field => [field.name, field]));
+  const ordered = PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(a => a.field)]).map(name => byName.get(name)).filter((field): field is T => Boolean(field));
+  const slots = adapted.flatMap((field, index) => progress.has(field.name) ? [index] : []);
+  const result = [...adapted]; slots.forEach((slot, i) => { result[slot] = ordered[i]; });
+  return result;
 }
 
 // ----- owner-specific LISL forms ([GU], [MV], [GU Rev 2 / Rev 3]) -----------------------------------------------------

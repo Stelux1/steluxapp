@@ -6,7 +6,7 @@ import { ACTIONS } from './catalog.ts';
 import { RELATIONS,relationFields,relationIds } from './catalog.ts';
 import { materialName,requirementExecution } from '../shared/materials.ts';
 import { nextRevision } from '../shared/revisions.ts';
-import type { Row } from '../shared/types.ts';
+import type { Field, Row } from '../shared/types.ts';
 import { api, post, ApiError, formatNumber, apiUrl } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Modal, FieldInput, revealInvalidField } from './components.tsx';
@@ -14,14 +14,18 @@ import { PermissionProfileEditor } from './permission-profile-editor.tsx';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { enabledOnSite } from '../shared/weld-catalogs.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
-import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
+import { PROGRESS_FIELDS, PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
+import { DuplicateSiteDialog } from './site-duplicate.tsx';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
+  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries, canRun } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.active?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):true}:{})}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
+  // Main project form: the weights are checked when the main project is new or its weights are in use or were changed here (an older main project that never had weights can still be edited).
+  const [initialValues] = useState(values); const [duplicating, setDuplicating] = useState(false); const hosted = Boolean(user.availability?.features.includes('pilots'));
+  const weightsChanged = PROGRESS_FIELDS.some(name => String(values[name] ?? '') !== String(initialValues[name] ?? ''));
   const groups = [...new Set(editorFields.filter(f=>!f.hidden).map(f => f.section || 'Details'))];
   // A long form is often scrolled past the message when it is saved: bring it back into view.
   useEffect(() => { if (error) document.querySelector('.modal-body > .alert.error')?.scrollIntoView({ block: 'nearest' }); }, [error, fields]);
@@ -29,12 +33,13 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     e.preventDefault(); setError(''); setFields({});
     if (resourceKey === 'isometrics') { const problems = isoInputErrors(values, record, (record && isoSummaries?.[record.id]?.budgets) ?? isoBudgets(record ?? ({} as Row), rows)); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
     if (resourceKey === 'flanges') { const problems = flangeInputErrors(values); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
-    if (resourceKey === 'sites') { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
+    if (resourceKey === 'sites' && (!record || !hosted || progressWeights(record).configured || weightsChanged)) { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
     setBusy(true);
     try { const payload = record && user.availability ? Object.fromEntries(Object.entries(values).filter(([name,value]) => {
       const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
       const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
-      return JSON.stringify(value)!==JSON.stringify(previous);
+      // Weights are saved together: a main project without weights gets all of them once one is entered.
+      return JSON.stringify(value)!==JSON.stringify(previous)||(resourceKey==='sites'&&weightsChanged&&PROGRESS_FIELDS.includes(name)&&!progressWeights(record).configured);
     })) : values; await api(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.active ? { enabledSiteId: enablement.siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(`${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }
   }
@@ -54,7 +59,22 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
       return next;
     });
   }
-  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  if (duplicating && record) return <DuplicateSiteDialog site={record} onClose={onClose} onBack={() => setDuplicating(false)}/>;
+  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary>{resourceKey === 'sites' && group === 'Iso progress' && hosted ? <ProgressGroups fields={editorFields.filter(f => !f.hidden && f.section === group)} values={values} errors={fields} onChange={change}/> : <><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</>}</details>)}</div><div className="modal-footer">{resourceKey === 'sites' && record && hosted && canRun('duplicate-site') && <button type="button" className="btn duplicate-site-button" disabled={busy} onClick={() => setDuplicating(true)}>Duplicate Project site</button>}<button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+}
+/** Iso progress of the hosted main project form: each phase's distribution with its activities, and the sum of its activities after the group (reference). */
+function ProgressGroups({ fields, values, errors, onChange }: { fields: Field[]; values: Record<string, unknown>; errors: Record<string, string>; onChange: (name: string, value: unknown) => void }) {
+  const totals = progressTotals(values);
+  const sum = (key: string, label: string, total: number) => <div className="field full-width weight-sum" role="status" key={key}><span>{label}</span><strong className={total === 100 ? 'ok' : ''}>{total}% / 100%</strong></div>;
+  return <>{PROGRESS_PHASES.map((phase, index) => {
+    const input = (name: string) => { const field = fields.find(f => f.name === name); return field && <FieldInput key={name} field={field} value={values[name]} values={values} error={errors[name]} onChange={v => onChange(name, v)}/>; };
+    return <div className="form-grid weight-group" key={phase.key} role="group" aria-label={`${phase.label} weights`}>
+      {input(phase.field)}
+      {index === 0 && sum('phases', 'Shop + Field + Site', totals.phases)}
+      {phase.activities.map(activity => input(activity.field))}
+      {sum(phase.key, `${phase.label} activities`, totals.activities[phase.key])}
+    </div>;
+  })}<p className="field-hint weight-note">Shop, Field and Site must total 100%. Inside each phase the activities must total 100%; Site activities only count when the Site phase is above 0.</p></>;
 }
 /** Running totals of the isometric progress weights: phases must reach 100 %, and so must each active phase. */
 function ProgressTotals({ values }: { values: Record<string, unknown> }) {

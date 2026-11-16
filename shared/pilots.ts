@@ -26,7 +26,8 @@ export interface Pilot { key: PilotKey; title: string; module: Module; color: st
 
 const r = (label: string, resource: string): PilotItem => ({ label, resource });
 const p = (label: string, path: string, need: Pick<PilotItem, 'resources' | 'reports'> = {}): PilotItem => ({ label, path, ...need });
-const PROJECT_SITES = p('Project sites', '/workspace/main-projects', { resources: ['sites'] });
+/** General data → Project sites: the table of main projects (the card screen "Select a main project" stays the choice after sign-in). */
+const PROJECT_SITES = r('Project sites', 'sites');
 const PASSWORD: PilotItem = { label: 'Change password', action: 'password' };
 const DASHBOARD = p('Dashboard', '/dashboard');
 /** Iso overview: a "Project search" dialog that opens the chosen project's isometrics page (needs projects and isometrics). */
@@ -96,3 +97,28 @@ export function legacyPilotPath(pathname: string, allowed: PilotKey[] = [...PILO
   const pilot = !allowed.includes(preferred) && allowed.includes(other) && pagePilots(pathname).includes(other) ? other : preferred;
   return `/${pilot}${pathname === '/' ? '' : pathname}`;
 }
+
+// ----- menu items the account may not open ------------------------------------------------------------------------------
+/** What the account's profile allows, as the menu asks for it. */
+export interface MenuRights { delivered: (path: string) => boolean; canRecord: (resource: string) => boolean; canReadReport: (report: string) => boolean }
+/**
+ * `open`: the page opens. `no-rights`: the page is delivered but the profile may not open it; the menu shows the item greyed
+ * and the page says "You do not have rights to open this page." `hidden`: the page does not exist in this workspace.
+ */
+export type MenuItemState = 'open' | 'no-rights' | 'hidden';
+export function pilotItemState(item: PilotItem, rights: MenuRights): MenuItemState {
+  const needed = pilotItemResources(item);
+  if (item.action) {
+    if (needed.some(key => !RESOURCE_MAP[key] || !rights.delivered(resourcePagePath(key)))) return 'hidden';
+    return needed.every(key => rights.canRecord(key)) ? 'open' : 'no-rights';
+  }
+  const to = pilotItemPath(item);
+  if (!to || (item.resource && !RESOURCE_MAP[item.resource]) || !rights.delivered(pathOnly(to))) return 'hidden';
+  return needed.every(key => rights.canRecord(key)) && (!item.reports || item.reports.some(key => rights.canReadReport(key))) ? 'open' : 'no-rights';
+}
+/** The state of the page at `pathname` in a pilot: that of its menu items (open when any item opens it), or `unlisted` for a page without a menu item. */
+export function pilotPageState(pilot: Pilot, pathname: string, rights: MenuRights): MenuItemState | 'unlisted' {
+  const states = pilot.groups.flatMap(group => group.items).filter(item => { const to = pilotItemPath(item); return !item.action && to !== undefined && pathOnly(to) === pathOnly(pathname); }).map(item => pilotItemState(item, rights));
+  return states.includes('open') ? 'open' : states.includes('no-rights') ? 'no-rights' : 'unlisted';
+}
+export const NO_RIGHTS_TEXT = 'You do not have rights to open this page.';

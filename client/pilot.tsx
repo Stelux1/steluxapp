@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, BadgeCheck, Boxes, Building2, Calculator, ChevronDown, ClipboardList, Flame, FolderKanban, HardHat, Layers3, LayoutDashboard, LayoutGrid, Loader2, LogOut, ScanLine, ScanSearch, Settings2, ShieldAlert, ShoppingCart, Truck } from 'lucide-react';
-import { PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemResources, splitPilotPath, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey } from '../shared/pilots.ts';
+import { NO_RIGHTS_TEXT, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemState, pilotPageState, splitPilotPath, type MenuRights, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey } from '../shared/pilots.ts';
 import { pageAvailable } from '../shared/release.ts';
 import type { User } from '../shared/types.ts';
 import { RESOURCES, RESOURCE_MAP } from './catalog.ts';
@@ -9,7 +9,7 @@ import { useWorkspace } from './context.tsx';
 import { resourcePath } from './records.tsx';
 import { EmptyState, Modal } from './components.tsx';
 import { Wordmark } from './brand.tsx';
-import { post } from './api.ts';
+import { apiBlob, post } from './api.ts';
 
 interface PilotState {
   pilot: Pilot;
@@ -69,10 +69,25 @@ function PilotRefused({ user, pilot, onSelect, onLogout }: { user: User; pilot: 
   </div>;
 }
 
-export function PilotSelector({ user, pilots, onOpen, onLogout }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void }) {
+/** The company logo of Company data for the application selector: its object URL, or '' while there is none (no logo saved, or it cannot be loaded). */
+function useCompanyLogo(enabled: boolean) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false, object = '';
+    apiBlob('/company-logo').then(blob => { if (cancelled) return; object = URL.createObjectURL(blob); setUrl(object); }).catch(() => { if (!cancelled) setUrl(''); });
+    return () => { cancelled = true; if (object) URL.revokeObjectURL(object); };
+  }, [enabled]);
+  return url;
+}
+
+/** `logo`: the logo to show (a URL), or '' for none; left out, the selector loads the company logo itself. */
+export function PilotSelector({ user, pilots, onOpen, onLogout, logo }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void; logo?: string }) {
+  const loaded = useCompanyLogo(logo === undefined), source = logo ?? loaded;
   return <div className="pilot-select-page">
     <AccountBar user={user} onLogout={onLogout}/>
     <main className="pilot-select-main" id="main-content">
+      {source && <img className="pilot-select-logo" src={source} alt="Company logo"/>}
       <div className="eyebrow">BLITZKRIEG · WORKSPACES</div>
       <h1>Select your application workspace</h1>
       <p>Projects, isometrics, spools and certificates are shared. Choose where you want to work now; you can switch at any time.</p>
@@ -86,6 +101,16 @@ export function PilotSelector({ user, pilots, onOpen, onLogout }: { user: User; 
 }
 
 const pathOnly = (path: string) => path.split('?')[0];
+/** Whether the current page is a delivered page of this pilot's menu that the profile may not open (then the page says so). */
+export function usePilotNoRights(pathname: string) {
+  const state = usePilot(); const { user, canRecord, canReadReport } = useWorkspace();
+  if (!state?.entered) return false;
+  return pilotPageState(state.pilot, pathname, { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport }) === 'no-rights';
+}
+/** The page of a menu item the profile may not open (the server refuses its data in any case). */
+export function PilotNoRights() {
+  return <div className="page pilot-no-access pilot-no-rights" role="alert"><span className="pilot-no-access-icon"><ShieldAlert size={22}/></span><EmptyState title={NO_RIGHTS_TEXT} description="Ask an administrator to add the right to your permission profile." action={<Link className="btn" to="/dashboard">Go to dashboard</Link>}/></div>;
+}
 const queryOf = (path: string) => path.includes('?') ? path.slice(path.indexOf('?')) : '';
 
 /**
@@ -117,25 +142,22 @@ export function PilotNavigation({ onPassword, collapsed = false }: { onPassword:
     if (over > 1) setPanel({ ...panel, top: Math.max(12, panel.top - over) });
   }, [panel]);
   const target = (item: PilotItem) => item.resource && RESOURCE_MAP[item.resource] && !item.path ? resourcePath(item.resource) : pilotItemPath(item);
-  const visible = (item: PilotItem) => {
-    if (item.action) return pilotItemResources(item).every(key => canRecord(key));
-    const to = target(item); if (!to) return false;
-    if (item.resource && !RESOURCE_MAP[item.resource]) return false;
-    return pageAvailable(user.availability, pathOnly(to), RESOURCES) && pilotItemResources(item).every(key => canRecord(key)) && (!item.reports || item.reports.some(key => canReadReport(key)));
-  };
-  const groups = state.pilot.groups.map(group => ({ ...group, items: group.items.filter(visible) })).filter(group => group.items.length);
+  // Every page the workspace delivers is listed; one the profile may not open is greyed and opens the "no rights" page.
+  const rights: MenuRights = { delivered: path => pageAvailable(user.availability, path, RESOURCES), canRecord, canReadReport };
+  const restricted = (item: PilotItem) => pilotItemState(item, rights) === 'no-rights';
+  const groups = state.pilot.groups.map(group => ({ ...group, items: group.items.filter(item => pilotItemState(item, rights) !== 'hidden') })).filter(group => group.items.length);
   const items = groups.flatMap(group => group.items);
   const here = (item: PilotItem) => { const to = target(item); return Boolean(to) && pathOnly(to!) === location.pathname; };
   const active = items.find(item => here(item) && queryOf(target(item)!) && queryOf(target(item)!) === location.search) || items.find(item => here(item) && !queryOf(target(item)!));
   if (!state.entered) return <p className="pilot-nav-note">{state.pilot.title} is not included in your permission profile.</p>;
   const entry = (item: PilotItem) => item.action
-    ? <button key={item.label} type="button" className="sub-nav-item pilot-nav-button" onClick={() => { setPanel(null); if (item.action === 'password') onPassword(); else setSearching(true); }}>{item.label}</button>
-    : <Link key={item.label} to={target(item)!} className={`sub-nav-item${item === active ? ' active' : ''}`} aria-current={item === active ? 'page' : undefined} onClick={() => setPanel(null)}>{item.label}</Link>;
+    ? <button key={item.label} type="button" className={`sub-nav-item pilot-nav-button${restricted(item) ? ' no-rights' : ''}`} aria-disabled={restricted(item) || undefined} title={restricted(item) ? NO_RIGHTS_TEXT : undefined} onClick={() => { setPanel(null); if (restricted(item)) return; if (item.action === 'password') onPassword(); else setSearching(true); }}>{item.label}</button>
+    : <Link key={item.label} to={target(item)!} className={`sub-nav-item${item === active ? ' active' : ''}${restricted(item) ? ' no-rights' : ''}`} aria-current={item === active ? 'page' : undefined} aria-disabled={restricted(item) || undefined} title={restricted(item) ? NO_RIGHTS_TEXT : undefined} onClick={() => setPanel(null)}>{item.label}</Link>;
   const search = searching && <ProjectSearch onClose={() => setSearching(false)}/>;
   if (collapsed) return <>{groups.map(group => {
     const Icon = GROUP_ICONS[group.icon], current = group.items.includes(active!), open = panel?.title === group.title, only = group.items.length === 1 && !group.items[0].action ? group.items[0] : null;
     // A group of one page (Start → Dashboard) opens that page directly.
-    if (only) return <div key={state.pilot.key + group.title} className="nav-rail-group"><Link to={target(only)!} className={`nav-rail-button${current ? ' active' : ''}`} aria-label={only.label} title={only.label} aria-current={current ? 'page' : undefined}><Icon size={18}/></Link></div>;
+    if (only) return <div key={state.pilot.key + group.title} className="nav-rail-group"><Link to={target(only)!} className={`nav-rail-button${current ? ' active' : ''}${restricted(only) ? ' no-rights' : ''}`} aria-disabled={restricted(only) || undefined} aria-label={only.label} title={only.label} aria-current={current ? 'page' : undefined}><Icon size={18}/></Link></div>;
     return <div key={state.pilot.key + group.title} ref={open ? panelGroup : undefined} className={`nav-rail-group${open ? ' open' : ''}`}>
       <button type="button" className={`nav-rail-button${current ? ' active' : ''}`} aria-label={group.title} title={open ? undefined : group.title} aria-haspopup="true" aria-expanded={open}
         onClick={event => { panelButton.current = event.currentTarget; setPanel(open ? null : { title: group.title, top: event.currentTarget.getBoundingClientRect().top }); }}><Icon size={18}/></button>

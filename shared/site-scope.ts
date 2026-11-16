@@ -103,4 +103,6 @@ export const SITE_RULES: Record<string, SiteRule> = {
   articles: 'global', clients: shared(WAREHOUSE), tool_stock: shared(WAREHOUSE), rentals: shared(WAREHOUSE), tool_movements: shared(WAREHOUSE),
   // System
   signatures: 'global', company_data: 'global', profiles: 'global', users: 'global',
+  // A notification of a main project follows that main project; one without a main project belongs to its account alone.
+  notifications: shared(SITE),
 };

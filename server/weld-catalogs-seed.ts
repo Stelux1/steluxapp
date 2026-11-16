@@ -58,7 +58,7 @@ export function seedWeldCatalogs(store: Store) {
   add('qa_engineers', 'qa-1', { name: 'Morgan Lee', companyId: 'company-stelux', phone: '+31 10 555 0121', email: 'quality@example.com', stamp: 'ML-07', level: 'Level 2', certificate1: 'ISO 9712 VT-2', certificate2: 'ISO 9712 PT-2' });
   add('qa_engineers', 'qa-2', { name: 'Priya Nair', companyId: 'company-north', phone: '+31 10 555 0187', email: 'p.nair@example.com', stamp: 'PN-12', level: 'Level 3', certificate1: 'ISO 9712 RT-3', certificate2: 'ISO 9712 UT-3' });
   [['Isometric drawing', true, false, 'Before Isometric'], ['ITP', true, false, 'Before Isometric'], ['NDT report', true, false, 'After Isometric'], ['Material certificate', true, false, 'After Isometric'], ['Signed release', true, false, 'After Isometric'], ['Hydrotest report', false, true, 'After Isometric']]
-    .forEach(([name, isoBook, hydrotest, position], i) => add('attachment_names', `attachment-type-${i}`, { name, isoBook, hydrotest, position, sort: i + 1 }));
+    .forEach(([name, isoBook, hydrotest, position], i) => add('attachment_names', `attachment-type-${i}`, { name, isoBook, hydrotest, position, sort: i + 1, ...(name === 'ITP' ? { standard: true } : {}) }));
   // A few records are switched off on one main project; everything else stays enabled everywhere.
   const off = (key: string, id: string, siteId: string) => setAvailability(store, key, id, siteId, false, SYSTEM);
   off('weld_types', 'weld-type-11', 'site-river'); off('weld_types', 'weld-type-12', 'site-river');

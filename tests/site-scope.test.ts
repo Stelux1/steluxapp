@@ -218,7 +218,7 @@ test('Weld Pilot limited to one main project: every write path naming the other 
     ['POST', '/records/punchlists', { name: 'Forged punch', isoId: 'iso-4', category: 'A' }],
     ['PUT', '/records/isometrics/iso-1', { projectId: 'project-steam', _version: version('isometrics', 'iso-1') }],
     ['PUT', '/records/projects/project-cooling', { siteId: RIVER, _version: version('projects', 'project-cooling') }],
-    ['POST', '/records/sites', { name: 'New yard outside my scope' }],
+    ['POST', '/records/sites', { name: 'New yard outside my scope', address: '1 Outside Road' }],
     // Bulk edits naming a record of the other main project, alone or mixed with an allowed one.
     ['POST', '/bulk/isometrics', { ids: ['iso-4'], changes: { area: 'Forged' }, versions: { 'iso-4': version('isometrics', 'iso-4') } }],
     ['POST', '/bulk/isometrics', { ids: ['iso-1', 'iso-4'], changes: { area: 'Forged' }, versions: { 'iso-1': version('isometrics', 'iso-1'), 'iso-4': version('isometrics', 'iso-4') } }],

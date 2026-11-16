@@ -14,6 +14,9 @@ export interface Field {
   aliases?: string[];
   /** Earlier stored values mapped to the option they now stand for (see shared/priority.ts). Never rewritten in bulk. */
   legacy?: Record<string, string>;
+  /** A select shown as radio buttons (no empty option), each option with its short explanation from `optionHints`. */
+  control?: 'radio';
+  optionHints?: Record<string, string>;
 }
 export interface Resource {
   key: string; title: string; singular: string; module: Module; group: string;

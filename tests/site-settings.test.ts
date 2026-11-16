@@ -11,7 +11,7 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, deliverResource, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { pilotScope, projectInPilot, projectScope } from '../shared/project-scope.ts';
 import { wdiProgress } from '../shared/wdi.ts';
-import { PROGRESS_FIELDS, defectNorm, mandatoryFields, ndtMeasurement, progressTotals, progressWeights, projectCertificates, repairPerformanceLimit, validateProgressWeights, wpsValidation } from '../shared/site-settings.ts';
+import { PROGRESS_FIELDS, PROGRESS_PHASES, defectNorm, mandatoryFields, ndtMeasurement, progressTotals, progressWeights, projectCertificates, repairPerformanceLimit, validateProgressWeights, wpsValidation } from '../shared/site-settings.ts';
 import type { Availability, Bootstrap } from '../shared/types.ts';
 
 const valid = { weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10, fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 };
@@ -34,7 +34,8 @@ test('progress weights: phases must total 100 and every phase with a weight need
   assert.match(validateProgressWeights({ ...valid, shopWelds: 41, siteHydrotest: 30 }).message, /Shop activities.*Site activities/);
   // Entering a single weight is enough to require a complete configuration.
   assert.equal(validateProgressWeights({ shopWelds: 100 }).valid, false);
-  assert.equal(validateProgressWeights({ weightShop: 100, shopWelds: 100 }).valid, true, 'a single phase of 100 with activities of 100 is complete');
+  assert.equal(validateProgressWeights({ weightShop: 100, shopWelds: 100 }).valid, false, 'Field activities are needed even at weight 0 (only Site is excused)');
+  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 100, fieldWelds: 100 }).valid, true, 'every phase with activities of 100 is complete');
   assert.equal(validateProgressWeights({ weightShop: 100 }).valid, false, 'a phase with a weight needs its activities');
 });
 
@@ -42,7 +43,8 @@ test('progress weights: Site activities are optional while Site is 0, and weight
   const noSite = { ...valid, weightShop: 40, weightField: 60, weightSite: 0, siteHydrotest: null, sitePaintTracing: null };
   assert.equal(validateProgressWeights(noSite).valid, true);
   assert.equal(validateProgressWeights({ ...noSite, weightSite: null }).valid, true);
-  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 60, shopNdt: 40 }).valid, true);
+  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 60, shopNdt: 40 }).valid, false, 'Field activities must total 100 at weight 0');
+  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 60, shopNdt: 40, fieldWelds: 100 }).valid, true);
   assert.equal(validateProgressWeights({ ...valid, weightSite: 8.5 }).valid, false);
   assert.equal(validateProgressWeights({ ...valid, shopWelds: -1 }).valid, false);
   assert.equal(validateProgressWeights({ ...valid, shopWelds: 101 }).valid, false);
@@ -75,7 +77,7 @@ test('the hosted profile delivers every site setting and both pilot switches, ot
   assert.deepEqual(site.columns, ['name', 'address', 'phone', 'email', 'irnCode']);
   const sections = [...new Set(site.fields.map(field => field.section || 'Details'))];
   assert.deepEqual(sections.slice(-3), ['Project settings', 'Document settings', 'Iso progress']);
-  assert.deepEqual(site.fields.filter(field => field.section === 'Iso progress').map(field => field.name), ['weightShop', 'weightField', 'weightSite', ...PROGRESS_FIELDS.filter(name => !name.startsWith('weight'))]);
+  assert.deepEqual(site.fields.filter(field => field.section === 'Iso progress').map(field => field.name), PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(activity => activity.field)]));
   const project = projectResource(hosted, RESOURCE_MAP.projects);
   assert.deepEqual(project.fields.filter(field => field.section === 'Applications').map(field => [field.name, field.label, field.default]), [['weldPilot', 'Weld Pilot', true], ['mtoPilot', 'MTO Pilot', true]]);
   assert.deepEqual(availabilityFor('full'), undefined);

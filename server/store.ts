@@ -318,6 +318,8 @@ export class Store {
     return `${prefix}-${new Date().getUTCFullYear()}-${String(row.value).padStart(4, '0')}`;
   }
   audit(key: string, id: string, action: string, summary: string, actor: Actor) {
+    // Notifications are personal messages, not events of the workspace: they are not part of its audit trail.
+    if (key === 'notifications') return;
     this.db.prepare('INSERT INTO audit(id,entity_type,entity_id,action,summary,actor_id,actor_name,created_at) VALUES (?,?,?,?,?,?,?,?)').run(randomUUID(), key, id, action, summary, actor.id, actor.name, new Date().toISOString());
   }
   activity(limit = 100): AuditEvent[] {
