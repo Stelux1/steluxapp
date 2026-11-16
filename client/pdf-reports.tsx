@@ -14,6 +14,10 @@ export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl', label: 'LISL Report', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-a3', label: 'LISL Report (A3)', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-blank', label: 'Blank LISL template', options: ['signature'], report: 'lisl' },
+  { key: 'lisl-gu', label: 'LISL Report [GU]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
+  { key: 'lisl-mv', label: 'LISL Report [MV]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
+  { key: 'lisl-gu-rev2', label: 'LISL Report [GU Rev 2]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
+  { key: 'lisl-gu-rev3', label: 'LISL Report [GU Rev 3]', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
 ];
 
 /** Query string of the chosen options (isometric, then the options the document offers). */

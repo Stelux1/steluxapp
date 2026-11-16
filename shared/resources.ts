@@ -9,7 +9,7 @@ import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELD
 import { RELEASE_EXTRA_FIELDS } from './releases.ts';
 import { LEGACY_PUNCH_CATEGORIES, LEGACY_PUNCH_STATUSES, PUNCH_CATEGORIES, PUNCH_PROGRESS_OPTIONS, PUNCH_STATUSES, PUNCH_TYPES, SIGNER_TYPES, SIGN_METHODS } from './punch.ts';
 import { applyMtoStock } from './mto-stock.ts';
-import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
+import { DEFECT_NORMS, FLANGE_STANDARDS, OWNER_FORM_SETTINGS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { ASME_GROUP_NUMBERS, ASME_P_NUMBERS, CERT_TYPES, ISO_15608_GROUPS, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS } from './welder-data.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
@@ -45,8 +45,9 @@ const siteSettings: Field[] = [
   ...[['signSubQaqc', 'Subcontractor QA/QC'], ['signSubConstruction', 'Subcontractor Construction'], ['signPrincipalUi', 'Principal UI'], ['signContractorQaqc', 'Contractor QA/QC'], ['signContractorConstruction', 'Contractor Construction'], ['signNobo', 'NoBo']].map(([name, label]) => t(name, `Signature title: ${label}`, { section: DOCUMENTS })),
   t('vtDocNo', 'VT Doc.No. & Rev.No.', { section: DOCUMENTS }), t('vtProcedureNo', 'VT Procedure No.', { section: DOCUMENTS }),
   t('vtType2No', 'VT type 2 no', { section: DOCUMENTS }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS }), d('vtType2Date', 'VT type 2 date', { section: DOCUMENTS }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS }),
-  ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL [GU] Field ${i}`, { section: DOCUMENTS })),
+  ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL [GU] Field ${i}`, { section: DOCUMENTS, hint: ['Printed as Doc. on the LISL [GU] report.', 'Printed as Version on the LISL [GU] report.', 'Printed as Date on the LISL [GU] report.'][i - 1] })),
   t('lislDocNo', 'LISL Doc.No. & Rev.No.', { section: DOCUMENTS }), t('lislProcedureNo', 'LISL Procedure No.', { section: DOCUMENTS }),
+  ...OWNER_FORM_SETTINGS.map(setting => setting.type === 'date' ? d(setting.name, setting.label, { section: DOCUMENTS, hint: setting.hint }) : t(setting.name, setting.label, { section: DOCUMENTS, hint: setting.hint })),
   ...PROGRESS_PHASES.map(phase => n(phase.field, `${phase.label} phase (%)`, { section: PROGRESS, max: 100, step: 1 })),
   ...PROGRESS_PHASES.flatMap(phase => phase.activities.map(activity => n(activity.field, `${phase.label} · ${activity.label} (%)`, { section: PROGRESS, max: 100, step: 1 }))),
 ];
