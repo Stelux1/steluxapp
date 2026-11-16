@@ -392,7 +392,8 @@ test('Pick list: project, isometric, report no., date, material lines and the "t
   assert.ok(text.some(line => line.startsWith(String(iso.isoNo))));
   const material = f.store.get('materials', String(report.lines[0].materialId));
   assert.ok(text.includes(String(material.materialNo)), 'the material number of the first line');
-  assert.ok(text.includes(String(f.store.get('warehouses', String(report.lines[0].warehouseId)).name)), 'storehouse');
+  const source = report.lines[0].warehouseId ? f.store.get('warehouses', String(report.lines[0].warehouseId)) : f.store.get('sites', String(report.lines[0].siteId));
+  assert.ok(text.includes(String(source.name)), 'the storehouse, or the project site whose inventory gives the material');
   assert.equal((await f.admin.request(`/pdf/pick-list?reportNo=${report.reportNo}`, { pilot: 'weld' })).status, 403, 'the pick list belongs to MTO Pilot');
   assert.equal((await f.admin.request('/pdf/pick-list?reportNo=nope', { pilot: 'mto' })).status, 404);
   assert.equal((await f.admin.request('/pdf/pick-list', { pilot: 'mto' })).status, 404);

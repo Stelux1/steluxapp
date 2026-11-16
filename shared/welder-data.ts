@@ -78,7 +78,7 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   suppliers: { name: 'Name', zip: 'Zip code', residence: 'Residence', email: 'Email address' },
   service_companies: { name: 'Name', email: 'Email address' },
   laydowns: { name: 'Laydown' },
-  warehouses: { name: 'Storehouse name' },
+  warehouses: { name: 'Name' },
   material_laydowns: { name: 'Laydown' },
   // Hydrotest release (capture weld-catalogs / hydrotest): the test system's name is "Test system"; Defect codes column "ISO 6520-1".
   test_systems: { name: 'Test system' },

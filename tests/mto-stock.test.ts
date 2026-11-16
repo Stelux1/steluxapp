@@ -10,18 +10,26 @@ import { seed } from '../server/seed.ts';
 import { runAction } from '../server/workflows.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
-import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
+import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import { canAction, canResource } from '../shared/permissions.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { PILOT_MAP, pilotItemPath } from '../shared/pilots.ts';
-import { conservedTotals, inventoryLog, inventoryRows, materialsList, projectHoldings, stockDetails, validQuantity } from '../shared/mto-stock.ts';
+import { conservedTotals, defaultTransferType, inventoryLog, inventoryRows, materialsList, siteInventoryLog, stockDetails, storehouseRows, transferOrderFields, transferRoute, transferTypesFor, unmigratedHoldings, validQuantity } from '../shared/mto-stock.ts';
+import { requirementExecution } from '../shared/materials.ts';
+import { materialStatus } from '../shared/mto-materials.ts';
+import { isoStatuses } from '../shared/mto-logistics.ts';
+import { migrateProjectHoldings } from '../server/mto-stock.ts';
 import type { Row, User } from '../shared/types.ts';
 
 const actor = { id: 'tester', name: 'Test engineer' };
 const fixture = () => { const store = new Store(':memory:'); seed(store); return store; };
-const all = (store: Store) => Object.fromEntries(['stock', 'movements', 'materials', 'custom_materials', 'warehouses', 'sites', 'projects', 'isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists'].map(key => [key, store.list(key, true)]));
-const line = (store: Store, warehouseId: string, materialId: string, chargeNo = 'H-1042') => store.list('stock').find(row => row.warehouseId === warehouseId && row.materialId === materialId && row.chargeNo === chargeNo)!;
+const all = (store: Store) => Object.fromEntries(['stock', 'movements', 'materials', 'custom_materials', 'warehouses', 'sites', 'projects', 'isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists', 'reservations', 'certifications', 'operation_phases'].map(key => [key, store.list(key, true)]));
+/** A storehouse line (material and charge in one storehouse). */
+const line = (store: Store, warehouseId: string, materialId: string, chargeNo = 'H-1042') => store.list('stock').find(row => row.locationKind !== 'site' && row.warehouseId === warehouseId && row.materialId === materialId && row.chargeNo === chargeNo)!;
+/** What a project site's Material inventory holds of one material, every charge together. */
+const onSite = (store: Store, siteId: string, materialId: string) => store.list('stock').filter(row => row.locationKind === 'site' && row.siteId === siteId && row.materialId === materialId).reduce((sum, row) => sum + Number(row.quantity), 0);
+const inv = (store: Store, requirementId: string) => requirementExecution(all(store)).find(entry => entry.requirement.id === requirementId)!.inventory;
 const run = (store: Store, key: string, data: Record<string, unknown>) => runAction(store, key, { date: '2026-11-01', ...data }, actor);
 const total = (store: Store) => conservedTotals(all(store));
 const refused = (status: number, pattern: RegExp) => (error: unknown) => { assert.equal((error as { status: number }).status, status); assert.match((error as Error).message, pattern); return true; };
@@ -31,20 +39,71 @@ test('quantities must be at least 0.01 in steps of 0.01', () => {
   for (const value of [0, -1, 0.001, 0.005, 1.005, NaN, Infinity, '1', null]) assert.equal(validQuantity(value), false, String(value));
 });
 
-test('transfer to a project is conserved: the storehouse loses exactly what the project holds, and a return restores it', () => {
+test('take-in books into the order\'s project site inventory, one inventory row per Material No; storehouse lines do not count', () => {
+  const s = fixture();
+  const material = s.create('materials', { materialNo: 'TI-ELB-90', description: 'Take-in test elbow', materialGroup: 'Elbow', uom: 'EA' }, actor, 'material-take-in');
+  const requirement = s.create('iso_materials', { isoId: 'iso-1', materialId: material.id, quantity: 10, phaseId: 'phase-0' }, actor);
+  const order = run(s, 'order-requirements', { requirementIds: [requirement.id] }).record!;
+  const orderLine = s.list('order_lines').find(row => row.orderId === order.id)!;
+  // Site A = North fabrication yard (iso-1 → project-cooling). No storehouse is named.
+  run(s, 'receive', { orderId: order.id, supplierId: 'supplier-steel', items: [{ lineId: orderLine.id, quantity: 6, chargeNo: 'RX-1' }] });
+  const received = s.list('stock').filter(row => row.materialId === material.id);
+  assert.equal(received.length, 1);
+  assert.deepEqual([received[0].locationKind, received[0].siteId, received[0].warehouseId, received[0].quantity], ['site', 'site-north', '', 6]);
+  assert.equal(inv(s, requirement.id), 6, 'Inv. counts the site inventory: 6');
+  run(s, 'receive', { orderId: order.id, supplierId: 'supplier-steel', items: [{ lineId: orderLine.id, quantity: 4, chargeNo: 'RX-2' }] });
+  const rows = inventoryRows(all(s), { siteId: 'site-north', onlyWithQuantity: true }).filter(row => row.materialId === material.id);
+  assert.equal(rows.length, 1, 'two charges, one row per Material No'); assert.equal(rows[0].quantity, 10, '6 + 4'); assert.equal(rows[0].lines.length, 2);
+  assert.equal(inventoryRows(all(s), { siteId: 'site-river', onlyWithQuantity: false }).some(row => row.materialId === material.id), false, 'not in the other site');
+  // A storehouse line of the same material changes nothing for the site's isometrics.
+  run(s, 'adjust-material', { materialId: material.id, warehouseId: 'warehouse-main', chargeNo: 'RX-1', quantity: 50, note: 'Storehouse opening balance' });
+  assert.equal(inv(s, requirement.id), 10, 'Inv. stays 10 with 50 in a storehouse');
+  assert.equal(materialStatus(s.get('isometrics', 'iso-1'), all(s)).lines.find(entry => entry.requirementId === requirement.id)!.covered, 10);
+  assert.equal(storehouseRows(all(s), { onlyWithQuantity: true }).filter(entry => entry.stock.materialId === material.id).length, 1);
+  assert.equal(siteInventoryLog(all(s), 'site-north', `catalog:${material.id}`).filter(move => move.type === 'Receipt').length, 2, 'the Material log shows both receipts');
+});
+
+test('transfer to project moves storehouse material into the chosen site inventory with its certificates; totals are conserved', () => {
   const s = fixture(), main = line(s, 'warehouse-main', 'material-4'), before = total(s), stockBefore = Number(main.quantity);
+  const riverBefore = onSite(s, 'site-river', 'material-4'), invBefore = inv(s, 'requirement-4');
   run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: main.id, quantity: 5.25 }], note: 'Steam header' });
-  assert.equal(Number(s.get('stock', main.id).quantity), stockBefore - 5.25);
-  assert.deepEqual(total(s), before, 'storehouse plus project totals are unchanged');
-  const held = projectHoldings(all(s)).find(entry => entry.siteId === 'site-river' && entry.materialId === 'material-4')!;
-  assert.equal(held.quantity, 5.25);
-  assert.equal(s.list('movements').filter(m => m.type === 'Project transfer' && m.siteId === 'site-river').at(0)!.quantity, -5.25);
-  run(s, 'stock-return', { stockId: main.id, siteId: 'site-river', quantity: 1.25 });
-  assert.equal(Number(s.get('stock', main.id).quantity), stockBefore - 4);
-  run(s, 'stock-return', { stockId: main.id, siteId: 'site-river', all: true });
-  assert.equal(Number(s.get('stock', main.id).quantity), stockBefore);
-  assert.equal(projectHoldings(all(s)).some(entry => entry.siteId === 'site-river' && entry.materialId === 'material-4'), false);
-  assert.deepEqual(total(s), before);
+  assert.equal(Number(s.get('stock', main.id).quantity), stockBefore - 5.25, 'storehouse line −5.25');
+  assert.equal(onSite(s, 'site-river', 'material-4'), riverBefore + 5.25, 'Riverside inventory +5.25');
+  assert.equal(inv(s, 'requirement-4'), invBefore + 5.25, 'the Riverside isometric counts it');
+  assert.deepEqual(total(s), before, 'storehouse plus site inventories: unchanged');
+  const moves = s.list('movements').filter(move => move.type === 'Project transfer' && move.materialId === 'material-4' && move.note === 'Steam header');
+  assert.deepEqual(moves.map(move => [move.warehouseId, move.siteId, move.quantity]).sort(), [['', 'site-river', 5.25], ['warehouse-main', 'site-river', -5.25]], 'a movement on both sides');
+  assert.deepEqual(unmigratedHoldings(all(s)), [], 'no invisible holding');
+  // The ticked certificates of the line are copied to the destination site, each with its index number there.
+  const pipe = line(s, 'warehouse-main', 'material-1');
+  run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: pipe.id, quantity: 2, certIds: ['certificate-1'] }] });
+  const copy = s.list('certifications').find(cert => cert.siteId === 'site-river' && cert.name === 'ATT-26-1184')!;
+  assert.ok(copy, 'certificate copied'); assert.match(String(copy.indexNo), /^\d{4}$/); assert.equal(copy.chargeNo, 'H-1042'); assert.equal(copy.materialId, 'material-1');
+  assert.equal(s.get('certifications', 'certificate-1').siteId, 'site-north', 'the original stays');
+  run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: pipe.id, quantity: 1, certIds: ['certificate-1'] }] });
+  assert.equal(s.list('certifications').filter(cert => cert.siteId === 'site-river' && cert.name === 'ATT-26-1184').length, 1, 'copied once');
+  assert.throws(() => run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: pipe.id, quantity: 1, certIds: ['certificate-2'] }] }), refused(422, /does not belong/));
+  // The current site is a destination too.
+  const northBefore = onSite(s, 'site-north', 'material-4');
+  run(s, 'stock-to-project', { siteId: 'site-north', items: [{ stockId: main.id, quantity: 1 }] });
+  assert.equal(onSite(s, 'site-north', 'material-4'), northBefore + 1);
+  assert.throws(() => run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: s.list('stock').find(row => row.locationKind === 'site')!.id, quantity: 1 }] }), refused(422, /inventory, not in a storehouse/));
+});
+
+test('scenario S14: transferring storehouse stock to the isometric\'s own site raises its coverage, and a reservation is never undercut by a storehouse transfer', () => {
+  // STX-CW-002 (iso-2, North) needs 4 CS-E090 (material-2) and reserves them; then every storehouse line of CS-E090 goes to North.
+  const s = fixture();
+  run(s, 'reserve-iso', { isoId: 'iso-2' });
+  assert.equal(s.list('reservations').find(row => row.isoId === 'iso-2')!.quantity, 4);
+  const before = isoStatuses(all(s)).get('iso-2')!.percent, north = onSite(s, 'site-north', 'material-2');
+  assert.equal(before, 100);
+  const lines = s.list('stock').filter(row => row.locationKind !== 'site' && row.materialId === 'material-2' && Number(row.quantity) > 0);
+  const moved = lines.reduce((sum, row) => sum + Number(row.quantity), 0);
+  run(s, 'stock-to-project', { siteId: 'site-north', items: lines.map(row => ({ stockId: row.id, quantity: Number(row.quantity) })) });
+  assert.equal(onSite(s, 'site-north', 'material-2'), north + moved, 'all of it arrives in the North inventory');
+  assert.equal(isoStatuses(all(s)).get('iso-2')!.percent, 100, 'D3: 100 % stays 100 % (was 88.2 %)');
+  assert.equal(materialStatus(s.get('isometrics', 'iso-2'), all(s)).percent, 100);
+  assert.equal(s.list('reservations').find(row => row.isoId === 'iso-2')!.status, 'Reserved');
 });
 
 test('stock never goes negative and a refused action leaves everything unchanged', () => {
@@ -54,7 +113,8 @@ test('stock never goes negative and a refused action leaves everything unchanged
   const other = line(s, 'warehouse-main', 'material-1');
   assert.throws(() => run(s, 'stock-to-project', { siteId: 'site-river', items: [{ stockId: other.id, quantity: 1 }, { stockId: main.id, quantity: 999 }] }), refused(409, /Insufficient/));
   assert.throws(() => run(s, 'stock-move', { stockId: main.id, toWarehouseId: 'warehouse-field', quantity: 500 }), refused(409, /Insufficient/));
-  assert.throws(() => run(s, 'stock-return', { stockId: main.id, siteId: 'site-river', quantity: 1 }), refused(409, /holds/), 'a project cannot return what it never received');
+  assert.throws(() => run(s, 'stock-return', { stockId: main.id, siteId: 'site-river', quantity: Number(main.quantity) + 1 }), refused(409, /Insufficient/), 'a storehouse cannot return more than it holds');
+  assert.throws(() => run(s, 'inventory-remove', { siteId: 'site-north', materialId: 'material-3', quantity: 999, comment: 'Count' }), refused(409, /Insufficient stock/));
   assert.throws(() => run(s, 'stock-adjust', { stockId: main.id, quantity: -1, reasonText: 'Count' }), refused(422, /zero or more/));
   assert.equal(JSON.stringify([s.list('stock'), s.list('movements', true)]), snapshot);
 });
@@ -107,7 +167,7 @@ test('correcting an entry needs a reason, logs what changed and never touches th
 
 test('a correction cannot rename a charge onto an existing line of the same material', () => {
   const s = fixture(), a = line(s, 'warehouse-main', 'material-1');
-  run(s, 'stock-add', { warehouseId: 'warehouse-main', materialId: 'material-1', chargeNo: 'H-9000', quantity: 3 });
+  run(s, 'adjust-material', { warehouseId: 'warehouse-main', materialId: 'material-1', chargeNo: 'H-9000', quantity: 3, note: 'Second heat' });
   const base = { stockId: a.id, materialGroup: 'Pipe', articleNo: 'ART-1001', uom: 'M', description: 'Seamless carbon steel pipe', dia: '2', lbs: 'SCH 40', reason: 'Other', reasonText: 'Wrong heat number' };
   assert.throws(() => run(s, 'stock-correct', { ...base, chargeNo: 'H-9000' }), refused(409, /already holds/));
   run(s, 'stock-correct', { ...base, chargeNo: 'H-1042-R' });
@@ -126,31 +186,68 @@ test('adjusting the quantity records the difference with its reason; removing wr
   run(s, 'stock-remove', { stockId: target.id, reasonText: 'Imported by mistake' });
   assert.equal(s.get('stock', target.id, true)._archived, true);
   assert.equal(s.list('movements').find(move => move.type === 'Removal' && move.materialId === 'material-7')!.quantity, -(start - 3));
-  assert.equal(inventoryRows(all(s), { warehouseId: 'warehouse-main', onlyWithQuantity: false }).some(entry => entry.stock.id === target.id), false);
+  assert.equal(storehouseRows(all(s), { warehouseId: 'warehouse-main', onlyWithQuantity: false }).some(entry => entry.stock.id === target.id), false);
   assert.ok(s.activity(30).some(event => event.action === 'removed'));
-  // The same material can be added again afterwards.
-  run(s, 'stock-add', { warehouseId: 'warehouse-main', materialId: 'material-7', chargeNo: 'H-1042', quantity: 2 });
+  // The same material can come into the storehouse again afterwards.
+  run(s, 'adjust-material', { warehouseId: 'warehouse-main', materialId: 'material-7', chargeNo: 'H-1042', quantity: 2, note: 'Recount' });
   assert.equal(Number(line(s, 'warehouse-main', 'material-7').quantity), 2);
 });
 
-test('the inventory shows only lines with quantity unless all materials are requested', () => {
-  const s = fixture(); const target = line(s, 'warehouse-main', 'material-3');
-  run(s, 'stock-adjust', { stockId: target.id, quantity: 0, reasonText: 'Used up' });
-  const only = inventoryRows(all(s), { warehouseId: 'warehouse-main', onlyWithQuantity: true }), everything = inventoryRows(all(s), { warehouseId: 'warehouse-main', onlyWithQuantity: false });
-  assert.equal(only.some(entry => entry.stock.id === target.id), false); assert.equal(everything.some(entry => entry.stock.id === target.id), true);
-  const found = inventoryRows(all(s), { warehouseId: 'warehouse-main', onlyWithQuantity: false, query: 'cs-f150' });
-  assert.ok(found.length >= 1 && found.every(entry => entry.details.materialNo === 'CS-F150'));
-  assert.ok(everything.every(entry => entry.stock.warehouseId === 'warehouse-main'));
+test('the Material inventory of a site lists one row per Material No with the quantity of every charge, and only rows with quantity unless asked', () => {
+  const s = fixture();
+  // SS-P114 (material-4) in the North inventory: 12 (H-1042) from the sample, then 6.5 of a second heat.
+  run(s, 'stock-add', { siteId: 'site-north', materialId: 'material-4', chargeNo: 'H-3310', quantity: 6.5 });
+  const pipe = inventoryRows(all(s), { siteId: 'site-north', onlyWithQuantity: true }).filter(row => row.details.materialNo === 'SS-P114');
+  assert.equal(pipe.length, 1); assert.equal(pipe[0].quantity, 18.5, '12 + 6.5'); assert.deepEqual(pipe[0].lines.map(row => row.chargeNo).sort(), ['H-1042', 'H-3310']);
+  const rows = inventoryRows(all(s), { siteId: 'site-north', onlyWithQuantity: false });
+  assert.equal(new Set(rows.map(row => row.details.materialNo)).size, rows.length, 'every Material No once');
+  assert.ok(rows.every(row => row.siteId === 'site-north' && row.lines.every(stock => stock.locationKind === 'site')));
+  // Removing all of a Material No: it leaves the list unless all materials are shown.
+  run(s, 'inventory-remove', { siteId: 'site-north', materialId: 'material-4', quantity: 18.5, comment: 'Used for the cooling loop spool repair' });
+  assert.equal(onSite(s, 'site-north', 'material-4'), 0);
+  assert.equal(inventoryRows(all(s), { siteId: 'site-north', onlyWithQuantity: true }).some(row => row.materialId === 'material-4'), false);
+  assert.equal(inventoryRows(all(s), { siteId: 'site-north', onlyWithQuantity: false }).some(row => row.materialId === 'material-4'), true);
+  const removals = siteInventoryLog(all(s), 'site-north', 'catalog:material-4').filter(move => move.type === 'Removal');
+  assert.deepEqual(removals.map(move => move.quantity).sort((a, b) => Number(a) - Number(b)), [-12, -6.5], 'one removal per charge, written off with the comment');
+  assert.ok(removals.every(move => move.reasonText === 'Used for the cooling loop spool repair'));
+  assert.throws(() => run(s, 'inventory-remove', { siteId: 'site-north', materialId: 'material-1', quantity: 1 }), refused(422, /Comment is required/));
+  const found = inventoryRows(all(s), { siteId: 'site-north', onlyWithQuantity: false, query: 'cs-e090' });
+  assert.deepEqual(found.map(row => [row.details.materialNo, row.quantity]), [['CS-E090', 15]], '12 transferred + 3 from the completed transfer order');
 });
 
-test('add material from the database creates or increases a line and logs it', () => {
+test('add material from DB puts it into the Material inventory of the project site and logs it', () => {
   const s = fixture(), before = s.list('stock').length;
-  const created = run(s, 'stock-add', { warehouseId: 'warehouse-field', materialId: 'material-8', chargeNo: 'H-7001', quantity: 2.5 });
-  assert.equal(s.list('stock').length, before + 1); assert.equal(Number('record' in created ? created.record!.quantity : 0), 2.5);
-  run(s, 'stock-add', { warehouseId: 'warehouse-field', materialId: 'material-8', chargeNo: 'H-7001', quantity: 0.5 });
-  assert.equal(Number(line(s, 'warehouse-field', 'material-8', 'H-7001').quantity), 3);
-  assert.throws(() => run(s, 'stock-add', { warehouseId: 'warehouse-field', materialId: 'material-8', quantity: 0 }), refused(422, /at least 0.01/));
-  assert.throws(() => run(s, 'stock-add', { warehouseId: 'warehouse-field', materialId: 'missing', quantity: 1 }), /could not be found/);
+  const created = run(s, 'stock-add', { siteId: 'site-river', materialId: 'material-8', chargeNo: 'H-7001', quantity: 2.5 });
+  const record = 'record' in created ? created.record! : null as never;
+  assert.equal(s.list('stock').length, before + 1); assert.deepEqual([record.locationKind, record.siteId, record.warehouseId, record.quantity], ['site', 'site-river', '', 2.5]);
+  run(s, 'stock-add', { siteId: 'site-river', materialId: 'material-8', chargeNo: 'H-7001', quantity: 0.5 });
+  assert.equal(Number(s.get('stock', record.id).quantity), 3);
+  assert.equal(siteInventoryLog(all(s), 'site-river', 'catalog:material-8').length, 2);
+  assert.throws(() => run(s, 'stock-add', { siteId: 'site-river', materialId: 'material-8', quantity: 0 }), refused(422, /at least 0.01/));
+  assert.throws(() => run(s, 'stock-add', { siteId: 'site-river', materialId: 'missing', quantity: 1 }), /could not be found/);
+  assert.throws(() => run(s, 'stock-add', { materialId: 'material-8', quantity: 1 }), /./, 'a project site is required');
+});
+
+test('transfer-order types route as in the reference: source, destination and the fields the dialog shows', () => {
+  assert.deepEqual(transferRoute('Inventory - Project'), { from: 'inventory', to: 'site' });
+  assert.deepEqual(transferRoute('Inventory - Storehouse'), { from: 'inventory', to: 'storehouse' });
+  assert.deepEqual(transferRoute('Storehouse → Project'), { from: 'storehouse', to: 'site' });
+  assert.deepEqual(transferRoute('Storehouse → Storehouse'), { from: 'storehouse', to: 'storehouse' });
+  assert.deepEqual(transferRoute('Return → Inventory'), { from: 'storehouse', to: 'inventory' });
+  assert.equal(transferRoute('Somewhere'), null);
+  // #stoType handler: 1 To storehouse; 5 To project site; 2 From storehouse (not in the inventory context or with carried lines) + To project site; 3 the same + To storehouse; 4 From storehouse only.
+  const shown = (type: string, context: 'inventory' | 'store' | 'page', carried = false) => transferOrderFields(type, context, carried);
+  assert.deepEqual(shown('Inventory - Storehouse', 'inventory'), { fromStorehouse: false, toSite: false, toStorehouse: true });
+  assert.deepEqual(shown('Inventory - Project', 'inventory'), { fromStorehouse: false, toSite: true, toStorehouse: false });
+  assert.deepEqual(shown('Storehouse → Project', 'page'), { fromStorehouse: true, toSite: true, toStorehouse: false });
+  assert.deepEqual(shown('Storehouse → Project', 'store', true), { fromStorehouse: false, toSite: true, toStorehouse: false });
+  assert.deepEqual(shown('Storehouse → Storehouse', 'inventory'), { fromStorehouse: false, toSite: false, toStorehouse: true });
+  assert.deepEqual(shown('Return → Inventory', 'page'), { fromStorehouse: true, toSite: false, toStorehouse: false });
+  assert.deepEqual(shown('Return → Inventory', 'store', true), { fromStorehouse: false, toSite: false, toStorehouse: false });
+  assert.equal(defaultTransferType('inventory'), 'Inventory - Project'); assert.equal(defaultTransferType('store'), 'Storehouse → Project');
+  assert.deepEqual(transferTypesFor('inventory'), ['Inventory - Project', 'Inventory - Storehouse']);
+  assert.deepEqual(transferTypesFor('store'), ['Storehouse → Project', 'Storehouse → Storehouse', 'Return → Inventory']);
+  assert.equal(transferTypesFor('page').length, 5);
 });
 
 test('transfer orders: validation follows the type, items need a material number and a valid quantity', () => {
@@ -165,7 +262,11 @@ test('transfer orders: validation follows the type, items need a material number
   assert.throws(() => create({ type: 'Storehouse → Project', fromWarehouseId: 'warehouse-main', siteId: 'site-river', items: [] }), refused(422, /at least one item/));
   assert.throws(() => create({ type: 'Storehouse → Project', fromWarehouseId: 'warehouse-main', siteId: 'site-river', items: [{ ...item, materialNo: '' }] }), refused(422, /Material no\. is required/));
   for (const quantity of [0, 0.004, -1]) assert.throws(() => create({ type: 'Storehouse → Project', fromWarehouseId: 'warehouse-main', siteId: 'site-river', items: [{ ...item, quantity }] }), refused(422, /at least 0.01/));
-  assert.throws(() => create({ type: 'Inventory - Project', fromWarehouseId: 'warehouse-field', siteId: 'site-river', items: [{ ...item, stockId: line(s, 'warehouse-main', 'material-1').id }] }), refused(422, /not in the chosen storehouse/));
+  assert.throws(() => create({ type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-river', items: [{ ...item, stockId: line(s, 'warehouse-main', 'material-1').id }] }), refused(422, /not in the inventory of this project site/));
+  assert.throws(() => create({ type: 'Inventory - Project', siteId: 'site-river' }), refused(422, /project site whose inventory gives/), 'the source is the active site');
+  assert.throws(() => create({ type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-north' }), refused(422, /different project site/));
+  assert.throws(() => create({ type: 'Inventory - Storehouse', fromSiteId: 'site-north' }), /./, 'a storehouse is required');
+  assert.throws(() => create({ type: 'Storehouse → Storehouse', fromWarehouseId: 'warehouse-main', toWarehouseId: 'warehouse-field', items: [{ ...item, stockId: line(s, 'warehouse-field', 'material-2').id }] }), refused(422, /not in the chosen storehouse/));
   const before = s.list('transfer_orders').length;
   const result = create({ type: 'Storehouse → Project', priority: 'Urgent', fromWarehouseId: 'warehouse-main', siteId: 'site-river', notes: 'Header spools' });
   const order = 'record' in result ? result.record! : null as never;
@@ -205,46 +306,97 @@ test('an order that cannot be fully supplied stays open and moves nothing', () =
   assert.throws(() => run(s, 'transfer-order-complete', { orderId: order.id }), refused(409, /already cancelled/));
 });
 
-test('an order built from inventory lines takes exactly those lines; a return order brings project material back', () => {
-  const s = fixture(), before = total(s), pipe = line(s, 'warehouse-main', 'material-1');
-  run(s, 'stock-add', { warehouseId: 'warehouse-main', materialId: 'material-1', chargeNo: 'H-1', quantity: 5 });
-  const toProject = run(s, 'transfer-order-create', { type: 'Inventory - Project', fromWarehouseId: 'warehouse-main', siteId: 'site-river', items: [{ stockId: pipe.id, materialNo: 'CS-P060', quantity: 6, uom: 'M' }] });
-  run(s, 'transfer-order-complete', { orderId: ('record' in toProject ? toProject.record! : null as never).id });
-  assert.equal(Number(s.get('stock', pipe.id).quantity), Number(pipe.quantity) - 6); assert.equal(Number(line(s, 'warehouse-main', 'material-1', 'H-1').quantity), 5, 'the other charge is untouched');
-  const back = run(s, 'transfer-order-create', { type: 'Return → Inventory', siteId: 'site-river', toWarehouseId: 'warehouse-field', items: [{ materialNo: 'CS-P060', quantity: 4, uom: 'M' }] });
-  run(s, 'transfer-order-complete', { orderId: ('record' in back ? back.record! : null as never).id });
-  assert.equal(Number(line(s, 'warehouse-field', 'material-1').quantity), 4);
-  assert.equal(projectHoldings(all(s)).find(entry => entry.siteId === 'site-river' && entry.materialId === 'material-1')!.quantity, 2);
-  const tooMuch = run(s, 'transfer-order-create', { type: 'Return → Inventory', siteId: 'site-river', toWarehouseId: 'warehouse-field', items: [{ materialNo: 'CS-P060', quantity: 2.01, uom: 'M' }] });
-  assert.throws(() => run(s, 'transfer-order-complete', { orderId: ('record' in tooMuch ? tooMuch.record! : null as never).id }), refused(409, /too little/));
-  assert.deepEqual(Object.fromEntries(Object.entries(total(s)).filter(([key]) => !key.endsWith('|H-1'))), Object.fromEntries(Object.entries(before)), 'only the added charge differs from the start');
+test('inventory orders take from the active site\'s inventory; Return → Inventory takes from a storehouse into the active site; totals are conserved', () => {
+  const s = fixture(), before = total(s);
+  const order = (data: Record<string, unknown>) => { const created = run(s, 'transfer-order-create', data); return ('record' in created ? created.record! : null as never); };
+  const complete = (o: Row) => run(s, 'transfer-order-complete', { orderId: o.id });
+  // 5 Inventory - Project: North → Riverside, 6 m of CS-P060 (North holds 16 H-1042 + 14 H-2207 = 30, taken in charge order).
+  const northPipe = onSite(s, 'site-north', 'material-1'), riverPipe = onSite(s, 'site-river', 'material-1');
+  const toRiver = order({ type: 'Inventory - Project', fromSiteId: 'site-north', siteId: 'site-river', items: [{ materialNo: 'CS-P060', quantity: 6, uom: 'M' }] });
+  assert.equal(onSite(s, 'site-north', 'material-1'), northPipe, 'creating an order moves nothing');
+  complete(toRiver);
+  assert.equal(onSite(s, 'site-north', 'material-1'), northPipe - 6); assert.equal(onSite(s, 'site-river', 'material-1'), riverPipe + 6);
+  // 1 Inventory - Storehouse: North → Field stores, 2 elbows.
+  const northElbow = onSite(s, 'site-north', 'material-2'), fieldElbow = Number(line(s, 'warehouse-field', 'material-2').quantity);
+  complete(order({ type: 'Inventory - Storehouse', fromSiteId: 'site-north', toWarehouseId: 'warehouse-field', items: [{ materialNo: 'CS-E090', quantity: 2, uom: 'EA' }] }));
+  assert.equal(onSite(s, 'site-north', 'material-2'), northElbow - 2); assert.equal(Number(line(s, 'warehouse-field', 'material-2').quantity), fieldElbow + 2);
+  // 4 Return → Inventory: from the Prefab yard store into the active site's (Riverside) inventory.
+  const yard = line(s, 'warehouse-yard', 'material-4', 'H-3310'), riverTube = onSite(s, 'site-river', 'material-4');
+  complete(order({ type: 'Return → Inventory', fromWarehouseId: 'warehouse-yard', siteId: 'site-river', items: [{ materialNo: 'SS-P114', quantity: 8.5, uom: 'M' }] }));
+  assert.equal(Number(s.get('stock', yard.id).quantity), 18.5 - 8.5); assert.equal(onSite(s, 'site-river', 'material-4'), riverTube + 8.5, 'the active site\'s inventory row rises');
+  // 2 Storehouse → Project with lines that carry their own storehouse (no From storehouse).
+  const mainFlange = line(s, 'warehouse-main', 'material-3'), northFlange = onSite(s, 'site-north', 'material-3');
+  complete(order({ type: 'Storehouse → Project', siteId: 'site-north', items: [{ stockId: mainFlange.id, materialNo: 'CS-F150', quantity: 3, uom: 'EA' }] }));
+  assert.equal(Number(s.get('stock', mainFlange.id).quantity), 0); assert.equal(onSite(s, 'site-north', 'material-3'), northFlange + 3);
+  assert.deepEqual(total(s), before, 'every quantity that left one location arrived in another');
+  const short = order({ type: 'Inventory - Project', fromSiteId: 'site-river', siteId: 'site-north', items: [{ materialNo: 'CS-P060', quantity: 999, uom: 'M' }] });
+  assert.throws(() => complete(short), refused(409, /Not enough CS-P060 in the inventory of Riverside installation/));
+  // An order planned before the site inventories (no source site) must be planned again.
+  const legacy = s.create('transfer_orders', { number: 'TO-OLD', type: 'Return → Inventory', status: 'Open', siteId: 'site-river', toWarehouseId: 'warehouse-main' }, actor);
+  s.create('transfer_order_items', { orderId: legacy.id, materialNo: 'CS-P060', quantity: 1 }, actor);
+  assert.throws(() => complete(legacy), refused(409, /planned before project site inventories/));
 });
 
-test('the seed gives every screen realistic data: storehouses, a project holding, a corrected line and orders in each status', () => {
+test('the seed gives every screen realistic data: shared storehouses, site inventories, a corrected line and orders in each status', () => {
   const s = fixture();
   assert.deepEqual(s.list('warehouses').map(w => w.name).sort(), ['Field stores', 'Main warehouse', 'Prefab yard store']);
-  assert.ok(s.list('warehouses').every(w => w.description));
+  assert.ok(s.list('warehouses').every(w => w.description && w.location && !w.siteId), 'company storehouses with a location and no project site');
   assert.deepEqual([...new Set(s.list('transfer_orders').map(o => o.status))].sort(), ['Completed', 'Open']);
   assert.ok(s.list('transfer_orders').some(o => o.priority === 'Urgent'));
   assert.ok(s.list('stock').some(row => row.corrected === true));
-  assert.ok(projectHoldings(all(s)).length > 0);
-  assert.ok(inventoryRows(all(s), { warehouseId: 'warehouse-yard', onlyWithQuantity: true }).length >= 3);
+  assert.deepEqual(unmigratedHoldings(all(s)), []);
+  for (const site of ['site-north', 'site-river']) assert.ok(inventoryRows(all(s), { siteId: site, onlyWithQuantity: true }).length >= 4, site);
+  assert.ok(storehouseRows(all(s), { warehouseId: 'warehouse-yard', onlyWithQuantity: true }).length >= 3);
 });
 
-test('the materials list is computed live from requirements, orders, stock and picks', () => {
+test('the materials list is computed live from requirements, orders, the site inventory and picks', () => {
   const s = fixture(); let rows = materialsList(all(s), { siteId: 'site-north' });
   assert.ok(rows.length > 0);
-  const entry = rows[0]; assert.deepEqual(Object.keys(entry.values), ['project', 'iso', 'chemicalClean', 'group', 'materialNo', 'description', 'quantity', 'ordered', 'inventory', 'picked']);
-  const requirement = s.get('iso_materials', entry.id), material = s.get('materials', String(requirement.materialId));
-  const stock = s.list('stock').filter(row => row.materialId === material.id).reduce((sum, row) => sum + Number(row.quantity), 0);
-  assert.equal(entry.values.inventory, stock);
-  run(s, 'stock-adjust', { stockId: s.list('stock').find(row => row.materialId === material.id && Number(row.quantity) > 0)!.id, quantity: 1, reasonText: 'Count' });
-  rows = materialsList(all(s), { siteId: 'site-north' });
-  assert.equal(rows.find(row => row.id === entry.id)!.values.inventory, s.list('stock').filter(row => row.materialId === material.id).reduce((sum, row) => sum + Number(row.quantity), 0), 'a new stock figure shows at once, no cache');
   const river = materialsList(all(s), { siteId: 'site-river' });
+  const entry = river.find(row => row.id === 'requirement-4')!; assert.deepEqual(Object.keys(entry.values), ['project', 'iso', 'chemicalClean', 'group', 'materialNo', 'description', 'quantity', 'ordered', 'inventory', 'picked']);
+  // requirement-4: iso-4 (Riverside), SS-P114 (material-4): Riverside holds the 20 transferred from the Main warehouse; the 20 left there do not count.
+  assert.equal(entry.values.inventory, 20);
+  run(s, 'stock-add', { siteId: 'site-river', materialId: 'material-4', chargeNo: 'H-1', quantity: 1 });
+  assert.equal(materialsList(all(s), { siteId: 'site-river' }).find(row => row.id === entry.id)!.values.inventory, 21, 'a new stock figure shows at once, no cache');
+  run(s, 'adjust-material', { materialId: 'material-4', warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: 100, note: 'Storehouse count' });
+  run(s, 'stock-add', { siteId: 'site-north', materialId: 'material-4', chargeNo: 'H-2', quantity: 50 });
+  assert.equal(materialsList(all(s), { siteId: 'site-river' }).find(row => row.id === entry.id)!.values.inventory, 21, 'neither a storehouse line nor another site counts');
   assert.ok(river.length > 0 && river.every(row => !rows.some(other => other.id === row.id)), 'each main project lists only its own materials');
   assert.equal(materialsList(all(s), { query: 'no-such-material' }).length, 0);
   assert.equal(materialsList(all(s), { projectId: 'project-cooling' }).every(row => row.values.project === 'STX-2401'), true);
+});
+
+test('the hosted preparation books the first version\'s project holdings into the site inventories, once', () => {
+  const s = fixture(), main = line(s, 'warehouse-main', 'material-5'), before = total(s);
+  // A transfer of the first version: only the storehouse side, the project "holds" 7.
+  s.update('stock', main.id, { quantity: Number(main.quantity) - 7 }, main._version, actor);
+  s.create('movements', { number: 'MM-OLD', materialId: 'material-5', warehouseId: 'warehouse-main', siteId: 'site-river', type: 'Project transfer', quantity: -7, chargeNo: 'H-1042', date: '2026-10-01' }, actor);
+  assert.deepEqual(total(s), before, 'the holding counts in the totals');
+  const river = onSite(s, 'site-river', 'material-5');
+  assert.deepEqual(migrateProjectHoldings(s, { dryRun: true }), { holdings: 1, quantity: 7 });
+  assert.equal(onSite(s, 'site-river', 'material-5'), river, 'a dry run changes nothing');
+  assert.deepEqual(migrateProjectHoldings(s), { holdings: 1, quantity: 7 });
+  assert.equal(onSite(s, 'site-river', 'material-5'), river + 7);
+  assert.deepEqual(unmigratedHoldings(all(s)), []); assert.deepEqual(total(s), before);
+  assert.deepEqual(migrateProjectHoldings(s), { holdings: 0, quantity: 0 }, 'a second run does nothing');
+});
+
+test('Start makes one pick-list line per requirement from the site inventory, with a five-digit Pick List No.', () => {
+  const s = fixture();
+  const material = s.create('materials', { materialNo: 'PL-BOLT', description: 'Stud bolt set', materialGroup: 'Bolt', uom: 'SET' }, actor, 'material-pick');
+  for (const [chargeNo, quantity] of [['A-1', 7], ['B-2', 5]] as const) run(s, 'stock-add', { siteId: 'site-north', materialId: material.id, chargeNo, quantity });
+  const first = s.create('iso_materials', { isoId: 'iso-3', materialId: material.id, quantity: 5, phaseId: 'phase-0' }, actor, 'req-pick-1');
+  s.create('iso_materials', { isoId: 'iso-3', materialId: material.id, quantity: 6, phaseId: 'phase-0' }, actor, 'req-pick-2');
+  const result = run(s, 'start-iso', { isoId: 'iso-3' });
+  const lines = ('records' in result ? result.records! : []).filter(row => row.materialId === material.id);
+  assert.deepEqual(lines.map(row => [row.requirementId, row.quantity]), [[first.id, 5], ['req-pick-2', 6]], 'one line per requirement (5 and 6), not per charge');
+  assert.ok(lines.every(row => row.warehouseId === '' && row.siteId === 'site-north' && /^\d{5}$/.test(String(row.reportNo))));
+  assert.equal(inv(s, first.id), 1, 'Inv. after Start: 12 on hand − 11 claimed = 1');
+  run(s, 'take-picklist', { reportNo: String(lines[0].reportNo) });
+  // Taken in charge order: 5 from A-1, then 2 from A-1 and 4 from B-2; B-2 keeps 1.
+  assert.deepEqual(s.list('movements').filter(move => move.type === 'Issue' && move.materialId === material.id).map(move => [move.chargeNo, move.quantity]).sort(), [['A-1', -2], ['A-1', -5], ['B-2', -4]]);
+  assert.equal(onSite(s, 'site-north', material.id), 1);
+  assert.deepEqual(requirementExecution(all(s)).filter(entry => entry.material.id === material.id).map(entry => [entry.picked, entry.inventory]), [[5, 1], [6, 1]]);
 });
 
 test('an older database without the new columns and tables still opens and works', () => {
@@ -269,8 +421,13 @@ test('the hosted profile delivers storehouses, inventory, transfer orders and th
   for (const key of ['warehouses', 'stock', 'transfer_orders']) assert.ok(hosted.navigation.includes(key), key);
   for (const key of ['movements', 'transfer_order_items']) assert.ok(hosted.resources[key] && !hosted.navigation.includes(key), `${key} is data only`);
   for (const key of Object.keys(ACTIONS).filter(key => key.startsWith('stock-') || key.startsWith('transfer-order-'))) assert.deepEqual(new Set(hosted.actions[key]), new Set(ACTIONS[key].fields.map(f => f.name)), key);
-  // Storehouses page fields, plus siteId and use, which the procurement take-in dialog reads.
-  assert.deepEqual(new Set(hosted.resources.warehouses), new Set(['name', 'siteId', 'use', 'address', 'zip', 'residence', 'phone', 'email', 'description']));
+  // Add storehouse (reference #addLager): Name*, Location, Description; nothing else in the pilots profile.
+  assert.deepEqual(hosted.resources.warehouses, ['name', 'location', 'description']);
+  const form = projectResource(hosted, RESOURCE_MAP.warehouses);
+  assert.deepEqual(form.fields.map(field => [field.name, field.label, Boolean(field.required)]), [['name', 'Name', true], ['location', 'Location', false], ['description', 'Description', false]]);
+  assert.equal(form.title, 'Storehouses');
+  assert.equal(projectResource(availabilityFor('full'), RESOURCE_MAP.warehouses).fields.some(field => field.name === 'use'), true, 'the full profile keeps Used for');
+  for (const key of ['locationKind', 'siteId']) assert.ok(hosted.resources.stock.includes(key), `stock ${key}`);
   // receive is delivered by the procurement flow (Material take in); the older adjust action stays full-profile only.
   assert.ok(!hosted.actions['adjust-material'], 'the older stock actions stay full-profile only');
   for (const profile of ['welding-demo', 'access-prototype'] as const) { const other = availabilityFor(profile)!; for (const key of ['warehouses', 'stock', 'movements', 'transfer_orders']) assert.equal(Object.hasOwn(other.resources, key), false, `${profile} ${key}`); assert.ok(!Object.keys(other.actions).some(key => key.startsWith('stock-'))); }
@@ -283,17 +440,21 @@ test('the hosted profile delivers storehouses, inventory, transfer orders and th
   assert.ok(PILOT_MAP.weld.groups.flatMap(group => group.items).every(item => !['Material inventory', 'Materials list', 'Transfer orders'].includes(item.label)));
 });
 
-test('permissions: the new resources and actions follow the Material inventory area and stay out of Weld Pilot', () => {
+test('permissions: inventory operations need Material inventory (16), storehouse-line operations Storehouses (75); none run in Weld Pilot', () => {
   const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
   const account = (permissions: Partial<User['permissions']>, extra: Partial<User> = {}): User => ({ id: 'u', name: 'T', email: 't@example.test', profileId: 'p', availability: hosted, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions }, ...extra });
-  const writer = account({ general: 2, materials: 2 }), reader = account({ general: 1, materials: 1 }), welder = account({ general: 2, welding: 3 });
-  for (const key of Object.keys(ACTIONS).filter(key => key.startsWith('stock-') || key.startsWith('transfer-order-'))) { assert.equal(canAction(writer, key), true, key); assert.equal(canAction(reader, key), false, key); assert.equal(canAction(welder, key), false, key); }
-  for (const key of ['stock', 'movements', 'transfer_orders', 'transfer_order_items']) { assert.equal(canResource(writer, key), true, key); assert.equal(canResource(reader, key), true, key); assert.equal(canResource(welder, key), false, key); }
+  const writer = account({ general: 2, materials: 2 }), reader = account({ general: 1, materials: 1 }), welder = { ...account({ general: 2, welding: 3 }), pilot: 'weld' as const };
+  for (const key of Object.keys(ACTIONS).filter(key => key.startsWith('stock-') || key.startsWith('transfer-order-') || key === 'inventory-remove')) { assert.equal(canAction(writer, key), true, key); assert.equal(canAction(reader, key), false, key); assert.equal(canAction(welder, key), false, key); }
+  for (const key of ['stock', 'movements', 'transfer_orders', 'transfer_order_items']) { assert.equal(canResource(writer, key), true, key); assert.equal(canResource(reader, key), true, key); assert.equal(canResource(account({ general: 2, welding: 3 }), key), false, key); }
   assert.equal(canResource(writer, 'warehouses', 'edit'), true); assert.equal(canResource(reader, 'warehouses', 'edit'), false);
-  // With a detailed matrix, removal needs the archive right of the Material inventory area.
-  const matrix = (rights: string[]) => account({ materials: 2 }, { capabilities: { '16': rights as never } });
-  assert.equal(canAction(matrix(['show', 'insert']), 'stock-remove'), false); assert.equal(canAction(matrix(['show', 'insert', 'delete']), 'stock-remove'), true);
-  assert.equal(canAction(matrix(['show', 'insert']), 'stock-move'), true); assert.equal(canAction(matrix(['show']), 'stock-move'), false);
+  // A detailed matrix: 16 without 75 runs the inventory but no storehouse dialog, and the reverse.
+  const matrix = (rules: Record<string, string[]>) => account({ materials: 2, general: 2 }, { capabilities: rules as never });
+  const inventoryOnly = matrix({ '16': ['show', 'insert', 'delete'] }), storehouseOnly = matrix({ '75': ['show', 'insert', 'edit', 'delete'] });
+  for (const key of ['stock-add', 'inventory-remove', 'transfer-order-create']) { assert.equal(canAction(inventoryOnly, key), true, key); assert.equal(canAction(storehouseOnly, key), false, key); }
+  for (const key of ['stock-to-project', 'stock-move', 'stock-return', 'stock-correct', 'stock-adjust', 'stock-remove']) { assert.equal(canAction(inventoryOnly, key), false, key); assert.equal(canAction(storehouseOnly, key), true, key); }
+  assert.equal(canAction(matrix({ '75': ['show', 'insert'] }), 'stock-correct'), false, 'correcting a line needs the edit right');
+  assert.equal(canAction(matrix({ '75': ['show', 'insert', 'edit'] }), 'stock-remove'), false, 'removing a line needs the archive right');
+  assert.equal(canAction(matrix({ '16': ['show', 'insert'] }), 'inventory-remove'), false, 'removing from the inventory needs its archive right');
   assert.deepEqual(RESOURCE_MAP.transfer_orders.fields.find(field => field.name === 'type')!.options, ['Inventory - Project', 'Inventory - Storehouse', 'Storehouse → Project', 'Storehouse → Storehouse', 'Return → Inventory']);
 });
 
@@ -341,6 +502,12 @@ test('HTTP: the MTO pilot operates the inventory, Weld Pilot and read-only accou
   assert.ok(history.events.some(event => event.action === 'completed'));
   const stockHistory = await (await f.request(`/api/history/stock/${main.id}`)).json() as { events: { action: string }[] };
   assert.ok(stockHistory.events.some(event => event.action === 'transferred'));
+  // Add storehouse: Name, Location, Description; the storehouse holds materials and belongs to no project site.
+  const added = await f.request('/api/records/warehouses', 'POST', { name: 'MAGACIN BELGIJA', location: 'Antwerp harbour, quay 12', description: 'Bonded store for imported fittings.' });
+  assert.equal(added.status, 201);
+  const storehouse = s.get('warehouses', ((await added.json()) as { record: Row }).record.id);
+  assert.deepEqual([storehouse.use, storehouse.siteId, storehouse.location], ['Materials', '', 'Antwerp harbour, quay 12']);
+  assert.equal((await f.request('/api/records/warehouses', 'POST', { name: 'Other store', siteId: 'site-north' })).status, 404, 'no project site field in the pilots profile');
   // The pilot boundary: the same account inside Weld Pilot, and accounts without write access, are refused.
   f.usePilot('weld');
   assert.equal((await f.request('/api/actions/stock-to-project', 'POST', { siteId: 'site-river', items: [{ stockId: main.id, quantity: 1 }] })).status, 403, 'not enabled for Weld Pilot');
@@ -359,12 +526,12 @@ test('HTTP: the MTO pilot operates the inventory, Weld Pilot and read-only accou
   assert.equal((await f.request('/api/actions/stock-move', 'POST', { stockId: main.id })).status, 403);
 });
 
-test('HTTP: a detailed profile needs the archive right to remove inventory lines', async t => {
+test('HTTP: a detailed profile needs the archive right of Storehouses (75) to remove a storehouse line', async t => {
   const f = await hostedFixture(t); const s = f.store, target = line(s, 'warehouse-main', 'material-8');
-  await f.signIn('No removal', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '16': ['show', 'insert'], '5': ['show'], '4': ['show'], '75': ['show'], '64': ['show'], '70': ['show'] }) });
+  await f.signIn('No removal', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '16': ['show', 'insert', 'delete'], '5': ['show'], '4': ['show'], '75': ['show', 'insert', 'edit'], '64': ['show'], '70': ['show'] }) });
   assert.equal((await f.request('/api/actions/stock-remove', 'POST', { stockId: target.id, reasonText: 'Imported by mistake' })).status, 403);
   assert.equal(s.get('stock', target.id)._archived, false);
-  await f.signIn('With removal', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '16': ['show', 'insert', 'delete'], '5': ['show'], '4': ['show'], '75': ['show'], '64': ['show'], '70': ['show'] }) });
+  await f.signIn('With removal', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '16': ['show'], '5': ['show'], '4': ['show'], '75': ['show', 'insert', 'edit', 'delete'], '64': ['show'], '70': ['show'] }) });
   assert.equal((await f.request('/api/actions/stock-remove', 'POST', { stockId: target.id, reasonText: 'Imported by mistake' })).status, 201);
   assert.equal(s.get('stock', target.id, true)._archived, true);
 });
@@ -376,8 +543,7 @@ test('HTTP: the materials list is computed on every request, scoped to the main 
   assert.deepEqual(first.columns.map(column => column.label), ['Project', 'Iso number', 'Ch.clean', 'Group', 'Mat.no.', 'Description', 'Qty.', 'Ord.?', 'Inv.', 'Picked']);
   assert.ok(first.rows.length > 0);
   const target = first.rows[0], material = s.get('materials', String(s.get('iso_materials', target.id).materialId));
-  const holder = s.list('stock').find(row => row.materialId === material.id && Number(row.quantity) > 0)!;
-  assert.equal((await f.request('/api/actions/stock-adjust', 'POST', { stockId: holder.id, quantity: 0.5, reasonText: 'Recount' })).status, 201);
+  assert.equal((await f.request('/api/actions/stock-add', 'POST', { siteId: 'site-north', materialId: material.id, chargeNo: 'H-NEW', quantity: 0.5, date: '2026-11-02' })).status, 201);
   const second = await (await f.request('/api/mto/materials-list?siteId=site-north')).json() as typeof first;
   assert.notEqual(second.rows.find(row => row.id === target.id)!.values.inventory, target.values.inventory, 'no cache: the new figure shows at once');
   assert.equal((await (await f.request('/api/mto/materials-list?siteId=missing-site')).json() as typeof first).rows.length, 0);

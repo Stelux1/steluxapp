@@ -14,7 +14,7 @@ import { materialLineStatuses } from '../shared/mto-materials.ts';
 import type { Row } from '../shared/types.ts';
 
 /**
- * The MTO Pilot end to end through HTTP, in the hosted profile: order → take in → transfer to a project → reserve →
+ * The MTO Pilot end to end through HTTP, in the hosted profile: order → take in → transfer order to a storehouse → reserve →
  * start → pick list taken. After every step the isometric's material row (Ord.? / Inv. / Picked, computed by
  * `materialLineStatuses()` from what the bootstrap delivers) is checked, and each step's record is visible on the
  * page of the flow that owns it (take-in log, inventory, pick-list archive).
@@ -62,22 +62,23 @@ test('MTO Pilot end to end: order, take in, transfer, reserve, start and take a 
   assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 0, 0], 'ordered: Ord.? Yes');
   const line = state.rows.order_lines.find(item => item.orderId === order.id && item.requirementId === requirementId); assert.ok(line);
 
-  // 2. Material take in: the delivery lands in the take-in log and in the storehouse inventory.
-  await json(await f.request('/api/actions/receive', 'POST', { orderId: order.id, supplierId: 'supplier-steel', warehouseId: 'warehouse-main', date, items: [{ lineId: line.id, quantity: 8, chargeNo: 'H-5120' }] }));
+  // 2. Material take in: the delivery lands in the take-in log and in the Material inventory of the isometric's project site.
+  await json(await f.request('/api/actions/receive', 'POST', { orderId: order.id, supplierId: 'supplier-steel', date, items: [{ lineId: line.id, quantity: 8, chargeNo: 'H-5120' }] }));
   state = await row();
   assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 8, 0], 'received: Inv. 8');
   assert.ok(state.rows.receipts.some(receipt => receipt.lineId === line.id && Number(receipt.quantity) === 8 && receipt.chargeNo === 'H-5120'), 'the receipt is in the take-in log');
   const stock = (await json<Row[] | { rows: Row[] }>(await f.request('/api/records/stock'), 200));
-  const inventoryLine = (Array.isArray(stock) ? stock : stock.rows).find(item => item.materialId === material.id && item.warehouseId === 'warehouse-main' && item.chargeNo === 'H-5120');
-  assert.ok(inventoryLine, 'the receipt is in the Material inventory of the storehouse'); assert.equal(Number(inventoryLine.quantity), 8);
+  const inventoryLine = (Array.isArray(stock) ? stock : stock.rows).find(item => item.materialId === material.id && item.locationKind === 'site' && item.siteId === 'site-river' && item.chargeNo === 'H-5120');
+  assert.ok(inventoryLine, 'the receipt is in the Material inventory of the Riverside site'); assert.equal(Number(inventoryLine.quantity), 8); assert.equal(inventoryLine.warehouseId, '');
 
-  // 3. Transfer to project: two elbows leave the storehouse for the Riverside site, so they are no longer inventory.
-  await json(await f.request('/api/actions/stock-to-project', 'POST', { siteId: 'site-river', date, items: [{ stockId: inventoryLine.id, quantity: 2 }] }));
+  // 3. Transfer order Inventory - Storehouse: two elbows leave the site's inventory for the Main warehouse, so Inv. is 6.
+  const transfer = (await json<{ record: Row }>(await f.request('/api/actions/transfer-order-create', 'POST', { type: 'Inventory - Storehouse', fromSiteId: 'site-river', toWarehouseId: 'warehouse-main', date, items: [{ materialNo: 'SS-E114-90', quantity: 2, uom: 'EA' }] }))).record;
+  await json(await f.request('/api/actions/transfer-order-complete', 'POST', { orderId: transfer.id, date }));
   state = await row();
-  assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 6, 0], 'transferred: Inv. 6');
-  assert.ok(state.rows.movements.some(move => move.type === 'Project transfer' && move.materialId === material.id && Number(move.quantity) === -2 && move.siteId === 'site-river'));
+  assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 6, 0], 'transferred to a storehouse: Inv. 6');
+  assert.ok(state.rows.stock.some(item => item.materialId === material.id && item.warehouseId === 'warehouse-main' && Number(item.quantity) === 2), 'the storehouse line holds the two');
 
-  // 4. Reserve: the six in the storehouse are set aside for the isometric; nothing is issued yet.
+  // 4. Reserve: the six in the site's inventory are set aside for the isometric; nothing is issued yet.
   await json(await f.request('/api/actions/reserve-iso', 'POST', { isoId, date }));
   state = await row();
   assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 6, 0], 'reserved: stock unchanged');
@@ -86,9 +87,9 @@ test('MTO Pilot end to end: order, take in, transfer, reserve, start and take a 
   // 5. Start: one pick list, visible in the Pick List archive, not taken yet, so Picked stays 0.
   const started = await json<{ records: Row[] }>(await f.request('/api/actions/start-iso', 'POST', { isoId, date }));
   const pick = started.records.find(item => item.requirementId === requirementId); assert.ok(pick, 'the pick list carries the requirement');
-  const reportNo = String(pick.reportNo); assert.match(reportNo, /^PL-\d{4}-\d{4}$/); assert.equal(pick.taken, false); assert.equal(Number(pick.quantity), 6);
+  const reportNo = String(pick.reportNo); assert.match(reportNo, /^\d{5}$/); assert.equal(pick.taken, false); assert.equal(Number(pick.quantity), 6);
   state = await row();
-  assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 6, 0], 'started: claimed, not issued');
+  assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 0, 0], 'started: claimed by the pick list (Inv. leaves it out), not issued');
   const archive = await json<Row[] | { rows: Row[] }>(await f.request('/api/records/picklists'), 200);
   assert.ok((Array.isArray(archive) ? archive : archive.rows).some(item => item.reportNo === reportNo && item.taken === false), 'the pick list is in the archive');
 

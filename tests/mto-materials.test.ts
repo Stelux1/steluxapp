@@ -13,6 +13,7 @@ import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../sha
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { isoBudgets as statusBudgets } from '../shared/iso-status.ts';
 import { isoBudgets, isoMaterialInputErrors, materialLineStatuses, materialStatus, phaseLocation, progressClassOf } from '../shared/mto-materials.ts';
+import { isoStatuses } from '../shared/mto-logistics.ts';
 import type { Row } from '../shared/types.ts';
 import ExcelJS from 'exceljs';
 import {
@@ -81,12 +82,13 @@ test('isoBudgets stays undefined without rows, without classified lines and for 
 
 function statusRows() {
   return {
-    isometrics: [row('iso-a', { projectId: 'p' }), row('iso-b', { projectId: 'p' })],
+    isometrics: [row('iso-a', { projectId: 'p' }), row('iso-b', { projectId: 'p' })], projects: [row('p', { siteId: 'site-a' })],
     materials: [row('m1', { materialNo: 'M1' }), row('m2', { materialNo: 'M2' }), row('m3', { materialNo: 'M3' })], custom_materials: [] as Row[],
     iso_materials: [row('r1', { isoId: 'iso-a', materialId: 'm1', quantity: 10 }), row('r2', { isoId: 'iso-a', materialId: 'm2', quantity: 4 }), row('r3', { isoId: 'iso-a', materialId: 'm3', quantity: 6 }), row('r4', { isoId: 'iso-b', materialId: 'm1', quantity: 5 })],
     orders: [row('o1', { projectId: 'p', status: 'Pending' })],
     order_lines: [row('l1', { orderId: 'o1', materialId: 'm1', requirementId: 'r1', quantity: 10, received: 0 }), row('l2', { orderId: 'o1', materialId: 'm2', requirementId: 'r2', quantity: 2, received: 0 })],
-    stock: [row('s1', { materialId: 'm1', warehouseId: 'w', quantity: 3 }), row('s2', { materialId: 'm2', warehouseId: 'w', quantity: 9 })],
+    // The Material inventory of the isometrics' project site, and a storehouse line that no isometric counts.
+    stock: [row('s1', { materialId: 'm1', locationKind: 'site', siteId: 'site-a', quantity: 3 }), row('s2', { materialId: 'm2', locationKind: 'site', siteId: 'site-a', quantity: 9 }), row('s3', { materialId: 'm1', warehouseId: 'w', quantity: 50 })],
     picklists: [row('k1', { isoId: 'iso-a', materialId: 'm1', requirementId: 'r1', quantity: 2 })],
   } as Record<string, Row[]>;
 }
@@ -107,9 +109,54 @@ test('material status is covered ÷ required, where covered = min(required, pick
   assert.deepEqual([status.required, status.covered, status.percent], [20, 9, 45]);
   assert.equal(materialStatus(data.isometrics[1], data).percent, 60, 'iso-b reads the same inventory: min(5, 0 + 3) / 5');
   assert.equal(materialStatus(row('iso-empty'), data).percent, null, 'nothing required: no percentage');
-  const full: Record<string, Row[]> = { ...data, stock: [row('s9', { materialId: 'm3', warehouseId: 'w', quantity: 100 }), ...data.stock] };
+  const full: Record<string, Row[]> = { ...data, stock: [row('s9', { materialId: 'm3', locationKind: 'site', siteId: 'site-a', quantity: 100 }), ...data.stock] };
   assert.deepEqual([materialStatus(data.isometrics[0], full).covered, materialStatus(data.isometrics[0], full).percent], [15, 75]);
-  assert.equal(materialStatus(data.isometrics[0], { ...full, iso_materials: full.iso_materials.map(line => line.id === 'r3' ? { ...line, _archived: true } : line) }).percent, 64.3, 'an archived line no longer counts');
+  // 9 of 14 = 64.28 %: whole percent, rounded down.
+  assert.equal(materialStatus(data.isometrics[0], { ...full, iso_materials: full.iso_materials.map(line => line.id === 'r3' ? { ...line, _archived: true } : line) }).percent, 64, 'an archived line no longer counts');
+  const elsewhere: Record<string, Row[]> = { ...data, stock: [row('s9', { materialId: 'm3', locationKind: 'site', siteId: 'site-b', quantity: 100 }), row('s8', { materialId: 'm3', warehouseId: 'w', quantity: 100 }), ...data.stock] };
+  assert.equal(materialStatus(data.isometrics[0], elsewhere).percent, 45, 'stock of another project site or of a storehouse does not count');
+});
+
+/**
+ * The reference sandbox (project site Zandbak), re-typed from the captures: mto__iso__0001.txt:153-176 (status 49 %,
+ * nine lines), mto__iso__00032.txt:160-162 (0 %), mto__iso__00022.txt:161-162 (Started, 100 %),
+ * mto__order__material-inventory.txt:71-77 (the inventory), mto__projects__pick-list-archive.txt:70 (pick list 00001 of
+ * 00022, not taken). In our model the stock stays on hand until the pick list is taken, so the inventory also holds the
+ * 10 + 2 that pick list claims. A storehouse line of 7430052832 shows that storehouse stock is not counted.
+ */
+function sandboxRows() {
+  const materials = ['8138265581', '1', '8138268881', '7662782601', '7636669711', '7633384771', '7430050581', '7430052832', '8138678259', '8138664911', '7436330731', 'P235GH']
+    .map(materialNo => row(`m-${materialNo}`, { materialNo }));
+  const line = (iso: string, materialNo: string, quantity: number, n: number) => row(`${iso}-${n}`, { isoId: iso, materialId: `m-${materialNo}`, quantity, _createdAt: `2025-11-0${n % 9 + 1}T00:00:00Z` });
+  const iso0001 = [['8138265581', 2], ['1', 3], ['8138268881', 3], ['7662782601', 6], ['7636669711', 8], ['7633384771', 13], ['7430050581', 6], ['7430052832', 12], ['8138678259', 16]] as const;
+  const iso00032 = [['8138664911', 16], ['8138268881', 16], ['7436330731', 16]] as const;
+  const iso00022 = [['8138678259', 2], ['8138268881', 10]] as const;
+  const onHand = [['1', 3], ['P235GH', 7], ['8138265581', 2], ['7662782601', 2], ['7636669711', 8], ['7633384771', 13], ['7430050581', 6], ['8138268881', 10], ['8138678259', 2]] as const;
+  return {
+    sites: [row('zandbak', { name: 'Zandbak' })], projects: [row('p-20240101', { siteId: 'zandbak' })],
+    isometrics: ['0001', '00032', '00022', '0003', '0005'].map(isoNo => row(`iso-${isoNo}`, { isoNo, projectId: 'p-20240101' })),
+    materials, custom_materials: [] as Row[], orders: [] as Row[], order_lines: [] as Row[], reservations: [] as Row[],
+    iso_materials: [...iso0001.map(([no, q], i) => line('iso-0001', no, q, i)), ...iso00032.map(([no, q], i) => line('iso-00032', no, q, i)), ...iso00022.map(([no, q], i) => line('iso-00022', no, q, i))],
+    stock: [...onHand.map(([no, q]) => row(`stock-${no}`, { materialId: `m-${no}`, locationKind: 'site', siteId: 'zandbak', quantity: q })), row('storehouse-line', { materialId: 'm-7430052832', warehouseId: 'magacin-belgija', quantity: 40 })],
+    picklists: [row('pick-1', { reportNo: '00001', isoId: 'iso-00022', requirementId: 'iso-00022-0', materialId: 'm-8138678259', quantity: 2, taken: false }), row('pick-2', { reportNo: '00001', isoId: 'iso-00022', requirementId: 'iso-00022-1', materialId: 'm-8138268881', quantity: 10, taken: false })],
+  } as Record<string, Row[]>;
+}
+
+test('Material status on the sandbox: 0001 = 49 %, 00032 = 0 %, 00022 = 100 %, one figure with the Isometric execution page', () => {
+  const data = sandboxRows(), statuses = isoStatuses(data);
+  const status = (isoNo: string) => materialStatus(data.isometrics.find(iso => iso.isoNo === isoNo)!, data);
+  // 0001: Σ min(Qty., free stock) = 2 + 3 + 0 (10 claimed by 00022) + 2 + 8 + 13 + 6 + 0 (storehouse only) + 0 (2 claimed) = 34; 34 / 69 = 49.28 → 49.
+  assert.deepEqual([status('0001').covered, status('0001').required, status('0001').percent], [34, 69, 49]);
+  // 00032: no free stock for any of its three lines (the 10 of 8138268881 are claimed): 0 / 48.
+  assert.deepEqual([status('00032').covered, status('00032').required, status('00032').percent], [0, 48, 0]);
+  // 00022: started; its own untaken pick list (2 + 10) covers both lines: 12 / 12.
+  assert.deepEqual([status('00022').covered, status('00022').required, status('00022').percent], [12, 12, 100]);
+  assert.equal(status('0003').percent, null, 'an isometric without lines shows no figure');
+  for (const iso of data.isometrics) assert.equal(materialStatus(iso, data).percent, statuses.get(iso.id)?.percent ?? null, `${iso.isoNo}: header = execution page`);
+  // Inv. leaves out what any untaken pick list claims (00022 shows Inv. 0 on both rows), and never counts a storehouse.
+  const inv = (isoId: string) => [...materialLineStatuses(data, isoId).values()].map(line => line.inventory);
+  assert.deepEqual(inv('iso-0001'), [2, 3, 0, 2, 8, 13, 6, 0, 0]);
+  assert.deepEqual(inv('iso-00022'), [0, 0]);
 });
 
 test('isoMaterialInputErrors checks the catalog and the custom forms', () => {

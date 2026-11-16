@@ -77,6 +77,9 @@ export interface IsoSummarySource {
   orderLines?: Row[] | null;
   stock?: Row[] | null;
   picklists?: Row[] | null;
+  /** Reservations and every isometric of the workspace: the free stock of Material status % leaves out what others reserved or claim. */
+  reservations?: Row[] | null;
+  allIsometrics?: Row[] | null;
   /** The calculation feature is delivered: the E flag exists. */
   planning: boolean;
 }
@@ -137,10 +140,10 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
   return output;
 }
 
-/** The rows `materialStatus()` reads for one isometric: its own requirement lines plus the shared order, stock and pick-list rows. */
+/** The rows `materialStatus()` reads for one isometric: its own requirement lines plus the shared order, stock, pick-list and reservation rows. */
 function materialRows(source: IsoSummarySource, iso: Row, requirements: Row[]): Record<string, Row[]> {
-  return { isometrics: [iso], iso_materials: requirements, materials: source.materials || [], custom_materials: source.customMaterials || [],
-    orders: source.orders || [], order_lines: source.orderLines || [], stock: source.stock || [], picklists: source.picklists || [] };
+  return { isometrics: source.allIsometrics || source.isometrics, projects: source.projects, iso_materials: requirements, materials: source.materials || [], custom_materials: source.customMaterials || [],
+    orders: source.orders || [], order_lines: source.orderLines || [], stock: source.stock || [], picklists: source.picklists || [], reservations: source.reservations || [] };
 }
 
 /** The progress card's view of a summary (no driver detail: the summary does not carry it). */

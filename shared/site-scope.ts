@@ -121,7 +121,8 @@ export const SITE_RULES: Record<string, SiteRule> = {
   orders: shared(PROJECT),
   order_lines: shared(ISO, ['orderId', 'orders']),
   receipts: shared(['lineId', 'order_lines'], ['orderId', 'orders'], WAREHOUSE),
-  stock: shared(WAREHOUSE),
+  // A project site's inventory row follows its site; a storehouse line its storehouse.
+  stock: shared(SITE, WAREHOUSE),
   movements: shared(ISO, SITE, WAREHOUSE),
   picklists: shared(ISO, WAREHOUSE),
   transfer_orders: shared(SITE, ['fromWarehouseId', 'warehouses'], ['toWarehouseId', 'warehouses']),

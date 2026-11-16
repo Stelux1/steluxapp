@@ -2,6 +2,7 @@ import { AppError, qty, type Actor, type Store } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import { allocateStock, isoStatuses, planReserve, planStart } from '../shared/mto-logistics.ts';
 import { runAction } from './workflows.ts';
+import { siteOfIso, takeFromSite } from './mto-stock.ts';
 
 type Input = Record<string, unknown>;
 /** The helpers `runAction` hands to the actions of this flow: they share its transaction, date and note. */
@@ -38,7 +39,7 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
     const records = plan.map(({ requirement, quantity }) => {
       const current = rows.reservations.find(row => row.requirementId === requirement.id);
       if (current) return patch('reservations', current, { quantity: qty((current.status === 'Reserved' ? Number(current.quantity) : 0) + quantity), status: 'Reserved', date, note });
-      return add('reservations', { isoId: iso.id, requirementId: requirement.id, ...refs(requirement), quantity, date, status: 'Reserved', note });
+      return add('reservations', { isoId: iso.id, requirementId: requirement.id, ...refs(requirement), siteId: siteOfIso(store, iso.id), quantity, date, status: 'Reserved', note });
     });
     return { resource: 'reservations', records };
   }
@@ -54,12 +55,15 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
     const iso = ensure('isometrics', data.isoId);
     const rows = rowsOf(store); const plan = planStart(rows, iso.id);
     if (!plan.length) throw new AppError(409, nothingBecause(rows, iso.id, 'start'));
-    const reportNo = store.next('PL'); const lines: Row[] = [];
+    // Pick List No.: five digits, as the reference's Pick List archive ("00001"); one counter for the workspace.
+    const reportNo = String(store.next('PL').split('-').pop()).padStart(5, '0'); const lines: Row[] = [];
+    const siteId = siteOfIso(store, iso.id);
     for (const item of plan) {
-      // Earlier lines of this pick list already claim stock: allocate from what the store holds now.
-      const { parts, shortfall } = allocateStock(rowsOf(store), item.identity, item.quantity);
-      if (shortfall > 0) throw new AppError(409, 'The available stock is spread over rows that other pick lists already claim. Try again after they are taken.');
-      for (const part of parts) lines.push(add('picklists', { number: store.next('PICK'), reportNo, isoId: iso.id, ...refs(item.requirement), requirementId: item.requirement.id, warehouseId: part.stock.warehouseId, quantity: part.quantity, date, chargeNo: String(part.stock.chargeNo || ''), taken: false }));
+      // The source is the isometric's project site's Material inventory; one pick line per requirement line (the
+      // inventory is kept per Material No, the charges are drawn when the pick list is taken).
+      const { shortfall } = allocateStock(rowsOf(store), siteId, item.identity, item.quantity);
+      if (shortfall > 0) throw new AppError(409, 'Other pick lists already claim this stock. Try again after they are taken.');
+      lines.push(add('picklists', { number: store.next('PICK'), reportNo, isoId: iso.id, ...refs(item.requirement), requirementId: item.requirement.id, warehouseId: '', siteId, quantity: item.quantity, date, chargeNo: '', taken: false }));
       // The reservation is used up by what this pick list takes; a larger reservation keeps its remainder.
       const reservation = rows.reservations.find(row => row.requirementId === item.requirement.id && row.status === 'Reserved');
       if (reservation) { const left = qty(Number(reservation.quantity) - item.quantity); patch('reservations', reservation, left > 0 ? { quantity: left } : { status: 'Used', quantity: Math.min(Number(reservation.quantity), item.quantity) }); }
@@ -70,13 +74,22 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
     const reportNo = typeof data.reportNo === 'string' ? data.reportNo.trim() : '';
     const lines = store.list('picklists').filter(line => String(line.reportNo || line.number) === reportNo);
     if (!lines.length) throw new AppError(404, 'This pick list could not be found.');
-    const open = lines.filter(line => line.taken === false);
+    // In the order the lines were written (requirement order), so the charges are drawn the same way every time.
+    const open = lines.filter(line => line.taken === false).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)) || String(a.number).localeCompare(String(b.number)));
     if (!open.length) throw new AppError(409, 'This pick list is already taken.');
     const records = open.map(line => {
       if (date < String(line.date)) throw new AppError(422, 'The taken date cannot be before the pick list date.');
       const custom = Boolean(line.customMaterialId); const item = String(custom ? line.customMaterialId : line.materialId);
-      balance(false, item, String(line.warehouseId), String(line.chargeNo || ''), -Number(line.quantity), custom);
-      movement(false, 'Issue', item, String(line.warehouseId), -Number(line.quantity), { isoId: String(line.isoId), requirementId: String(line.requirementId || ''), chargeNo: String(line.chargeNo || ''), note: `${line.number}${note ? ' · ' + note : ''}` }, custom);
+      const extra = { isoId: String(line.isoId), requirementId: String(line.requirementId || ''), note: `${line.number}${note ? ' · ' + note : ''}` };
+      if (line.warehouseId) {
+        // A pick line written before the site inventories existed takes from its storehouse line.
+        balance(false, item, String(line.warehouseId), String(line.chargeNo || ''), -Number(line.quantity), custom);
+        movement(false, 'Issue', item, String(line.warehouseId), -Number(line.quantity), { ...extra, chargeNo: String(line.chargeNo || '') }, custom);
+      } else {
+        const siteId = String(line.siteId || '') || siteOfIso(store, line.isoId);
+        const parts = takeFromSite(store, context.actor, siteId, refs(line), Number(line.quantity));
+        for (const part of parts) add('movements', { number: store.next('MM'), ...refs(line), warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), ...extra });
+      }
       return patch('picklists', line, { taken: true, takenDate: date });
     });
     return { resource: 'picklists', records };
@@ -114,7 +127,8 @@ export function seedMtoLogistics(store: Store, actor: Actor) {
     add('iso_materials', 'requirement-field-6', { isoId: 'iso-4', materialId: 'material-4', quantity: 40, phaseId: 'phase-0' });
     add('iso_materials', 'requirement-field-7', { isoId: 'iso-6', materialId: 'material-5', quantity: 70, phaseId: 'phase-1' });
     add('iso_materials', 'requirement-field-8', { isoId: 'iso-8', materialId: 'material-3', quantity: 40, phaseId: 'phase-1' });
-    for (const [materialId, quantity, chargeNo] of [['material-6', 3, 'H-2204'], ['material-8', 60, 'H-3310'], ['material-4', 18, 'H-1042'], ['material-7', 40, 'H-2951'], ['material-9', 10, 'H-4410'], ['material-12', 2, 'H-4512']] as const) run('adjust-material', { materialId, warehouseId: 'warehouse-yard', chargeNo, quantity, date: '2026-10-05', note: 'Sample opening balance' });
+    // Opening balances of the project sites' Material inventories (north: cooling water; river: steam network).
+    for (const [siteId, materialId, quantity, chargeNo] of [['site-north', 'material-6', 3, 'H-2204'], ['site-north', 'material-8', 60, 'H-3310'], ['site-river', 'material-4', 42, 'H-1042'], ['site-river', 'material-5', 46, 'H-2208'], ['site-river', 'material-7', 40, 'H-2951'], ['site-north', 'material-9', 10, 'H-4410'], ['site-north', 'material-12', 2, 'H-4512']] as const) run('stock-add', { siteId, materialId, chargeNo, quantity, date: '2026-10-05', note: 'Sample opening balance' });
     // iso-2 reserves what it can (the three class 150 flanges in stock), iso-1 starts and is taken, iso-5 starts and waits to be taken.
     run('reserve-iso', { isoId: 'iso-2', date: '2026-10-22' });
     const first = run('start-iso', { isoId: 'iso-1', date: '2026-10-23' });

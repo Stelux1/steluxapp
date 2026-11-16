@@ -2,6 +2,7 @@ import type { DataStep } from './hosted-preparation.ts';
 import type { Store } from './store.ts';
 import { upgradeWeldCatalogs } from './catalog-upgrade.ts';
 import { loadDiameterCatalog, missingDiameterCatalog } from './diameter-catalog.ts';
+import { migrateProjectHoldings } from './mto-stock.ts';
 
 /**
  * The data steps of the hosted preparation (server/prepare-welding.ts), in order. Every step only inserts: no step
@@ -14,4 +15,7 @@ export const hostedDataSteps = (store: () => Store): DataStep[] => [
   { name: 'catalogData', run: options => upgradeWeldCatalogs(store(), options) },
   // The reference diameter catalog: adds the diameters the workspace does not hold and never changes one that exists.
   { name: 'diameterCatalog', run: ({ dryRun: counting }) => ({ added: counting ? missingDiameterCatalog(store()).length : loadDiameterCatalog(store()) }) },
+  // MTO stock: what the first version kept as an invisible project holding is added to that project site's Material
+  // inventory as a new row with one new movement; the old rows stay as stored (server/mto-stock.ts).
+  { name: 'projectHoldings', run: options => migrateProjectHoldings(store(), options) },
 ];

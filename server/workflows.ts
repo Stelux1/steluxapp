@@ -14,7 +14,7 @@ import { runPunchAction } from './punch.ts';
 import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
 import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
 import { isMtoStockAction } from '../shared/mto-stock.ts';
-import { runMtoStock } from './mto-stock.ts';
+import { changeSiteStock, receivingSiteId, runMtoStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
 import { runMtoLogisticsAction } from './mto-logistics.ts';
 import { createSpoolServiceRequest, moveSpoolsToLaydown, nextNumber } from './spool-logistics.ts';
@@ -68,7 +68,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
     const movement = (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra: Input = {},custom=false) => add(tool ? 'tool_movements' : 'movements', { number: store.next(tool ? 'TM' : 'MM'), [tool ? 'articleId' : custom?'customMaterialId':'materialId']: itemId, warehouseId, quantity: qty(amount), type, date, note, ...extra });
     if (MTO_ACTION_KEYS.includes(key)) return runMtoLogisticsAction(key, { store, actor, data, date, note, ensure, add, patch, balance, movement });
     if (MTO_MATERIAL_ACTIONS.includes(key)) { const mto = runMtoMaterialAction(store, key, data, actor)!; return mto.records ? { resource: mto.resource, records: mto.records } : { resource: mto.resource, record: mto.record! }; }
-    const procurement: ProcurementContext = { store, date, note, ensure, add, patch, balance, movement };
+    const procurement: ProcurementContext = { store, actor, date, note, ensure, add, patch, balance, movement };
     if (key === 'correct-receipt') { const done = correctReceipt(procurement, data); return { resource: done.resource, record: done.record }; }
     if (key === 'order'||key==='order-requirements') {
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
@@ -84,7 +84,12 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       return { resource: 'orders', record: order };
     }
     if (key === 'receive') {
-      const order = ensure('orders', data.orderId); const wh = warehouse(receivingWarehouseId(store, data.warehouseId), false);
+      const order = ensure('orders', data.orderId);
+      // New receipts go into the Material inventory of the order's project site; only an order that belongs to no
+      // project site (a manual order without a project) is still booked into a storehouse.
+      const orderLines = store.list('order_lines').filter(l => l.orderId === order.id);
+      const needsStorehouse = Array.isArray(data.items) && (data.items as Input[]).some(item => { const line = orderLines.find(l => l.id === (item as Input)?.lineId); return line && !receivingSiteId(store, order, line); });
+      const wh = needsStorehouse ? warehouse(receivingWarehouseId(store, data.warehouseId), false) : undefined;
       const supplierId=str(data.supplierId)||String(order.supplierId||'');if(!supplierId)throw new AppError(422,'Choose the delivery supplier.');ensure('suppliers',supplierId);
       if (order.status === 'Cancelled' || order.status === 'Received') throw new AppError(409, 'This order has no outstanding deliveries.');
       if (!Array.isArray(data.items) || !data.items.length) throw new AppError(422, 'Enter at least one received quantity.');
@@ -97,9 +102,15 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
         if (qty(Number(line.received) + amount) > Number(line.quantity)) throw new AppError(409, 'Received quantity exceeds the outstanding quantity.');
         patch('order_lines', line, { received: qty(Number(line.received) + amount) });
         const chargeNo = str(item.chargeNo);
-        balance(false, material.record.id, wh.id, chargeNo, amount,material.custom);
-        movement(false, 'Receipt', material.record.id, wh.id, amount, { chargeNo,requirementId:line.requirementId||'',isoId:line.isoId||'', note: `${order.number}${note ? ' · ' + note : ''}` },material.custom);
-        recordReceipt(procurement, { order, line, warehouseId: wh.id, supplierId, chargeNo, quantity: amount });
+        const siteId = receivingSiteId(store, order, line);
+        if (siteId) {
+          changeSiteStock(store, actor, siteId, material.refs, chargeNo, amount);
+          add('movements', { number: store.next('MM'), ...material.refs, warehouseId: '', siteId, quantity: qty(amount), type: 'Receipt', date, chargeNo, requirementId: line.requirementId || '', isoId: line.isoId || '', note: `${order.number}${note ? ' · ' + note : ''}` });
+        } else {
+          balance(false, material.record.id, wh!.id, chargeNo, amount,material.custom);
+          movement(false, 'Receipt', material.record.id, wh!.id, amount, { chargeNo,requirementId:line.requirementId||'',isoId:line.isoId||'', note: `${order.number}${note ? ' · ' + note : ''}` },material.custom);
+        }
+        recordReceipt(procurement, { order, line, warehouseId: siteId ? '' : wh!.id, supplierId, chargeNo, quantity: amount });
       }
       const lines = store.list('order_lines').filter(l => l.orderId === order.id);
       const status = lines.every(l => Number(l.received) >= Number(l.quantity)) ? 'Received' : 'Partially received';
@@ -125,7 +136,16 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       return { resource: tool ? 'tool_stock' : 'stock' };
     }
     if (key === 'issue-material') {
-      const iso = ensure('isometrics', data.isoId); const material = materialOf(data); const wh = warehouse(data.warehouseId, false); const amount = positive(data.quantity); const chargeNo = str(data.chargeNo);
+      const iso = ensure('isometrics', data.isoId); const material = materialOf(data); const amount = positive(data.quantity); const chargeNo = str(data.chargeNo);
+      if (!data.warehouseId) {
+        // Without a storehouse the isometric's project site inventory gives the material (charge by charge).
+        const siteId = siteOfIso(store, iso.id); if (!siteId) throw new AppError(422, 'Choose the storehouse to issue from.');
+        const parts = takeFromSite(store, actor, siteId, material.refs, amount, String(material.record.materialNo || 'material'));
+        const pick = add('picklists', { number: store.next('PICK'), isoId: iso.id,...material.refs,requirementId:data.requirementId||'', warehouseId: '', siteId, quantity: amount, date, chargeNo });
+        for (const part of parts) add('movements', { number: store.next('MM'), ...material.refs, warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), isoId: iso.id, requirementId: data.requirementId || '', note: `${pick.number}${note ? ' · ' + note : ''}` });
+        return { resource: 'picklists', record: pick };
+      }
+      const wh = warehouse(data.warehouseId, false);
       balance(false, material.record.id, wh.id, chargeNo, -amount,material.custom);
       const pick = add('picklists', { number: store.next('PICK'), isoId: iso.id,...material.refs,requirementId:data.requirementId||'', warehouseId: wh.id, quantity: amount, date, chargeNo });
       movement(false, 'Issue', material.record.id, wh.id, -amount, { isoId: iso.id,requirementId:data.requirementId||'', chargeNo, note: `${pick.number}${note ? ' · ' + note : ''}` },material.custom);

@@ -27,7 +27,7 @@ export const PROCUREMENT_PATHS: string[] = PROCUREMENT_PAGES.map(page => page.pa
 export const PROCUREMENT_RESOURCE_FIELDS: Record<string, string[]> = {
   receipts: ['orderId', 'lineId', 'materialId', 'customMaterialId', 'warehouseId', 'supplierId', 'chargeNo', 'quantity', 'date', 'correction', 'correctsId', 'note'],
   suppliers: ['name', 'address', 'zip', 'residence', 'phone', 'email', 'description'],
-  warehouses: ['name', 'siteId', 'use'],
+  // No storehouse: a take-in books into the Material inventory of the order's project site (shared/mto-stock.ts).
 };
 export const PROCUREMENT_ACTION_FIELDS: Record<string, string[]> = {
   'order-requirements': ['requirementIds', 'supplierId', 'date', 'note'],
