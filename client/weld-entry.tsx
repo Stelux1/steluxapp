@@ -19,7 +19,7 @@ import {
   WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
   planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
   MASS_EDIT_CLEAR_LABEL, MASS_EDIT_COLUMNS, MASS_EDIT_DATES, MASS_EDIT_DATE_HINT, MASS_EDIT_DIAMETER, MASS_EDIT_FLAGS_LABELS, MASS_EDIT_SECTIONS, MASS_EDIT_SELECT_NOTHING,
-  NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, WELD_ORDER_MESSAGES, WELD_SORTING_MESSAGES, orderFailureMessage, sideCellTexts, stampOptionLabel,
+  NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, deletedViewEmpty, stayInDeletedView, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, WELD_ORDER_MESSAGES, WELD_SORTING_MESSAGES, orderFailureMessage, sideCellTexts, stampOptionLabel,
   MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldMatchesSearch, weldSortingDisabled, weldSortingMenu, welderStamps, type MassEditItem,
   CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
   chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
@@ -37,7 +37,7 @@ const sortByName = (rows: Row[], key = 'name') => [...rows].sort((a, b) => str(a
 /** Dia. options: one per distinct Size in inches of the catalog in the hosted profile (see diameterOptions). */
 function useDiameterOptions() { const { rows, user } = useWorkspace(); return useMemo(() => diameterOptions(activeRows(rows, 'diameters'), Boolean(user.availability?.features.includes('pilots'))), [rows, user]); }
 function useWeldData(iso: Row) {
-  const { rows, allRows } = useWorkspace();
+  const { rows, allRows, welderStamps } = useWorkspace();
   return useMemo(() => {
     const all = (rows.welds || []).filter(weld => weld.isoId === iso.id);
     const welds = orderedWelds(all.filter(weld => !weld._archived), weldSortingDisabled(iso));
@@ -50,9 +50,9 @@ function useWeldData(iso: Row) {
     return {
       all, welds, deleted: orderedWelds(all.filter(weld => weld._archived), true), project, site, certificates, offered, lookups, requests: rows.inspection_requests || [],
       lock: lockContext(rows.weld_types, rows.releases, rows.isometrics),
-      types: byId('weld_types'), stampers: byId('qa_engineers'), welders: byId('welders'), wps: byId('wps'), diameters: byId('diameters'), spools: byId('spools'), certs: byId('certifications'), materials: byId('materials'), materialTypes: byId('material_types'), materialParts: byId('material_parts'),
+      types: byId('weld_types'), stampers: byId('qa_engineers'), welders: new Map([...(welderStamps || []).map(stamp => [stamp.id, stamp as unknown as Row] as const), ...byId('welders')]), wps: byId('wps'), diameters: byId('diameters'), spools: byId('spools'), certs: byId('certifications'), materials: byId('materials'), materialTypes: byId('material_types'), materialParts: byId('material_parts'),
     };
-  }, [rows, allRows, iso]);
+  }, [rows, allRows, iso, welderStamps]);
 }
 type WeldData = ReturnType<typeof useWeldData>;
 
@@ -474,11 +474,11 @@ function DeleteDialog({ welds, onClose, onDone }: { welds: Row[]; onClose: () =>
 }
 
 /** The undo icon of a deleted weld: "Bring weld back", "Are you sure?", Bring back / Cancel. */
-function BringBackDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
+function BringBackDialog({ weld, onClose, onBack }: { weld: Row; onClose: () => void; onBack: () => void }) {
   const { refresh, notify } = useWorkspace(); const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function bring() {
     setBusy(true); setError('');
-    try { await post(`/records/welds/${weld.id}/archive`, { _version: weld._version }); await refresh(); notify(`Weld ${str(weld.weldNo)} is back in the table.`); onClose(); } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
+    try { await post(`/records/welds/${weld.id}/archive`, { _version: weld._version }); await refresh(); notify(`Weld ${str(weld.weldNo)} is back in the table.`); onBack(); onClose(); } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
   return <Modal title={WELD_BRING_BACK_WORDING.title} onClose={onClose}><div className="modal-body"><Failure message={error}/><p>{WELD_BRING_BACK_WORDING.text}</p></div>
     <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{WELD_BRING_BACK_WORDING.cancel}</button><button type="button" className="btn primary" disabled={busy} onClick={() => void bring()}>{busy && <Loader2 size={15} className="spin"/>}{WELD_BRING_BACK_WORDING.button}</button></div></Modal>;
@@ -590,7 +590,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
       })}</tbody>
       {canSort && dragging && <tfoot><tr className="weld-drop-end" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, null), welds.find(row => row.id === dragging)); }}><td colSpan={columns.length + 1}>Drop here to move the weld to the end</td></tr></tfoot>}
     </table>{visible.length === 0 && <p className="muted weld-no-match" role="status">No weld matches “{query.trim()}”.</p>}</TableScroll>
-      : showDeleted ? <EmptyState title={WELD_BRING_BACK_WORDING.emptyTitle} description={WELD_BRING_BACK_WORDING.emptyText}/>
+      : showDeleted ? <EmptyState {...deletedViewEmpty(welds.length)}/>
       : <EmptyState title="No welds on this isometric" description="Add the first weld, or add a range of weld numbers at once." action={canAdd ? <button type="button" className="btn primary" onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : undefined}/>}
     {welds.length > 0 && !showDeleted && <p className="muted weld-legend"><Lock size={13}/> A padlock marks a weld of a completed phase: field welds after the Field release, shop welds after the Prefab release. Reopen the release to change them.</p>}
     {dialog === 'add' && <WeldDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
@@ -601,7 +601,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     {dialog === 'delete' && <DeleteDialog welds={removing} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
     {/* Options → Punch list opens the isometric's punch dialog (Add item / Complete punch & Sign-off), the same as the Item button of the status card. */}
     {dialog === 'punch' && <PunchDialog isoId={iso.id} onClose={() => setDialog(null)}/>}
-    {restoring && <BringBackDialog weld={restoring} onClose={() => setRestoring(null)}/>}
+    {restoring && <BringBackDialog weld={restoring} onClose={() => setRestoring(null)} onBack={() => { if (!stayInDeletedView(data.deleted.filter(row => row.id !== restoring.id).length)) setShowDeleted(false); }}/>}
     {inspection && <inspection.Dialog isoId={str(iso.id)} weldIds={checked.map(weld => weld.id)} onClose={() => setInspection(null)}/>}
   </section>;
 }

@@ -126,7 +126,7 @@
 .iso-itp-row small { display: block; color: var(--muted); }
 .iso-itp-title { grid-column: 1; overflow-wrap: anywhere; }
 .iso-itp-meta { grid-column: 1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; color: var(--muted); }
-.iso-itp-row > .icon-btn { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.iso-itp-row > .icon-btn, .iso-itp-row > .iso-itp-unlink { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
 .iso-itp-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--muted); }
 .iso-release-anchor:focus-visible { outline: 2px solid var(--pilot-color, currentColor); outline-offset: 3px; }
 .iso-lock-banner { background: var(--surface-blue); border: 1px solid var(--line); color: var(--ink, inherit); }

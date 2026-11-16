@@ -73,6 +73,8 @@ export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: 
   projectStatus?: Record<string, number>;
   /** Pilots profile: which parts Copy isometrics may carry for this account. */
   copyParts?: import('./permissions.ts').CopyParts;
+  /** Pilots profile: code and name of the welders that readable welds name but the account does not read (weld stamps only). */
+  welderStamps?: import('./weld-entry.ts').WelderStamp[];
   /** Pilots profile, limited account with several main projects: the main-project choice (each main project read with its own profile). */
   siteRows?: Record<string, Row[]>;
   /** Pilots profile: the main project chosen for the sign-in session ('' while none is), shared by every pilot and tab. */

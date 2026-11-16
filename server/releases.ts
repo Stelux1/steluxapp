@@ -1,5 +1,5 @@
 import type { Row } from '../shared/types.ts';
-import { COMPLETION_FIELDS, ITP_MISSING, RELEASE_PHASES, activeRelease, fwpAccepts, nextReportNo, phaseCompleted, releaseCheck, releaseDocumentData, releaseItpOf, type ReleasePhase } from '../shared/releases.ts';
+import { COMPLETION_FIELDS, ITP_MISSING, RELEASE_PHASES, activeRelease, fwpAccepts, nextReportNo, phaseCompleted, releaseCheck, releaseDocumentData, releaseItpOf, releaseItpsOf, type ReleasePhase } from '../shared/releases.ts';
 import { itpLatest } from '../shared/itps.ts';
 import { AppError, SYSTEM, validDate, type Actor, type Store } from './store.ts';
 
@@ -54,23 +54,23 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
   const isometrics = ids(data.isoIds, 'isometric').map(id => store.get('isometrics', id));
   let itp = '';
   if (type !== 'Hydrotest') {
-    const phase = type as ReleasePhase; const releases = store.list('releases');
+    const phase = type as ReleasePhase; const releases = store.list('releases'); const itps = store.list('itps'), itpsOf = (iso: Row) => releaseItpsOf(iso, phase, itps);
     if (actor.id !== SYSTEM.id) {
       // The release document follows the phase's Complete on the isometric: only completed isometrics are released.
       const refused = isometrics.flatMap(iso => {
         if (activeRelease(releases, iso.id, phase)) return [{ iso, message: `${phase} is already released.` }];
         if (!phaseCompleted(iso, phase, releases)) return [{ iso, message: `${phase} is not complete yet. Mark it ${phase} complete on the isometric first.` }];
-        return releaseItpOf(iso, phase) ? [] : [{ iso, message: ITP_MISSING[phase] }];
+        return itpsOf(iso).length ? [] : [{ iso, message: ITP_MISSING[phase] }];
       });
       if (refused.length) {
         const shown = refused.slice(0, 3).map(item => `${isoName(item.iso)}: ${item.message}`).join(' ');
         throw new AppError(422, `Nothing was released. ${shown}${refused.length > 3 ? ` ${refused.length - 3} more isometrics are blocked.` : ''}`);
       }
       // One document per ITP: the chosen ITP (or, without one, the single ITP all checked isometrics share).
-      const held = [...new Set(isometrics.map(iso => releaseItpOf(iso, phase)))];
+      const held = isometrics.map(itpsOf).reduce((shared, own) => shared.filter(value => own.includes(value)));
       itp = str(data.itp) || (held.length === 1 ? held[0] : '');
       if (!itp) throw new AppError(422, 'Choose one ITP first: the checked isometrics have different ITPs, and a release document is made per ITP.', { itp: 'Choose an ITP.' });
-      const other = isometrics.filter(iso => releaseItpOf(iso, phase) !== itp);
+      const other = isometrics.filter(iso => !itpsOf(iso).includes(itp));
       if (other.length) throw new AppError(422, `Nothing was released. ${other.slice(0, 3).map(iso => `${isoName(iso)}: ${phase === 'Prefab' ? 'ITP No' : 'ITP No 2'} is ${releaseItpOf(iso, phase)}, not the chosen ITP ${itp}.`).join(' ')}${other.length > 3 ? ` ${other.length - 3} more isometrics are blocked.` : ''}`, { itp: 'Release one ITP at a time.' });
       if (new Set(isometrics.map(iso => siteOf(store, iso)?.id ?? '')).size > 1) throw new AppError(422, 'Release the isometrics of one main project at a time.');
     } else itp = str(data.itp) || releaseItpOf(isometrics[0], phase);

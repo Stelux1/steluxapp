@@ -718,3 +718,51 @@ test('spool names: a North-only account reads the whole catalog, adds a name swi
   const saved = await north.as.request('/actions/save-weld', { method: 'POST', pilot: 'weld', data: { isoId: 'iso-1', weldNo: 'SN-1', spoolName: 'SP-N1' } });
   assert.equal(saved.status, 201, await saved.clone().text());
 });
+
+test('SC2 D9: every PDF of an isometric out of reach answers 403 `site`, as the record routes, also for a per-site profile account', async t => {
+  const { PDF_DOCUMENTS } = await import('../server/pdf/documents.ts');
+  const f = await fixture(t);
+  const review = f.profile('Only review here', { generalPermission: 'Read only', materialsPermission: NONE, weldingPermission: 'Read only' });
+  const admin = f.profile('Admin here', { generalPermission: ADMIN, materialsPermission: ADMIN, weldingPermission: ADMIN, settingsPermission: ADMIN });
+  // As the scenario's account: profile and Weld Pilot profile set, North ticked with its own read-only profile.
+  const reader = f.account('SC2 Weld Reader', { profileId: review, weldEnabled: true, weldProfileId: admin, mtoEnabled: false, mtoProfileId: admin, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteProfiles: JSON.stringify({ [NORTH]: review }) }, { weld: [NORTH] });
+  await reader.login();
+  const record = await reader.as.request('/records/isometrics/iso-4', { method: 'PUT', pilot: 'weld', data: { description: 'x', _version: f.store.get('isometrics', 'iso-4')._version } });
+  assert.equal(record.status, 403); assert.equal((await json(record)).code, 'site');
+  // Every document that takes an isometric: the record routes' answer, never 404 (documents the profile does not allow say so first).
+  for (const document of PDF_DOCUMENTS.filter(item => item.scope !== 'project')) {
+    const response = await reader.as.request(`/pdf/${document.key}?isoId=iso-4`, { pilot: 'weld' });
+    const body = await json(response);
+    assert.equal(response.status, 403, document.key);
+    assert.ok(body.code === 'site' || body.error === 'Your permission profile does not allow this document.', `${document.key}: ${JSON.stringify(body)}`);
+  }
+  // A record named by id in a document request: the welder card of a welder of the other main project answered 404.
+  const card = await reader.as.request('/pdf/welder-card?welderId=welder-3', { pilot: 'weld' });
+  assert.equal(card.status, 403); assert.equal((await json(card)).code, 'site');
+  assert.equal((await reader.as.request('/history/welders/welder-3', { pilot: 'weld' })).status, 403, 'as its record route');
+  assert.equal((await reader.as.request('/pdf/welder-card?welderId=welder-1', { pilot: 'weld' })).status, 200, 'a welder of its own main project prints');
+  assert.equal((await reader.as.request('/pdf/welder-card?welderId=no-such-welder', { pilot: 'weld' })).status, 404, 'an unknown welder is still not found');
+});
+
+test('SC2 N-H: a limited account gets the stamps (code and name) of the welders its welds name, not their welder records', async t => {
+  const f = await fixture(t);
+  const review = f.profile('Only review stamps', { generalPermission: 'Read only', materialsPermission: NONE, weldingPermission: 'Read only' });
+  const reader = f.account('Stamp reader', { profileId: review, weldEnabled: true, mtoEnabled: false, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteProfiles: JSON.stringify({ [NORTH]: review }) }, { weld: [NORTH] });
+  await reader.login();
+  const boot = await json<Bootstrap & { welderStamps?: Record<string, unknown>[] }>(await reader.as.request('/bootstrap', { pilot: 'weld' }));
+  const welderIds = new Set(boot.rows.welders.map(row => row.id));
+  const named = new Set(boot.rows.welds.flatMap(weld => ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id'].map(field => String(weld[field] || '')).filter(Boolean)));
+  const missing = [...named].filter(id => !welderIds.has(id)).sort();
+  assert.ok(missing.length > 0, 'the sample North welds name welders that are linked to Riverside only');
+  const stamps = boot.welderStamps || [];
+  assert.deepEqual(stamps.map(stamp => stamp.id).sort(), missing, 'one stamp for every welder a readable weld names and the welder list lacks');
+  for (const stamp of stamps) {
+    const welder = f.store.get('welders', String(stamp.id));
+    assert.deepEqual(stamp, { id: welder.id, number: String(welder.number), welderCode: String(welder.welderCode ?? ''), name: String(welder.name) }, 'code and name only');
+    const record = await reader.as.request(`/history/welders/${stamp.id}`, { pilot: 'weld' });
+    assert.equal(record.status, 403, 'the welder record itself stays closed'); assert.equal((await json(record)).code, 'site');
+  }
+  // An account that reads every welder gets no stamps.
+  const all = await json<Bootstrap & { welderStamps?: unknown[] }>(await f.admin.request('/bootstrap', { pilot: 'weld' }));
+  assert.deepEqual(all.welderStamps, []);
+});

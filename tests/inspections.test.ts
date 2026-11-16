@@ -244,7 +244,7 @@ test('mass request dialog: the weld list comes from the table, the messages are 
   const processes = [row('rt', { name: 'RT' }), row('mt', { name: 'MT' })];
   const w1 = weld('w1', { ndoReq: true, ndtProcess1Id: 'rt', ndtProcess2Id: 'mt' }), w2 = weld('w2', { ndoReq: true });
   assert.equal(massRequestPlan('NDT', [], [], [], processes).error, 'Select one or more welds in the table first.');
-  assert.equal(massRequestPlan('NDT', [w2], [], [], processes).error, 'None of the selected welds has an open NDT process.');
+  assert.equal(massRequestPlan('NDT', [w2], [], [], processes).error, 'None of the selected welds has an open NDT process. Set the NDT location and NDT process on the welds first (Edit weld or Mass edit welds).');
   const full = row('r1', { number: 'R00011', weldId: 'w1', type: 'NDT', status: 'Open', processes: 'RT, MT' });
   assert.equal(massRequestPlan('NDT', [w1], [full], [], processes).error, 'All NDT requests have already been created for the selected welds.');
   const plan = massRequestPlan('NDT', [w1, w2], [{ ...full, processes: 'RT' }], [], processes);
@@ -890,4 +890,21 @@ test('PWHT request dialog: sections follow what the weld requires, Save writes t
   assert.equal(store.list('attachments').some(item => item.id === file.id), false);
   const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
   assert.ok(hosted.actions['pwht-weld'], 'the hosted profile delivers the action');
+});
+
+test('SA2 N4, N6, N7: the mass request dialog says where to set the process, the PWHT warning names PWHT, the toast number reads as the archive', async () => {
+  const I = await import('../shared/inspections.ts');
+  // N4: no weld has an NDT process yet: the message says what to do.
+  assert.match(I.massRequestPlan('NDT', [{ id: 'w', _version: 1, _archived: false, _createdAt: '', _updatedAt: '', ndoReq: true } as Row], [], [], []).error, /Set the NDT location and NDT process on the welds first/);
+  // N7: the PWHT dialog has the reference PWHT sentence; NDT and NDT-Pre keep theirs.
+  assert.equal(I.massRequestAlert('PWHT'), 'When you generate PWHT Request you can not change request data. Please check that you entered correct data!');
+  assert.equal(I.massRequestAlert('NDT'), I.MASS_REQUEST_TEXTS.alert); assert.equal(I.massRequestAlert('NDT PRE'), I.MASS_REQUEST_TEXTS.alert);
+  // N6: the request archive (reference pwht-request-archive: "00007") and the toast show one number.
+  assert.equal(I.requestCreatedText('R00001', 3), 'Request 00001 created for 3 welds.');
+  assert.equal(I.requestCreatedText('R00005', 1), 'Request 00005 created for 1 weld.');
+  assert.equal(I.requestNumberShown('R00001'), '00001');
+  const { readFileSync } = await import('node:fs');
+  assert.match(readFileSync(new URL('../client/pdf-documents.tsx', import.meta.url), 'utf8'), /subtitle=\{`Request \$\{requestNumberShown\(number\)\}`\}/, 'the Request PDF dialog of the archive shows the same number');
+  const dialog = readFileSync(new URL('../client/inspections.tsx', import.meta.url), 'utf8');
+  assert.match(dialog, /made = requestCreatedText\(number, saved\.records\.length\)/); assert.match(dialog, /\{massRequestAlert\(kind\)\}/);
 });

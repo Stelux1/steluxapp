@@ -2,6 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { ExternalLink, FileText, Loader2 } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import { PUNCH_PRINT_OPTIONS, punchPrintHint } from '../shared/punch.ts';
+import { requestNumberShown } from '../shared/inspections.ts';
 import { ApiError, apiBlob, apiUrl } from './api.ts';
 import { Modal } from './components.tsx';
 import { useWorkspace } from './context.tsx';
@@ -130,7 +131,7 @@ export function RequestPdfButton({ request }: { request: Row }) {
     { name: 'note', label: 'Note', kind: 'textarea', maxLength: 2000, hint: 'Leave empty to print the note saved with the request.' },
     { name: 'isometrics', label: 'Include isometric(s)', kind: 'checkbox', defaultValue: false, hint: 'Adds the list of the isometrics this request covers.' },
   ];
-  return <PdfDocumentButton document={kind.document} report="pdf-ndt-request" params={{ requestNo: number }} label="Request PDF" title={kind.label} subtitle={`Request ${number}`} fileName={`${kind.label}-${safe(number)}`} options={options} attach allowed={canRecord('inspection_requests', 'export', request)} hint="Create the printable request"/>;
+  return <PdfDocumentButton document={kind.document} report="pdf-ndt-request" params={{ requestNo: number }} label="Request PDF" title={kind.label} subtitle={`Request ${requestNumberShown(number)}`} fileName={`${kind.label}-${safe(number)}`} options={options} attach allowed={canRecord('inspection_requests', 'export', request)} hint="Create the printable request"/>;
 }
 /** A request PDF button for each live request of a weld (of the given inspection types): the weld's NDT and PWHT dialogs. */
 export function WeldRequestPdfButtons({ weld, types }: { weld: Row; types: string[] }) {

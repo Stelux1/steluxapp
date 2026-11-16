@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Download, FileText, Filter, Loader2, Pencil, Printer, RefreshCw, Search, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  ARCHIVE_PAGE_SIZES, ARCHIVE_TITLES, ARCHIVE_VIEWS, MANAGER_PATH, heatSections, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
+  ARCHIVE_PAGE_SIZES, ARCHIVE_TITLES, ARCHIVE_VIEWS, MANAGER_PATH, heatSections, massRequestAlert, requestCreatedText, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
   archiveViewLabel, filterManagerWelds, groupRequests, inspectionFileError, keepEligible, locationField, managerColumns, managerResults, managerWelds, massRequestPlan, monthRange, processField, requestArchiveArea, requestDetail, requestFlag, requestSelectable, resultLabel, roundErrors, roundLabel,
   weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type ArchiveFilter, type ArchiveRow, type ArchiveView, type InspectionKind, type ManagerFilter, type ManagerTab, type MassRequestPlan, type RequestDetailLine, type RequestFilter, type RequestGroup, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
@@ -384,7 +384,7 @@ export function MassRequestForm({ kind, type, onType, plan, processes, chosen, o
   const ndt = kind !== 'PWHT';
   const title = kind === 'NDT PRE' ? 'NDT-Pre Request' : kind === 'NDT' ? 'NDT Request' : 'PWHT request';
   return <Modal title={title} onClose={onClose}><form onSubmit={onSubmit}><div className="modal-body"><Alert message={error}/>
-    <div className="alert" role="note"><span>{MASS_REQUEST_TEXTS.alert}</span></div>
+    <div className="alert" role="note"><span>{massRequestAlert(kind)}</span></div>
     {ndt ? (plan.error ? <p className="muted" role="status">{plan.error}</p>
         : <fieldset className="field full-width inspection-processes"><legend>{kind === 'NDT PRE' ? 'NDT-Pre Process' : 'NDT Process'}</legend>{processes.map(process => <label key={process.id}><input type="checkbox" checked={chosen.includes(process.id)} onChange={e => onChosen(e.target.checked ? [...chosen, process.id] : chosen.filter(id => id !== process.id))}/>{process.label}</label>)}</fieldset>)
       : <><fieldset className="field inspection-processes"><legend className="sr-only">Pre-HT or PWHT</legend>
@@ -412,7 +412,7 @@ export function MassRequestDialog({ kind, weldIds, onClose }: MassProps & { kind
     if (ndt && !picked.length) { setError(MASS_REQUEST_TEXTS.selectProcess); return; }
     void run(async () => {
       const saved = await post<{ records: Row[] }>('/actions/mass-inspection-request', { type, weldIds: plan.open.map(line => line.weldId), processIds: ndt ? picked : [], note });
-      const number = String(saved.records[0]?.number ?? ''), made = `Request ${number} created for ${saved.records.length} weld${saved.records.length === 1 ? '' : 's'}.`;
+      const number = String(saved.records[0]?.number ?? ''), made = requestCreatedText(number, saved.records.length);
       try { await openRequestPdf(type, number, include); return made; }
       catch (failure) { return `${made} Its PDF could not be made (${(failure as ApiError).message || 'try again'}); print it from the request archive.`; }
     });

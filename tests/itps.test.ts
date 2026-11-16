@@ -229,3 +229,16 @@ test('sample data: the ITPs carry a scope and title, and the linked isometrics s
   assert.equal(availabilityFor(HOSTED_RELEASE_PROFILE)!.resources.attachments.includes('revNo'), true);
   assert.equal(availabilityFor('welding-demo')!.resources.attachments.includes('revNo'), false);
 });
+
+test('SB2 N10-1: the linked ITP row has a labelled Unlink button that asks first (reference Unlink ITP dialog)', async () => {
+  const { UNLINK_ITP } = await import('../shared/itps.ts');
+  assert.deepEqual([UNLINK_ITP.title, UNLINK_ITP.button, UNLINK_ITP.cancel, UNLINK_ITP.confirm('ITP-01')], ['Unlink ITP', 'Unlink', 'Cancel', 'Unlink ITP-01 from this asset?']);
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../client/itp-dashboard.tsx', import.meta.url), 'utf8');
+  const control = source.slice(source.indexOf('export function ItpLinkControl'), source.indexOf('export function ItpCardLinkButton'));
+  const linked = control.slice(control.indexOf('if (linked)'), control.indexOf('if (!allowedScopes'));
+  // The row button only opens the dialog; the unlink request is sent from the dialog's Unlink button.
+  assert.match(linked, /className="btn subtle small iso-itp-unlink"[^>]*onClick=\{\(\) => \{ setError\(''\); setOpen\(true\); \}\}><Unlink size=\{14\} aria-hidden="true"\/>\{UNLINK_ITP\.button\}<\/button>/);
+  assert.match(linked, /<Modal title=\{UNLINK_ITP\.title\}[\s\S]*UNLINK_ITP\.confirm\(show\(linked\.number\)\)[\s\S]*className="btn danger"[^>]*onClick=\{\(\) => void send\('\/itps\/unlink'/);
+  assert.equal(linked.split("send('/itps/unlink'").length, 2, 'one place sends the unlink, inside the dialog');
+});

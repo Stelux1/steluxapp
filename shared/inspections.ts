@@ -460,6 +460,10 @@ export function nextRequestNumber(requests: Row[] | null | undefined): string {
 }
 /** A request number as the request archives show it: "R00029" reads "00029"; an older number is shown as stored. */
 export const requestNumberShown = (number: unknown) => REQUEST_NUMBER.test(textOf(number)) ? textOf(number).slice(1) : textOf(number);
+/** The toast after Go: the number as the request archives show it ("00001", SA2 N6). */
+export const requestCreatedText = (number: unknown, welds: number) => `Request ${requestNumberShown(number)} created for ${welds} weld${welds === 1 ? '' : 's'}.`;
+/** The warning of the Generate Mass … request dialog: the NDT sentence for NDT and NDT-Pre, the PWHT one for Pre-HT / PWHT. */
+export const massRequestAlert = (kind: string) => kind === 'PWHT' ? MASS_REQUEST_TEXTS.alertPwht : MASS_REQUEST_TEXTS.alert;
 
 // ----- processes of a request ---------------------------------------------------------------------------------
 
@@ -486,8 +490,11 @@ export const requestSelectable = (weld: Row, kind: InspectionKind, requests: Row
 
 export const MASS_REQUEST_TEXTS = {
   alert: 'When you generate NDT Request you can not change request data. Please check that you entered correct data!',
+  /** The PWHT request dialog's own warning (reference pdfPwhtRequestLanguage; its isometric copy repeats the NDT sentence, SA2 N7). */
+  alertPwht: 'When you generate PWHT Request you can not change request data. Please check that you entered correct data!',
   selectWelds: 'Select one or more welds in the table first.',
-  noProcess: 'None of the selected welds has an open NDT process.',
+  /** SA2 N4: also says what to do (the process and location come from the weld). */
+  noProcess: 'None of the selected welds has an open NDT process. Set the NDT location and NDT process on the welds first (Edit weld or Mass edit welds).',
   selectProcess: 'Select at least one NDT process before generating the request.',
   allDone: 'All NDT requests have already been created for the selected welds.',
   noPwht: 'None of the selected welds needs a new Pre-HT/PWHT request.',

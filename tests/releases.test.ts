@@ -695,3 +695,26 @@ test('over HTTP: signed release documents are PDF attachments of the release; ot
   assert.deepEqual(archive.filter(entry => entry.reportNo === '00001').map(entry => [entry.reportNo, entry.itp, entry.signed.length]), [['00001', 'ITP-900', 1]]);
   assert.ok(archive.some(entry => entry.reportNo === 'PFR-002' && entry.itp === 'ITP-01'), 'a release made before the ITP was stored takes the ITP of its isometric');
 });
+
+test('SB2 N7-2: Field release filtered on the isometric\'s Shop+Field ITP No lists it and releases it (as the dashboard counts field welds)', async t => {
+  const { releaseItpsOf } = await import('../shared/releases.ts');
+  const itps = [row('itp-sf', { number: 'ITP-SF', scope: 'Shop+Field' }), row('itp-shop', { number: 'ITP-S', scope: 'Shop' }), row('itp-old', { number: 'ITP-OLD', scope: '' })];
+  const fieldDone = { fieldCompletedAt: '2026-11-16T08:00:00.000Z', prefabCompletedAt: '2026-11-15T08:00:00.000Z' };
+  // The scenario's isometric: ITP-01 (Shop+Field) in slot 1, the sample's hidden ITP No 2 ITP-NDT-01.
+  const iso = row('i', { isoNo: 'STX-CW-001', projectId: 'p1', itpId: 'itp-sf', itpNo: 'ITP-SF', itp2Id: 'itp-ndt', itpNo2: 'ITP-NDT-01', ...fieldDone });
+  assert.deepEqual(releaseItpsOf(iso, 'Field', itps), ['ITP-NDT-01', 'ITP-SF']);
+  assert.deepEqual(releaseItpsOf(iso, 'Prefab', itps), ['ITP-SF'], 'Prefab keeps ITP No');
+  assert.deepEqual(releaseItpsOf({ ...iso, itpId: 'itp-shop', itpNo: 'ITP-S' }, 'Field', itps), ['ITP-NDT-01'], 'a Shop ITP does not count for Field');
+  assert.deepEqual(releaseItpsOf({ ...iso, itpId: 'itp-old', itpNo: 'ITP-OLD', itp2Id: '', itpNo2: '' }, 'Field', itps), ['ITP-OLD'], 'an ITP without scope reads Shop+Field, as on the card');
+  const source = { isometrics: [iso], projects: [row('p1')], welds: [], weldTypes, results: [], releases: [], itps };
+  assert.deepEqual(releaseListRows('Field', source, { itpNo: 'ITP-SF' }).map(entry => [entry.iso.isoNo, entry.selectable]), [['STX-CW-001', true]], 'the Field filter on ITP No 1 finds it');
+  assert.deepEqual(releaseListRows('Field', source, { itpNo: 'ITP-NDT-01' }).map(entry => entry.iso.isoNo), ['STX-CW-001'], 'ITP No 2 still answers');
+  assert.deepEqual(releaseListRows('Field', { ...source, itps: [] }, { itpNo: 'ITP-SF' }).map(entry => entry.iso.isoNo), [], 'without the register nothing is assumed');
+  // Server: Release selected with the Shop+Field ITP is accepted for Field.
+  const store = fixture(t); const { id } = readyIso(store);
+  store.create('itps', { number: 'ITP-SF-900', title: 'Shop and field plan', scope: 'Shop+Field', ndtPercent: 10, revision: '0' }, SYSTEM, 'itp-sf-900');
+  store.update('isometrics', id, { itpId: 'itp-sf-900', itpNo: 'ITP-SF-900' }, store.get('isometrics', id)._version, SYSTEM);
+  complete(store, id, 'Prefab', SYSTEM); complete(store, id, 'Field', SYSTEM);
+  const { records } = runAction(store, 'release', releaseData([id], 'Field', { reportNo: 'FR-900', itp: 'ITP-SF-900' }), actor);
+  assert.equal(records![0].itp, 'ITP-SF-900');
+});

@@ -65,7 +65,7 @@ function useReleaseSource() {
   return useMemo(() => ({
     isometrics: rows.isometrics || [], projects: rows.projects || [], spools: canRecord('spools') ? rows.spools || [] : [],
     welds: canWelds ? rows.welds || [] : [], weldTypes: rows.weld_types || [], results: canRecord('inspection_results') ? rows.inspection_results || [] : [],
-    releases: rows.releases || [], punch: canRecord('punchlists') ? rows.punchlists || [] : null,
+    releases: rows.releases || [], punch: canRecord('punchlists') ? rows.punchlists || [] : null, itps: rows.itps || [],
     /** Without the weld register the pages cannot judge a phase; the server still does. */
     limited: !canWelds,
   }), [rows, canWelds, canRecord]);

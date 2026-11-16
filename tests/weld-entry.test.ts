@@ -983,3 +983,19 @@ test('the weld form defines its check box labels before the fields that use them
   assert.ok(defined > 0 && used > 0, 'both are present');
   assert.ok(defined < used, 'flagLabel is a const arrow function: calling it above its definition throws while the dialog renders');
 });
+
+test('SA2 N-D2: bringing back the last deleted weld returns to the active welds; the generic empty text only on an isometric without welds', async () => {
+  const { stayInDeletedView, deletedViewEmpty, WELD_BRING_BACK_WORDING } = await import('../shared/weld-entry.ts');
+  // Show deleted welds with W050 deleted (14 active), Bring back: no deleted weld left, so the active list is shown.
+  assert.equal(stayInDeletedView(1 - 1), false);
+  assert.equal(stayInDeletedView(2 - 1), true, 'another deleted weld left: the deleted view stays');
+  // The deleted view of an isometric that has active welds never says "No welds added yet …".
+  const withWelds = deletedViewEmpty(15);
+  assert.notEqual(withWelds.title, WELD_BRING_BACK_WORDING.emptyTitle); assert.ok(!withWelds.title.includes('No welds added yet'));
+  assert.match(withWelds.description, /Show active welds/);
+  assert.deepEqual(deletedViewEmpty(0), { title: 'No welds added yet for this isometric.', description: 'Use Add weld or Add welds to create the first weld.' }, 'the reference text on an isometric without welds');
+  // The screen uses both rules (client/weld-entry.tsx).
+  const source = (await import('node:fs')).readFileSync(new URL('../client/weld-entry.tsx', import.meta.url), 'utf8');
+  assert.match(source, /stayInDeletedView\(data\.deleted\.filter\(row => row\.id !== restoring\.id\)\.length\)\) setShowDeleted\(false\)/);
+  assert.match(source, /<EmptyState \{\.\.\.deletedViewEmpty\(welds\.length\)\}\/>/);
+});

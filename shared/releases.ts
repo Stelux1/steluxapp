@@ -4,6 +4,7 @@ import { RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { punchBlocking, punchKind } from './punch.ts';
 import { itpLatest } from './itps.ts';
 import { priorityLabel } from './priority.ts';
+import { weldItpId } from './itp-dashboard.ts';
 
 /**
  * Prefab and Field release, Reopen, release documents and field work packages.
@@ -176,12 +177,22 @@ export function phaseState(type: ReleasePhase, input: ReleaseCheckInput): PhaseS
 
 export interface ReleaseListRow { iso: Row; project?: Row; spools: string; release?: Row; check: ReleaseCheck; /** A box can be ticked only once one ITP is chosen in the filter and the isometric is not released ("Choose ITP" until then). */ selectable: boolean; }
 export interface ReleaseListFilters { /** 'hide' (default): only isometrics that are not released; 'show': released ones too. */ show?: 'hide' | 'show'; projectId?: string; /** The chosen ITP No: matched exactly against the phase's ITP slot (Prefab: ITP No, Field: ITP No 2). Empty = All. */ itpNo?: string; }
-export interface ReleaseListSource { isometrics: Row[]; projects: Row[]; spools?: Row[]; welds: Row[]; weldTypes: Row[]; results: Row[]; releases?: Row[] | null; punch?: Row[] | null; }
+export interface ReleaseListSource { isometrics: Row[]; projects: Row[]; spools?: Row[]; welds: Row[]; weldTypes: Row[]; results: Row[]; releases?: Row[] | null; punch?: Row[] | null; /** The ITP register: a Shop+Field ITP No counts for Field too. */ itps?: Row[] | null; }
 /** The isometric field that holds the ITP of a phase: Prefab uses ITP No, Field uses ITP No 2 (reference: the inline field release names "ITP 2"). */
 export const RELEASE_ITP_SLOT: Record<ReleasePhase, 'itpNo' | 'itpNo2'> = { Prefab: 'itpNo', Field: 'itpNo2' };
 /** Tooltips of the reference for a phase that cannot be released without its ITP. */
 export const ITP_MISSING: Record<ReleasePhase, string> = { Prefab: 'ITP number is missing — enter it before prefab release.', Field: 'ITP 2 is missing — enter it before field release.' };
 export const releaseItpOf = (iso: Row, type: ReleasePhase) => text(iso[RELEASE_ITP_SLOT[type]]);
+/**
+ * Every ITP No a phase of the isometric can be released under (SB2 N7-2): its own slot, and for Field also a Shop+Field ITP
+ * in ITP No (it covers both phases and hides ITP No 2), as the dashboard counts a field weld under it (itp-dashboard weldItpId).
+ */
+export function releaseItpsOf(iso: Row, type: ReleasePhase, itps: Row[] | null | undefined = []): string[] {
+  const own = releaseItpOf(iso, type);
+  if (type !== 'Field' || !text(iso.itpId)) return own ? [own] : [];
+  const covering = weldItpId({ ...iso, itp2Id: '' }, 'Field', itps || []) === text(iso.itpId) ? text(iso.itpNo) : '';
+  return [...new Set([own, covering].filter(Boolean))];
+}
 /** Page lengths of the release lists (reference DataTables): 10 … 500 and ALL (0), default 1000. */
 export const RELEASE_PAGE_LENGTHS = [10, 20, 50, 100, 500, 0] as const;
 export const RELEASE_DEFAULT_PAGE_LENGTH = 1000;
@@ -198,7 +209,7 @@ const priorityOrder = (a: ReleaseListRow, b: ReleaseListRow) => { const left = p
 export function releaseListRows(type: ReleasePhase, source: ReleaseListSource, filters: ReleaseListFilters = {}): ReleaseListRow[] {
   const projects = new Map(source.projects.map(project => [project.id, project]));
   const itp = text(filters.itpNo);
-  return live(source.isometrics).filter(iso => phaseCompleted(iso, type, source.releases) && (!filters.projectId || iso.projectId === filters.projectId) && (!itp || releaseItpOf(iso, type) === itp)).map(iso => {
+  return live(source.isometrics).filter(iso => phaseCompleted(iso, type, source.releases) && (!filters.projectId || iso.projectId === filters.projectId) && (!itp || releaseItpsOf(iso, type, source.itps).includes(itp))).map(iso => {
     const release = activeRelease(source.releases, iso.id, type);
     const spools = live(source.spools).filter(spool => spool.isoId === iso.id).map(spool => text(spool.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).join(', ');
     return { iso, project: projects.get(String(iso.projectId)), spools, release, selectable: Boolean(itp) && !release, check: releaseCheck(type, { iso, welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, punch: source.punch }) };
