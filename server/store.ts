@@ -18,6 +18,7 @@ import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
+import { hostedFreeValue } from '../shared/welder-data.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -151,6 +152,7 @@ export class Store {
       if(key==='pqr'&&input[field.name]===undefined&&existing?.[field.name]===undefined){if(field.name==='attribute25Id')value=input.standard??existing?.standard??'';if(field.name==='attribute5Id')value=input.material??existing?.material??'';}
       if(key==='isometrics'&&field.name==='xRay'&&typeof value==='number')value=String(value);
       if(key==='flanges')value=flangeStoredValue(field,value);
+      if(key==='material_parts'&&field.name==='custom'&&typeof value==='boolean')value=value?'Yes':'';
       if(key==='isometrics'&&existing&&['itpRevNo','itp2RevNo'].includes(field.name)&&input[field.name]===undefined&&existing[field.name]===undefined){const type=field.name==='itpRevNo'?'ITP':'ITP 2';value=this.list('revisions').find(r=>r.isoId===existing.id&&r.type===type)?.revNo??field.default??'0';}
       if (field.required && (value === '' || value === null || value === undefined)) { errors[field.name] = `${field.label} is required.`; continue; }
       if (field.type === 'checkbox') {
@@ -166,7 +168,7 @@ export class Store {
         if (text.length > 20_000) errors[field.name] = `${field.label} is too long.`;
         if (field.type === 'email' && text && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) errors[field.name] = 'Enter a valid email address.';
         if (field.type === 'date' && text) { try { validDate(text, field.label); } catch (e) { errors[field.name] = (e as Error).message; } }
-        if (field.options && text && !field.options.includes(text) && !(field.legacy && Object.hasOwn(field.legacy, text))) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
+        if (field.options && text && !field.options.includes(text) && !(field.legacy && Object.hasOwn(field.legacy, text)) && !(this.hostedRules && hostedFreeValue(key, field.name))) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
         if(field.ref&&text&&field.creatable){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);
           // A text that names no existing value adds one to the catalog: that needs the add right there, not only the right to edit this record.
           if(!found&&actor.canAdd&&!actor.canAdd(field.ref))throw new AppError(403,`Your permission profile does not allow adding a new value for ${field.label}. Choose an existing value.`,{[field.name]:'Choose an existing value.'});

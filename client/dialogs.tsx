@@ -6,20 +6,23 @@ import { ACTIONS } from './catalog.ts';
 import { RELATIONS,relationFields,relationIds } from './catalog.ts';
 import { materialName,requirementExecution } from '../shared/materials.ts';
 import { nextRevision } from '../shared/revisions.ts';
-import type { Row } from '../shared/types.ts';
+import type { ActionField, Row } from '../shared/types.ts';
 import { api, post, ApiError, formatNumber, apiUrl } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Modal, FieldInput, revealInvalidField } from './components.tsx';
 import { PermissionProfileEditor } from './permission-profile-editor.tsx';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { enabledOnSite } from '../shared/weld-catalogs.ts';
+import { DIAMETER_NUMBER_MESSAGE, diameterNumbers, hostedFieldOrder } from '../shared/welder-data.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
 import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
+  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries, canRecord } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=(user.availability?.features.includes('pilots')?hostedFieldOrder:(_key:string,list:ActionField[])=>list)(resourceKey,[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])]).filter(f=>!f.generated);
+  // Welding wire (hosted): the certificate file is chosen in the same dialog and attached once the wire is saved.
+  const [file, setFile] = useState<File | null>(null); const withFile = resourceKey === 'welding_wires' && Boolean(user.availability?.features.includes('pilots')) && canRecord(resourceKey, 'import', record);
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.active?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):true}:{})}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
   const groups = [...new Set(editorFields.filter(f=>!f.hidden).map(f => f.section || 'Details'))];
@@ -29,13 +32,16 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     e.preventDefault(); setError(''); setFields({});
     if (resourceKey === 'isometrics') { const problems = isoInputErrors(values, record, (record && isoSummaries?.[record.id]?.budgets) ?? isoBudgets(record ?? ({} as Row), rows)); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
     if (resourceKey === 'flanges') { const problems = flangeInputErrors(values); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
+    if (resourceKey === 'diameters' && user.availability) { const numbers = diameterNumbers(values); if (Object.keys(numbers.errors).length) { setError(numbers.errors.sizeinch ?? numbers.errors.outline ?? DIAMETER_NUMBER_MESSAGE); setFields(numbers.errors); return; } }
     if (resourceKey === 'sites') { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
     setBusy(true);
     try { const payload = record && user.availability ? Object.fromEntries(Object.entries(values).filter(([name,value]) => {
       const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
       const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
       return JSON.stringify(value)!==JSON.stringify(previous);
-    })) : values; await api(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.active ? { enabledSiteId: enablement.siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(`${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
+    })) : values; const saved = await api<{ record?: Row }>(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.active ? { enabledSiteId: enablement.siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); const saveNote = `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`;
+      if (withFile && file && saved.record) { try { const body = new FormData(); body.set('file', file); body.set('entityType', resourceKey); body.set('entityId', saved.record.id); await api('/files', { method: 'POST', body }); } catch (failure) { await refresh(); notify(`${saveNote} The file could not be attached: ${(failure as Error).message}`); onClose(); return; } }
+      await refresh(); notify(saveNote); onClose(); }
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }
   }
   function change(name: string, value: unknown) {
@@ -54,7 +60,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
       return next;
     });
   }
-  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} setValue={change} onChange={v => change(f.name, v)}/>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</details>)}{withFile && <div className="field"><label htmlFor="field-file">File</label><input id="field-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.csv,.xlsx,.docx,.txt" onChange={e => setFile(e.target.files?.[0] ?? null)}/><small className="field-hint">PDF, images, CSV, Excel, Word or text · up to 20 MB</small></div>}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
 }
 /** Running totals of the isometric progress weights: phases must reach 100 %, and so must each active phase. */
 function ProgressTotals({ values }: { values: Record<string, unknown> }) {

@@ -4,7 +4,7 @@ import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
-import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
+import { HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
@@ -197,6 +197,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     deliverInspections(availability, deliverResource);
     // Operational PDF documents (server/pdf/operational-documents.ts): access keys only, no report columns.
     for (const key of Object.keys(PDF_REPORT_RESOURCES)) availability.reports[key] = [];
+    // Fields of the shared catalog definitions the reference forms do not have (shared/welder-data.ts); last, so no later delivery brings them back.
+    for (const [key, names] of Object.entries(HOSTED_DROPPED_FIELDS)) if (availability.resources[key]) availability.resources[key] = availability.resources[key].filter(name => !names.includes(name));
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
   return availability;
@@ -234,7 +236,7 @@ export function projectResource(availability: Availability | undefined, resource
   const pilots = availability.features.includes('pilots');
   const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   const listed = pilots ? HOSTED_COLUMNS[resource.key] : undefined;
-  return {
+  const projected: Resource = {
     ...resource, description: descriptions[resource.key] || resource.description,
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
@@ -246,6 +248,8 @@ export function projectResource(availability: Availability | undefined, resource
     actions: resource.actions?.filter(key => actionAvailable(availability, key)),
     createAction: resource.createAction && actionAvailable(availability, resource.createAction) ? resource.createAction : undefined,
   };
+  // Form order of the reference (shared/welder-data.ts); the other profiles keep the order of the shared definition.
+  return pilots ? { ...projected, fields: hostedFieldOrder(resource.key, projected.fields) } : projected;
 }
 export function projectAction(availability: Availability | undefined, action: ActionDefinition): ActionDefinition {
   if (!availability) return action;

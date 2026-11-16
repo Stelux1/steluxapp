@@ -104,6 +104,29 @@ export function sideSummary(weld: Values, side: 1 | 2, context: SideContext = {}
   if (context.certificate) return { kind: 'certificate', index: text(context.certificate.indexNo), charge: charge || text(context.certificate.chargeNo), material: certificateMaterialText(context) };
   return charge ? { kind: 'charge', index: '', charge, material: '' } : { kind: 'none', index: '', charge: '', material: '' };
 }
+/** One entry of the Dia. select: its value is the id of the first diameter row that has this size. */
+export interface DiameterOption { value: string; label: string; ids: string[] }
+/**
+ * Dia. options of the weld form. Hosted: one entry per distinct "Size in inches" of the catalog (labelled with that value), so the
+ * reducer pairs and mm sizes of a large catalog do not multiply the list; a row without an inch size keeps its own entry, labelled
+ * with its diameter. Otherwise one entry per row. Rows are taken in Sorting order.
+ */
+export function diameterOptions(rows: Values[], grouped = true): DiameterOption[] {
+  const rank = (row: Values) => text(row.sorting) !== '' && Number.isFinite(Number(row.sorting)) ? Number(row.sorting) : Number.MAX_SAFE_INTEGER;
+  const ordered = [...rows].sort((a, b) => rank(a) - rank(b));
+  const options: DiameterOption[] = [], byKey = new Map<string, DiameterOption>();
+  for (const row of ordered) {
+    const inches = grouped ? text(row.sizeinch) : '';
+    const key = inches ? `inch:${inches}` : `row:${row.id}`;
+    const found = byKey.get(key);
+    if (found) { found.ids.push(String(row.id)); continue; }
+    const option = { value: String(row.id), label: inches || text(row.diameter), ids: [String(row.id)] };
+    byKey.set(key, option); options.push(option);
+  }
+  return options;
+}
+/** The option a stored diameter row stands for (its own id when it is in none). */
+export const diameterOptionValue = (options: DiameterOption[], id: unknown) => options.find(option => option.ids.includes(text(id)))?.value ?? text(id);
 /** The diameter column: the configured diameter, or the explicit length in mm. */
 export function weldDiameterText(weld: Values, diameter?: Values | null): string {
   if (weld.lengthMode === 'Length in mm') return present(weld.dialen) ? `${weld.dialen} mm` : '';

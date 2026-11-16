@@ -171,10 +171,11 @@ extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Mater
 extend('welders', [b('combination', 'Combination')]);
 extend('roles', [t('abbreviation', 'Abbreviation'), n('maxTasks', 'Max amount tasks', { step: 1 }), b('leadRole', 'Lead role?')]);
 extend('welder_certificates', [r('customId', 'Custom', 'welder_customs_catalog'), r('wireId', 'Welding wire', 'welding_wires'), s('position', 'Position', WELD_POSITIONS), s('weldKind', 'BW/FW', WELD_KINDS), s('system', 'ASME/EN', STANDARD_SYSTEMS), n('diameterFrom', 'Diameter from (mm)', { section: 'Qualified range' }), n('diameterTo', 'Diameter to (mm)', { section: 'Qualified range' }), n('thicknessFrom', 'Thickness from (mm)', { section: 'Qualified range' }), n('thicknessTo', 'Thickness to (mm)', { section: 'Qualified range' }), b('ownerArchived', 'Welder archived', { hidden: true })]);
-extend('material_parts', [b('custom', 'Custom')]);
+extend('material_parts', [t('custom', 'Custom')]);
+extend('suppliers', [t('mailbox', 'Mailbox number', { hidden: true }), t('mnzip', 'MN-Zip code', { hidden: true }), t('mnresidence', 'MN-Residence', { hidden: true }), t('fax', 'Fax', { hidden: true })]);
 extend('material_types', [t('typeOfSteel', 'Type of steel'), t('materialDescription', 'Material description'), t('basicMaterial', 'Basic material'), t('materialGroup', 'Material group'), t('lucefinGroup', 'Lucefin group nr.'), s('iso15608', 'ISO 15608 group', ISO_15608_GROUPS), s('asmePNumber', 'ASME P-Number', ASME_P_NUMBERS), s('asmeGroup', 'ASME Group Number', ASME_GROUP_NUMBERS), t('isoAsme', 'ISO / ASME', { hidden: true, readonly: true })]);
 extend('certifications', [s('certType', 'Certificate type', CERT_TYPES), r('materialTypeId', 'Type of material', 'material_types'), r('materialPartId', 'Material part', 'material_parts'), t('basicMaterial', 'Basic material'), t('hotYield', 'Hot yield'), t('impactStrength', 'Impact strength'), b('allProjects', 'All projects', { default: true, hint: 'Untick to link the certificate to chosen projects only.' }), b('controlled', 'Controlled'), b('accepted', 'Accepted')]);
-extend('welding_wires', [r('materialTypeId', 'Type of material', 'material_types'), t('norm', 'Norm'), s('certType', 'Certificate type', CERT_TYPES), t('attestNo', 'Attest number'), r('supplierId', 'Supplier', 'suppliers'), b('allProjects', 'All projects', { default: true, hint: 'Untick to link the wire to chosen projects only.' }), b('controlled', 'Controlled'), b('accepted', 'Accepted')]);
+extend('welding_wires', [r('materialTypeId', 'Type of material', 'material_types'), t('typeMaterial', 'Type of material', { hidden: true }), t('norm', 'Norm'), s('certType', 'Certificate type', CERT_TYPES), t('attestNo', 'Attest number'), r('supplierId', 'Supplier', 'suppliers'), b('allProjects', 'All projects', { default: true, hint: 'Untick to link the wire to chosen projects only.' }), b('controlled', 'Controlled'), b('accepted', 'Accepted')]);
 extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
   r(`material${i}Id`, `Material ${i}`, 'materials', { section: `Material side ${i}` }),
   r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),
@@ -207,7 +208,7 @@ resources.push(...HYDROTEST_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);
 /** Fields above that only the pilots profile shows. */
-export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope'], signatures: ['userId', 'kind', 'nameUnder'], isometrics: ['itpId', 'itp2Id'] };
+export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope'], signatures: ['userId', 'kind', 'nameUnder'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'] };
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {

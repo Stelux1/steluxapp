@@ -168,13 +168,14 @@ test('hosted rules: required abbreviations, ranges, index numbers and the ISO / 
   assert.equal((await f.request('/api/records/certificate_types', 'POST', { name: 'Welder test' })).status, 422);
   assert.equal((await f.request('/api/records/welder_customs_catalog', 'POST', { name: 'W10 Custom', abbreviation: 'W10', diameterFrom: '100', diameterTo: '50' })).status, 422);
   assert.equal((await f.request('/api/records/welder_customs_catalog', 'POST', { name: 'W10 Custom', abbreviation: 'W10', diameterFrom: '50', diameterTo: '100', wtFrom: '3', wtTo: '12' })).status, 201);
-  assert.equal((await f.request('/api/records/diameters', 'POST', { diameter: '10"' })).status, 422);
-  assert.equal((await f.request('/api/records/diameters', 'POST', { diameter: '10"', size: 273.1, sizeinch: 10, outline: 858 })).status, 201);
+  assert.equal((await f.request('/api/records/diameters', 'POST', { diameter: '99"' })).status, 422);
+  assert.equal((await f.request('/api/records/diameters', 'POST', { diameter: '99"', size: 273.1, sizeinch: 99, outline: 858 })).status, 201);
   // Type of material: type of steel is required and the list column is derived.
   assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'A105' })).status, 422);
   response = await f.request('/api/records/material_types', 'POST', { name: 'A105', typeOfSteel: 'Carbon steel', iso15608: '1.2', asmePNumber: 'P-1', asmeGroup: '2', isoAsme: 'client value' });
   assert.equal(response.status, 201); assert.equal((await json(response)).record.isoAsme, '1.2 / P-1 Gr 2');
-  assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'Bad', typeOfSteel: 'Carbon steel', iso15608: '99.9' })).status, 422);
+  // The group is choose-or-type: a value that is not in the list is accepted (see tests/material-data.test.ts).
+  assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'Bad', typeOfSteel: 'Carbon steel', iso15608: '99.9' })).status, 201);
   // Welding wire index numbers are generated when left empty.
   response = await f.request('/api/records/welding_wires', 'POST', { classification: 'ER70S-6', diameter: 1.6, chargeNo: 'C-1', certType: '3.1', controlled: true, allProjects: true });
   assert.equal(response.status, 201); const first = (await json(response)).record.name; assert.match(first, /^\d{4}$/);
