@@ -56,6 +56,15 @@
 .inspection-toolbar .field { min-width: 220px; flex: 0 1 320px; margin: 0; }
 .inspection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .inspection-table th[scope="row"] { font-weight: 600; text-align: left; }
+/* Archives and request archives: heading with the last refresh, request filter, options cell, rows per page, restart list. */
+.inspection-archive-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 8px; font-size: 16px; }
+.inspection-archive-heading small { font-size: 12px; font-weight: 400; }
+.inspection-request-filter .field { min-width: 140px; flex: 0 1 200px; }
+.inspection-options { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.inspection-page-size { display: inline-flex; align-items: center; gap: 6px; }
+.inspection-page-size select { min-height: 32px; }
+.inspection-restart-line { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.inspection-table .record-link, .inspection-table .text-link { white-space: nowrap; }
 
 @media (max-width: 640px) {
   .inspection-toolbar { flex-direction: column; align-items: stretch; }

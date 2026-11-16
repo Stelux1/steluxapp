@@ -94,48 +94,48 @@ function assertLayout(layout: Layout, name: string, options: { rowsMinimum?: num
 
 test('NDT request: header, request data, processes and the weld table of a mass request', async t => {
   const f = await fixture(t);
-  const text = await get(f, 'ndt-request?requestNo=R-2026-0004');
-  for (const label of ['NDT request', 'Request R-2026-0004', 'Client', 'Intern prj. no.', 'Request no.', 'Request date', 'NDT location', 'Processes', 'Weld no.', 'Type', 'Dia.', 'Wall thk.', 'Material', 'WPS', 'Welder', 'Weld date', 'Note', 'Requested by', 'Received by', 'Kestrel Pipe Fabrication B.V.']) assert.ok(text.includes(label), label);
+  const text = await get(f, 'ndt-request?requestNo=R00004');
+  for (const label of ['NDT request', 'Request R00004', 'Client', 'Intern prj. no.', 'Request no.', 'Request date', 'NDT location', 'Processes', 'Weld no.', 'Type', 'Dia.', 'Wall thk.', 'Material', 'WPS', 'Welder', 'Weld date', 'Note', 'Requested by', 'Received by', 'Kestrel Pipe Fabrication B.V.']) assert.ok(text.includes(label), label);
   for (const id of ['weld-22', 'weld-23', 'weld-24']) assert.ok(text.includes(weldNo(f.store, id)), id);
   assert.ok(text.includes('RT, UT') && text.includes('Radiography of the field closing welds; UT where film access is limited.'));
   assert.ok(text.some(line => /^\d\d\.\d\d\.\d{4} \d\d:\d\d$/.test(line)) && text.includes('1/1'));
   assert.ok(!text.includes('Test system') && !text.includes('Rev.'), 'no isometric list unless asked');
-  const asked = await get(f, 'ndt-request?requestNo=R-2026-0004&isometrics=1');
+  const asked = await get(f, 'ndt-request?requestNo=R00004&isometrics=1');
   assert.ok(asked.includes('ISO number') && asked.includes('Drawing no.') && asked.includes('Test system'));
-  const onlyRt = await get(f, 'ndt-request?requestNo=R-2026-0004&processes=ndt-0');
+  const onlyRt = await get(f, 'ndt-request?requestNo=R00004&processes=ndt-0');
   assert.ok(onlyRt.includes('RT') && !onlyRt.includes('RT, UT'));
-  const noted = await get(f, `ndt-request?requestNo=R-2026-0004&note=${encodeURIComponent('Film density as per procedure.')}`);
+  const noted = await get(f, `ndt-request?requestNo=R00004&note=${encodeURIComponent('Film density as per procedure.')}`);
   assert.ok(noted.includes('Film density as per procedure.') && !noted.includes('Radiography of the field closing welds; UT where film access is limited.'));
-  assert.equal((await f.admin.request(`/pdf/ndt-request?requestNo=R-2026-0004&note=${'x'.repeat(2001)}`, { pilot: 'weld' })).status, 422);
-  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R-2026-0003', { pilot: 'weld' })).status, 404, 'an NDT Pre request is not an NDT request');
+  assert.equal((await f.admin.request(`/pdf/ndt-request?requestNo=R00004&note=${'x'.repeat(2001)}`, { pilot: 'weld' })).status, 422);
+  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R00003', { pilot: 'weld' })).status, 404, 'an NDT Pre request is not an NDT request');
   assert.equal((await f.admin.request('/pdf/ndt-request', { pilot: 'weld' })).status, 404);
-  assert.match((await f.admin.request('/pdf/ndt-request?requestNo=R-2026-0004', { pilot: 'weld' })).headers.get('content-disposition') || '', new RegExp(`filename="${TODAY}-STX-2402-NDT-request-R-2026-0004\\.pdf"`));
+  assert.match((await f.admin.request('/pdf/ndt-request?requestNo=R00004', { pilot: 'weld' })).headers.get('content-disposition') || '', new RegExp(`filename="${TODAY}-STX-2402-NDT-request-R00004\\.pdf"`));
 });
 
 test('NDT Pre request and Pre-HT/PWHT request print their own types and processes', async t => {
   const f = await fixture(t);
-  const pre = await get(f, 'ndt-pre-request?requestNo=R-2026-0003');
-  for (const label of ['NDT Pre request', 'Request R-2026-0003', 'MT', 'Magnetic particle test of the root and hot pass before capping.']) assert.ok(pre.includes(label), label);
+  const pre = await get(f, 'ndt-pre-request?requestNo=R00003');
+  for (const label of ['NDT Pre request', 'Request R00003', 'MT', 'Magnetic particle test of the root and hot pass before capping.']) assert.ok(pre.includes(label), label);
   for (const id of ['weld-22', 'weld-24']) assert.ok(pre.includes(weldNo(f.store, id)));
   assert.ok(!pre.includes(weldNo(f.store, 'weld-23')), 'only the welds of that request');
-  const pwht = await get(f, 'pwht-request?requestNo=R-2026-0006');
+  const pwht = await get(f, 'pwht-request?requestNo=R00006');
   for (const label of ['Pre-HT / PWHT request', 'PWHT location', 'PWHT process', 'Heat treatment cycle as specified in the WPS; chart recorder required.']) assert.ok(pwht.includes(label), label);
   assert.ok(pwht.includes(weldNo(f.store, 'weld-20')));
-  assert.ok((await get(f, 'pwht-request?requestNo=R-2026-0005')).includes(weldNo(f.store, 'weld-2')), 'Pre-HT requests print too');
-  assert.equal((await f.admin.request('/pdf/pwht-request?requestNo=R-2026-0004', { pilot: 'weld' })).status, 404);
+  assert.ok((await get(f, 'pwht-request?requestNo=R00005')).includes(weldNo(f.store, 'weld-2')), 'Pre-HT requests print too');
+  assert.equal((await f.admin.request('/pdf/pwht-request?requestNo=R00004', { pilot: 'weld' })).status, 404);
 });
 
 test('a request document is attached to its requests as "Request document" (POST only), and the weld cell finds it', async t => {
   const f = await fixture(t);
   const before = f.store.list('attachments').length;
-  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R-2026-0004', { pilot: 'weld' })).status, 200);
+  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R00004', { pilot: 'weld' })).status, 200);
   assert.equal(f.store.list('attachments').length, before, 'GET does not store anything');
-  const response = await f.admin.request('/pdf/ndt-request?requestNo=R-2026-0004', { method: 'POST', pilot: 'weld' });
+  const response = await f.admin.request('/pdf/ndt-request?requestNo=R00004', { method: 'POST', pilot: 'weld' });
   const bytes = await pdf(response);
   assert.equal(response.headers.get('x-attached'), '3');
   const files = f.store.list('attachments').filter(file => file.documentType === REQUEST_DOCUMENT);
   assert.equal(files.length, 3);
-  const requests = f.store.list('inspection_requests').filter(row => row.number === 'R-2026-0004');
+  const requests = f.store.list('inspection_requests').filter(row => row.number === 'R00004');
   assert.deepEqual(files.map(file => file.entityId).sort(), requests.map(row => row.id).sort());
   assert.ok(files.every(file => file.entityType === 'inspection_requests' && file.mime === 'application/pdf' && file.size === bytes.length && String(file.name).endsWith('.pdf')));
   const download = await f.admin.request(`/files/${files[0].id}`, { pilot: 'weld' });
@@ -152,9 +152,9 @@ test('attaching needs the import right on the requests; printing alone does not 
   const f = await fixture(t);
   const reader = f.profile('Reader', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only' });
   const viewer = f.account('Weld reader', { profileId: reader, weldEnabled: true, weldProfileId: reader, mtoEnabled: false }), other = f.client(); await other.login(viewer.email);
-  const printed = await other.request('/pdf/ndt-request?requestNo=R-2026-0004', { pilot: 'weld' });
+  const printed = await other.request('/pdf/ndt-request?requestNo=R00004', { pilot: 'weld' });
   await pdf(printed);
-  assert.equal((await other.request('/pdf/ndt-request?requestNo=R-2026-0004', { method: 'POST', pilot: 'weld' })).status, 403, 'a reader may print but not attach');
+  assert.equal((await other.request('/pdf/ndt-request?requestNo=R00004', { method: 'POST', pilot: 'weld' })).status, 403, 'a reader may print but not attach');
   assert.equal(f.store.list('attachments').filter(file => file.documentType === REQUEST_DOCUMENT).length, 0);
 });
 
@@ -412,7 +412,7 @@ test('access: documents follow their family key inside the current pilot, both d
   const noMto = f.account('Welding only', { profileId: mtoNone, weldEnabled: true, weldProfileId: writer, mtoEnabled: true, mtoProfileId: mtoNone });
   const weld = f.client(), mto = f.client(), none = f.client(), noMaterial = f.client(); await weld.login(weldOnly.email); await mto.login(mtoOnly.email); await none.login(noWeld.email); await noMaterial.login(noMto.email);
   const prefab = releaseOf(f.store, 'iso-3', 'Prefab'), pick = pickListReports(rowsOf(f.store))[0];
-  const weldDocuments = ['ndt-request?requestNo=R-2026-0004', 'ndt-pre-request?requestNo=R-2026-0003', 'pwht-request?requestNo=R-2026-0006', 'visual-report?reportNo=VT-2026-014', `prefab-release?releaseId=${prefab.id}`, 'hydrotest-request?requestId=hydrotest-cw-1', 'punch-list', 'punch-list-blank?isoId=iso-1', 'flange-report?isoId=iso-1'];
+  const weldDocuments = ['ndt-request?requestNo=R00004', 'ndt-pre-request?requestNo=R00003', 'pwht-request?requestNo=R00006', 'visual-report?reportNo=VT-2026-014', `prefab-release?releaseId=${prefab.id}`, 'hydrotest-request?requestId=hydrotest-cw-1', 'punch-list', 'punch-list-blank?isoId=iso-1', 'flange-report?isoId=iso-1'];
   const mtoDocuments = [`pick-list?reportNo=${pick.reportNo}`];
   for (const path of weldDocuments) {
     await pdf(await weld.request(`/pdf/${path}`, { pilot: 'weld' }));
@@ -435,8 +435,8 @@ test('access: documents follow their family key inside the current pilot, both d
     assert.equal((await f.admin.request(`/pdf/${path}`)).status, 403, `${path}: no pilot`);
   }
   // Request documents are attached only through POST and only where the document allows it.
-  assert.equal((await weld.request('/pdf/ndt-request?requestNo=R-2026-0004', { method: 'POST', pilot: 'weld' })).status, 200);
-  assert.equal((await mto.request('/pdf/ndt-request?requestNo=R-2026-0004', { method: 'POST', pilot: 'weld' })).status, 403);
+  assert.equal((await weld.request('/pdf/ndt-request?requestNo=R00004', { method: 'POST', pilot: 'weld' })).status, 200);
+  assert.equal((await mto.request('/pdf/ndt-request?requestNo=R00004', { method: 'POST', pilot: 'weld' })).status, 403);
   assert.equal((await f.admin.request('/pdf/punch-list', { method: 'POST', pilot: 'weld' })).status, 404);
 });
 
@@ -448,9 +448,9 @@ test('pilot boundary: records of a project that is not enabled in the pilot are 
     assert.equal((await f.admin.request(`/pdf/${path}`, { pilot: 'weld' })).status, 404, path);
   const punch = await get(f, 'punch-list');
   assert.ok(!punch.some(line => line.includes('Paint damage') || line.includes('name plates')), 'no punch item of the disabled project');
-  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R-2026-0004', { pilot: 'weld' })).status, 200, 'a request of another project still prints');
+  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R00004', { pilot: 'weld' })).status, 200, 'a request of another project still prints');
   const steam = f.store.get('projects', 'project-steam'); f.store.update('projects', steam.id, { weldPilot: false }, steam._version, SYSTEM);
-  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R-2026-0004', { pilot: 'weld' })).status, 404);
+  assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=R00004', { pilot: 'weld' })).status, 404);
   f.store.update('projects', steam.id, { weldPilot: true }, f.store.get('projects', steam.id)._version, SYSTEM);
   assert.ok((await get(f, 'flange-report?projectId=project-steam')).includes('FL-ST-004'), 'other projects still print');
   const pick = pickListReports(rowsOf(f.store)).find(report => f.store.get('isometrics', report.isoId).projectId === 'project-cooling')!;
@@ -461,7 +461,7 @@ test('pilot boundary: records of a project that is not enabled in the pilot are 
 test('other profiles keep behaving as before: the new documents do not exist there', async t => {
   for (const profile of ['full', 'welding-demo', 'access-prototype'] as ReleaseProfile[]) {
     const f = await fixture(t, profile);
-    for (const path of ['ndt-request?requestNo=R-2026-0004', 'punch-list', 'pick-list?reportNo=x', 'flange-report?isoId=iso-1']) assert.equal((await f.admin.request(`/pdf/${path}`)).status, 404, `${profile} ${path}`);
+    for (const path of ['ndt-request?requestNo=R00004', 'punch-list', 'pick-list?reportNo=x', 'flange-report?isoId=iso-1']) assert.equal((await f.admin.request(`/pdf/${path}`)).status, 404, `${profile} ${path}`);
     assert.equal((await f.admin.request('/pdf/ndt-request?requestNo=x', { method: 'POST' })).status, 404, profile);
   }
 });
@@ -521,11 +521,11 @@ test('layout model: long documents break between rows, repeat headers, keep head
 test('documents print without company data and without a logo, and never a third-party name', async t => {
   const f = await fixture(t);
   const rows = rowsOf(f.store), isoIds = allIsos(rows);
-  const bare = await requestPdf({ model: requestDocumentModel('ndt-request', rows, 'R-2026-0004', isoIds, requestDocumentOptions({}).options)!, company: null, generatedAt: NOW, rows });
+  const bare = await requestPdf({ model: requestDocumentModel('ndt-request', rows, 'R00004', isoIds, requestDocumentOptions({}).options)!, company: null, generatedAt: NOW, rows });
   const words = bare.layout.pages.flatMap(page => page.texts.map(item => item.text));
   assert.ok(!words.includes('Kestrel Pipe Fabrication B.V.') && bare.layout.pages.every(page => page.images === 0));
   assert.ok(words.includes('NDT request') && words.includes('Client'));
-  assert.equal(requestDocumentModel('ndt-request', rows, 'R-2026-0004', new Set(), requestDocumentOptions({}).options), null, 'nothing outside the visible isometrics');
+  assert.equal(requestDocumentModel('ndt-request', rows, 'R00004', new Set(), requestDocumentOptions({}).options), null, 'nothing outside the visible isometrics');
 });
 
 test('options and models: request options, punch and flange validation, hydrotest by record number', () => {
