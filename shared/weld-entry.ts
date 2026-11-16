@@ -2,7 +2,7 @@ import type { Row } from './types.ts';
 import { mandatoryFields, projectCertificates, wpsValidation } from './site-settings.ts';
 import { certificatesForProject as projectCertificatesOf } from './welder-data.ts';
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
-import { INSPECTION_MASS_EDIT_FIELDS } from './inspections.ts';
+import { INSPECTION_MASS_EDIT_FIELDS, locationField, processField } from './inspections.ts';
 
 /**
  * Weld table and weld entry on the isometric (Weld Pilot). Pure functions over plain rows: the server uses them
@@ -35,11 +35,22 @@ export const MASS_EDIT_FLAGS = ['ndoReqPre', 'ndoReq', 'pwhtReqPre', 'pwhtReq', 
 // ---------------------------------------------------------------------------------------------------------------
 // Table order
 
-/** Table order: stored sort order first (welds without one follow), then weld number as numbers inside text. */
-export function orderedWelds<T extends Values>(welds: T[]): T[] {
-  const order = (weld: T) => typeof weld.sortOrder === 'number' && Number.isFinite(weld.sortOrder) ? weld.sortOrder : Number.POSITIVE_INFINITY;
+/** True when "Disable welds sorting" is on for the isometric (stored on it, seen by every user). Isometrics saved before have no flag: sorting stays on. */
+export const weldSortingDisabled = (iso?: Values | null) => iso?.weldSortingDisabled === true;
+export const WELD_SORTING_MESSAGES = { enabled: 'Welds sorting enabled', disabled: 'Welds sorting disabled', failed: 'Error updating sorting', off: 'Welds sorting is switched off for this isometric.' } as const;
+/** Menu entry of the sorting switch: ticked "Disable welds sorting" while sorting is on, unticked "Enable welds sorting" while it is off. */
+export const weldSortingMenu = (disabled: boolean) => ({ checked: !disabled, label: disabled ? 'Enable welds sorting' : 'Disable welds sorting' });
+/**
+ * Table order: stored sort order first (welds without one follow), then weld number as numbers inside text.
+ * With sorting switched off the stored order is ignored and the welds follow their weld number (the automatic order).
+ */
+export function orderedWelds<T extends Values>(welds: T[], sortingDisabled = false): T[] {
+  const order = (weld: T) => !sortingDisabled && typeof weld.sortOrder === 'number' && Number.isFinite(weld.sortOrder) ? weld.sortOrder : Number.POSITIVE_INFINITY;
   return [...welds].sort((a, b) => (order(a) === order(b) ? 0 : order(a) < order(b) ? -1 : 1) || naturalCompare(a.weldNo, b.weldNo));
 }
+/** Toasts of a saved or failed table order: the server's message when it gave one. */
+export const WELD_ORDER_MESSAGES = { saved: 'Order saved', failed: 'Something went wrong.' } as const;
+export const orderFailureMessage = (error: unknown) => text((error as { message?: unknown } | null)?.message) || WELD_ORDER_MESSAGES.failed;
 /** The id order after moving `id` one place up or down, or null when it cannot move. */
 export function moveWeld(ids: string[], id: string, direction: 'up' | 'down'): string[] | null {
   const index = ids.indexOf(id), target = direction === 'up' ? index - 1 : index + 1;
@@ -77,7 +88,8 @@ export function typeAbbreviation(type?: Values | null): string {
   if (present(type.abbreviation)) return text(type.abbreviation);
   return text(type.name).split(/[\s\-–—]+/).filter(Boolean).map(word => /^[A-Za-z]/.test(word) ? word[0].toUpperCase() : word).join('');
 }
-export const locationTooltip = (location: 'Shop' | 'Field' | null) => location === 'Field' ? 'Field weld' : location === 'Shop' ? 'Shop weld' : 'Weld type';
+/** The tooltip of the Type cell: the weld type's name (the cell text is its abbreviation); "-" without a type. */
+export const locationTooltip = (type?: Values | null) => text(type?.name) || '-';
 
 export interface SideContext {
   certificate?: Values | null;
@@ -88,22 +100,29 @@ export interface SideContext {
 }
 export interface SideSummary { kind: 'none' | 'certificate' | 'existing' | 'connected' | 'charge'; index: string; charge: string; material: string; }
 /**
- * Material ① / ②: `dia/schedule/wall/type of material/part` from the certificate. Empty parts are left out.
- * The type of material falls back to the certificate's material code, the part to the material group.
+ * Material ① / ②: `dia/schedule/wall/type of material/part` from the certificate. All five slots are always written;
+ * an empty one reads "-". The type of material falls back to the certificate's material code, the part to the material group.
  */
 export function certificateMaterialText(context: SideContext): string {
   const { certificate: cert, material } = context;
   const parts = [cert?.diameter ?? material?.dia, cert?.schedule ?? material?.lbs, cert?.wallThickness ?? material?.wallThickness, context.materialType || cert?.materialCode, context.materialPart || material?.materialGroup];
-  return parts.map(text).filter(Boolean).join('/');
+  return parts.map(part => text(part) || '-').join('/');
 }
-/** What one side of a weld shows in the table (Idx, Chg.No., Material). */
+/** What one side of a weld shows in the table (Idx, Chg.No., Material). EXISTING / CONN ISO appear in Material only. */
 export function sideSummary(weld: Values, side: 1 | 2, context: SideContext = {}): SideSummary {
   const charge = text(weld[`chargeNo${side}`]);
-  if (charge === 'EXISTING') return { kind: 'existing', index: '', charge, material: 'EXISTING' };
-  if (charge === 'CONN ISO') return { kind: 'connected', index: '', charge, material: 'CONN ISO' };
+  if (charge === 'EXISTING') return { kind: 'existing', index: '', charge: '', material: 'EXISTING' };
+  if (charge === 'CONN ISO') return { kind: 'connected', index: '', charge: '', material: 'CONN ISO' };
   if (context.certificate) return { kind: 'certificate', index: text(context.certificate.indexNo), charge: charge || text(context.certificate.chargeNo), material: certificateMaterialText(context) };
   return charge ? { kind: 'charge', index: '', charge, material: '' } : { kind: 'none', index: '', charge: '', material: '' };
 }
+/** The three cells of a side as the table prints them: an empty cell reads "-". */
+export const sideCellTexts = (summary: SideSummary) => ({ index: summary.index || '-', charge: summary.charge || '-', material: summary.material || '-' });
+/** The Wdr cell: one stamp per welder (text = welder code, tooltip = welder name); "------" when no welder. */
+export const NO_WELDER_TEXT = '------';
+export const welderStamps = (welders: Values[]) => welders.map(welder => ({ code: text(welder.welderCode || welder.number), name: text(welder.name || welder.number) }));
+/** Search over the weld table: every word must occur somewhere in the row's text (case does not matter). */
+export const weldMatchesSearch = (rowText: string, query: string) => text(query).toLowerCase().split(/\s+/).filter(Boolean).every(word => rowText.toLowerCase().includes(word));
 /** One entry of the Dia. select: its value is the id of the first diameter row that has this size. */
 export interface DiameterOption { value: string; label: string; ids: string[] }
 /**
@@ -284,6 +303,69 @@ export function readMassEdit(input: Values): MassEdit {
   if (!Object.keys(changes).length && !Object.keys(errors).length) errors._ = 'Change at least one field.';
   return { changes, errors };
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Mass edit: what the reference checks and how its dialog is laid out
+
+export const MASS_EDIT_MANDATORY_MESSAGE = 'Cannot save: after this change one or more selected welds would still miss required fields (Weld type, WPS, Weld Date, Dia.).';
+/**
+ * The reference checks Weld type, WPS, Weld Date and Dia. only (no charge numbers), and only when the mass edit sets the Welder
+ * (not Welder 2 to 4) on a main project with "Mandatory fields". Returns the names of what the weld would still miss after the change
+ * (the posted value, else the stored one; Clear date counts as an empty date; an explicit length stands for the diameter).
+ */
+export function massEditMissingFields(site: SiteLike, weld: Values, changes: Values): string[] {
+  if (!mandatoryFields(site) || !present(changes.welder1Id)) return [];
+  const after: Values = { ...weld, ...changes }, missing: string[] = [];
+  if (!present(after.typeId)) missing.push('typeId');
+  if (!present(after.wpsId)) missing.push('wpsId');
+  if (!present(after.date)) missing.push('date');
+  if (after.lengthMode === 'Length in mm' ? !(present(after.dialen) && Number(after.dialen) > 0) : !present(after.diameterId)) missing.push('diameterId');
+  return missing;
+}
+
+/** One input of the Mass edit welds dialog; `control` says where its options come from. */
+export interface MassEditItem { name: string; label: string; control: 'catalog' | 'welder' | 'wps' | 'charge' | 'text'; catalog?: string; side?: 1 | 2; }
+const item = (name: string, label: string, control: MassEditItem['control'], extra: Partial<MassEditItem> = {}): MassEditItem => ({ name, label, control, ...extra });
+/** The two columns of the dialog, each read top to bottom (the reference's order). Weld process is not part of it (hidden in the reference). */
+export const MASS_EDIT_COLUMNS: MassEditItem[][] = [
+  [item('typeId', 'Weld type', 'catalog', { catalog: 'weld_types' }), item('welder1Id', 'Welder', 'welder'), item('welder3Id', 'Welder 3', 'welder'), item('coating1Id', 'Coating 1', 'catalog', { catalog: 'coatings' }), item('wire1Id', 'Welding wire 1', 'catalog', { catalog: 'welding_wires' }), item('pos1', 'Pos 1', 'text'), item('chargeNo1', 'Charge number 1', 'charge', { side: 1 })],
+  [item('wpsId', 'WPS number', 'wps'), item('welder2Id', 'Welder 2', 'welder'), item('welder4Id', 'Welder 4', 'welder'), item('coating2Id', 'Coating 2', 'catalog', { catalog: 'coatings' }), item('wire2Id', 'Welding wire 2', 'catalog', { catalog: 'welding_wires' }), item('pos2', 'Pos 2', 'text'), item('chargeNo2', 'Charge number 2', 'charge', { side: 2 })],
+];
+export const MASS_EDIT_DATES = [{ name: 'datefit', clear: 'clearDatefit', label: 'Fit-up Date' }, { name: 'date', clear: 'clearDate', label: 'Weld Date' }] as const;
+export const MASS_EDIT_CLEAR_LABEL = 'Clear date', MASS_EDIT_DATE_HINT = 'Leave the date empty to keep existing values. Tick Clear date only if you want to remove the date.';
+/** Dia. offers one extra option that switches to a length; Length in mm is shown for that option only. */
+export const MASS_EDIT_DIAMETER = { label: 'Dia.', lengthOption: '-- Length in mm --', lengthLabel: 'Length in mm' } as const;
+export const MASS_EDIT_FLAGS_LABELS: [string, string][] = [['ndoReqPre', 'NDT Req. Pre'], ['ndoReq', 'NDT Req.'], ['pwhtReqPre', 'Pre-HT'], ['pwhtReq', 'PWHT Req.'], ['repair', 'Repair'], ['tracer', 'Tracer']];
+const rounds = (pre: boolean) => [1, 2, 3, 4, 5].map(index => item(processField(pre, index), 'NDT process', 'catalog', { catalog: 'ndt_processes' }));
+/** The inspection sections, each with its own heading (the reference's NDT Pre, NDT and Pre-HT / PWHT). */
+export const MASS_EDIT_SECTIONS: { title: string; items: MassEditItem[] }[] = [
+  { title: 'NDT Pre', items: [item(locationField(true), 'NDT location Pre', 'catalog', { catalog: 'ndt_locations' }), ...rounds(true)] },
+  { title: 'NDT', items: [item(locationField(false), 'NDT location', 'catalog', { catalog: 'ndt_locations' }), ...rounds(false)] },
+  { title: 'Pre-HT / PWHT', items: [item('pwhtPreLocationId', 'PWHT location Pre', 'catalog', { catalog: 'pwht_locations' }), item('pwhtPreProcessId', 'PWHT process Pre', 'catalog', { catalog: 'pwht_processes' }), item('pwhtLocationId', 'PWHT location', 'catalog', { catalog: 'pwht_locations' }), item('pwhtProcessId', 'PWHT process', 'catalog', { catalog: 'pwht_processes' })] },
+];
+/** The labels of the dialog in the order they appear (Length in mm only after the length option was chosen). */
+export const massEditLabels = (lengthShown = false) => [
+  ...MASS_EDIT_COLUMNS.flat().map(entry => entry.label), ...MASS_EDIT_DATES.flatMap(date => [date.label, MASS_EDIT_CLEAR_LABEL]),
+  MASS_EDIT_DIAMETER.label, ...(lengthShown ? [MASS_EDIT_DIAMETER.lengthLabel] : []), ...MASS_EDIT_FLAGS_LABELS.map(([, label]) => label),
+  ...MASS_EDIT_SECTIONS.flatMap(section => [section.title, ...section.items.map(entry => entry.label)]),
+];
+export const MASS_EDIT_SELECT_NOTHING = 'Select one or more welds first.';
+
+// ---------------------------------------------------------------------------------------------------------------
+// Options menu, delete, bring back, stamp
+
+/** Entries of the weld table's Options menu in the reference order. "Upload NDT on multiple welds" is not in it. */
+export const WELD_OPTIONS_MENU: { key: string; label: string; dividerBefore?: boolean }[] = [
+  { key: 'attachments', label: 'Attachments' }, { key: 'visual-inspection', label: 'Visual inspection' }, { key: 'mass-ndt-pre', label: 'Generate Mass NDT-Pre request' },
+  { key: 'mass-ndt', label: 'Generate Mass NDT request' }, { key: 'mass-pwht', label: 'Generate Mass Pre-HT/PWHT request' }, { key: 'upload-pwht', label: 'Upload Pre-HT/PWHT on multiple welds' },
+  { key: 'punch-list', label: 'Punch list' }, { key: 'audit-trail', label: 'Audit trail' }, { key: 'set-phase', label: 'Set phase' }, { key: 'show-deleted', label: 'Show deleted welds' },
+  { key: 'delete-selected', label: 'Delete selected', dividerBefore: true }, { key: 'sorting', label: 'Disable welds sorting', dividerBefore: true },
+];
+export const WELD_DELETE_WORDING = { one: 'Delete weld', many: 'Delete selected', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' } as const;
+export const WELD_BRING_BACK_WORDING = { title: 'Bring weld back', text: 'Are you sure?', button: 'Bring back', cancel: 'Cancel', icon: 'Bring weld back', showActive: 'Show active welds', emptyTitle: 'No welds added yet for this isometric.', emptyText: 'Use Add weld or Add welds to create the first weld.' } as const;
+/** The Stamp dialog's select: "<name> / <stamp>", as the reference prints it (also for a person without a stamp number). */
+export const stampOptionLabel = (engineer: Values) => `${text(engineer.name)} / ${text(engineer.stamp)}`;
+export const STAMP_NONE = '-----------';
 
 /** The charge of a side from a selection: a certificate, EXISTING or CONN ISO. Written back by the form and mass edit. */
 export function chargeSelection(value: string, side: 1 | 2, certificates: Row[]): Values {

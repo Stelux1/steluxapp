@@ -454,7 +454,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const translated = store.translate(error);
     if (translated instanceof AppError) {
       // Error handlers see no route params. Record routes name their resource in the path and may only name delivered fields; action routes name the fields of their own dialog.
-      const recordKey=/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||(/^\/api\/actions\/(?:save-weld|add-welds|mass-edit-welds|reorder-welds)$/.test(_req.path)?'welds':'');
+      const recordKey=/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||(/^\/api\/actions\/(?:save-weld|add-welds|mass-edit-welds|reorder-welds|toggle-weld-sorting|stamp-weld)$/.test(_req.path)?'welds':'');
       const key=String(_req.params.resource||recordKey);
       const answer=refusalBody(translated,{hosted:Boolean(availability),deliver:key?name=>access.field(key,name):undefined});
       res.status(answer.status).json(answer.body);

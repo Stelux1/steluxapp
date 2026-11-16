@@ -141,7 +141,7 @@ function PunchList() {
 
 const fileKind = (file: File) => file.type.startsWith('image/') ? PUNCH_FILE_TYPES[0] : PUNCH_FILE_TYPES[1];
 
-function PunchEditor({ record, onClose, onApprove }: { record?: Row; onClose: () => void; onApprove: (row: Row) => void }) {
+function PunchEditor({ record, initial, onClose, onApprove }: { record?: Row; initial?: Record<string, unknown>; onClose: () => void; onApprove: (row: Row) => void }) {
   const { rows, refresh, notify, label, canRun } = useWorkspace(); const id = useId();
   const def = RESOURCE_MAP[RESOURCE];
   const field = (name: string) => def.fields.find(item => item.name === name);
@@ -149,7 +149,7 @@ function PunchEditor({ record, onClose, onApprove }: { record?: Row; onClose: ()
   const existing = record ? filesOf(rows, record).filter(file => file.documentType !== PUNCH_SIGN_OFF_DOCUMENT) : [];
   const room = Math.max(0, PUNCH_FILE_LIMIT - existing.length);
   const companies = activeRows(rows, 'companies'), projects = activeRows(rows, 'projects');
-  const [values, setValues] = useState<Record<string, unknown>>(() => { const defaults = { ...punchFormDefaults(companies), projectId: projects.length === 1 ? projects[0].id : '' }; return record ? Object.fromEntries(names.map(name => [name, record[name] ?? (name === 'punchType' ? punchKind(record) : '')])) : defaults; });
+  const [values, setValues] = useState<Record<string, unknown>>(() => { const defaults = { ...punchFormDefaults(companies), projectId: projects.length === 1 ? projects[0].id : '', ...initial }; return record ? Object.fromEntries(names.map(name => [name, record[name] ?? (name === 'punchType' ? punchKind(record) : '')])) : defaults; });
   const [files, setFiles] = useState<(File | null)[]>(() => Array(room).fill(null));
   const [error, setError] = useState(''), [problems, setProblems] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false), [savedId, setSavedId] = useState('');
   const change = (name: string, value: unknown) => { setProblems(old => ({ ...old, [name]: '' })); setValues(old => {
@@ -316,6 +316,31 @@ function FinishDialog({ items, single, onClose, onDone }: { items: Row[]; single
       </div>}
     </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy}>{busy ? <Loader2 size={15} className="spin"/> : <Check size={15}/>}Finish + Sign-off</button></div></form>
   </Modal>;
+}
+
+// ----- isometric: Options -> Punch list ---------------------------------------------------------------------
+
+/** The weld table's Options -> Punch list: this isometric's punch items with their counts, and Add item (the whole list stays on the Punch lists page). */
+export function IsoPunchDialog({ iso, onClose }: { iso: Row; onClose: () => void }) {
+  const { rows, canRecord } = useWorkspace();
+  const [adding, setAdding] = useState(false);
+  const items = useMemo(() => withPunchPhases(activeRows(rows, RESOURCE)).filter(row => row.isoId === iso.id).sort((a, b) => numberOf(b) - numberOf(a) || b._createdAt.localeCompare(a._createdAt)), [rows, iso.id]);
+  const counts = punchCounts(items), today = punchToday();
+  if (adding) return <PunchEditor initial={{ isoId: iso.id, projectId: iso.projectId }} onClose={() => setAdding(false)} onApprove={() => undefined}/>;
+  const readable = canRecord(RESOURCE);
+  return <Modal title="Punch lists" subtitle={`ISO: ${text(iso.isoNo)}`} wide onClose={onClose}><div className="modal-body">
+    {!readable ? <EmptyState title="You do not have rights to open this page" description="Your permission profile does not include punch lists."/> : <>
+      {counts.blocking > 0 && <p className="iso-hint" role="status"><AlertCircle size={14} aria-hidden="true"/> {counts.blocking} open item{counts.blocking === 1 ? '' : 's'} in category A or B must be finished and approved before release.</p>}
+      <p className="punch-summary">{counts.prePunchOpen} pre-punch open · {counts.punchOpen} punch open · {counts.overdue} overdue</p>
+      {items.length ? <TableScroll><table className="data-table punch-table"><caption className="sr-only">Punch items of {text(iso.isoNo)}</caption>
+        <thead><tr>{['#', 'Type', 'Description', 'Due date', 'Punch', 'Status'].map(heading => <th key={heading} scope="col">{heading}</th>)}</tr></thead>
+        <tbody>{items.map(row => { const status = punchStatus(row); return <tr key={row.id}>
+          <td className="tabular">{text(row.number) || '—'}</td><td><span className="punch-letter" title={punchCategoryLabel(punchCategory(row.category))}>{punchCategory(row.category)}</span></td>
+          <td className="description-cell" title={text(row.description)}>{text(row.description) || '—'}</td><td className="tabular">{formatDate(row.dueDate)}</td><td>{punchKind(row)}</td>
+          <td><Badge color={STATUS_COLOR[status]}>{status}</Badge>{isOverdue(row, today) && <> <Badge color="red">Overdue</Badge></>}</td></tr>; })}</tbody></table></TableScroll>
+        : <EmptyState title="No punch items for this isometric yet" description="Add the first pre-punch or punch item."/>}
+      <p className="muted">Sign-off, edit and the activity log are on the <Link className="text-link" to={resourcePath(RESOURCE)} onClick={onClose}>Punch lists</Link> page.</p></>}
+  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button>{readable && canRecord(RESOURCE, 'insert') && <button type="button" className="btn primary" onClick={() => setAdding(true)}><Plus size={16}/>Add item</button>}</div></Modal>;
 }
 
 // ----- isometric header ------------------------------------------------------------------------------------

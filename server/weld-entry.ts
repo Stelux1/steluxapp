@@ -3,8 +3,8 @@ import { availableWps } from '../shared/welding.ts';
 import type { Row } from '../shared/types.ts';
 import { inOwnerSite } from '../shared/welder-data.ts';
 import {
-  MASS_EDIT_FIELDS, WELD_ENTRY_FIELDS, certificateErrors, hasWelder, lockContext, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent, orderedWelds,
-  planWeldRange, readMassEdit, weldLock, welderWpsErrors,
+  MASS_EDIT_FIELDS, MASS_EDIT_MANDATORY_MESSAGE, WELD_ENTRY_FIELDS, WELD_SORTING_MESSAGES, certificateErrors, hasWelder, lockContext, massEditMissingFields, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent, orderedWelds,
+  planWeldRange, readMassEdit, weldLock, weldSortingDisabled, welderWpsErrors,
 } from '../shared/weld-entry.ts';
 
 /**
@@ -13,7 +13,7 @@ import {
  * functions in `shared/weld-entry.ts`; this file only gathers the records they need and turns answers into errors.
  */
 type Values = Record<string, unknown>;
-export const WELD_ENTRY_ACTIONS = new Set(['save-weld', 'add-welds', 'mass-edit-welds', 'reorder-welds']);
+export const WELD_ENTRY_ACTIONS = new Set(['save-weld', 'add-welds', 'mass-edit-welds', 'reorder-welds', 'toggle-weld-sorting', 'stamp-weld']);
 
 const norm = (value: unknown) => value === undefined || value === null ? '' : JSON.stringify(value);
 const changed = (input: Values, existing: Row | undefined, names: readonly string[]) => !existing || names.some(name => Object.hasOwn(input, name) && norm(input[name]) !== norm(existing[name]));
@@ -64,7 +64,7 @@ export function assertInspectionUnlocked(store: Store, key: string, data: Values
  * stored weld. A rule is evaluated when the request creates the weld or touches a field the rule concerns, so an
  * unrelated edit of an older incomplete weld is not blocked by it.
  */
-export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
+export function assertWeldEntry(store: Store, input: Values, existing?: Row, options: { massEdit?: boolean } = {}) {
   const merged: Values = { ...existing, ...Object.fromEntries(Object.entries(input).filter(([name]) => name !== '_version')) };
   if (!merged.isoId) return;
   let iso: Row, project: Row, site: Row;
@@ -83,7 +83,8 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
     } catch { errors.wpsId = 'Choose an active WPS.'; }
   }
   // (a) mandatory fields
-  if (changed(input, existing, ['typeId', 'wpsId', 'date', 'lengthMode', 'diameterId', 'dialen', 'chargeNo1', 'chargeNo2', 'certificate1Id', 'certificate2Id', 'welder1Id', 'welder2Id', 'welder3Id', 'welder4Id'])) Object.assign(errors, missingMandatoryFields(site, merged));
+  // The mass edit has its own, smaller rule (massEditMissingFields).
+  if (!options.massEdit && changed(input, existing, ['typeId', 'wpsId', 'date', 'lengthMode', 'diameterId', 'dialen', 'chargeNo1', 'chargeNo2', 'certificate1Id', 'certificate2Id', 'welder1Id', 'welder2Id', 'welder3Id', 'welder4Id'])) Object.assign(errors, missingMandatoryFields(site, merged));
   // (b) validation on WPS
   if (changed(input, existing, ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id', 'wpsId', 'date']) && hasWelder(merged) && merged.wpsId) {
     let wps: Row | undefined; try { wps = store.get('wps', merged.wpsId, true); } catch { /* reported above */ }
@@ -98,6 +99,11 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
 
 const pick = (data: Values, names: readonly string[]) => Object.fromEntries(names.filter(name => data[name] !== undefined).map(name => [name, data[name]]));
 const activeWelds = (store: Store, isoId: unknown) => store.list('welds').filter(weld => weld.isoId === isoId);
+/** The main project of an isometric (its "Mandatory fields" setting decides the mass edit rule). */
+function siteOfIso(store: Store, isoId: unknown): Row | undefined {
+  try { const iso = store.get('isometrics', isoId, true); return store.get('sites', store.get('projects', iso.projectId, true).siteId, true); } catch { return undefined; }
+}
+const sortingOff = (store: Store, isoId: unknown) => { try { return weldSortingDisabled(store.get('isometrics', isoId, true)); } catch { return false; } };
 
 /** The next stored order for an isometric; welds that have none yet are numbered first so the new one really comes last. */
 function nextSortOrder(store: Store, isoId: unknown, actor: Actor) {
@@ -122,7 +128,7 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       // Neighbours in table order: this weld's charge goes to the adjoining side of the previous / next weld.
       const neighbours: { weld: Row; patch: Values }[] = [];
       if (data.updatePrev === true || data.updateNext === true) {
-        const order = orderedWelds(activeWelds(store, isoId)).map(weld => weld.id);
+        const order = orderedWelds(activeWelds(store, isoId), sortingOff(store, isoId)).map(weld => weld.id);
         const anchor = existing?.id ?? '', ids = existing ? order : [...order, ''];
         for (const [flag, which, from, to] of [['updatePrev', 'prev', 1, 2], ['updateNext', 'next', 2, 1]] as const) {
           if (data[flag] !== true) continue;
@@ -158,7 +164,9 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       const records = (ids as string[]).map(id => {
         const weld = store.get('welds', id);
         if (versions[id] !== undefined && versions[id] !== weld._version) throw new AppError(409, `Weld ${weld.weldNo} changed since you opened it. Refresh and try again.`);
-        try { assertWeldEntry(store, changes, weld); } catch (error) { if (error instanceof AppError) throw new AppError(error.status, `Weld ${weld.weldNo}: ${error.message}`, error.fields); throw error; }
+        // The reference's rule comes first, as it does before the browser sends anything: Weld type, WPS, Weld Date and Dia. must be there when the mass edit sets a welder.
+        if (massEditMissingFields(siteOfIso(store, weld.isoId), weld, changes).length) throw new AppError(422, MASS_EDIT_MANDATORY_MESSAGE);
+        try { assertWeldEntry(store, changes, weld, { massEdit: true }); } catch (error) { if (error instanceof AppError) throw new AppError(error.status, `Weld ${weld.weldNo}: ${error.message}`, error.fields); throw error; }
         const patch: Values = { ...changes }; const merged = { ...weld, ...patch };
         if (changed(patch, weld, ['lengthMode', 'ndoReq', 'ndtpercent'])) { const percent = normalizedNdtPercent(merged); if (percent === null && weld.ndtpercent !== undefined && weld.ndtpercent !== null && weld.ndtpercent !== '') patch.ndtpercent = ''; }
         return store.update('welds', weld.id, patch, weld._version, actor);
@@ -168,10 +176,27 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
     if (key === 'reorder-welds') {
       const iso = store.get('isometrics', data.isoId);
       const ids = Array.isArray(data.weldIds) ? data.weldIds as unknown[] : [];
+      if (weldSortingDisabled(iso)) throw new AppError(409, WELD_SORTING_MESSAGES.off);
       const current = activeWelds(store, iso.id);
       if (ids.length !== current.length || new Set(ids).size !== ids.length || !current.every(weld => ids.includes(weld.id))) throw new AppError(409, 'The welds of this isometric changed. Refresh and try again.');
       const records = (ids as string[]).flatMap((id, index) => { const weld = current.find(row => row.id === id)!; return weld.sortOrder === index + 1 ? [] : [store.update('welds', id, { sortOrder: index + 1 }, weld._version, actor)]; });
       return { resource: 'welds', records };
+    }
+    if (key === 'toggle-weld-sorting') {
+      const iso = store.get('isometrics', data.isoId);
+      if (typeof data.enabled !== 'boolean') throw new AppError(422, 'Choose Yes or No.', { enabled: 'Choose Yes or No.' });
+      const record = weldSortingDisabled(iso) === !data.enabled ? iso : store.update('isometrics', iso.id, { weldSortingDisabled: !data.enabled }, iso._version, actor);
+      return { resource: 'isometrics', record, records: [record] };
+    }
+    if (key === 'stamp-weld') {
+      const weld = store.get('welds', data.weldId);
+      if (data.expectedVersion !== undefined && data.expectedVersion !== weld._version) throw new AppError(409, 'This weld changed since you opened it. Refresh and try again.');
+      if (data.stampedBy !== undefined && typeof data.stampedBy !== 'string') throw new AppError(422, 'Choose a person from the list.', { stampedBy: 'Choose a person from the list.' });
+      const person = String(data.stampedBy ?? '').trim();
+      if (person) { try { store.get('qa_engineers', person); } catch { throw new AppError(422, 'Choose a person from the list.', { stampedBy: 'Choose a person from the list.' }); } }
+      assertWeldUnlocked(store, weld);
+      const record = store.update('welds', weld.id, { stampedBy: person, stampedAt: person ? new Date().toISOString() : '' }, weld._version, actor);
+      return { resource: 'welds', record, records: [record] };
     }
     throw new AppError(404, 'This action is not available.');
   });

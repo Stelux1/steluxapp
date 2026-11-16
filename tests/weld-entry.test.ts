@@ -15,6 +15,8 @@ import {
   certificateErrors, certificateMaterialText, certificatesForProject, chargeSelection, chargeValue, dropWeld, isSideValue, lockContext, missingMandatoryFields,
   moveWeld, neighbourOf, normalizedNdtPercent, orderedWelds, planWeldRange, readMassEdit, sideSummary, typeAbbreviation, weldDiameterText, weldLock, weldLocation, weldNumberStyle,
   welderQualifiedForWps, welderWpsErrors,
+  MASS_EDIT_FIELDS, MASS_EDIT_MANDATORY_MESSAGE, WELD_OPTIONS_MENU, locationTooltip, massEditLabels, massEditMissingFields, orderFailureMessage, sideCellTexts, stampOptionLabel,
+  weldMatchesSearch, weldSortingDisabled, weldSortingMenu, welderStamps, MASS_EDIT_COLUMNS, MASS_EDIT_SECTIONS,
 } from '../shared/weld-entry.ts';
 import type { Row, User } from '../shared/types.ts';
 
@@ -124,10 +126,10 @@ test('table text: NDT percent, side summaries, material text and type abbreviati
   assert.equal(normalizedNdtPercent({ lengthMode: 'Length in mm', ndoReq: true, ndtpercent: '' }), null);
   const certificate = row('c', { indexNo: 'IX-1', chargeNo: 'H-1', diameter: '1/2"', schedule: '40', wallThickness: '7,2', materialCode: 'A106 Gr B' });
   assert.equal(certificateMaterialText({ certificate, materialPart: 'Pipe' }), '1/2"/40/7,2/A106 Gr B/Pipe');
-  assert.equal(certificateMaterialText({ certificate: row('c2', { diameter: '2"' }), material: row('m', { lbs: 'SCH 40', materialGroup: 'Elbow' }) }), '2"/SCH 40/Elbow');
-  assert.deepEqual(sideSummary({ chargeNo1: 'EXISTING' }, 1), { kind: 'existing', index: '', charge: 'EXISTING', material: 'EXISTING' });
+  assert.equal(certificateMaterialText({ certificate: row('c2', { diameter: '2"' }), material: row('m', { lbs: 'SCH 40', materialGroup: 'Elbow' }) }), '2"/SCH 40/-/-/Elbow', 'every slot stays, an empty one reads -');
+  assert.deepEqual(sideSummary({ chargeNo1: 'EXISTING' }, 1), { kind: 'existing', index: '', charge: '', material: 'EXISTING' });
   assert.equal(sideSummary({ chargeNo2: 'CONN ISO' }, 2).material, 'CONN ISO');
-  assert.deepEqual(sideSummary({ chargeNo1: 'H-1' }, 1, { certificate }), { kind: 'certificate', index: 'IX-1', charge: 'H-1', material: '1/2"/40/7,2/A106 Gr B' });
+  assert.deepEqual(sideSummary({ chargeNo1: 'H-1' }, 1, { certificate }), { kind: 'certificate', index: 'IX-1', charge: 'H-1', material: '1/2"/40/7,2/A106 Gr B/-' });
   assert.equal(sideSummary({ chargeNo1: 'H-9' }, 1).kind, 'charge'); assert.equal(sideSummary({}, 2).kind, 'none');
   assert.equal(typeAbbreviation(row('t', { name: 'Butt Weld - Field', abbreviation: 'BWF' })), 'BWF'); assert.equal(typeAbbreviation(row('t', { name: 'Butt Weld - Field' })), 'BWF'); assert.equal(typeAbbreviation(null), '');
   assert.equal(weldDiameterText({ lengthMode: 'Length in mm', dialen: 95 }), '95 mm'); assert.equal(weldDiameterText({ lengthMode: 'Diameter' }, row('d', { diameter: '2"' })), '2"');
@@ -135,6 +137,60 @@ test('table text: NDT percent, side summaries, material text and type abbreviati
   assert.deepEqual(chargeSelection('EXISTING', 1, certificates), { chargeNo1: 'EXISTING', certificate1Id: '', material1Id: '' });
   assert.deepEqual(chargeSelection('c', 2, certificates), { chargeNo2: 'H-1', certificate2Id: 'c', material2Id: '' }); assert.deepEqual(chargeSelection('', 1, certificates), { chargeNo1: '', certificate1Id: '', material1Id: '' });
   assert.equal(chargeValue({ chargeNo1: 'CONN ISO', certificate1Id: '' }, 1), 'CONN ISO'); assert.equal(chargeValue({ chargeNo2: 'H-1', certificate2Id: 'c' }, 2), 'c'); assert.equal(isSideValue('existing'), false);
+});
+
+test('table cells: material keeps empty slots as -, EXISTING / CONN ISO show in Material only, one tooltip per welder, the type tooltip is the type name', () => {
+  const cap = row('c', { diameter: '1"', schedule: '40', wallThickness: '7.2', indexNo: '3', chargeNo: 'H-3' });
+  assert.equal(certificateMaterialText({ certificate: cap, materialPart: 'Cap' }), '1"/40/7.2/-/Cap');
+  assert.equal(certificateMaterialText({ certificate: row('c3', {}) }), '-/-/-/-/-');
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'EXISTING' }, 1)), { index: '-', charge: '-', material: 'EXISTING' });
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo2: 'CONN ISO' }, 2)), { index: '-', charge: '-', material: 'CONN ISO' });
+  assert.deepEqual(sideSummary({ chargeNo1: 'EXISTING' }, 1), { kind: 'existing', index: '', charge: '', material: 'EXISTING' });
+  assert.deepEqual(sideCellTexts(sideSummary({}, 1)), { index: '-', charge: '-', material: '-' });
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'H-3' }, 1, { certificate: cap })), { index: '3', charge: 'H-3', material: '1"/40/7.2/-/-' });
+  assert.deepEqual(welderStamps([row('a', { welderCode: 'ML396', name: 'Aleksandar Djuric' }), row('b', { number: 'W-2', name: '' })]), [{ code: 'ML396', name: 'Aleksandar Djuric' }, { code: 'W-2', name: 'W-2' }], 'one stamp per welder, each with its own tooltip');
+  assert.deepEqual(welderStamps([]), []);
+  const type = row('t', { name: 'Butt Weld - Field', abbreviation: 'FW', location: 'Field' });
+  assert.equal(typeAbbreviation(type), 'FW'); assert.equal(locationTooltip(type), 'Butt Weld - Field'); assert.equal(locationTooltip(null), '-'); assert.equal(locationTooltip(row('u', {})), '-');
+});
+
+test('search over the weld table: every word must occur, case does not matter', () => {
+  assert.equal(weldMatchesSearch('005 FW ML396 Butt Weld - Field', '005'), true); assert.equal(weldMatchesSearch('005 FW ML396', 'ml396 fw'), true);
+  assert.equal(weldMatchesSearch('005 FW', '006'), false); assert.equal(weldMatchesSearch('005 FW', '005 xx'), false); assert.equal(weldMatchesSearch('anything', '  '), true);
+});
+
+test('Disable welds sorting: the flag is read from the isometric, the menu entry flips, the automatic order is the weld number', () => {
+  assert.equal(weldSortingDisabled(row('i', {})), false, 'isometrics saved before have sorting on'); assert.equal(weldSortingDisabled(row('i', { weldSortingDisabled: true })), true);
+  assert.deepEqual(weldSortingMenu(false), { checked: true, label: 'Disable welds sorting' }); assert.deepEqual(weldSortingMenu(true), { checked: false, label: 'Enable welds sorting' });
+  const welds = [row('c', { weldNo: '010', sortOrder: 1 }), row('b', { weldNo: '9', sortOrder: 2 }), row('a', { weldNo: '005', sortOrder: 3 })];
+  assert.deepEqual(orderedWelds(welds).map(w => w.id), ['c', 'b', 'a']); assert.deepEqual(orderedWelds(welds, true).map(w => w.id), ['a', 'b', 'c'], 'the stored order is ignored while sorting is off');
+  assert.equal(orderFailureMessage(new Error('The welds of this isometric changed.')), 'The welds of this isometric changed.'); assert.equal(orderFailureMessage(new Error('')), 'Something went wrong.'); assert.equal(orderFailureMessage(undefined), 'Something went wrong.');
+});
+
+test('Options menu: the reference order, with Punch list after the Pre-HT/PWHT upload and without Upload NDT on multiple welds', () => {
+  assert.deepEqual(WELD_OPTIONS_MENU.map(entry => entry.label), ['Attachments', 'Visual inspection', 'Generate Mass NDT-Pre request', 'Generate Mass NDT request', 'Generate Mass Pre-HT/PWHT request', 'Upload Pre-HT/PWHT on multiple welds', 'Punch list', 'Audit trail', 'Set phase', 'Show deleted welds', 'Delete selected', 'Disable welds sorting']);
+  assert.deepEqual(WELD_OPTIONS_MENU.filter(entry => entry.dividerBefore).map(entry => entry.label), ['Delete selected', 'Disable welds sorting']);
+  assert.equal(WELD_OPTIONS_MENU.some(entry => /Upload NDT/.test(entry.label)), false);
+});
+
+test('Mass edit: the dialog has the reference labels in order, the rule checks four fields and only when a welder is set', () => {
+  assert.deepEqual(massEditLabels(), ['Weld type', 'Welder', 'Welder 3', 'Coating 1', 'Welding wire 1', 'Pos 1', 'Charge number 1', 'WPS number', 'Welder 2', 'Welder 4', 'Coating 2', 'Welding wire 2', 'Pos 2', 'Charge number 2',
+    'Fit-up Date', 'Clear date', 'Weld Date', 'Clear date', 'Dia.', 'NDT Req. Pre', 'NDT Req.', 'Pre-HT', 'PWHT Req.', 'Repair', 'Tracer',
+    'NDT Pre', 'NDT location Pre', 'NDT process', 'NDT process', 'NDT process', 'NDT process', 'NDT process', 'NDT', 'NDT location', 'NDT process', 'NDT process', 'NDT process', 'NDT process', 'NDT process',
+    'Pre-HT / PWHT', 'PWHT location Pre', 'PWHT process Pre', 'PWHT location', 'PWHT process']);
+  assert.ok(!massEditLabels().includes('Weld process') && !massEditLabels().includes('Length in mm'), 'Weld process is hidden; Length in mm only after the length option');
+  assert.ok(massEditLabels(true).includes('Length in mm'));
+  for (const entry of [...MASS_EDIT_COLUMNS.flat(), ...MASS_EDIT_SECTIONS.flatMap(section => section.items)]) assert.ok(MASS_EDIT_FIELDS.includes(entry.name), `${entry.name} is a field the server accepts`);
+  const site = { mandatoryFields: true }, weld = { welder1Id: 'w', typeId: 't', wpsId: 'p', date: '2026-10-01', lengthMode: 'Diameter', diameterId: 'd' };
+  assert.deepEqual(massEditMissingFields(site, weld, { typeId: 'x' }), [], 'no welder set by the mass edit: no check (charge numbers are never checked)');
+  assert.deepEqual(massEditMissingFields(site, weld, { welder2Id: 'w2', clearDate: true, date: '' }), [], 'Welder 2 to 4 do not count');
+  assert.deepEqual(massEditMissingFields(site, weld, { welder1Id: 'w2' }), [], 'complete welds without charge numbers pass');
+  assert.deepEqual(massEditMissingFields(site, { typeId: '' }, { welder1Id: 'w' }), ['typeId', 'wpsId', 'date', 'diameterId']);
+  assert.deepEqual(massEditMissingFields(site, weld, { welder1Id: 'w', date: '' }), ['date'], 'Clear date counts as an empty date');
+  assert.deepEqual(massEditMissingFields(site, { ...weld, diameterId: '' }, { welder1Id: 'w', dialen: 90, lengthMode: 'Length in mm' }), [], 'an explicit length stands for the diameter');
+  assert.deepEqual(massEditMissingFields({ mandatoryFields: false }, {}, { welder1Id: 'w' }), [], 'setting off');
+  assert.match(MASS_EDIT_MANDATORY_MESSAGE, /\(Weld type, WPS, Weld Date, Dia\.\)\.$/);
+  assert.equal(stampOptionLabel(row('q', { name: 'Morgan Lee', stamp: 'ML-07' })), 'Morgan Lee / ML-07'); assert.equal(stampOptionLabel(row('q', { name: 'Zivorad Jovanovic' })), 'Zivorad Jovanovic / ');
 });
 
 // ---------------------------------------------------------------------------------------------------- through HTTP
@@ -376,8 +432,9 @@ test('Mass edit welds writes only the fields that change, clears dates on reques
   const foreign = f.store.create('wps', { name: 'STX-WPS-RIVER', method: '111', definition: 'Sample', allProjects: true, siteIds: ['site-river'], processId: 'process-1' });
   result = await f.act('mass-edit-welds', { weldIds: ['weld-1', 'weld-10'], changes: { wpsId: foreign.id, pos2: '2G' } });
   assert.equal(result.status, 422); assert.equal(f.store.get('welds', 'weld-1').pos2 ?? '', '');
-  result = await f.act('mass-edit-welds', { weldIds: ['weld-1', 'weld-10'], changes: { clearDate: true } });
-  assert.equal(result.status, 422); assert.match(result.body.error, /Weld date is required once a welder is assigned/); assert.ok(f.store.get('welds', 'weld-1').date);
+  // The reference checks Weld type, WPS, Weld Date and Dia. only when the mass edit sets the Welder (w3-weld-table): Clear date alone passes the rule.
+  result = await f.act('mass-edit-welds', { weldIds: ['weld-1', 'weld-10'], changes: { welder1Id: 'welder-1', clearDate: true } });
+  assert.equal(result.status, 422); assert.equal(result.body.error, MASS_EDIT_MANDATORY_MESSAGE); assert.ok(f.store.get('welds', 'weld-1').date);
   assert.equal((await f.act('mass-edit-welds', { weldIds: ['weld-5', 'weld-6'], changes: { clearDate: true } })).status, 201, 'Riverside has no mandatory fields');
   assert.equal(f.store.get('welds', 'weld-5').date, '');
   // The inspection inputs of the capture's Mass edit (NDT location / process per round, PWHT location / process).
@@ -438,5 +495,93 @@ test('the sample seed carries realistic entry data: qualifications, certificates
   const first = s.get('welds', 'weld-1');
   assert.equal(first.certificate1Id, 'certificate-1'); assert.equal(first.material1Id, 'material-1'); assert.equal(s.get('welds', 'weld-4').chargeNo1, 'EXISTING');
   assert.ok(s.list('welds').every(w => typeof w.sortOrder === 'number'));
+  s.close();
+});
+
+test('Disable welds sorting is stored on the isometric: every user sees it, reordering is refused while it is off, the order returns when it is on again', async t => {
+  const f = await fixture(t);
+  assert.equal(f.store.get('isometrics', 'iso-1').weldSortingDisabled ?? false, false);
+  assert.equal((await f.act('toggle-weld-sorting', { isoId: 'iso-1', enabled: 'no' })).status, 422);
+  const off = await f.act('toggle-weld-sorting', { isoId: 'iso-1', enabled: false });
+  assert.equal(off.status, 201, JSON.stringify(off.body)); assert.equal(f.store.get('isometrics', 'iso-1').weldSortingDisabled, true);
+  assert.equal(f.store.get('isometrics', 'iso-2').weldSortingDisabled ?? false, false, 'per isometric');
+  // A second user reads the same flag from the server.
+  await f.signIn('Second welder', { generalPermission: 'Read & write', materialsPermission: 'No access', weldingPermission: 'Read & write' });
+  const seen = (await (await f.request('/api/bootstrap')).json()).rows.isometrics.find((item: Row) => item.id === 'iso-1');
+  assert.equal(seen.weldSortingDisabled, true);
+  assert.equal((await f.act('reorder-welds', { isoId: 'iso-1', weldIds: orderOf(f.store, 'iso-1') })).status, 409, 'no manual order while sorting is off');
+  assert.equal((await f.act('toggle-weld-sorting', { isoId: 'iso-1', enabled: true })).status, 201);
+  assert.equal(f.store.get('isometrics', 'iso-1').weldSortingDisabled, false);
+  assert.equal((await f.act('reorder-welds', { isoId: 'iso-1', weldIds: orderOf(f.store, 'iso-1') })).status, 201);
+  // A viewer may not switch it.
+  await f.signIn('Sorting viewer', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'Read only' });
+  assert.equal((await f.act('toggle-weld-sorting', { isoId: 'iso-1', enabled: false })).status, 403);
+});
+
+test('the table order saves for locked welds too (they can be moved as the reference allows)', async t => {
+  const f = await fixture(t);
+  const order = orderOf(f.store, 'iso-3'); assert.ok(order.includes('weld-3'), 'weld-3 is a locked shop weld of iso-3');
+  assert.equal((await f.act('save-weld', { weldId: 'weld-3', kr: 'K9' })).status, 423);
+  const next = moveWeld(order, 'weld-3', 'down')!;
+  const result = await f.act('reorder-welds', { isoId: 'iso-3', weldIds: next });
+  assert.equal(result.status, 201, JSON.stringify(result.body)); assert.deepEqual(orderOf(f.store, 'iso-3'), next);
+});
+
+test('Mass edit without charge numbers: Weld type only, on welds that have a welder and no charge numbers, succeeds; setting a welder checks the four fields', async t => {
+  const f = await fixture(t);
+  const weld = f.store.create('welds', { weldNo: 'W070', isoId: 'iso-1', welder1Id: 'welder-1', wpsId: 'wps-1', date: '2026-10-22', diameterId: 'diameter-6', lengthMode: 'Diameter', sortOrder: 9 });
+  assert.equal(weld.chargeNo1 ?? '', '');
+  assert.equal((await f.act('mass-edit-welds', { weldIds: [weld.id], changes: { typeId: 'weld-type-1' } })).status, 201, 'no charge numbers needed');
+  assert.equal(f.store.get('welds', weld.id).typeId, 'weld-type-1');
+  // Without a Weld type, setting the welder is refused with the reference message and nothing is written.
+  const bare = f.store.create('welds', { weldNo: 'W071', isoId: 'iso-1', wpsId: 'wps-1', date: '2026-10-22', diameterId: 'diameter-6', lengthMode: 'Diameter', sortOrder: 10 });
+  const refused = await f.act('mass-edit-welds', { weldIds: [bare.id], changes: { welder1Id: 'welder-1' } });
+  assert.equal(refused.status, 422); assert.equal(refused.body.error, MASS_EDIT_MANDATORY_MESSAGE); assert.equal(f.store.get('welds', bare.id).welder1Id ?? '', '');
+  // The same change with a Weld type in the same mass edit passes (charge numbers are still not needed).
+  assert.equal((await f.act('mass-edit-welds', { weldIds: [bare.id], changes: { welder1Id: 'welder-1', typeId: 'weld-type-1' } })).status, 201);
+  assert.equal(f.store.get('welds', bare.id).welder1Id, 'welder-1');
+});
+
+test('Stamp: the QC person who stamped the weld is stored on the weld; welders and the weld date stay as they are', async t => {
+  const f = await fixture(t);
+  const before = f.store.get('welds', 'weld-5');
+  const bad = await f.act('stamp-weld', { weldId: 'weld-5', stampedBy: 'nobody' }); assert.equal(bad.status, 422);
+  const result = await f.act('stamp-weld', { weldId: 'weld-5', stampedBy: 'qa-1', expectedVersion: before._version });
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  const after = f.store.get('welds', 'weld-5');
+  assert.equal(after.stampedBy, 'qa-1'); assert.ok(after.stampedAt);
+  for (const name of ['welder1Id', 'welder2Id', 'date', 'datefit', 'typeId', 'weldNo']) assert.equal(after[name] ?? '', before[name] ?? '', name);
+  assert.equal((await f.act('stamp-weld', { weldId: 'weld-5', stampedBy: 'qa-2', expectedVersion: before._version })).status, 409, 'a stale weld is refused');
+  assert.equal((await f.act('stamp-weld', { weldId: 'weld-5', stampedBy: '' })).status, 201); assert.equal(f.store.get('welds', 'weld-5').stampedBy, ''); assert.equal(f.store.get('welds', 'weld-5').stampedAt, '');
+  // A weld of a completed phase cannot be stamped; a viewer cannot stamp.
+  assert.equal((await f.act('stamp-weld', { weldId: 'weld-3', stampedBy: 'qa-1' })).status, 423);
+  await f.signIn('Stamp viewer', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'Read only' });
+  assert.equal((await f.act('stamp-weld', { weldId: 'weld-5', stampedBy: 'qa-1' })).status, 403);
+});
+
+test('Delete weld: a weld with an open inspection request is deleted (and can be brought back) without a refusal', async t => {
+  const f = await fixture(t);
+  const request = f.store.create('inspection_requests', { weldId: 'weld-5', type: 'NDT', status: 'Open', date: '2026-11-16' }, SYSTEM);
+  assert.ok(request.id);
+  const weld = f.store.get('welds', 'weld-5');
+  const gone = await f.request('/api/records/welds/weld-5/archive', 'POST', { _version: weld._version });
+  assert.equal(gone.status, 200, JSON.stringify(await gone.json().catch(() => ({})))); assert.equal(f.store.get('welds', 'weld-5', true)._archived, true);
+  const back = await f.request('/api/records/welds/weld-5/archive', 'POST', { _version: f.store.get('welds', 'weld-5', true)._version });
+  assert.equal(back.status, 200); assert.equal(f.store.get('welds', 'weld-5')._archived, false);
+});
+
+test('the new fields are delivered by the hosted profile only; the other profiles do not get the actions', () => {
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  for (const field of ['stampedBy', 'stampedAt']) assert.ok(hosted.resources.welds.includes(field), field);
+  assert.ok(hosted.resources.isometrics.includes('weldSortingDisabled'));
+  for (const key of ['toggle-weld-sorting', 'stamp-weld']) { assert.ok(hosted.actions[key], key); for (const profile of ['welding-demo', 'access-prototype'] as const) assert.equal(availabilityFor(profile)!.actions[key], undefined, `${profile} ${key}`); }
+});
+
+test('sample weld types carry the reference abbreviations (Shop WS, Field FW, HOOK-UP YTI, Longitudinal Field WS)', () => {
+  const s = new Store(':memory:'); seed(s);
+  const abbreviation = (name: string) => s.list('weld_types').find(type => type.name === name)?.abbreviation;
+  assert.equal(abbreviation('Butt Weld - Field'), 'FW'); assert.equal(abbreviation('Butt Weld - Shop'), 'WS'); assert.equal(abbreviation('HOOK-UP'), 'YTI');
+  assert.equal(abbreviation('Longitudinal Welds - Field'), 'WS'); assert.equal(abbreviation('Fillet Weld - Field'), 'FW'); assert.equal(abbreviation('Victaulic Joint - Shop'), 'WS');
+  assert.equal(locationTooltip(s.list('weld_types').find(type => type.name === 'Butt Weld - Field')), 'Butt Weld - Field');
   s.close();
 });

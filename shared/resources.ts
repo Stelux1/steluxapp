@@ -183,6 +183,8 @@ extend('itps', [t('title', 'Title'), s('scope', 'Scope', [...ITP_SCOPES], { defa
 extend('attachments', [t('revNo', 'Revision number', { hidden: true })]);
 // Punch progress of the isometric (0 / 25 / 50 / 75 / 100 %), entered in the isometric header; empty until entered.
 extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true, legacy: LEGACY_PUNCH_PROGRESS })]);
+// Welds sorting switched off for this isometric (every user sees it), written by the toggle-weld-sorting action only (shared/weld-entry.ts).
+extend('isometrics', [b('weldSortingDisabled', 'Welds sorting disabled', { hidden: true, readonly: true })]);
 extend('wps', [b('active', 'Active', { default: true })]);
 // WPS material groups and copies, PQR validity (shared/wps.ts; the hosted profile shows them).
 extend('wps', WPS_EXTRA_FIELDS);
@@ -211,6 +213,8 @@ extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
 ])]);
 // Weld entry on the isometric (hosted): stored table order, weld process and the coating of the weld itself.
 extend('welds', [n('sortOrder', 'Table order', { hidden: true, min: 0 }), r('processId', 'Weld process', 'weld_processes', { section: 'Welders & traceability' }), r('coatingWeldId', 'Coating weld', 'coatings', { section: 'Welders & traceability' })]);
+// The QA/QC person who stamped the weld and when (stamp-weld action; shared/weld-entry.ts).
+extend('welds', [r('stampedBy', 'Stamped by', 'qa_engineers', { hidden: true, readonly: true }), t('stampedAt', 'Stamped at', { hidden: true, readonly: true })]);
 // Release records keep who released, the document numbering and signature titles, and Reopen (see shared/releases.ts).
 extend('releases', RELEASE_EXTRA_FIELDS);
 extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
