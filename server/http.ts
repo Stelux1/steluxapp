@@ -22,7 +22,7 @@ import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkA
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
 import { assertSignatureImage } from './signatures.ts';
-import { assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
+import { assertPunchAddAllowed, assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
 import { ISO_LIST_COLUMNS, flagText } from '../shared/iso-list.ts';
 import { isoSummariesFor } from './iso-summary.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
@@ -219,6 +219,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (pilots) requireOwnerSite(resource.key, req.body);
+    if (pilots && resource.key === 'punchlists') assertPunchAddAllowed(store, req.body, (req as unknown as AuthRequest).user);
     if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (pilots) checkIsoWrite(store, resource.key, req.body);

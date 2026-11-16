@@ -10,7 +10,7 @@ import { NOTIFICATION_KINDS } from './notifications.ts';
 import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, DEFECT_GROUPS, LEGACY_DEFECT_GROUPS, WELD_LOCATIONS } from './weld-catalogs.ts';
 import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELDS, INSPECTION_WELD_FIELDS } from './inspections.ts';
 import { RELEASE_EXTRA_FIELDS } from './releases.ts';
-import { LEGACY_PUNCH_CATEGORIES, LEGACY_PUNCH_STATUSES, PUNCH_CATEGORIES, PUNCH_PROGRESS_OPTIONS, PUNCH_STATUSES, PUNCH_TYPES, SIGNER_TYPES, SIGN_METHODS } from './punch.ts';
+import { LEGACY_PUNCH_CATEGORIES, LEGACY_PUNCH_PROGRESS, LEGACY_PUNCH_STATUSES, LEGACY_SIGNER_TYPES, PUNCH_CATEGORIES, PUNCH_PROGRESS_OPTIONS, PUNCH_STATUSES, PUNCH_TYPES, SIGNER_TYPES, SIGN_METHODS } from './punch.ts';
 import { applyMtoStock } from './mto-stock.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, OWNER_FORM_SETTINGS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS, ISS_NDT_STANDARDS } from './site-settings.ts';
 import { ITP_SCOPES } from './itps.ts';
@@ -142,10 +142,14 @@ add('punchlists', 'Punch lists', 'punch item', 'welding', 'Releases', 'Track pre
   r('projectId', 'Project', 'projects', { hint: 'Needed for an item that belongs to the whole project; taken from the isometric otherwise.' }), r('isoId', 'Isometric', 'isometrics', { hint: 'Leave empty for a project-related item.' }),
   t('name', 'Short title', { hint: 'Filled from the description when left empty.' }), t('description', 'Description', { type: 'textarea', required: true }),
   d('dueDate', 'Due date'), r('contractorId', 'Contractor', 'companies'), d('reportedDate', 'Reported date'), t('reportedBy', 'Reported by'),
+  // Reported by from the personnel list (welders); `reportedBy` keeps the free text of earlier items.
+  r('reportedById', 'Reported by', 'welders', { hidden: true }),
   s('status', 'Status', [...PUNCH_STATUSES], { default: 'Open', legacy: LEGACY_PUNCH_STATUSES }),
   t('assignedTo', 'Assigned to', { hidden: true }), d('completedAt', 'Completed date', { hidden: true }),
   // Written only by Mark as finished, Report passed and Mark as removed (see shared/punch.ts).
-  d('finishedAt', 'Finished on', { hidden: true }), t('finishedBy', 'Finished by', { hidden: true }), s('signerType', 'Signed by', SIGNER_TYPES, { hidden: true }), t('signName', 'Client name', { hidden: true }), t('signCompany', 'Company', { hidden: true }), t('signFunction', 'Function', { hidden: true }), t('signInspector', 'Inspector', { hidden: true }), t('signRemarks', 'Sign-off remarks', { type: 'textarea', hidden: true }), s('signMethod', 'Sign-off', SIGN_METHODS, { hidden: true }), t('signAttachmentId', 'Sign-off document', { hidden: true }),
+  d('finishedAt', 'Finished on', { hidden: true }), t('finishedBy', 'Finished by', { hidden: true }), s('signerType', 'Signed by', SIGNER_TYPES, { hidden: true, legacy: LEGACY_SIGNER_TYPES }), t('signName', 'Client name', { hidden: true }), t('signCompany', 'Company', { hidden: true }), t('signFunction', 'Function', { hidden: true }), t('signInspector', 'Inspector', { hidden: true }), r('signInspectorId', 'Inspector', 'welders', { hidden: true }), t('signRemarks', 'Sign-off remarks', { type: 'textarea', hidden: true }), s('signMethod', 'Sign-off', SIGN_METHODS, { hidden: true }), t('signAttachmentId', 'Sign-off document', { hidden: true }),
+  // Client approval (Akkoord), set by the sign-off or by Mark as Client approved; Passed is derived (shared/punch.ts).
+  b('clientApproved', 'Client approved', { hidden: true }), d('approvedAt', 'Client approved on', { hidden: true }), t('approvedBy', 'Client approved by', { hidden: true }),
   d('passedAt', 'Passed on', { hidden: true }), t('passedBy', 'Passed by', { hidden: true }), t('passRemarks', 'Remarks', { type: 'textarea', hidden: true }),
   d('removedAt', 'Removed on', { hidden: true }), t('removedBy', 'Removed by', { hidden: true }), t('removeReason', 'Reason for removal', { type: 'textarea', hidden: true }),
 ], ['number', 'projectId', 'isoId', 'category', 'description', 'dueDate', 'contractorId', 'punchType', 'status'], { display: 'name' });
@@ -176,7 +180,7 @@ extend('isometrics', [r('itpId', 'Linked ITP / KNR', 'itps', { hidden: true }), 
 extend('itps', [t('title', 'Title'), s('scope', 'Scope', [...ITP_SCOPES], { default: 'Shop+Field' }), b('active', 'Active', { default: true }), n('sortOrder', 'Sort order', { step: 1 })]);
 extend('attachments', [t('revNo', 'Revision number', { hidden: true })]);
 // Punch progress of the isometric (0 / 25 / 50 / 75 / 100 %), entered in the isometric header; empty until entered.
-extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true })]);
+extend('isometrics', [s('punchProgress', 'Punch progress', PUNCH_PROGRESS_OPTIONS, { hidden: true, legacy: LEGACY_PUNCH_PROGRESS })]);
 extend('wps', [b('active', 'Active', { default: true })]);
 // WPS material groups and copies, PQR validity (shared/wps.ts; the hosted profile shows them).
 extend('wps', WPS_EXTRA_FIELDS);

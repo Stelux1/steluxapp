@@ -12,8 +12,9 @@ import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { isoBlockers, isoProgress, type IsoStatusInput } from '../shared/iso-status.ts';
 import { pilotScope, projectScope } from '../shared/project-scope.ts';
 import {
-  PUNCH_CATEGORIES, canTransition, hasPunchProgress, isBlockingCategory, isOverdue, matchesPunchKpi, punchBlocking, punchCategory, punchCounts, punchDeadlineSoon, punchFinishErrors, punchInputErrors,
-  punchKind, punchKpis, punchProgress, punchStatus, punchWriteError,
+  PUNCH_CATEGORIES, PUNCH_MESSAGES, PUNCH_PROGRESS_OPTIONS, SIGNER_TYPES, canTransition, finishSummary, hasPunchProgress, isBlockingCategory, isOverdue, matchesPunchKpi, nextPunchNumber, punchAddRefusal,
+  punchBlocking, punchCategory, punchCounts, punchDeadlineSoon, punchFinishErrors, punchInputErrors, punchKind, punchKpis, punchPhasePassed, punchProgress, punchProgressLabel, punchStatus, punchWriteError,
+  withPunchPhases, PUNCH_FORM_FIELDS, punchFormDefaults,
 } from '../shared/punch.ts';
 import type { Row, User } from '../shared/types.ts';
 
@@ -51,13 +52,22 @@ test('the eight key figures count and filter the same items', () => {
   ];
   const cards = Object.fromEntries(punchKpis(items, TODAY).map(card => [card.key, card.count]));
   assert.deepEqual(cards, { open: 4, prePunch: 2, punch: 2, overdue: 1, deadline: 2, finished: 2, passed: 1, removed: 1 });
+  // Read through the phases: item 6 (stored Passed by an earlier version, no isometric) reads Finished, approved.
+  assert.deepEqual(Object.fromEntries(punchKpis(withPunchPhases(items), TODAY).map(card => [card.key, card.count])), { open: 4, prePunch: 2, punch: 2, overdue: 1, deadline: 2, finished: 3, passed: 0, removed: 1 });
   assert.deepEqual(punchKpis(items, TODAY).map(card => card.label), ['Open', 'Pre-punch (open)', 'Punch (open)', 'Overdue', 'Deadline 7 days', 'Finished', 'Passed', 'Removed']);
   for (const card of punchKpis(items, TODAY)) assert.equal(items.filter(item => !item._archived && matchesPunchKpi(item, card.key, TODAY)).length, card.count, card.key);
 });
 
 test('counts of an isometric: open and finished pre-punch and punch, overdue and blocking', () => {
   const items = [row('1', { punchType: 'Pre-punch', category: A, dueDate: '2026-11-01' }), row('2', { punchType: 'Pre-punch', category: C, status: 'Finished' }), row('3', { category: B }), row('4', { category: D, status: 'Finished' }), row('5', { category: C, status: 'Passed' }), row('6', { status: 'Removed' })];
-  assert.deepEqual(punchCounts(items, TODAY), { prePunchOpen: 1, prePunchFinished: 1, punchOpen: 1, punchFinished: 1, overdue: 1, blocking: 2 });
+  // Item 5 was stored as Passed by the earlier version and has no isometric: it reads Finished (Passed needs an isometric).
+  assert.deepEqual(punchCounts(items, TODAY), { prePunchOpen: 1, prePunchFinished: 1, punchOpen: 1, punchFinished: 2, overdue: 1, blocking: 2 });
+});
+
+test('punch progress options read 0% … 100% (default 0%); earlier labels with a space still read', () => {
+  assert.deepEqual(PUNCH_PROGRESS_OPTIONS, ['0%', '25%', '50%', '75%', '100%']);
+  assert.equal(punchProgress(row('i', { punchProgress: '50 %' })), 0.5); assert.equal(punchProgress(row('i', { punchProgress: '50%' })), 0.5);
+  assert.deepEqual(['50 %', '100%', '', 'x'].map(value => punchProgressLabel(row('i', { punchProgress: value }))), ['50%', '100%', '', '']);
 });
 
 test('punch progress reads the stored percentage as 0..1 and is unset until entered', () => {
@@ -81,21 +91,75 @@ test('the isometric blockers and the punch driver of the progress read these fun
 });
 
 test('input and sign-off rules', () => {
-  assert.deepEqual(Object.keys(punchInputErrors({ description: 'x' })), ['projectId']);
+  assert.deepEqual(punchInputErrors({ description: 'x' }), { projectId: 'Please select a project.' });
   assert.deepEqual(punchInputErrors({ projectId: 'p' }), {});
+  assert.equal(punchInputErrors({ projectId: 'p', punchType: 'Final' }).punchType, 'Choose Pre-punch or Punch.');
   assert.ok(punchInputErrors({ isoId: 'i', projectId: 'p2' }, undefined, row('i', { projectId: 'p1' })).projectId);
   assert.ok(punchInputErrors({ projectId: 'p', dueDate: '2026-11-01', reportedDate: '2026-11-02' }).dueDate);
   assert.equal(punchWriteError({ description: 'x' }, row('p', { status: 'Open' })), null);
   assert.ok(punchWriteError({ description: 'x' }, row('p', { status: 'Passed' })));
-  assert.ok(punchWriteError({ status: 'Passed' }, row('p', { status: 'Open' })));
+  for (const name of ['status', 'clientApproved', 'approvedAt']) assert.ok(punchWriteError({ [name]: name === 'status' ? 'Passed' : true }, row('p', { status: 'Open' })), name);
   assert.equal(punchWriteError({ status: 'Open' }, undefined), null); assert.ok(punchWriteError({ status: 'Finished' }, undefined)); assert.ok(punchWriteError({ number: '99' }, undefined));
-  const client = { signerType: 'Client', clientName: 'Jan de Vries', company: 'Riverside Utilities', date: TODAY, signMethod: 'Drawn' };
-  assert.deepEqual(punchFinishErrors(client, true), {});
-  assert.deepEqual(Object.keys(punchFinishErrors({ ...client, clientName: '', company: '' }, true)).sort(), ['clientName', 'company']);
-  assert.deepEqual(Object.keys(punchFinishErrors({ signerType: 'Own inspector', date: TODAY, signMethod: 'Uploaded PDF' }, true)), ['inspector']);
-  assert.deepEqual(Object.keys(punchFinishErrors(client, false)), ['signMethod']);
-  assert.deepEqual(Object.keys(punchFinishErrors({ ...client, signerType: 'Contractor' }, true)), ['signerType']);
-  assert.deepEqual(['Open', 'Finished', 'Passed', 'Removed'].map(status => (['finish', 'pass', 'remove'] as const).map(transition => canTransition(row('p', { status }), transition))), [[true, false, true], [false, true, true], [false, false, false], [false, false, false]]);
+  // Sign-off: Client (default) / User / Inspection; only the client name is required for a client.
+  assert.deepEqual(SIGNER_TYPES, ['Client', 'User', 'Inspection']);
+  const client = { signerType: 'Client', clientName: 'Jan de Vries', date: TODAY, signMethod: 'Drawn' };
+  assert.deepEqual(punchFinishErrors(client, true), {}, 'company and function are optional');
+  assert.deepEqual(punchFinishErrors({ ...client, clientName: '' }, true), { clientName: 'Client name is required.' });
+  assert.deepEqual(punchFinishErrors({ signerType: 'Inspection', date: TODAY, signMethod: 'Uploaded PDF' }, true), { inspectorId: 'Select an inspector.' });
+  assert.deepEqual(punchFinishErrors({ signerType: 'Inspection', inspectorId: 'welder-1', date: TODAY, signMethod: 'Drawn' }, true), {});
+  assert.deepEqual(punchFinishErrors(client, false), { signMethod: 'Signature is required.' });
+  assert.deepEqual(punchFinishErrors({ signerType: 'User', date: TODAY, signMethod: 'Saved signature' }, false, true), {}, 'the saved signature needs no drawing');
+  assert.ok(punchFinishErrors({ signerType: 'User', date: TODAY, signMethod: 'Saved signature' }, false, false).signMethod, 'without a saved signature the user draws');
+  assert.ok(punchFinishErrors({ ...client, signMethod: 'Saved signature' }, false, true).signMethod, 'a client never signs with the account’s signature');
+  assert.deepEqual(Object.keys(punchFinishErrors({ ...client, signerType: 'Own inspector' }, true)), ['signerType']);
+  assert.equal(finishSummary(1, true), 'This item will be finished with sign-off.'); assert.equal(finishSummary(3), '3 item(s) will be finished with sign-off.');
+  // Open → finish / promote (pre-punch) / approve / remove; Finished → approve (until approved) / remove; Passed and Removed are final.
+  const actions = ['finish', 'approve', 'promote', 'remove'] as const;
+  assert.deepEqual([row('p', { punchType: 'Pre-punch' }), row('p'), row('p', { status: 'Finished' }), row('p', { status: 'Finished', clientApproved: true }), row('p', { status: 'Passed' }), row('p', { status: 'Removed' })].map(item => actions.map(action => canTransition(item, action))),
+    [[true, true, true, true], [true, true, false, true], [false, true, false, true], [false, false, false, true], [false, false, false, false], [false, false, false, false]]);
+});
+
+test('Passed is derived per isometric and phase: every A/B Finished and approved; open C items stay Open', () => {
+  const item = (id: string, data: Record<string, unknown>) => row(id, { isoId: 'iso', punchType: 'Pre-punch', category: A, ...data });
+  const one = item('a1', { status: 'Finished', clientApproved: true }), two = item('a2', { status: 'Finished' }), open = item('c1', { category: C });
+  const cards = (items: Row[]) => Object.fromEntries(punchKpis(withPunchPhases(items), TODAY).map(card => [card.key, card.count]));
+  // Two finished A items, one approved: neither is Passed, the Passed card is 0.
+  let items = [one, two, open];
+  assert.deepEqual(withPunchPhases(items).map(punchStatus), ['Finished', 'Finished', 'Open']);
+  assert.equal(cards(items).passed, 0); assert.equal(punchPhasePassed(items, 'iso', 'Pre-punch'), false);
+  // After approving the second, both read Passed (card 2); the open C stays Open and does not hold the phase back.
+  items = [one, { ...two, clientApproved: true }, open];
+  assert.deepEqual(withPunchPhases(items).map(punchStatus), ['Passed', 'Passed', 'Open']);
+  assert.equal(cards(items).passed, 2); assert.equal(cards(items).open, 1); assert.equal(cards(items).finished, 0);
+  assert.equal(punchCounts(items, TODAY).prePunchFinished, 0, 'the status card counts passed items apart from finished ones');
+  // Other isometrics and the other phase are separate; Punch needs the pre-punch A/B items too.
+  const punch = row('p1', { isoId: 'iso', punchType: 'Punch', category: B, status: 'Finished', clientApproved: true });
+  assert.equal(punchStatus(withPunchPhases([punch, two])[0]), 'Finished', 'a pre-punch A not approved holds Punch back');
+  assert.equal(punchStatus(withPunchPhases([punch, { ...two, clientApproved: true }, open])[0]), 'Passed', 'open pre-punch C does not block Punch');
+  assert.equal(punchStatus(withPunchPhases([punch, row('x', { isoId: 'other', category: A })])[0]), 'Passed');
+  // An item stored as Passed by the earlier version reads Finished and approved; it is Passed while its phase is.
+  assert.deepEqual(withPunchPhases([item('old', { status: 'Passed' }), item('new', {})]).map(entry => [punchStatus(entry), entry.clientApproved]), [['Finished', true], ['Open', undefined]]);
+  assert.equal(punchStatus(withPunchPhases([item('old', { status: 'Passed' })])[0]), 'Passed');
+  // Removed and archived items do not count; a project-related item never passes; a phase without a finished item is not Passed.
+  assert.equal(punchStatus(withPunchPhases([one, item('r', { status: 'Removed' }), item('z', { _archived: true })])[0]), 'Passed');
+  assert.equal(punchStatus(withPunchPhases([row('pr', { projectId: 'p', status: 'Finished', clientApproved: true })])[0]), 'Finished');
+  assert.equal(punchPhasePassed([open], 'iso', 'Pre-punch'), false);
+  // Adding after Punch Passed: refused, except a Punch item by a full access account.
+  const passed = [punch];
+  assert.equal(punchAddRefusal({ isoId: 'iso', punchType: 'Pre-punch' }, [two], false), null, 'Punch not passed yet');
+  assert.ok(punchAddRefusal({ isoId: 'iso', punchType: 'Punch' }, passed, false));
+  assert.ok(punchAddRefusal({ isoId: 'iso', punchType: 'Pre-punch' }, passed, true));
+  assert.equal(punchAddRefusal({ isoId: 'iso', punchType: 'Punch' }, passed, true), null);
+  assert.equal(punchAddRefusal({ isoId: 'other', punchType: 'Punch' }, passed, false), null);
+  // Numbering continues from the highest number.
+  assert.equal(nextPunchNumber([row('1', { number: '8' }), row('2', { number: '3' }), row('3', {})]), '9'); assert.equal(nextPunchNumber([]), '1');
+});
+
+test('Add item follows the reference: field order, Type A, Pre-Punch, today, first contractor, Reported by "—", no Short title', () => {
+  assert.deepEqual([...PUNCH_FORM_FIELDS], ['projectId', 'isoId', 'category', 'files', 'description', 'dueDate', 'contractorId', 'reportedDate', 'reportedById', 'punchType']);
+  assert.deepEqual(punchFormDefaults([row('company-1'), row('company-2')], TODAY), { projectId: '', isoId: '', category: A, description: '', dueDate: TODAY, contractorId: 'company-1', reportedDate: TODAY, reportedById: '', punchType: 'Pre-punch' });
+  assert.ok(!(PUNCH_FORM_FIELDS as readonly string[]).includes('name'));
+  assert.equal(PUNCH_MESSAGES.description, 'Please enter a description.');
 });
 
 // ----- the store ---------------------------------------------------------------------------------------------
@@ -124,7 +188,7 @@ test('project-related items stay in the project and pilot scope; the sample show
   const store = new Store(':memory:'); seed(store);
   try {
     const rows = Object.fromEntries(['sites', 'projects', 'isometrics', 'punchlists', 'welds', 'attachments'].map(key => [key, store.list(key)]));
-    const sample = Object.fromEntries(punchKpis(rows.punchlists).map(card => [card.key, card.count]));
+    const sample = Object.fromEntries(punchKpis(withPunchPhases(rows.punchlists)).map(card => [card.key, card.count]));
     for (const key of Object.keys(sample)) assert.ok(sample[key] > 0, `the sample has ${key} items`);
     const related = rows.punchlists.find(item => !item.isoId)!;
     assert.equal(related.projectId, 'project-cooling');
@@ -140,7 +204,9 @@ test('the hosted profile delivers the page and its actions; other profiles keep 
   assert.ok(hosted.navigation.includes('punchlists'));
   for (const name of ['number', 'punchType', 'category', 'projectId', 'isoId', 'description', 'dueDate', 'contractorId', 'reportedDate', 'reportedBy', 'status', 'signAttachmentId']) assert.ok(hosted.resources.punchlists.includes(name), name);
   assert.ok(hosted.resources.isometrics.includes('punchProgress'));
-  for (const key of ['punch-finish', 'punch-pass', 'punch-remove']) assert.ok(hosted.actions[key], key);
+  for (const key of ['punch-finish', 'punch-approve', 'punch-promote', 'punch-remove']) assert.ok(hosted.actions[key], key);
+  assert.equal(hosted.actions['punch-pass'], undefined, 'Passed is derived, never reported by hand');
+  for (const name of ['clientApproved', 'approvedAt', 'approvedBy', 'reportedById', 'signInspectorId']) assert.ok(hosted.resources.punchlists.includes(name), name);
   for (const profile of ['welding-demo', 'access-prototype'] as const) { const other = availabilityFor(profile)!; assert.ok(!other.navigation.includes('punchlists'), profile); assert.ok(!other.actions['punch-finish'], profile); assert.ok(!other.resources.punchlists, profile); }
   assert.equal(availabilityFor('full'), undefined);
 });
@@ -183,7 +249,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     if (file) body.set('file', new Blob([file.bytes as BlobPart], { type: file.type }), file.name);
     return body;
   };
-  return { store, worker, viewer, detailed, form };
+  return { store, worker, viewer, detailed, form, account };
 }
 const json = async <T = Record<string, unknown>>(response: Response) => await response.json() as T;
 const newItem = { punchType: 'Pre-punch', category: B, isoId: 'iso-5', description: 'Weld cap not removed on spool SP-005 branch connection.', dueDate: '2026-12-20', contractorId: 'company-stelux', reportedDate: '2026-11-16', reportedBy: 'Morgan Lee' };
@@ -198,7 +264,7 @@ test('items are added and edited in the Weld Pilot; the MTO Pilot refuses them; 
   const edited = await f.worker(`/records/punchlists/${item.id}`, { method: 'PUT', data: { description: 'Weld cap removed? Check again.', category: C, _version: item._version } }); assert.equal(edited.status, 200);
   assert.equal((await json<{ record: Row }>(edited)).record.category, C);
   // The pilot boundary: the item is neither readable nor writable from the MTO Pilot.
-  for (const [path, options] of [['/records/punchlists', {}], ['/records/punchlists', { method: 'POST', data: newItem }], [`/records/punchlists/${item.id}`, { method: 'PUT', data: { description: 'Other pilot', _version: item._version + 1 } }], [`/history/punchlists/${item.id}`, {}], ['/actions/punch-pass', { method: 'POST', data: { punchId: item.id } }]] as const) {
+  for (const [path, options] of [['/records/punchlists', {}], ['/records/punchlists', { method: 'POST', data: newItem }], [`/records/punchlists/${item.id}`, { method: 'PUT', data: { description: 'Other pilot', _version: item._version + 1 } }], [`/history/punchlists/${item.id}`, {}], ['/actions/punch-approve', { method: 'POST', data: { punchId: item.id } }]] as const) {
     assert.equal((await f.worker(path, { ...options, pilot: 'mto' })).status, 403, path);
   }
   assert.equal(Object.hasOwn((await json<{ rows: Record<string, Row[]> }>(await f.worker('/bootstrap', { pilot: 'mto' }))).rows, 'punchlists'), false);
@@ -231,7 +297,7 @@ test('Mark as finished takes the sign-off with its file in one request and audit
   // Refusals leave the item open and create no attachment.
   const missing = await finish(clientSignOff); assert.equal(missing.status, 422); assert.match((await json<{ error: string }>(missing)).error, /signature|signed/i);
   const noName = await finish({ ...clientSignOff, clientName: '' }, drawn); assert.equal(noName.status, 422); assert.match((await json<{ error: string }>(noName)).error, /client/i);
-  assert.equal((await finish({ ...clientSignOff, signerType: 'Own inspector' }, drawn)).status, 422, 'an own inspector needs the inspector’s name');
+  assert.equal((await finish({ ...clientSignOff, signerType: 'Inspection' }, drawn)).status, 422, 'an inspection sign-off needs the inspector');
   assert.equal((await finish(clientSignOff, { name: 'sign.png', type: 'image/png', bytes: PDF })).status, 422, 'the content must be what the name says');
   assert.equal((await finish({ ...clientSignOff, signMethod: 'Uploaded PDF' }, { name: 'sign.pdf', type: 'application/pdf', bytes: PNG })).status, 422, 'a PNG is not a signed PDF');
   assert.equal((await finish({ ...clientSignOff, signMethod: 'Uploaded PDF' }, drawn)).status, 422);
@@ -255,28 +321,90 @@ test('Mark as finished takes the sign-off with its file in one request and audit
   assert.ok(history.events.some(event => event.summary === 'Finished punch item'), JSON.stringify(history.events));
   // A signed PDF by an own inspector on another item.
   const other = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, projectId: '', isoId: 'iso-6' } }))).record;
-  const pdf = await f.worker(`/punch/${other.id}/finish`, { method: 'POST', data: f.form({ signerType: 'Own inspector', inspector: 'Morgan Lee', date: '2026-11-17', signMethod: 'Uploaded PDF' }, { name: 'signed.pdf', type: 'application/pdf', bytes: PDF }) });
-  assert.equal(pdf.status, 201); assert.equal(f.store.get('punchlists', other.id).signInspector, 'Morgan Lee'); assert.equal(f.store.get('punchlists', other.id).signMethod, 'Uploaded PDF');
+  const pdf = await f.worker(`/punch/${other.id}/finish`, { method: 'POST', data: f.form({ signerType: 'Inspection', inspectorId: 'welder-1', date: '2026-11-17', signMethod: 'Uploaded PDF' }, { name: 'signed.pdf', type: 'application/pdf', bytes: PDF }) });
+  assert.equal(pdf.status, 201); assert.equal(f.store.get('punchlists', other.id).signInspectorId, 'welder-1'); assert.equal(f.store.get('punchlists', other.id).signInspector, f.store.display('welders', f.store.get('welders', 'welder-1'))); assert.equal(f.store.get('punchlists', other.id).signMethod, 'Uploaded PDF');
+  // The sign-off also gives the client approval.
+  assert.equal(finished.clientApproved, true); assert.equal(finished.approvedAt, '2026-11-16');
 });
 
-test('Report passed follows Finished, and a passed item cannot be edited, extended or removed', async t => {
+test('Mark as Client approved, Promote to Punch, and a passed phase locks its items and refuses new items', async t => {
+  const f = await fixture(t);
+  const create = async (data: Record<string, unknown>, as = f.worker) => as('/records/punchlists', { method: 'POST', data: { ...newItem, isoId: 'iso-6', ...data } });
+  const item = (await json<{ record: Row }>(await create({ category: A }))).record;
+  const approve = (id: string, as = f.worker) => as('/actions/punch-approve', { method: 'POST', data: { punchId: id } });
+  const promote = (id: string, as = f.worker) => as('/actions/punch-promote', { method: 'POST', data: { punchId: id } });
+  // Approval before the sign-off: allowed, the item stays Open.
+  assert.equal((await approve(item.id, f.viewer)).status, 403);
+  assert.equal((await approve(item.id)).status, 201);
+  assert.equal(f.store.get('punchlists', item.id).clientApproved, true); assert.equal(f.store.get('punchlists', item.id).status, 'Open');
+  assert.equal((await approve(item.id)).status, 422, 'not twice');
+  assert.equal((await f.worker(`/records/punchlists/${item.id}`, { method: 'PUT', data: { clientApproved: false, _version: f.store.get('punchlists', item.id)._version } })).status, 422, 'the approval is not a plain field');
+  // Promote: an open pre-punch item becomes Punch, once; a punch item is refused.
+  const pre = (await json<{ record: Row }>(await create({ category: C }))).record;
+  assert.equal((await promote(pre.id, f.viewer)).status, 403);
+  assert.equal((await promote(pre.id)).status, 201); assert.equal(f.store.get('punchlists', pre.id).punchType, 'Punch');
+  assert.equal((await promote(pre.id)).status, 422);
+  // Finish the pre-punch A item: its phase passes; the item is Passed, locked for edits, files and removal.
+  assert.equal((await f.worker(`/punch/${item.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 'sign.png', type: 'image/png', bytes: PNG }) })).status, 201);
+  const passed = f.store.get('punchlists', item.id);
+  assert.equal(punchStatus(withPunchPhases(f.store.list('punchlists'))!.find(row => row.id === item.id)!), 'Passed');
+  const edit = await f.worker(`/records/punchlists/${item.id}`, { method: 'PUT', data: { description: 'Changed after passing.', _version: passed._version } });
+  assert.equal(edit.status, 422); assert.match(await edit.text(), /passed punch item cannot be changed/i);
+  assert.equal((await f.worker('/actions/punch-remove', { method: 'POST', data: { punchId: item.id } })).status, 422);
+  assert.equal((await f.worker('/files', { method: 'POST', data: f.form({ entityType: 'punchlists', entityId: item.id, documentType: 'Punch photo' }, { name: 'late.png', type: 'image/png', bytes: PNG }) })).status, 422);
+  // Pre-punch Passed does not stop new items. Finish the promoted C (Punch): Punch passes, then adding is refused.
+  assert.equal((await f.worker(`/punch/${pre.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 'sign.png', type: 'image/png', bytes: PNG }) })).status, 201);
+  assert.equal(punchPhasePassed(f.store.list('punchlists'), 'iso-6', 'Punch'), true);
+  for (const punchType of ['Pre-punch', 'Punch']) {
+    const refused = await create({ punchType }); assert.equal(refused.status, 422, punchType); assert.match((await json<{ error: string }>(refused)).error, /Punch is already Passed/);
+  }
+  // A full access account (the administrator) may still add a Punch item, not a Pre-punch item.
+  const admin = await f.account('Punch admin', { generalPermission: 'Administration', materialsPermission: 'Administration', weldingPermission: 'Administration', settingsPermission: 'Administration' });
+  assert.equal((await create({ punchType: 'Pre-punch' }, admin)).status, 422);
+  assert.equal((await create({ punchType: 'Punch' }, admin)).status, 201);
+  assert.equal((await create({ isoId: 'iso-5' })).status, 201, 'other isometrics are not affected');
+});
+
+test('bulk Mark as finished (Sign-off) finishes and approves the checked items in one transaction', async t => {
+  const f = await fixture(t);
+  const make = async () => (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: newItem }))).record;
+  const [one, two, three] = [await make(), await make(), await make()];
+  const bulk = (ids: string[], fields: Record<string, string> = clientSignOff, as = f.worker) => as('/punch/finish', { method: 'POST', data: f.form({ ...fields, punchIds: ids.join(',') }, { name: 'sign.png', type: 'image/png', bytes: PNG }) });
+  assert.equal((await bulk([])).status, 422);
+  // One refused id (already removed) leaves every item unchanged.
+  assert.equal((await f.worker('/actions/punch-remove', { method: 'POST', data: { punchId: three.id } })).status, 201);
+  assert.equal((await bulk([one.id, three.id])).status, 422);
+  assert.equal(f.store.get('punchlists', one.id).status, 'Open'); assert.equal(f.store.list('attachments').filter(row => row.entityType === 'punchlists').length, 0);
+  assert.equal((await bulk([one.id, two.id], clientSignOff, f.viewer)).status, 403);
+  const done = await bulk([one.id, two.id]); assert.equal(done.status, 201);
+  assert.equal((await json<{ records: Row[] }>(done)).records.length, 2);
+  for (const id of [one.id, two.id]) {
+    const item = f.store.get('punchlists', id);
+    assert.equal(item.status, 'Finished'); assert.equal(item.clientApproved, true); assert.equal(item.signName, 'Jan de Vries');
+    const file = f.store.get('attachments', item.signAttachmentId); assert.equal(file.entityId, id); assert.equal(file.documentType, 'Punch sign-off');
+    assert.equal((await f.worker(`/files/${file.id}`)).status, 200);
+  }
+});
+
+test('a User sign-off uses the account’s saved signature from Signatures; without one the user draws', async t => {
   const f = await fixture(t);
   const item = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: newItem }))).record;
-  const pass = (data: Record<string, unknown> = {}, as = f.worker) => as('/actions/punch-pass', { method: 'POST', data: { punchId: item.id, date: '2026-11-18', note: 'Inspected on site.', ...data } });
-  assert.equal((await pass()).status, 422, 'an open item is not passed');
-  assert.equal((await f.worker(`/punch/${item.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 'sign.png', type: 'image/png', bytes: PNG }) })).status, 201);
-  assert.equal((await pass({}, f.viewer)).status, 403);
-  assert.equal((await pass({ date: '2026-11-15' })).status, 422, 'not before it was finished');
-  assert.equal((await pass({ date: 'tomorrow' })).status, 422);
-  assert.equal((await pass()).status, 201);
-  const passed = f.store.get('punchlists', item.id); assert.equal(passed.status, 'Passed'); assert.equal(passed.passedAt, '2026-11-18'); assert.equal(passed.passRemarks, 'Inspected on site.');
-  assert.equal((await pass()).status, 422);
-  const edit = await f.worker(`/records/punchlists/${item.id}`, { method: 'PUT', data: { description: 'Changed after passing.', _version: passed._version } });
-  assert.equal(edit.status, 422); assert.match((await json<{ error: string }>(edit)).error, /passed/i);
-  assert.equal((await f.worker('/actions/punch-remove', { method: 'POST', data: { punchId: item.id, note: 'No' } })).status, 422);
-  const photo = await f.worker('/files', { method: 'POST', data: f.form({ entityType: 'punchlists', entityId: item.id, documentType: 'Punch photo' }, { name: 'late.png', type: 'image/png', bytes: PNG }) });
-  assert.equal(photo.status, 422);
-  assert.equal(f.store.get('punchlists', item.id).description, newItem.description);
+  const user = { signerType: 'User', date: '2026-11-16', signMethod: 'Saved signature' };
+  assert.equal((await f.worker(`/punch/${item.id}/finish`, { method: 'POST', data: f.form(user) })).status, 422, 'no saved signature yet');
+  const signature = (await json<{ record: Row }>(await f.worker('/records/signatures', { method: 'POST', data: { name: 'Punch worker', userId: f.store.list('users').find(row => row.name === 'Punch worker')!.id, kind: 'Full signature', nameUnder: false } }))).record;
+  assert.equal((await f.worker('/files', { method: 'POST', data: f.form({ entityType: 'signatures', entityId: signature.id }, { name: 'full.png', type: 'image/png', bytes: PNG }) })).status, 201);
+  const done = await f.worker(`/punch/${item.id}/finish`, { method: 'POST', data: f.form(user) }); assert.equal(done.status, 201, await done.clone().text());
+  const finished = f.store.get('punchlists', item.id);
+  assert.equal(finished.signerType, 'User'); assert.equal(finished.signName, 'Punch worker'); assert.equal(finished.signMethod, 'Saved signature'); assert.equal(finished.clientApproved, true);
+  assert.equal((await f.worker(`/files/${finished.signAttachmentId}`)).status, 200);
+});
+
+test('new item numbers continue from the highest number of the list (scenario SB defect D4)', async t => {
+  const f = await fixture(t);
+  const highest = Math.max(...f.store.list('punchlists', true).map(row => Number(row.number) || 0));
+  assert.equal(highest, 8, 'the sample holds items 1 to 8');
+  const created = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: newItem }))).record;
+  assert.equal(created.number, '9');
 });
 
 test('Mark as removed asks for the delete right, works from Open and Finished only and is final', async t => {
@@ -284,22 +412,24 @@ test('Mark as removed asks for the delete right, works from Open and Finished on
   const maker = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: newItem }))).record;
   const editor = await f.detailed('Punch editor', ['show', 'insert', 'edit', 'import']);
   const remover = await f.detailed('Punch remover', ['show', 'edit', 'delete']);
-  // Both directions: the editor may finish and pass but not remove; the remover may remove.
+  // Both directions: the editor may finish and approve but not remove; the remover may remove.
   assert.equal((await editor('/actions/punch-remove', { method: 'POST', data: { punchId: maker.id } })).status, 403);
-  assert.equal((await remover('/actions/punch-remove', { method: 'POST', data: { punchId: maker.id, date: '2026-11-17', note: 'Superseded by design change DC-051.' } })).status, 201);
-  const removed = f.store.get('punchlists', maker.id); assert.equal(removed.status, 'Removed'); assert.equal(removed.removedAt, '2026-11-17'); assert.equal(removed.removeReason, 'Superseded by design change DC-051.');
+  // A plain confirmation: no date and no reason; today is stored.
+  assert.equal((await remover('/actions/punch-remove', { method: 'POST', data: { punchId: maker.id } })).status, 201);
+  const removed = f.store.get('punchlists', maker.id); assert.equal(removed.status, 'Removed'); assert.equal(removed.removedAt, new Date().toISOString().slice(0, 10)); assert.equal(removed.removeReason, '');
   assert.equal((await remover('/actions/punch-remove', { method: 'POST', data: { punchId: maker.id } })).status, 422);
   assert.equal((await remover(`/punch/${maker.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 's.png', type: 'image/png', bytes: PNG }) })).status, 422);
-  assert.equal((await remover('/actions/punch-pass', { method: 'POST', data: { punchId: maker.id } })).status, 422);
+  assert.equal((await remover('/actions/punch-approve', { method: 'POST', data: { punchId: maker.id } })).status, 422);
   const second = (await json<{ record: Row }>(await editor('/records/punchlists', { method: 'POST', data: newItem }))).record;
   assert.equal((await editor(`/punch/${second.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 's.png', type: 'image/png', bytes: PNG }) })).status, 201);
-  assert.equal((await editor('/actions/punch-pass', { method: 'POST', data: { punchId: second.id } })).status, 201);
+  assert.equal(f.store.get('punchlists', second.id).clientApproved, true);
   assert.equal((await remover('/records/punchlists', { method: 'POST', data: newItem })).status, 403, 'the remover cannot add items');
   // A profile that only reads cannot run any transition.
   const reader = await f.detailed('Punch reader', ['show']);
   const third = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: newItem }))).record;
   assert.equal((await reader('/actions/punch-remove', { method: 'POST', data: { punchId: third.id } })).status, 403);
-  assert.equal((await reader('/actions/punch-pass', { method: 'POST', data: { punchId: third.id } })).status, 403);
+  assert.equal((await reader('/actions/punch-approve', { method: 'POST', data: { punchId: third.id } })).status, 403);
+  assert.equal((await reader('/actions/punch-promote', { method: 'POST', data: { punchId: third.id } })).status, 403);
   assert.equal((await reader(`/punch/${third.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 's.png', type: 'image/png', bytes: PNG }) })).status, 403);
   assert.equal(f.store.get('punchlists', third.id).status, 'Open');
 });
@@ -315,6 +445,8 @@ test('an item holds up to two photos or documents; the sign-off type cannot be a
   const third = await attach('Punch photo', 'three.png'); assert.equal(third.status, 422); assert.match((await json<{ error: string }>(third)).error, /up to 2/);
   assert.equal(f.store.list('attachments').filter(row => row.entityType === 'punchlists' && row.entityId === item.id).length, 2);
   // The sign-off file does not use up the two places.
+  // An open A item keeps the phase from Passed, so the finished item still takes files.
+  assert.equal((await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, isoId: 'iso-6', category: A } })).status, 201);
   const other = (await json<{ record: Row }>(await f.worker('/records/punchlists', { method: 'POST', data: { ...newItem, isoId: 'iso-6' } }))).record;
   assert.equal((await f.worker(`/punch/${other.id}/finish`, { method: 'POST', data: f.form(clientSignOff, { name: 's.png', type: 'image/png', bytes: PNG }) })).status, 201);
   for (const name of ['a.png', 'b.png']) assert.equal((await f.worker('/files', { method: 'POST', data: f.form({ entityType: 'punchlists', entityId: other.id, documentType: 'Punch photo' }, { name, type: 'image/png', bytes: PNG }) })).status, 201);
@@ -328,9 +460,10 @@ test('the punch progress is stored on the isometric and drives the field progres
   const f = await fixture(t);
   const iso = f.store.get('isometrics', 'iso-6');
   assert.equal((await f.worker(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '60 %', _version: iso._version } })).status, 422);
-  const saved = await f.worker(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '75 %', _version: iso._version } }); assert.equal(saved.status, 200);
+  const saved = await f.worker(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '75%', _version: iso._version } }); assert.equal(saved.status, 200);
   assert.equal(punchProgress(f.store.get('isometrics', 'iso-6')), 0.75);
-  assert.equal((await f.viewer(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '100 %', _version: iso._version + 1 } })).status, 403);
+  assert.equal((await f.viewer(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '100%', _version: iso._version + 1 } })).status, 403);
+  assert.equal((await f.worker(`/records/isometrics/${iso.id}`, { method: 'PUT', data: { punchProgress: '50 %', _version: iso._version + 1 } })).status, 200, 'an earlier label is still accepted');
   assert.ok(punchKind(row('x')) && punchKpis([]).length === 8);
 });
 
