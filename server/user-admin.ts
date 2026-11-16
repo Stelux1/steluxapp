@@ -10,7 +10,9 @@ import { AppError, type Store } from './store.ts';
  * one by one (shared/permissions.ts `usersProfilesRight`); on top of them, and always on the server:
  * - an account's profile (any pilot, any project site) is set or changed only with Edit on both 26 and 53, and so is the
  *   password of another account (whoever sets it can sign in with that account's rights);
- * - the rights of a profile are changed only with Edit on both 26 and 53;
+ * - the rights of a profile are changed only with Edit on both 26 and 53, and only while every account using it is
+ *   within the editor's reach (sec2-001); a new profile with rights needs the same and grants nothing beyond the
+ *   creator's own profiles (sec2-013); Storehouse manager is an access change too (sec2-004);
  * - nobody widens their own access: their own account's profile may only become narrower, their own application access
  *   is never switched on by themselves (their own project site access is refused in server/site-scope.ts), and the rights
  *   of a profile their own account uses may only become narrower;
@@ -19,6 +21,7 @@ import { AppError, type Store } from './store.ts';
 export const RIGHTS_REFUSED = 'Changing the profile of an account or the rights of a profile needs the Edit right on both User accounts and Profiles.';
 export const PASSWORD_REFUSED = 'Setting the password of another account needs the Edit right on both User accounts and Profiles.';
 export const SELF_REFUSED = 'You cannot widen your own access. Ask another administrator.';
+export const NEW_PROFILE_REFUSED = 'A new profile cannot grant a right that your own profiles do not hold.';
 export const STOREHOUSE_REFUSED = 'Only an administrator with access to all project sites of MTO Pilot can tick Storehouse manager.';
 export const PROFILE_REACH_REFUSED = 'This profile is used by accounts that reach main projects outside your project site access. Ask an administrator with access to all project sites.';
 
@@ -86,6 +89,16 @@ export function assertRightsWrite(store: Store, actor: User, key: string, before
     }
     const plain = (row: Row) => profileRow(store, text(row.profileId) || null);
     if (text(before.profileId) !== text(after.profileId)) { const previous = plain(before), next = plain(after); if (!previous || !next || !profileWithin(next, previous)) throw new AppError(403, SELF_REFUSED); }
+    return;
+  }
+  if (key === 'profiles' && !before) {
+    // A new profile (sec2-013): one that grants anything needs the right to change rights, and never more than the
+    // creator's own profiles hold together.
+    const granted = grants(after);
+    if (!granted.size) return;
+    if (!canChangeRights(actor)) throw new AppError(403, RIGHTS_REFUSED);
+    const held = new Set([...profilesOf(store.get('users', actor.id))].flatMap(id => { const row = profileRow(store, id); return row ? [...grants(row)] : []; }));
+    if ([...granted].some(grant => !held.has(grant))) throw new AppError(403, NEW_PROFILE_REFUSED);
     return;
   }
   if (key === 'profiles' && before) {

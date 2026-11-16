@@ -74,10 +74,12 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
       if (other.length) throw new AppError(422, `Nothing was released. ${other.slice(0, 3).map(iso => `${isoName(iso)}: ${phase === 'Prefab' ? 'ITP No' : 'ITP No 2'} is ${releaseItpOf(iso, phase)}, not the chosen ITP ${itp}.`).join(' ')}${other.length > 3 ? ` ${other.length - 3} more isometrics are blocked.` : ''}`, { itp: 'Release one ITP at a time.' });
       if (new Set(isometrics.map(iso => siteOf(store, iso)?.id ?? '')).size > 1) throw new AppError(422, 'Release the isometrics of one main project at a time.');
     } else itp = str(data.itp) || releaseItpOf(isometrics[0], phase);
-    if (!reportNo) {
-      const site = siteOf(store, isometrics[0])?.id ?? '', siteOfIso = new Map<string, string>();
-      const inSite = (release: Row) => { const key = String(release.isoId); if (!siteOfIso.has(key)) { let id = ''; try { id = siteOf(store, store.get('isometrics', key, true))?.id ?? ''; } catch { id = ''; } siteOfIso.set(key, id); } return siteOfIso.get(key) === site; };
-      reportNo = nextReportNo(store.list('releases', true), type, inSite);
+    const site = siteOf(store, isometrics[0])?.id ?? '', siteOfIso = new Map<string, string>();
+    const inSite = (release: Row) => { const key = String(release.isoId); if (!siteOfIso.has(key)) { let id = ''; try { id = siteOf(store, store.get('isometrics', key, true))?.id ?? ''; } catch { id = ''; } siteOfIso.set(key, id); } return siteOfIso.get(key) === site; };
+    if (!reportNo) reportNo = nextReportNo(store.list('releases', true), type, inSite);
+    // A typed number may not repeat one of the phase in this main project (sec2-009), so it cannot bypass the automatic series.
+    else if (actor.id !== SYSTEM.id && store.list('releases', true).some(release => release.type === type && str(release.reportNo) === reportNo && inSite(release))) {
+      throw new AppError(422, `Report number ${reportNo} is already used for a ${type} release of this main project. Leave it empty to number it automatically.`, { reportNo: `${reportNo} is already used.` });
     }
   }
   const itpEntry = itp ? store.list('itps').find(entry => String(entry.number) === itp) : undefined;

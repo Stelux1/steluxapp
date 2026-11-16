@@ -199,12 +199,12 @@ export const COPY_SCOPES:[CopyPart,string][]=[['copyWelds','63'],['copyMaterials
 /** Actions that need one more right than their own area. A receipt correction changes stock, so it also needs the add right on material inventory (the reference has no edit right on receipts). */
 const EXTRA_ACTION_SCOPES:Record<string,[string,PermissionVerb][]>={'correct-receipt':[['16','insert']],'fill-irn':[['64','edit']]};
 /**
- * Rights an action needs on top of its own scope that depend on its input. Undo on an NDT request (sec2-002) archives the
- * request line and the weld's results of that request: on top of Show on the request archive (66) it needs Delete on the
- * NDT area of the type (76 NDT, 94 NDT Pre).
+ * Rights an action needs on top of its own scope that depend on its input. Undo on an NDT request (sec2-002) and Restart
+ * NDT process (sec2-008) archive request lines and the weld's results: they need Delete on the NDT area of the type (76
+ * NDT, 94 NDT Pre). The PWHT request dialog archives the documents ticked for deletion only with Delete on 97 (sec2-008).
  */
 function extraActionScopes(key:string,data:Record<string,unknown>):[string,PermissionVerb][]{
- const typed:[string,PermissionVerb][]=key==='inspection-request-undo'?[[data.type==='NDT PRE'?'94':'76','delete']]:[];
+ const typed:[string,PermissionVerb][]=key==='inspection-request-undo'||key==='ndt-restart'?[[data.type==='NDT PRE'?'94':'76','delete']]:key==='pwht-weld'&&Array.isArray(data.deleteFileIds)&&data.deleteFileIds.length?[['97','delete']]:[];
  return [...(EXTRA_ACTION_SCOPES[key]||[]),...typed];
 }
 export function canAction(user:User,key:string,data:Record<string,unknown>={}):boolean{

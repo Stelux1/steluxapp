@@ -230,6 +230,15 @@ export function registerProjectImportRoutes(app: Application, { store, access, a
   };
   const allow = (req: Request, siteId: string, mode: ImportMode) => (plan: ImportPlan) => {
     for (const [part, verbs] of neededRights(plan, mode)) { const refusal = partRefusal(req, siteId, part, verbs); if (refusal) throw new AppError(403, refusal); }
+    // Welds go only into projects switched on for Weld Pilot, material lines only into projects switched on for MTO Pilot,
+    // whichever pilot the import is started from (sec2-007). The pilot flags are never imported, so only existing projects can be off.
+    for (const iso of plan.isometrics) {
+      const project = plan.projects.find(item => item.internnumber === iso.internnumber)?.existing;
+      if (!project) continue;
+      for (const [part, owner, used] of [['welds', 'weld', iso.ranges.some(range => range.numbers.length)], ['iso_materials', 'mto', iso.materials.length > 0]] as const) {
+        if (used && !projectInPilot(project, owner)) throw new AppError(403, `Project ${iso.internnumber} is switched off for ${PILOT_MAP[owner].title}: its ${IMPORT_PART_NAMES[part]} cannot be imported.`);
+      }
+    }
   };
   const contextOf = (req: Request, siteId: string, columns: ImportColumn[]) => () => importContext(store, siteId, columns, {
     pilot: user(req).pilot, visible: (key, row) => access.visible(user(req), key, row), title: key => projectResource(availability, RESOURCE_MAP[key]).title,

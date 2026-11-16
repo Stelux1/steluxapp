@@ -348,9 +348,12 @@ export function assertCopyInScope(store: Store, account: Row, input: Record<stri
   const parts: [string, ScopePilot][] = [['copyWelds', 'weld'], ['copyMaterials', 'mto'], ['copyCalculations', 'mto']];
   for (const [part, pilot] of parts) {
     if (input[part] !== true) continue;
+    let project: Row; try { project = store.get('projects', input.projectId); } catch { continue; }
+    const title = pilot === 'weld' ? 'Weld Pilot' : 'MTO Pilot';
+    // A part of a pilot the target project is switched off for is never copied into it (sec2-007).
+    if (!projectInPilot(project, pilot)) throw new AppError(403, `This project is switched off for ${title}: its part of the isometrics cannot be copied into it.`);
     const scope = siteScopeFor(store, account, pilot);
     if (!scope) continue;
-    let project: Row; try { project = store.get('projects', input.projectId); } catch { continue; }
-    if (!scope.allows('projects', project)) throw siteRefused(`Your ${pilot === 'weld' ? 'Weld Pilot' : 'MTO Pilot'} access does not include this main project.`);
+    if (!scope.allows('projects', project)) throw siteRefused(`Your ${title} access does not include this main project.`);
   }
 }

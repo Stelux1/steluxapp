@@ -5,6 +5,7 @@ import { AppError, type Store } from './store.ts';
 import type { documentStorage } from './documents.ts';
 import type { releaseAccess } from './release-access.ts';
 import { actorOf, checkResourcePermission, type AuthRequest } from './auth.ts';
+import { isPdfUpload } from './service-requests.ts';
 import { canResource } from '../shared/permissions.ts';
 import { attachmentDeleteIds, attachmentUploadError, isoAttachmentRows } from '../shared/iso-attachments.ts';
 import { auditEntities } from '../shared/iso-audit.ts';
@@ -51,10 +52,13 @@ export function registerIsoDialogRoutes(app: Application, { store, documents, ac
       const names2 = files.map(file => ({ name: basename(file.originalname).replace(/[\r\n]/g, '') }));
       const problem = attachmentUploadError(req.body?.reportNo, names, names2);
       if (problem) throw new AppError(422, problem, { reportNo: problem });
+      // Only PDFs (sec2-012): the content is checked as well as the name, and the stored type is set here.
+      const notPdf = files.find(file => !isPdfUpload(file));
+      if (notPdf) { const message = `Only PDFs are allowed: ${basename(notPdf.originalname).replace(/[\r\n]/g, '')} is not a PDF file.`; throw new AppError(422, message, { files: message }); }
       const reportType = names.find(row => row.id === text(req.body.reportNo))!;
       const actor = actorOf(req);
       const records = store.transaction(() => files.map((file, index) => {
-        const record = store.create('attachments', { name: names2[index].name, entityType: 'isometrics', entityId: iso.id, documentType: String(reportType.name), mime: file.mimetype, size: file.size, note: '' }, actor);
+        const record = store.create('attachments', { name: names2[index].name, entityType: 'isometrics', entityId: iso.id, documentType: String(reportType.name), mime: 'application/pdf', size: file.size, note: '' }, actor);
         documents.save(record.id, file);
         return record;
       }));

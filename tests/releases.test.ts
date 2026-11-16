@@ -404,7 +404,9 @@ test('releasing: only completed isometrics, with who, when, the document numberi
   // Later changes of the Document settings do not rewrite the document that was released.
   const site = store.get('sites', 'site-north'); store.update('sites', site.id, { prefix: 'ZZZ', releaseDocDrawing: 'Prefix + iso', signSubQaqc: 'Someone else' }, site._version, SYSTEM);
   assert.equal(store.get('releases', release.id).docNo, 'DWG-2499-STX-CW-901');
-  assert.equal(runAction(store, 'release', releaseData([other.id]), actor).records![0].docNo, 'ZZZ-STX-CW-902', 'the next release uses the new settings');
+  // A typed report number of the phase is used once per main project (sec2-009): the next document takes its own.
+  assert.match(refusal(() => runAction(store, 'release', releaseData([other.id]), actor)).message, /Report number PFR-900 is already used/);
+  assert.equal(runAction(store, 'release', releaseData([other.id], 'Prefab', { reportNo: 'PFR-901' }), actor).records![0].docNo, 'ZZZ-STX-CW-902', 'the next release uses the new settings');
   assert.ok(store.activity(10).some(event => event.entityType === 'releases' && event.action === 'released'));
   // Already released; the old validation stays.
   error = refusal(() => runAction(store, 'release', releaseData([id]), actor));

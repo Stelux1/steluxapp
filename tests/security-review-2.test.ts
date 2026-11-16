@@ -10,10 +10,12 @@ import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
 import { inspectionRules } from '../server/inspections.ts';
+import { runAction } from '../server/workflows.ts';
 import { columnsFor } from '../server/project-import.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { SITE_SCOPE_SPECIFIC, USER_SITES } from '../shared/site-scope.ts';
 import * as FLANGES from '../shared/flanges.ts';
+import { PWHT_DOCUMENT } from '../shared/inspections.ts';
 import type { User } from '../shared/types.ts';
 
 /**
@@ -238,4 +240,181 @@ test('sec2-006: a project switched off for a pilot is neither archived by a clea
   // From MTO Pilot, where it is switched on, it is archived as before.
   const fromMto = await f.admin.request(`/records/projects/${off.id}/archive`, { method: 'POST', pilot: 'mto', data: { _version: off._version } });
   assert.equal(fromMto.status, 200, await fromMto.clone().text());
+});
+
+test('sec2-007: Project import writes welds only into projects switched on for Weld Pilot and material lines only into projects switched on for MTO Pilot', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.admin.request('/auth/site', { method: 'POST', data: { siteId: NORTH } })).status, 200);
+  const noWeld = f.store.create('projects', { internnumber: 'NO-WELD-1', siteId: NORTH, weldPilot: false }, SYSTEM);
+  const noMto = f.store.create('projects', { internnumber: 'NO-MTO-1', siteId: NORTH, mtoPilot: false }, SYSTEM);
+  const counts = () => [f.store.list('welds').length, f.store.list('iso_materials').length, f.store.list('isometrics').length];
+  const before = counts();
+  // From MTO Pilot: welds for a project switched off for Weld Pilot.
+  const welds = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'mto', data: await importSheet('full', [{ 'projects.internnumber': String(noWeld.internnumber), 'isometrics.isoNo': 'NO-WELD-ISO', 'welds.start': '1', 'welds.end': '2' }], { withWelds: true }) });
+  assert.equal(welds.status, 403, await welds.clone().text());
+  assert.match((await welds.json() as { error: string }).error, /Weld Pilot/);
+  // From Weld Pilot: a material line for a project switched off for MTO Pilot.
+  const line = { 'projects.internnumber': String(noMto.internnumber), 'isometrics.isoNo': 'NO-MTO-ISO', 'iso_materials.componentCode': '1', 'iso_materials.materialNo': 'NO-MTO-PIPE', 'iso_materials.description': 'Pipe', 'iso_materials.uom': 'M', 'iso_materials.quantity': '2', 'iso_materials.phase': 'Shop' };
+  const materials = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'weld', data: await importSheet('full', [line], { withWelds: false }) });
+  assert.equal(materials.status, 403, await materials.clone().text());
+  assert.match((await materials.json() as { error: string }).error, /MTO Pilot/);
+  // Copy isometrics has the same rule for the welds it copies.
+  const copied = await f.admin.request('/actions/copy-isometrics', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-1'], projectId: noWeld.id, copyWelds: true } });
+  assert.equal(copied.status, 403, await copied.clone().text());
+  assert.deepEqual(counts(), before, 'no weld, material line or isometric was written');
+  // The same material line into a project switched on for MTO Pilot still imports.
+  const fine = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'weld', data: await importSheet('full', [{ ...line, 'projects.internnumber': String(noWeld.internnumber) }], { withWelds: false }) });
+  assert.equal(fine.status, 201, await fine.clone().text());
+});
+
+test('sec2-008: removing PWHT documents needs Delete on 97, and Restart NDT process needs Delete on the NDT area', async t => {
+  const f = await fixture(t);
+  // A PWHT result with its document.
+  const weld = f.store.list('welds').find(row => row.pwhtReq === true)!;
+  const section = { type: 'PWHT', locationId: 'pwht-site', processId: 'pwht-2', reportNo: 'PWHT-SEC2-008', date: '2026-10-20', checked: true };
+  const result = inspectionRules(f.store, SYSTEM).run('pwht-weld', { weldId: weld.id, sections: [section] }).records![0];
+  const file = f.store.create('attachments', { name: 'chart.pdf', entityType: 'inspection_results', entityId: result.id, documentType: PWHT_DOCUMENT, mime: 'application/pdf', size: 12, note: '' }, SYSTEM);
+  const adder = f.account('PWHT adder', { profileId: f.matrix('PWHT adder', { '63': ['show'], '97': ['show', 'insert'] }) });
+  await adder.login();
+  const save = (as: ReturnType<typeof f.client>, deleteFileIds: string[]) => as.request('/actions/pwht-weld', { method: 'POST', pilot: 'weld', data: { weldId: weld.id, sections: [section], deleteFileIds } });
+  const refused = await save(adder.as, [file.id]);
+  assert.equal(refused.status, 403, await refused.clone().text());
+  assert.equal(f.store.get('attachments', file.id, true)._archived, false, 'the document stays');
+  assert.equal((await save(adder.as, [])).status, 201, 'saving without removing a document needs only Add');
+  const remover = f.account('PWHT remover', { profileId: f.matrix('PWHT remover', { '63': ['show'], '97': ['show', 'insert', 'delete'] }) });
+  await remover.login();
+  assert.equal((await save(remover.as, [file.id])).status, 201);
+  assert.equal(f.store.get('attachments', file.id, true)._archived, true);
+  // Restart NDT process archives the NDT results of the picked processes.
+  for (const id of ['weld-22', 'weld-23']) f.store.update('welds', id, { ndtLocationId: 'ndt-shop', ndtProcess1Id: 'ndt-0', ndtProcess2Id: 'ndt-1' }, f.store.get('welds', id)._version, SYSTEM);
+  const line = inspectionRules(f.store, SYSTEM).run('mass-inspection-request', { type: 'NDT', weldIds: ['weld-22', 'weld-23'], processIds: ['ndt-0', 'ndt-1'] }).records!.find(row => row.weldId === 'weld-22')!;
+  const ndt = f.store.create('inspection_results', { requestId: line.id, weldId: 'weld-22', type: 'NDT', round: 'Initial', result: 'Accepted', reportNo: 'RT-SEC2-008', processId: 'ndt-0' }, SYSTEM);
+  const restart = { weldId: 'weld-22', type: 'NDT', processIds: ['ndt-0'] };
+  const ndtAdder = f.account('NDT adder', { profileId: f.matrix('NDT adder', { '63': ['show'], '76': ['show', 'insert'] }) });
+  await ndtAdder.login();
+  assert.equal((await ndtAdder.as.request('/actions/ndt-restart', { method: 'POST', pilot: 'weld', data: restart })).status, 403);
+  assert.equal(f.store.get('inspection_results', ndt.id, true)._archived, false, 'the NDT result stays');
+  const ndtRemover = f.account('NDT remover', { profileId: f.matrix('NDT remover', { '63': ['show'], '76': ['show', 'insert', 'delete'] }) });
+  await ndtRemover.login();
+  assert.equal((await ndtRemover.as.request('/actions/ndt-restart', { method: 'POST', pilot: 'weld', data: restart })).status, 201);
+  assert.equal(f.store.get('inspection_results', ndt.id, true)._archived, true);
+});
+
+test('sec2-009: a typed Prefab release report number that the main project already used for Prefab is refused with a sentence naming it', async t => {
+  const f = await fixture(t);
+  const released = new Set(f.store.list('releases').filter(row => row.type === 'Prefab').map(row => String(row.isoId)));
+  const ready = (ids: string[]) => ids.filter(id => !released.has(id)).map(id => { const iso = f.store.get('isometrics', id); return f.store.update('isometrics', id, { itpNo: 'ITP-SEC2-009', prefabCompletedAt: '2026-11-01T10:00:00.000Z', prefabCompletedBy: 'Inspector' }, iso._version, SYSTEM); });
+  const [north1, north2, north3] = ready(['iso-7', 'iso-8', 'iso-9', 'iso-10', 'iso-1', 'iso-2', 'iso-3']);
+  const [river1] = ready(['iso-4', 'iso-5', 'iso-6']);
+  assert.ok(north1 && north2 && north3 && river1, 'three North and one Riverside isometric ready for Prefab release');
+  const release = (isoId: string, reportNo?: string) => f.admin.request('/actions/release', { method: 'POST', pilot: 'weld', data: { type: 'Prefab', isoIds: [isoId], ...(reportNo === undefined ? {} : { reportNo }) } });
+  const first = await release(north1.id);
+  assert.equal(first.status, 201, await first.clone().text());
+  const used = String(f.store.list('releases').find(row => row.isoId === north1.id && row.type === 'Prefab')!.reportNo);
+  const count = f.store.list('releases', true).length;
+  const refused = await release(north2.id, used);
+  assert.equal(refused.status, 422, await refused.clone().text());
+  assert.ok((await refused.json() as { error: string }).error.includes(used), 'the sentence names the number');
+  assert.equal(f.store.list('releases', true).length, count, 'no release row was added');
+  // A new typed number, and the same number in another main project, are still accepted.
+  assert.equal((await release(north2.id, 'PFR-SEC2-009')).status, 201);
+  assert.equal((await release(river1.id, used)).status, 201);
+});
+
+test('sec2-010: Stock to project and a transfer order copy only certificates of a main project the request reaches', async t => {
+  const f = await fixture(t);
+  // certificate-1 (sample) is a North certificate of material-1, charge H-1042, on a Main warehouse line.
+  const pipe = f.store.list('stock').find(row => row.locationKind !== 'site' && row.warehouseId === 'warehouse-main' && row.materialId === 'material-1')!;
+  const cert = f.store.get('certifications', 'certificate-1');
+  const store = f.matrix('River store', { '75': ['show', 'insert', 'edit'], '16': ['show', 'insert'], '18': ['show'], '6': ['show'], '4': ['show'] });
+  const river = f.account('River store', { profileId: store, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [RIVER] });
+  await river.login();
+  assert.notEqual((await river.as.request('/records/certifications/certificate-1', { pilot: 'mto' })).status, 200, 'it cannot open the North certificate');
+  const copies = () => f.store.list('certifications', true).filter(row => row.siteId === RIVER && row.name === cert.name).length;
+  const quantity = Number(pipe.quantity);
+  const moved = await river.as.request('/actions/stock-to-project', { method: 'POST', pilot: 'mto', data: { siteId: RIVER, items: [{ stockId: pipe.id, quantity: 1, certIds: [cert.id] }] } });
+  assert.equal(moved.status, 422, await moved.clone().text());
+  assert.equal(copies(), 0, 'no Riverside copy of the North certificate');
+  assert.equal(Number(f.store.get('stock', pipe.id).quantity), quantity, 'nothing moved');
+  const order = await river.as.request('/actions/transfer-order-create', { method: 'POST', pilot: 'mto', data: { type: 'Storehouse → Project', fromWarehouseId: 'warehouse-main', siteId: RIVER, items: [{ materialNo: 'CS-P060', quantity: 1, certIds: [cert.id] }] } });
+  assert.equal(order.status, 422, await order.clone().text());
+  // Without the certificate the same transfer still runs.
+  const plain = await river.as.request('/actions/stock-to-project', { method: 'POST', pilot: 'mto', data: { siteId: RIVER, items: [{ stockId: pipe.id, quantity: 1 }] } });
+  assert.equal(plain.status, 201, await plain.clone().text());
+});
+
+test('sec2-011: an Inventory → Storehouse order stays readable where the storehouse is, without the source inventory or its certificates; only the source main project acts on it', async t => {
+  const f = await fixture(t);
+  const source = f.store.list('stock').find(row => row.locationKind === 'site' && row.siteId === NORTH && row.materialId === 'material-1' && Number(row.quantity) >= 1)!;
+  assert.ok(source, 'a North inventory row');
+  const materialNo = String(f.store.get(source.materialId ? 'materials' : 'custom_materials', String(source.materialId || source.customMaterialId)).materialNo);
+  const done = runAction(f.store, 'transfer-order-create', { type: 'Inventory - Storehouse', fromSiteId: NORTH, toWarehouseId: 'warehouse-main', date: '2026-11-16', items: [{ stockId: source.id, materialNo, quantity: 1, certIds: ['certificate-1'] }] }, SYSTEM);
+  const order = (done as { record: { id: string } }).record;
+  const item = f.store.list('transfer_order_items').find(row => row.orderId === order.id)!;
+  const logistics = f.matrix('Store hand', { '16': ['show', 'insert', 'export'], '75': ['show'], '4': ['show'], '6': ['show'] });
+  const river = f.account('River hand', { profileId: logistics, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [RIVER] });
+  const north = f.account('North hand', { profileId: logistics, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
+  await river.login(); await north.login();
+  // Readable (storehouses are company-wide), as intended: the order and its lines.
+  const orders = await river.as.request('/records/transfer_orders', { pilot: 'mto' });
+  assert.ok((await orders.json() as { rows: { id: string }[] }).rows.some(row => row.id === order.id), 'the order is listed');
+  const lines = await river.as.request('/records/transfer_order_items', { pilot: 'mto' });
+  assert.equal(lines.status, 200);
+  assert.ok((await lines.json() as { rows: { id: string }[] }).rows.some(row => row.id === item.id), 'its line is listed');
+  // Not the North inventory row behind it, nor the North certificate it carries.
+  assert.notEqual((await river.as.request(`/records/stock/${source.id}`, { pilot: 'mto' })).status, 200, 'the inventory row stays closed');
+  assert.notEqual((await river.as.request('/records/certifications/certificate-1', { pilot: 'mto' })).status, 200, 'the certificate stays closed');
+  const stock = await river.as.request('/records/stock', { pilot: 'mto' });
+  assert.ok(!(await stock.json() as { rows: { id: string }[] }).rows.some(row => row.id === source.id), 'no North inventory quantity in the list');
+  // Acting on it is for the source main project only.
+  const version = f.store.get('transfer_orders', order.id)._version;
+  for (const [key, data] of [['transfer-order-assign', {}], ['transfer-order-pick', { items: [{ itemId: item.id, qtyPicked: 1, lineStatus: 'Picked' }] }], ['transfer-order-cancel', { reason: 'Not ours' }], ['transfer-order-complete', {}]] as const) {
+    const response = await river.as.request(`/actions/${key}`, { method: 'POST', pilot: 'mto', data: { orderId: order.id, ...data } });
+    assert.equal(response.status, 403, `${key}: ${await response.text()}`);
+  }
+  assert.equal(f.store.get('transfer_orders', order.id)._version, version, 'the order is unchanged');
+  const assigned = await north.as.request('/actions/transfer-order-assign', { method: 'POST', pilot: 'mto', data: { orderId: order.id } });
+  assert.equal(assigned.status, 201, await assigned.clone().text());
+});
+
+test('sec2-012: isometric Attachments stores only real PDFs, checked by content, with the type set by the server', async t => {
+  const f = await fixture(t);
+  const type = f.store.list('attachment_names')[0];
+  assert.ok(type, 'the sample data has attachment names');
+  const upload = (body: string, name: string, mime: string) => { const form = new FormData(); form.set('reportNo', type.id); form.append('files', new Blob([body], { type: mime }), name); return f.admin.request('/isometrics/iso-1/attachments', { method: 'POST', pilot: 'weld', data: form }); };
+  const count = () => f.store.list('attachments').filter(row => row.entityType === 'isometrics' && row.entityId === 'iso-1').length;
+  const before = count();
+  for (const mime of ['text/html', 'application/pdf']) {
+    const refused = await upload('<html><script>alert(1)</script></html>', 'report.pdf', mime);
+    assert.equal(refused.status, 422, `${mime}: ${await refused.clone().text()}`);
+    assert.match((await refused.json() as { error: string }).error, /report\.pdf/);
+  }
+  assert.equal(count(), before, 'no attachment was added');
+  const real = await upload('%PDF-1.4 real', 'real.pdf', 'application/pdf');
+  assert.equal(real.status, 201, await real.clone().text());
+  assert.equal((await real.json() as { records: { mime: string }[] }).records[0].mime, 'application/pdf');
+});
+
+test('sec2-013: a new profile with rights needs the right to change rights and never grants more than its creator holds', async t => {
+  const f = await fixture(t);
+  const none = { generalPermission: NONE, materialsPermission: NONE, weldingPermission: NONE, toolsPermission: NONE, settingsPermission: NONE };
+  const create = (as: ReturnType<typeof f.client>, name: string, levels: Record<string, unknown>) => as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name, description: 'Harmless reader', ...levels } });
+  const profiles = () => f.store.list('profiles', true).length;
+  // Show and Add on Profiles only.
+  const adder = f.account('Profile adder', { profileId: f.matrix('Profile adder', { '53': ['show', 'insert'] }) });
+  await adder.login();
+  const before = profiles();
+  const refused = await create(adder.as, 'Reader', { ...adminLevels, toolsPermission: ADMIN });
+  assert.equal(refused.status, 403, await refused.clone().text());
+  assert.equal(profiles(), before, 'no profile was added');
+  const empty = await create(adder.as, 'Empty profile', none);
+  assert.equal(empty.status, 201, await empty.clone().text());
+  // With the right to change rights, but holding only the Users and Profiles boxes: no profile wider than that.
+  const keeper = f.account('Rights keeper', { profileId: f.matrix('Rights keeper', { '26': ['show', 'insert', 'edit'], '53': ['show', 'insert', 'edit'] }) });
+  await keeper.login();
+  assert.equal((await create(keeper.as, 'Wide', { ...none, weldingPermission: RW })).status, 403, 'a right the creator does not hold');
+  const within = await create(keeper.as, 'Profile reader', { ...none, permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '53': ['show'] }) });
+  assert.equal(within.status, 201, await within.clone().text());
+  // The administrator creates any profile.
+  assert.equal((await create(f.admin, 'Full', { ...adminLevels, toolsPermission: ADMIN })).status, 201);
 });

@@ -319,7 +319,7 @@ export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => vo
     </div></section>; }) : <EmptyState title="No heat treatment required" description="Tick Pre-HT or PWHT required on the weld first."/>}
     {sections.length > 0 && <>
       {editable && <FilePicker id="pwht-weld-file" label="Document (Only PDFs are allowed)" files={files} onChange={setFiles} pdf single hint="One PDF file."/>}
-      {stored.length > 0 && <fieldset className="field full-width inspection-files"><legend>Documents</legend>{stored.map(file => <label key={file.id}><a href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a>{editable && <span className="inspection-delete"><input type="checkbox" aria-label={`Check for delete ${file.name}`} checked={removing.includes(file.id)} onChange={e => setRemoving(e.target.checked ? [...removing, file.id] : removing.filter(id => id !== file.id))}/> Check for delete</span>}</label>)}</fieldset>}
+      {stored.length > 0 && <fieldset className="field full-width inspection-files"><legend>Documents</legend>{stored.map(file => <label key={file.id}><a href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a>{editable && canRun('pwht-weld', { deleteFileIds: [file.id] }) && <span className="inspection-delete"><input type="checkbox" aria-label={`Check for delete ${file.name}`} checked={removing.includes(file.id)} onChange={e => setRemoving(e.target.checked ? [...removing, file.id] : removing.filter(id => id !== file.id))}/> Check for delete</span>}</label>)}</fieldset>}
     </>}
   </div><Footer busy={busy} onClose={onClose} submit={editable && sections.length ? 'Save' : undefined}/></form></Modal>;
 }

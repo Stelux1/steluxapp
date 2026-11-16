@@ -840,8 +840,10 @@ test('a profile editor without Edit on User accounts edits profiles but not righ
   const keyUser = f.account('Profile editor', { profileId: detailed(f.store, 'Profiles insert and edit', { '26': ['show'], '53': ['show', 'insert', 'edit'] }) });
   const as = f.client(); await as.login(keyUser.email);
   const reviewer = detailed(f.store, 'Reviewer matrix', { '63': ['show'] });
-  // Profiles: add, rename and describe.
-  const created = await as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name: 'Key user profile', description: 'Key user', permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '63': ['show', 'edit'] }) } });
+  // Profiles: add (without rights: a new profile with rights needs Edit on both 26 and 53, sec2-013), rename and describe.
+  const withRights = await as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name: 'Key user profile', description: 'Key user', permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '63': ['show', 'edit'] }) } });
+  assert.equal(withRights.status, 403); assert.match((await json<{ error: string }>(withRights)).error, /Edit right on both User accounts and Profiles/);
+  const created = await as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name: 'Key user profile', description: 'Key user', permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({}) } });
   assert.equal(created.status, 201);
   let target = f.store.get('profiles', reviewer);
   assert.equal(await status(await as.request(`/records/profiles/${reviewer}`, { method: 'PUT', pilot: 'weld', data: { name: 'Reviewer (renamed)', _version: target._version } })), 200);

@@ -167,7 +167,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
 }
 type Api = { request: (path: string, options?: { method?: string; pilot?: string; data?: unknown }) => Promise<Response> };
 const json = async <T = Record<string, any>>(response: Response) => await response.json() as T;
-const pdf = (names: string[], reportNo: string, type = 'application/pdf') => { const form = new FormData(); form.set('reportNo', reportNo); for (const name of names) form.append('files', new Blob([name.endsWith('.pdf') ? '%PDF-1.4 test' : 'not a pdf'], { type }), name); return form; };
+const pdf = (names: string[], reportNo: string, type = 'application/pdf') => { const form = new FormData(); form.set('reportNo', reportNo); for (const name of names) form.append('files', new Blob([/\.pdf$/i.test(name) ? '%PDF-1.4 test' : 'not a pdf'], { type }), name); return form; };
 
 test('Options → Attachments on the server: several PDFs in one request are stored under the report type; anything else is refused whole; Delete archives the ticked ones', async t => {
   const f = await fixture(t);
