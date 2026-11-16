@@ -217,6 +217,31 @@ test('lislNdtCells maps requests and results to report number, process and A / N
   assert.equal(more.ndt[0].lines[0], 'A-2', 'a request whose round is taken falls to the first free column');
 });
 
+test('lislNdtCells follows the inspections model: one request per weld, a result per round, NA for a stored Rejected', () => {
+  const stamp = { _version: 1, _archived: false, _updatedAt: '', _createdAt: '2026-01-01T00:00:00Z' };
+  // The weld carries the NDT process of each round (shared/inspections.ts processField); round 3 is planned, not examined.
+  const weld = { id: 'w1', weldNo: 'W1', ndtProcess1Id: 'p-rt', ndtProcess2Id: 'p-rt', ndtProcess3Id: 'p-ut', ndtPreProcess1Id: 'p-mt', ...stamp } as Row;
+  const requests = [
+    { id: 'req-ndt', weldId: 'w1', type: 'NDT', number: 'NDT-0001', status: 'Open', processId: 'p-rt', date: '2026-01-10', ...stamp },
+    { id: 'req-pre', weldId: 'w1', type: 'NDT PRE', number: 'NDT-0002', status: 'Accepted', processId: 'p-mt', date: '2026-01-05', ...stamp },
+  ] as Row[];
+  const result = (id: string, requestId: string, type: string, round: string, value: string, reportNo: string, processId: string, date: string) => ({ id, requestId, weldId: 'w1', type, round, result: value, reportNo, processId, date, ...stamp }) as Row;
+  const results = [
+    result('r1', 'req-ndt', 'NDT', 'Initial', 'Rejected', 'RT-101', 'p-rt', '2026-01-12'),
+    result('r2', 'req-ndt', 'NDT', 'Remaining', 'Accepted', 'RT-102', '', '2026-01-14'),
+    result('r0', 'req-ndt', 'NDT', 'Initial', 'Accepted', 'RT-099', 'p-rt', '2026-01-11'),
+    result('r5', 'req-ndt', 'NDT', 'Additional 3', '', 'RT-200', 'p-rt', '2026-01-20'),
+    result('r3', 'req-pre', 'NDT PRE', 'Initial', 'Accepted', 'MT-5', 'p-mt', '2026-01-06'),
+  ];
+  const names: Record<string, string> = { 'p-rt': 'RT', 'p-ut': 'UT', 'p-mt': 'MT' };
+  const cells = lislNdtCells(weld, results, requests, request => names[String(request.processId)] || '');
+  assert.deepEqual(cells.ndt.map(cell => cell.lines), [['RT-101', 'RT (NA)'], ['RT-102', 'RT (A)'], ['', 'UT ---'], ['', ''], ['', '']]);
+  assert.equal(cells.ndt[0].result, 'NA', 'the stored Rejected prints NA'); assert.equal(cells.ndt[1].process, 'RT', 'the round process comes from the weld when the result has none');
+  assert.deepEqual(cells.pre.map(cell => cell.lines[1]), ['MT (A)', '', '', '', ''], 'a closed request with no planned round leaves the other columns empty');
+  // A cancelled request prints nothing.
+  assert.deepEqual(lislNdtCells(weld, results, requests.map(row => ({ ...row, status: 'Cancelled' }) as Row)).ndt.map(cell => cell.result), ['', '', '', '', '']);
+});
+
 test('lislModel sorts welds by number and the company model omits a nameless record', () => {
   const stamp = { _version: 1, _archived: false, _updatedAt: '', _createdAt: '2026-01-01T00:00:00Z' };
   const rows = { isometrics: [{ id: 'i', isoNo: 'ISO-1', projectId: 'p', ...stamp }], projects: [{ id: 'p', internnumber: 'P-1', ...stamp }], welds: ['W10', 'W2', 'W1'].map(weldNo => ({ id: weldNo, weldNo, isoId: 'i', ...stamp })) } as unknown as Record<string, Row[]>;

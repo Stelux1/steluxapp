@@ -58,24 +58,51 @@ function cellOf(request: Row, results: Row[], processName: ProcessName): NdtCell
 }
 
 /**
- * THE mapping from a weld's inspection data to the report's NDT / PWHT cells.
- * `requests` and `results` are any records; the function picks this weld's (not archived, request not
- * cancelled). Returns five NDT PRE cells (type "NDT PRE"), five NDT cells (type "NDT") and one PWHT cell
- * (the latest "PWHT" request). A request goes to the column of its result's round (Initial, Remaining,
- * Additional, Additional 2, Additional 3; the older "Additional 1" counts as Additional); requests without a
- * result, or whose round is taken, fill the first free column in request-date order.
+ * THE mapping from a weld's inspection data to the report's NDT / PWHT cells, on the inspections model
+ * (shared/inspections.ts): a weld has one request per type, and each examination round (Initial, Remaining,
+ * Additional, Additional 2, Additional 3; stored as "Additional 1" … "Additional 3") is a result row on that
+ * request with its own report number and NDT process. The report's "NA" is our stored "Rejected".
+ * `requests` and `results` are any records; the function picks this weld's (not archived, request not cancelled).
+ * Returns five NDT PRE cells, five NDT cells and one PWHT cell (the latest "PWHT" request).
+ * - A round with a result shows its report number and `process (A|NA)`; the process is the result's, else the
+ *   weld's NDT process of that round, else the request's.
+ * - A round without a result whose NDT process is set on the weld while a request of the type is open shows `process ---`.
+ * - Older data (one request per round, results without a round, a round given twice) fills the first free column
+ *   in request-date order.
  * The integrator adjusts only this function when the inspection model changes.
  */
 export function lislNdtCells(weld: Row, results: Row[], requests: Row[], processName: ProcessName = request => String(request.processId ?? request.pwhtProcessId ?? '')): LislNdtCells {
   const mine = requests.filter(row => !row._archived && row.weldId === weld.id && row.status !== 'Cancelled').sort(byDate);
-  const own = results.filter(row => !row._archived && row.weldId === weld.id);
+  const own = results.filter(row => !row._archived && row.weldId === weld.id && text(row.result) !== '');
   const slots = (type: string): NdtCell[] => {
-    const cells: NdtCell[] = Array.from({ length: NDT_ROUNDS.length }, () => EMPTY_CELL), taken = new Set<string>(), pending: Row[] = [];
-    for (const request of mine.filter(row => row.type === type)) {
-      const result = own.filter(row => row.requestId === request.id).sort((a, b) => byDate(b, a))[0], index = roundIndex(result?.round);
-      if (index >= 0 && cells[index] === EMPTY_CELL) { cells[index] = cellOf(request, own, processName); taken.add(request.id); } else pending.push(request);
+    const pre = type === 'NDT PRE';
+    const typed = mine.filter(row => row.type === type), byId = new Map(typed.map(row => [row.id, row]));
+    const cells: NdtCell[] = Array.from({ length: NDT_ROUNDS.length }, () => EMPTY_CELL);
+    // Earlier requests first (request-date order); within a request the newest result of a round wins.
+    const order = new Map(typed.map((row, index) => [row.id, index]));
+    const latest = own.filter(row => byId.has(String(row.requestId))).sort((a, b) => order.get(String(a.requestId))! - order.get(String(b.requestId))! || byDate(b, a));
+    const pending: NdtCell[] = [];
+    const roundProcess = (index: number) => text(weld[`${pre ? 'ndtPreProcess' : 'ndtProcess'}${index + 1}Id`]);
+    const cellFor = (request: Row, result: Row | undefined, index: number) => {
+      const process = processName({ ...request, processId: text(result?.processId) || (index >= 0 ? roundProcess(index) : '') || request.processId });
+      const report = result ? String(result.reportNo ?? '') : '';
+      const code = result ? resultCode(result.result) : '---';
+      return { report, process, result: code, lines: [report, result ? `${process} (${code})`.trim() : `${process} ---`.trim()] } as NdtCell;
+    };
+    const holder: string[] = [];
+    for (const result of latest) {
+      const index = roundIndex(result.round), request = byId.get(String(result.requestId))!;
+      if (index >= 0 && cells[index] === EMPTY_CELL) { cells[index] = cellFor(request, result, index); holder[index] = request.id; }
+      // An older result of the same request and round was superseded; another request's result moves to a free column.
+      else if (index < 0 || holder[index] !== request.id) pending.push(cellFor(request, result, -1));
     }
-    for (const request of pending) { const free = cells.indexOf(EMPTY_CELL); if (free >= 0) cells[free] = cellOf(request, own, processName); }
+    // Rounds requested on the weld (process set) under an open request, without a result yet.
+    const open = typed.filter(row => (row.status || 'Open') === 'Open');
+    const withResults = new Set(latest.map(row => String(row.requestId)));
+    if (open.length) for (let index = 0; index < cells.length; index++) if (cells[index] === EMPTY_CELL && roundProcess(index)) cells[index] = cellFor(open.at(-1)!, undefined, index);
+    // Requests with no result and no round process on the weld (older data: one request per round).
+    for (const request of typed) if (!withResults.has(request.id) && !NDT_ROUNDS.some((_, index) => roundProcess(index))) pending.push(cellFor(request, undefined, -1));
+    for (const cell of pending) { const free = cells.indexOf(EMPTY_CELL); if (free >= 0) cells[free] = cell; }
     return cells;
   };
   const pwhtRequest = mine.filter(row => row.type === 'PWHT').at(-1);
