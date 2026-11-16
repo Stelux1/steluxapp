@@ -7,7 +7,8 @@ import { PROGRESS_CLASSES, isoMaterialInputErrors, materialLineStatuses, materia
 import { RESOURCE_MAP } from './catalog.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import { ApiError, api, apiUrl, formatNumber, post } from './api.ts';
-import { DEFAULT_UOM, MASS_EDIT_BLANK, MASS_EDIT_FIELDS, MASS_EDIT_HELP, MATERIAL_DEFAULT_SORT, MATERIAL_FORM_FIELDS, MATERIAL_IMPORT_PATH, MATERIAL_PAGE_SIZE, MATERIAL_PAGE_SIZES, catalogOrder, massEditChanges, massEditRefusal, materialTypeLabel, phasesById, phasesByName, showingEntries, sortMaterials, uomByName } from '../shared/material-db.ts';
+import { HOME_LOCATION, LINKED_TO_SITE, materialFormFields, materialSiteIds, materialsOnSite } from '../shared/material-sites.ts';
+import { DEFAULT_UOM, MASS_EDIT_BLANK, MASS_EDIT_FIELDS, MASS_EDIT_HELP, MATERIAL_DEFAULT_SORT, MATERIAL_IMPORT_PATH, MATERIAL_PAGE_SIZE, MATERIAL_PAGE_SIZES, catalogOrder, massEditChanges, massEditRefusal, materialTypeLabel, phasesById, phasesByName, showingEntries, sortMaterials, uomByName } from '../shared/material-db.ts';
 import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScroll, FormError, selectPrompt } from './components.tsx';
 import { RecordEditor } from './dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
@@ -28,13 +29,14 @@ const MATERIAL_HEADINGS: Record<string, string> = { componentCode: 'CC', materia
  * and Delete. Other profiles keep the generic table page.
  */
 export function MaterialDatabase() {
-  const { rows, canRecord } = useWorkspace();
+  const { rows, allRows, siteId, canRecord } = useWorkspace();
   const def = RESOURCE_MAP.materials;
   const [search, setSearch] = useState<Record<string, string>>({}), [selected, setSelected] = useState<string[]>([]), [page, setPage] = useState(0), [size, setSize] = useState(MATERIAL_PAGE_SIZE);
   const [sort, setSort] = useState(MATERIAL_DEFAULT_SORT);
   const [editor, setEditor] = useState<Row | 'new' | null>(null), [bulk, setBulk] = useState(false), [deleting, setDeleting] = useState<Row | null>(null);
   const columns = def.columns.map(key => def.fields.find(field => field.name === key)!).filter(Boolean).map(field => ({ ...field, label: MATERIAL_HEADINGS[field.name] || field.label }));
-  const all = activeRows(rows, 'materials');
+  // The Material database of the current main project: the materials linked to it (older materials without links are on every one).
+  const all = useMemo(() => materialsOnSite(activeRows(rows, 'materials'), siteId, allRows.catalog_sites), [rows, allRows.catalog_sites, siteId]);
   const filtered = useMemo(() => sortMaterials(all.filter(row => columns.every(column => { const query = (search[column.name] || '').trim().toLowerCase(); return !query || text(row[column.name]).toLowerCase().includes(query); })), sort.column, sort.direction), [all, columns, search, sort]);
   const pages = Math.max(1, Math.ceil(filtered.length / size)), current = Math.min(page, pages - 1), shown = filtered.slice(current * size, (current + 1) * size);
   const checked = all.filter(row => selected.includes(row.id));
@@ -66,7 +68,7 @@ export function MaterialDatabase() {
       {!filtered.length && <EmptyState title={all.length ? 'No material matches your searches' : 'No materials yet'} description={all.length ? 'Change or clear the searches under the column headings.' : 'Add the first material or import them from Excel. They can then be added to isometrics.'}/>}
       <div className="table-footer"><span>{showingEntries(current * size + 1, current * size + shown.length, filtered.length)}{checked.length ? ` · ${checked.length} checked` : ''}</span><div><button className="btn small" disabled={!current} onClick={() => setPage(current - 1)}>Previous</button><span>{current + 1} / {pages}</span><button className="btn small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div></div>
     </div>
-    {editor && <MaterialForm record={typeof editor === 'object' ? editor : undefined} onClose={() => setEditor(null)}/>}
+    {editor && <MaterialForm record={typeof editor === 'object' ? editor : undefined} onClose={() => setEditor(null)} onShow={materialNo => { setEditor(null); setSearch({ materialNo }); setPage(0); }}/>}
     {bulk && <MassEditMaterials records={checked} onClose={done => { setBulk(false); if (done) setSelected([]); }}/>}
     {deleting && <DeleteMaterial record={deleting} onClose={done => { setDeleting(null); if (done) setSelected(old => old.filter(id => id !== deleting.id)); }}/>}
   </div>;
@@ -82,23 +84,58 @@ function useMaterialOptions() {
   }), [rows]) as Record<string, { value: string; label: string }[]>;
 }
 
+/**
+ * "Home location": one checkbox per main project the account can open; ticked where the material(s) are available. With several
+ * materials a box is half ticked when only some of them are there; only the boxes that are changed are sent.
+ */
+function HomeLocation({ records, changes, onChange }: { records: Row[]; changes: Record<string, boolean>; onChange: (changes: Record<string, boolean>) => void }) {
+  const { allRows } = useWorkspace();
+  const sites = activeRows(allRows, 'sites').sort((a, b) => byText(a.name, b.name));
+  const ticked = (siteId: string) => records.filter(row => materialSiteIds(row, [{ id: siteId }], allRows.catalog_sites).length).length;
+  if (!sites.length) return null;
+  return <fieldset className="full-width material-home-location"><legend>{HOME_LOCATION}</legend><div className="material-home-sites">{sites.map(site => {
+    const count = ticked(site.id), changed = Object.hasOwn(changes, site.id), checked = changed ? changes[site.id] : count === records.length;
+    return <label key={site.id}><input type="checkbox" checked={checked} ref={element => { if (element) element.indeterminate = !changed && count > 0 && count < records.length; }} onChange={event => {
+      // Back to what every checked material already has: nothing to send for this box.
+      const next = { ...changes, [site.id]: event.target.checked };
+      if (event.target.checked ? count === records.length : count === 0) delete next[site.id];
+      onChange(next);
+    }}/><span>{text(site.name)}</span></label>;
+  })}</div></fieldset>;
+}
+
 /** Add material / Edit material: the reference fields in the reference order; UOM starts at EA, part and type at their first option. */
-function MaterialForm({ record, onClose }: { record?: Row; onClose: () => void }) {
-  const { rows, refresh, notify } = useWorkspace();
+function MaterialForm({ record, onClose, onShow }: { record?: Row; onClose: () => void; onShow: (materialNo: string) => void }) {
+  const { rows, siteId, refresh, notify } = useWorkspace();
   const def = RESOURCE_MAP.materials, options = useMaterialOptions();
-  const fields = [...MATERIAL_FORM_FIELDS.map(name => def.fields.find(field => field.name === name)), ...def.fields.filter(field => !field.hidden && !MATERIAL_FORM_FIELDS.includes(field.name) && field.name !== 'uom')].filter((field): field is NonNullable<typeof field> => Boolean(field));
+  const fields = materialFormFields(def.fields, record ? 'edit' : 'add');
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(fields.map(field => [field.name, record ? record[field.name] ?? '' : field.name === 'uomId' ? uomByName(activeRows(rows, 'uoms'), DEFAULT_UOM)?.id ?? '' : field.name in options ? options[field.name][0]?.value ?? '' : field.default ?? ''])));
+  const [sites, setSites] = useState<Record<string, boolean>>({});
   const [error, setError] = useState(''), [problems, setProblems] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setProblems({});
     const missing = Object.fromEntries(fields.filter(field => field.required && text(values[field.name]) === '').map(field => [field.name, `${field.label} is required.`]));
     if (Object.keys(missing).length) { setError('Please check the highlighted fields.'); setProblems(missing); return; }
-    const payload = record ? Object.fromEntries(Object.entries(values).filter(([name, value]) => JSON.stringify(value ?? '') !== JSON.stringify(record[name] ?? ''))) : values;
+    if (!record && !siteId) { setError('Choose a main project first.'); return; }
+    const payload = record ? Object.fromEntries(Object.entries(values).filter(([name, value]) => JSON.stringify(value ?? '') !== JSON.stringify(record[name] ?? ''))) : { ...values, enabledOnSite: true, enabledSiteId: siteId };
     setBusy(true);
-    try { await api(`/records/materials${record ? `/${record.id}` : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(record ? 'Material updated.' : 'Material created.'); onClose(); }
-    catch (failure) { setError((failure as Error).message); setProblems((failure as ApiError).fields || {}); } finally { setBusy(false); }
+    try {
+      if (!record) {
+        const result = await api<{ record: Row; linked?: boolean }>('/records/materials', { method: 'POST', body: JSON.stringify(payload) });
+        await refresh(); notify(result.linked ? LINKED_TO_SITE(text(result.record.materialNo)) : 'Material created.'); onClose(); return;
+      }
+      if (Object.keys(payload).length) await api(`/records/materials/${record.id}`, { method: 'PUT', body: JSON.stringify({ ...payload, _version: record._version }) });
+      if (Object.keys(sites).length) await post('/material-sites', { ids: [record.id], sites });
+      await refresh(); notify('Material updated.'); onClose();
+    }
+    catch (failure) {
+      // The same Material No is already in this project site's database: the add is refused and that row is shown.
+      if ((failure as ApiError).code === 'material-on-site') { notify((failure as Error).message); onShow(text(values.materialNo)); return; }
+      setError((failure as Error).message); setProblems((failure as ApiError).fields || {});
+    } finally { setBusy(false); }
   }
   return <Form title={record ? 'Edit material' : 'Add material'} subtitle={record ? text(record.materialNo) : def.description} onClose={onClose} onSubmit={event => void submit(event)} busy={busy} error={error} fields={problems} submit={record ? 'Update' : 'Add'}>
+    {record && <HomeLocation records={[record]} changes={sites} onChange={setSites}/>}
     {fields.map(field => field.name in options
       ? <Choice key={field.name} label={field.label} value={text(values[field.name])} onChange={value => setValues(old => ({ ...old, [field.name]: value }))} options={options[field.name]} required={field.required} error={problems[field.name]}/>
       : <div key={field.name} className={field.name === 'description' ? 'full-width' : undefined}><FieldInput field={field} value={values[field.name]} onChange={value => setValues(old => ({ ...old, [field.name]: value }))} error={problems[field.name]}/></div>)}
@@ -109,17 +146,23 @@ function MaterialForm({ record, onClose }: { record?: Row; onClose: () => void }
 function MassEditMaterials({ records, onClose }: { records: Row[]; onClose: (done: boolean) => void }) {
   const { refresh, notify } = useWorkspace();
   const def = RESOURCE_MAP.materials, options = useMaterialOptions();
-  const [values, setValues] = useState<Record<string, unknown>>({}), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [values, setValues] = useState<Record<string, unknown>>({}), [sites, setSites] = useState<Record<string, boolean>>({}), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault(); setError('');
-    const changes = massEditChanges(values), refusal = massEditRefusal(changes);
-    if (refusal) { setError(refusal); return; }
+    const changes = massEditChanges(values), refusal = massEditRefusal(changes), sitesChanged = Object.keys(sites).length > 0;
+    // The project site boxes may change on their own; filled fields follow the mass edit rule.
+    if (refusal && (Object.keys(changes).length || !sitesChanged)) { setError(refusal); return; }
     setBusy(true);
-    try { await post('/bulk/materials', { ids: records.map(row => row.id), changes, versions: Object.fromEntries(records.map(row => [row.id, row._version])) }); await refresh(); notify(`${records.length} ${records.length === 1 ? 'material' : 'materials'} updated.`); onClose(true); }
+    try {
+      if (Object.keys(changes).length) await post('/bulk/materials', { ids: records.map(row => row.id), changes, versions: Object.fromEntries(records.map(row => [row.id, row._version])) });
+      if (sitesChanged) await post('/material-sites', { ids: records.map(row => row.id), sites });
+      await refresh(); notify(`${records.length} ${records.length === 1 ? 'material' : 'materials'} updated.`); onClose(true);
+    }
     catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
   }
   return <Form title="Mass edit materials" subtitle={`${records.length} selected ${records.length === 1 ? 'material' : 'materials'}`} onClose={() => onClose(false)} onSubmit={event => void submit(event)} busy={busy} error={error} submit="Update">
     <p className="field-hint full-width">{MASS_EDIT_HELP}</p>
+    <HomeLocation records={records} changes={sites} onChange={setSites}/>
     {MASS_EDIT_FIELDS.map(name => { const field = def.fields.find(item => item.name === name)!; const set = (value: unknown) => setValues(old => ({ ...old, [name]: value }));
       return name in options ? <Choice key={name} label={field.label} value={text(values[name])} onChange={set} options={options[name]} empty={MASS_EDIT_BLANK}/>
         : <div key={name} className={name === 'description' ? 'full-width' : undefined}><FieldInput field={{ ...field, required: false, default: undefined }} value={values[name] ?? ''} onChange={set}/></div>; })}

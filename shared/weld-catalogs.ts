@@ -14,7 +14,7 @@ import type { Field, Resource, Row } from './types.ts';
 /** Resources of this flow (the reference's Weld data, NDT data, Welding data and General data catalogs). */
 export const WELD_CATALOG_RESOURCES = ['weld_processes', 'weld_types', 'coatings', 'ndt_groups', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'companies', 'attachment_names'];
 /** Catalogs that carry "Enabled on this site". Suppliers, service companies and laydowns only gain the enablement. */
-export const SITE_ENABLED_RESOURCES = ['weld_types', 'coatings', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'suppliers', 'service_companies', 'laydowns', 'material_laydowns'];
+export const SITE_ENABLED_RESOURCES = ['weld_types', 'coatings', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'suppliers', 'service_companies', 'laydowns', 'material_laydowns', 'materials'];
 /** Tables the hosted database needs for this flow (created by the preparation step, see shared/planning.ts). */
 export const CATALOG_TABLES = ['ndt_defect_codes', 'catalog_sites'];
 /** The link records: one per catalog record and site that was switched explicitly. Written only by the server. */
@@ -36,9 +36,13 @@ export const formEnablement = (key: string) => Object.hasOwn(FORM_ENABLEMENT, ke
  * Options -> Activate selected is used (hosted profile; the sample data and the demo copy keep "no link = enabled").
  * Weld types are not in the list: their form has no box and their lists show every type as enabled.
  */
-export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers'];
-/** The selects of these catalogs offer every record, whatever "Enabled on this site" says (the list column and Options stay). */
-export const UNFILTERED_OPTIONS = ['pwht_processes', 'pwht_locations'];
+export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers', 'materials'];
+/**
+ * The selects of these catalogs offer every record, whatever "Enabled on this site" says (the list column and Options stay).
+ * Materials: the site link narrows only the Material database, its import and the add lists (shared/material-sites.ts); lines,
+ * orders, stock and certificates keep pointing at any material, so no reference to one is refused for its site.
+ */
+export const UNFILTERED_OPTIONS = ['pwht_processes', 'pwht_locations', 'materials'];
 
 /** The reference's list columns, in order (the hosted profile; "Enabled on this site" is appended by the list). */
 export const WELD_CATALOG_COLUMNS: Record<string, string[]> = {

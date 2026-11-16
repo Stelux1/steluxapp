@@ -45,7 +45,7 @@ import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
-import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
+import { addMaterialOnSite, assertMaterialsInScope, deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { activeSite, assertAccountReach, assertCopyInScope, assertSiteAccessEdit, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
@@ -248,12 +248,15 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (pilots) checkIsoWrite(store, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
+    // Add material (pilots): it belongs to the main project it is added on; an existing Material No is linked there or refused.
+    if (pilots && resource.key === 'materials') { const added = addMaterialOnSite(store, req.body, actorOf(req)); res.status(added.linked ? 200 : 201).json({ record: access.project(resource.key, added.record), linked: added.linked }); return; }
     const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
+    if (pilots && resource.key === 'materials') { assertMaterialsInScope(store, [String(req.params.id)]); if (ENABLEMENT_INPUT.some(name => req.body[name] !== undefined)) throw new AppError(422, 'Use Home location to change the project sites of a material.'); }
     dropCompletionInput(resource.key, req.body);
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
@@ -307,13 +310,13 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     // Mass edit materials (pilots): every filled field at once, never Material No.
-    if (pilots && resource.key === 'materials') req.body.changes = materialMassEdit(req.body.changes);
+    if (pilots && resource.key === 'materials') { req.body.changes = materialMassEdit(req.body.changes); assertMaterialsInScope(store, req.body.ids); }
     dropCompletionInput(resource.key, req.body.changes);
     access.input(resource.key, req.body.changes);
     if (pilots && resource.key === 'isometrics' && ['xRay', 'itpId', 'itp2Id'].some(name => Object.hasOwn(req.body.changes, name))) throw new AppError(422, 'X Ray % and the ITP links cannot be bulk edited. Use Link ITP on the isometric.');
     // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
-    if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
+    if (availability?.features.includes('pilots') && enablementKey(resource.key) && resource.key !== 'materials' && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
     const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
   });

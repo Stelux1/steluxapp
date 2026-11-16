@@ -9,9 +9,15 @@ import {
   IMPORT_FIELDS, MATERIAL_IMPORT_COLUMNS, MATERIAL_IMPORT_EXAMPLES, importField, importable, importedMaterial, massEditChanges, massEditRefusal, materialImportPreview,
   materialImportSummary, materialUomId, missingCatalogMaterials, takeOverCounts, takeOverRows, type ImportContext, type ImportRow, type ImportRowInput,
 } from '../shared/material-db.ts';
+import { CATALOG_SITES } from '../shared/weld-catalogs.ts';
+import {
+  ALREADY_ON_SITE, LINK_NOTE, USED_ON_SITE_RESOURCES, changedSites, cleanImportPlan, importFromSitePlan, linkOnAdd, materialOnSite, materialSiteIds, materialsOnSite,
+  materialsUsedOnSite, siteLinkRows, takeOverLinks,
+} from '../shared/material-sites.ts';
 import { AppError, qty, type Actor, type Store } from './store.ts';
 import { actorOf, type AuthRequest } from './auth.ts';
 import type { releaseAccess } from './release-access.ts';
+import { SiteScope, currentSiteScope, keepSiteScope, siteRefused, withSiteScope } from './site-scope.ts';
 
 type Input = Record<string, unknown>;
 const str = (value: unknown) => typeof value === 'string' ? value.trim() : '';
@@ -50,9 +56,11 @@ function addIsoMaterial(store: Store, data: Input, actor: Actor): MtoResult {
   }
   const custom = Object.fromEntries(CUSTOM_FIELDS.map(name => [name, data[name] ?? '']));
   const classification = { componentCode: str(data.componentCode), progressClass: str(data.progressClass) };
-  const material = data.addToDB ? store.create('materials', { ...custom, ...classification }, actor) : null;
+  const material = data.addToDB ? createMaterialOnSite(store, { ...custom, ...classification }, siteOfIso(store, iso), actor) : null;
   return { resource: 'iso_materials', record: store.create('iso_materials', { ...base, ...custom, ...classification, customMaterial: !material, materialId: material?.id || '' }, actor) };
 }
+
+const siteOfIso = (store: Store, iso: Row) => { try { return str(store.get('projects', iso.projectId, true).siteId); } catch { return ''; } };
 
 /** Set the operation phase ("Type") of the checked requirements, all or nothing. */
 function setMaterialType(store: Store, data: Input, actor: Actor): MtoResult {
@@ -88,7 +96,7 @@ export function runMtoMaterialAction(store: Store, key: string, data: Input, act
 export function deriveMaterialRows(store: Store, key: string, rows: Row[]): Row[] {
   if (key === 'materials' && store.hostedRules) {
     const uoms = store.list('uoms', true), names = new Map(uoms.map(uom => [uom.id, uom.name]));
-    return rows.map(row => { const uomId = materialUomId(row, uoms); return uomId ? { ...row, uomId, uom: names.get(uomId) ?? row.uom } : row; });
+    return materialsInScope(store, rows).map(row => { const uomId = materialUomId(row, uoms); return uomId ? { ...row, uomId, uom: names.get(uomId) ?? row.uom } : row; });
   }
   if (key === 'operation_phases') return rows.map(row => row.number === undefined || row.number === null ? { ...row, number: typeof row.sort === 'number' ? row.sort : null } : row);
   return rows;
@@ -120,8 +128,128 @@ export function deleteMaterial(store: Store, id: string, version: unknown, actor
   });
 }
 
+// ----- Material sites ("Home location", shared/material-sites.ts) ------------------------------------------------------------
+
+/**
+ * Run `fn` with the record guard of the request widened to every main project. Used only for the link rows the material rules
+ * themselves derive (a new material switched off on the other main projects, the other main projects keeping their state when
+ * one is ticked or unticked), never for a change the user asked for on a main project outside the account's access.
+ */
+function unscoped<T>(store: Store, fn: () => T): T {
+  const scope = currentSiteScope();
+  return scope && scope.allowed !== 'all' ? withSiteScope(new SiteScope(store, scope.pilot, 'all', scope.off), fn) : fn();
+}
+const limitedScope = () => { const scope = currentSiteScope(); return scope && scope.allowed !== 'all' ? { scope, allowed: scope.allowed } : undefined; };
+const referenced = new WeakMap<SiteScope, Set<string>>();
+/** Materials the records of a limited request point at (its isometric lines, orders, stock, certificates, welds …): they keep resolving. */
+function referencedInScope(store: Store, scope: SiteScope): Set<string> {
+  let ids = referenced.get(scope);
+  if (!ids) {
+    ids = new Set();
+    for (const resource of RESOURCES) {
+      const fields = resource.fields.filter(field => field.ref === 'materials').map(field => field.name);
+      if (!fields.length) continue;
+      for (const row of store.list(resource.key, true)) if (fields.some(name => typeof row[name] === 'string' && row[name]) && scope.allows(resource.key, row)) for (const name of fields) if (row[name]) ids.add(String(row[name]));
+    }
+    referenced.set(scope, ids);
+  }
+  return ids;
+}
+/**
+ * The materials a request may see. An account limited to specific main projects sees the materials of its main projects and the
+ * ones its own records point at, never a material linked only to another main project. Every other account sees every material.
+ */
+export function materialsInScope(store: Store, rows: Row[]): Row[] {
+  const limited = limitedScope();
+  if (!limited) return rows;
+  const links = store.list(CATALOG_SITES), used = referencedInScope(store, limited.scope);
+  return rows.filter(row => [...limited.allowed].some(siteId => materialOnSite(row, siteId, links)) || used.has(row.id));
+}
+/** Refuse a material the request may not see (403, as a record of another main project). */
+export function assertMaterialsInScope(store: Store, ids: unknown[]) {
+  if (!limitedScope()) return;
+  const rows = ids.map(id => { try { return store.get('materials', id, true); } catch { return null; } }).filter((row): row is Row => Boolean(row));
+  const visible = new Set(materialsInScope(store, rows).map(row => row.id));
+  if (rows.some(row => !visible.has(row.id))) throw siteRefused('This material belongs to the material database of a main project your account cannot access.');
+}
+/** Store the main projects of a material: one explicit link per main project, as `siteLinkRows` says. */
+function writeMaterialSites(store: Store, material: Row, next: ReadonlySet<string>, actor: Actor) {
+  const { create, update } = siteLinkRows(material, next, store.list('sites', true), store.list(CATALOG_SITES));
+  for (const row of create) store.create(CATALOG_SITES, { resourceKey: 'materials', recordId: material.id, siteId: row.siteId, enabled: row.enabled }, actor);
+  for (const row of update) store.update(CATALOG_SITES, row.link.id, { enabled: row.enabled }, row.link._version, actor);
+}
+/** Add `siteId` to the main projects of a material (the others stay as they are). */
+const linkMaterial = (store: Store, material: Row, siteId: string, actor: Actor) => unscoped(store, () => writeMaterialSites(store, material, changedSites(material, { [siteId]: true }, store.list('sites', true), store.list(CATALOG_SITES)), actor));
+/** A new catalog material, available on `siteId` only (a material a user adds in the pilots belongs to the main project it is added on). */
+function createMaterialOnSite(store: Store, input: Record<string, unknown>, siteId: string, actor: Actor): Row {
+  if (!siteId) throw new AppError(422, 'Choose a main project first.');
+  return unscoped(store, () => {
+    const material = store.create('materials', { ...input, enabledOnSite: true, enabledSiteId: siteId }, actor);
+    writeMaterialSites(store, material, new Set([siteId]), actor);
+    return material;
+  });
+}
+/**
+ * Add material (pilots): the new material belongs to the main project it is added on. A Material No that exists but is not linked
+ * here is linked (no copy, the existing row is kept as it is); one already linked here is refused, and the page shows its row.
+ */
+export function addMaterialOnSite(store: Store, input: Record<string, unknown>, actor: Actor): { record: Row; linked: boolean } {
+  const siteId = str(input.enabledSiteId);
+  if (!siteId || input.enabledOnSite !== true) throw new AppError(422, 'Choose a main project first.');
+  store.get('sites', siteId);
+  return store.transaction(() => {
+    const plan = linkOnAdd(input.materialNo, siteId, store.list('materials'), store.list(CATALOG_SITES));
+    if (plan.kind === 'refused') throw new AppError(422, ALREADY_ON_SITE, { materialNo: ALREADY_ON_SITE }, 'material-on-site');
+    if (plan.kind === 'link') { linkMaterial(store, plan.material, siteId, actor); return { record: store.get('materials', plan.material.id), linked: true }; }
+    const { enabledOnSite: _on, enabledSiteId: _site, ...fields } = input;
+    return { record: createMaterialOnSite(store, fields, siteId, actor), linked: false };
+  });
+}
+/**
+ * Tick or untick main projects of the checked materials (Edit material "Home location", Mass edit "Project site checkboxes").
+ * Only the boxes that are sent change; each must be a main project the account reaches.
+ */
+export function setMaterialSites(store: Store, ids: unknown, sites: unknown, actor: Actor, mayEdit: (row: Row) => boolean): number {
+  if (!Array.isArray(ids) || !ids.length || ids.length > 500 || ids.some(id => typeof id !== 'string' || !id)) throw new AppError(422, 'Select between 1 and 500 materials.');
+  if (!sites || typeof sites !== 'object' || Array.isArray(sites) || !Object.keys(sites).length || Object.values(sites).some(value => typeof value !== 'boolean')) throw new AppError(422, 'Tick or untick at least one project site.');
+  const changes = sites as Record<string, boolean>, scope = currentSiteScope();
+  for (const siteId of Object.keys(changes)) { store.get('sites', siteId, true); if (scope && !scope.allowsSite(siteId)) throw siteRefused(); }
+  assertMaterialsInScope(store, ids);
+  return store.transaction(() => {
+    let changed = 0;
+    for (const id of new Set(ids as string[])) {
+      const material = store.get('materials', id);
+      if (!mayEdit(material)) throw new AppError(403, 'Your permission profile does not allow this action.');
+      const allSites = store.list('sites', true), links = store.list(CATALOG_SITES);
+      const before = new Set(materialSiteIds(material, allSites, links)), next = changedSites(material, changes, allSites, links);
+      if (before.size === next.size && [...next].every(site => before.has(site))) continue;
+      // Only the sent boxes change; the rows of the other main projects are written only so that they keep their state.
+      unscoped(store, () => writeMaterialSites(store, material, next, actor)); changed++;
+    }
+    return changed;
+  });
+}
+/** Import Materials DB from another project site: every material of the source becomes available on the target (no copies). */
+export function importMaterialsFromSite(store: Store, targetId: string, sourceId: string, actor: Actor): { linked: number } {
+  if (!targetId || !sourceId) throw new AppError(422, 'Choose the project site to import the material database from.');
+  if (targetId === sourceId) throw new AppError(422, 'Choose another project site than this one.');
+  store.get('sites', targetId); store.get('sites', sourceId);
+  return store.transaction(() => {
+    const materials = importFromSitePlan(store.list('materials'), sourceId, targetId, store.list(CATALOG_SITES));
+    for (const material of materials) linkMaterial(store, material, targetId, actor);
+    return { linked: materials.length };
+  });
+}
+
 const MAX_ROWS = 5000, MAX_TEXT = 2000;
-const importContext = (store: Store): ImportContext => ({ materials: store.list('materials'), uoms: store.list('uoms'), parts: store.list('material_parts'), types: store.list('material_types') });
+/** The import's view of the catalog: on a main project only its own materials count as "already in the Material database". */
+const importContext = (store: Store, siteId?: string): ImportContext => ({ materials: siteId ? materialsOnSite(store.list('materials'), siteId, store.list(CATALOG_SITES)) : store.list('materials'), uoms: store.list('uoms'), parts: store.list('material_parts'), types: store.list('material_types') });
+/** Preview rows of a main project: a Material No that exists for another main project is linked here on commit (shown with a note). */
+function withSiteNotes(store: Store, rows: ImportRow[], siteId?: string): (ImportRow & { note?: string })[] {
+  if (!siteId) return rows;
+  const linkable = new Set(takeOverLinks(rows.map(row => row.values.materialNo), siteId, store.list('materials'), store.list(CATALOG_SITES)).link.map(material => str(material.materialNo)));
+  return rows.map(row => linkable.has(row.values.materialNo) && !Object.keys(row.error).length ? { ...row, note: LINK_NOTE } : row);
+}
 /** The sheet's rows by material field (row 1 holds the headings; columns the import does not know are left out). */
 async function readSheet(buffer: Buffer): Promise<ImportRowInput[]> {
   const workbook = new ExcelJS.Workbook();
@@ -150,7 +278,6 @@ function sentRows(value: unknown): ImportRowInput[] {
     return { rowNo: Number.isSafeInteger(row.rowNo) ? Number(row.rowNo) : index + 2, values: values as Record<string, string>, action: row.action, source: row.source, origin: typeof row.origin === 'string' ? row.origin : undefined };
   });
 }
-const respond = (rows: ImportRow[]) => ({ rows, summary: materialImportSummary(rows) });
 
 /** Requirement lines of a take-over that may point at the new catalog material: custom lines of the site with nothing ordered, picked, reserved or moved yet. */
 function linkableLines(store: Store, siteId: string, materialNo: string): Row[] {
@@ -167,23 +294,33 @@ export interface ImportOptions {
   siteId?: string;
   /** Whether the account may change a requirement line (a line it may not change keeps its custom material). */
   mayLink?: (line: Row) => boolean;
-  /** Reserved for "Clean import" (mto-catalogs-002); refused until that flow builds it. */
+  /**
+   * "Clean import (remove the existing materials of this project site)": after the rows are committed, every material of the
+   * main project whose Material No is not in the file is removed from that main project (other main projects keep it), except
+   * the materials used there, which stay and are listed.
+   */
   clean?: boolean;
 }
+export interface ImportResult { committed: number; skipped: number; failed: number; linked: number; attached: number; removed?: number; kept?: { id: string; materialNo: string; description: string }[] }
 /**
  * Commit an import: the rows are checked again against the data as it is now, and each row chosen for import without an
- * error or warning becomes a catalog material. Rows of a take-over also link their isometric lines to the new material.
+ * error or warning becomes a catalog material of the main project, or (its Material No exists for another main project) links
+ * that material to this one (`attached`). Rows of a take-over also link their isometric lines to the catalog material.
  */
-export function commitMaterialImport(store: Store, input: ImportRowInput[], options: ImportOptions) {
-  if (options.clean) throw new AppError(422, 'Clean import is not available yet.');
-  const result = { committed: 0, skipped: 0, failed: 0, linked: 0 };
+export function commitMaterialImport(store: Store, input: ImportRowInput[], options: ImportOptions): ImportResult {
+  const { siteId } = options;
+  if (options.clean && !siteId) throw new AppError(422, 'Choose a main project first.');
+  if (options.clean && input.some(row => row.source === 'iso' || row.source === 'order')) throw new AppError(422, 'Clean import works with an uploaded Excel file only.');
+  const result: ImportResult = { committed: 0, skipped: 0, failed: 0, linked: 0, attached: 0 };
   store.transaction(() => {
-    const context = importContext(store);
+    const context = importContext(store, siteId);
     for (const row of materialImportPreview(input, context)) {
       if (!importable(row)) { result[row.action === 'skip' ? 'skipped' : 'failed']++; continue; }
       store.db.exec('SAVEPOINT material_import_row');
       try {
-        const material = store.create('materials', importedMaterial(row, context), options.actor);
+        const existing = siteId ? store.list('materials').find(item => str(item.materialNo) === row.values.materialNo) : undefined;
+        const material = existing ?? (siteId ? createMaterialOnSite(store, importedMaterial(row, context), siteId, options.actor) : store.create('materials', importedMaterial(row, context), options.actor));
+        if (existing) { linkMaterial(store, existing, siteId!, options.actor); result.attached++; }
         context.materials.push(material);
         if (row.source !== 'file' && row.origin && options.siteId) for (const line of linkableLines(store, options.siteId, row.origin)) {
           if (options.mayLink && !options.mayLink(line)) continue;
@@ -192,8 +329,18 @@ export function commitMaterialImport(store: Store, input: ImportRowInput[], opti
         store.db.exec('RELEASE material_import_row'); result.committed++;
       } catch (error) { store.db.exec('ROLLBACK TO material_import_row; RELEASE material_import_row'); if ((error as AppError).status === 403) throw error; result.failed++; }
     }
+    if (options.clean && siteId) Object.assign(result, cleanSite(store, siteId, input.map(row => row.values.materialNo), options.actor));
   });
   return result;
+}
+/** The clean part of a clean import on one main project (see ImportOptions.clean). */
+function cleanSite(store: Store, siteId: string, fileNos: unknown[], actor: Actor) {
+  const links = store.list(CATALOG_SITES), sites = store.list('sites', true);
+  const used = materialsUsedOnSite(Object.fromEntries(USED_ON_SITE_RESOURCES.map(key => [key, store.list(key)])), siteId);
+  const plan = cleanImportPlan(materialsOnSite(store.list('materials'), siteId, links), fileNos, used);
+  // Other main projects keep each removed material: an older material without links gets an explicit row for each of them.
+  for (const material of plan.unlink) unscoped(store, () => writeMaterialSites(store, material, changedSites(material, { [siteId]: false }, sites, links), actor));
+  return { removed: plan.unlink.length, kept: plan.kept.map(material => ({ id: material.id, materialNo: str(material.materialNo), description: str(material.description) })) };
 }
 
 type Access = ReturnType<typeof releaseAccess>;
@@ -201,10 +348,14 @@ export function registerMaterialDbRoutes(app: Application, { store, access }: { 
   const user = (req: Request) => (req as AuthRequest).user;
   const allow = (req: Request, verb: Parameters<typeof canResource>[2]) => { access.resource('materials'); if (!canResource(user(req), 'materials', verb)) throw new AppError(403, 'Your permission profile does not allow this action.'); };
   const importAllowed = (req: Request) => { allow(req, 'import'); allow(req, 'insert'); };
-  const memory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+  const memory = keepSiteScope(multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } }));
   const site = (value: unknown) => { if (typeof value !== 'string' || !value) throw new AppError(422, 'Choose a main project first.'); return store.get('sites', value).id; };
+  /** The main project of a preview: optional (without one every material counts as already in the database, as before). */
+  const previewSite = (value: unknown) => value === undefined || value === '' ? undefined : site(value);
   const visible = (req: Request, key: string) => store.list(key).filter(row => access.visible(user(req), key, row));
-  const missing = (req: Request, siteId: string) => missingCatalogMaterials(Object.fromEntries(['materials', 'projects', 'isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'custom_materials'].map(key => [key, visible(req, key)])), siteId);
+  // Only the site's own materials count as "in the catalog": a Material No of another main project is missing here and is linked on commit.
+  const missing = (req: Request, siteId: string) => missingCatalogMaterials({ ...Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'orders', 'order_lines', 'picklists', 'stock', 'custom_materials'].map(key => [key, visible(req, key)])), materials: materialsOnSite(visible(req, 'materials'), siteId, store.list(CATALOG_SITES)) }, siteId);
+  const preview = (rows: ImportRowInput[], siteId?: string) => { const checked = materialImportPreview(rows, importContext(store, siteId)); return { rows: withSiteNotes(store, checked, siteId), summary: materialImportSummary(checked) }; };
 
   app.get('/api/material-import/template', async (req, res) => {
     importAllowed(req);
@@ -219,30 +370,47 @@ export function registerMaterialDbRoutes(app: Application, { store, access }: { 
     importAllowed(req);
     if (!req.file) throw new AppError(422, 'Choose an Excel file.');
     if (!/\.xlsx$/i.test(req.file.originalname)) throw new AppError(422, 'Choose an Excel file (.xlsx).');
-    res.json(respond(materialImportPreview(await readSheet(req.file.buffer), importContext(store))));
+    const siteId = previewSite(req.body?.siteId);
+    res.json(preview(await readSheet(req.file.buffer), siteId));
   });
   // The preview again after a Material No or an action was changed on the page (nothing is saved).
-  app.post('/api/material-import/check', (req, res) => { importAllowed(req); res.json(respond(materialImportPreview(sentRows(req.body?.rows), importContext(store)))); });
+  app.post('/api/material-import/check', (req, res) => { importAllowed(req); res.json(preview(sentRows(req.body?.rows), previewSite(req.body?.siteId))); });
   app.get('/api/material-import/take-over', (req, res) => { importAllowed(req); res.setHeader('Cache-Control', 'no-store'); res.json(takeOverCounts(missing(req, site(req.query.siteId)))); });
   app.post('/api/material-import/take-over', (req, res) => {
     importAllowed(req);
     const source = req.body?.source;
     if (source !== 'iso' && source !== 'order') throw new AppError(422, 'Choose isometrics or order materials.');
-    const rows = takeOverRows(missing(req, site(req.body?.siteId)), source);
-    res.json(rows.length ? respond(materialImportPreview(rows, importContext(store))) : { empty: true, rows: [], summary: materialImportSummary([]) });
+    const siteId = site(req.body?.siteId);
+    const rows = takeOverRows(missing(req, siteId), source);
+    res.json(rows.length ? preview(rows, siteId) : { empty: true, rows: [], summary: materialImportSummary([]) });
   });
   app.post('/api/material-import/commit', (req, res) => {
     importAllowed(req);
     const rows = sentRows(req.body?.rows);
-    const siteId = rows.some(row => row.source === 'iso' || row.source === 'order') ? site(req.body?.siteId) : undefined;
+    // Every committed material belongs to the main project of the page (shared/material-sites.ts).
+    const siteId = site(req.body?.siteId);
     const options = req.body?.options && typeof req.body.options === 'object' ? req.body.options as Record<string, unknown> : {};
+    if (options.clean !== undefined && typeof options.clean !== 'boolean') throw new AppError(422, 'Choose whether the import is a clean import.');
+    // A clean import removes materials from the main project: it needs the right to delete materials as well.
+    if (options.clean === true) allow(req, 'delete');
     res.status(201).json(commitMaterialImport(store, rows, { actor: actorOf(req), siteId, clean: options.clean === true, mayLink: line => canResource(user(req), 'iso_materials', 'edit', line) }));
   });
   app.post('/api/materials/:id/delete', (req, res) => {
     access.resource('materials');
     const material = access.record('materials', String(req.params.id), true);
+    assertMaterialsInScope(store, [material.id]);
     if (!canResource(user(req), 'materials', 'delete', material)) throw new AppError(403, 'Your permission profile does not allow this action.');
     deleteMaterial(store, material.id, req.body?._version, actorOf(req));
     res.json({ deleted: material.id });
+  });
+  // Edit material "Home location" / Mass edit "Project site checkboxes": {ids, sites: {siteId: ticked}}.
+  app.post('/api/material-sites', (req, res) => {
+    allow(req, 'edit');
+    res.json({ changed: setMaterialSites(store, req.body?.ids, req.body?.sites, actorOf(req), row => canResource(user(req), 'materials', 'edit', row)) });
+  });
+  // MTO Pilot -> Project sites -> "Import Materials DB from another project site": {siteId (this one), sourceSiteId}.
+  app.post('/api/material-sites/import', (req, res) => {
+    importAllowed(req);
+    res.status(201).json(importMaterialsFromSite(store, site(req.body?.siteId), site(req.body?.sourceSiteId), actorOf(req)));
   });
 }

@@ -33,3 +33,15 @@
 .material-import-table td.mi-warning-cell { background: #fff4d6; }
 .material-import-table .mi-edit-input { width: 100%; min-width: 120px; font: inherit; font-size: 12px; padding: 5px 7px; border: 1px solid #d5dde8; border-radius: 5px; }
 @media (max-width: 560px) { .mto-catalog-toolbar { padding: 10px 14px; } .material-import-takeover { padding: 12px; } }
+/* Material database: "Home location" boxes of Edit material and Mass edit (one per main project). */
+.material-home-location { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 12px; margin: 0; min-width: 0; }
+.material-home-location legend { font-size: 13px; font-weight: 600; padding: 0 4px; }
+.material-home-sites { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 1fr)); gap: 6px 14px; }
+.material-home-sites label { display: flex; gap: 8px; align-items: center; font-size: 13px; min-width: 0; }
+.material-home-sites span { overflow-wrap: anywhere; }
+/* Import material: Clean import and its result. */
+.material-import-clean { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 4px 0 10px; }
+.material-import-clean input { margin-top: 2px; }
+.material-import-clean small { display: block; margin-top: 2px; }
+.material-import-kept { margin: 0 0 12px; font-size: 13px; }
+.material-import-kept ul { margin: 6px 0 0; padding-left: 20px; max-height: 220px; overflow: auto; }
