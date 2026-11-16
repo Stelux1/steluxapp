@@ -5,7 +5,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store, SYSTEM } from '../server/store.ts';
-import { seed, seedSiteScopeSamples } from '../server/seed.ts';
+import { seed, seedInspectionSamples, seedSiteScopeSamples } from '../server/seed.ts';
+import { seedMtoLogistics } from '../server/mto-logistics.ts';
+import { seedMtoDashboard } from '../server/mto-dashboard-seed.ts';
+import { MTO_DASHBOARD_OPTIONAL, MTO_DASHBOARD_REQUIRED, mtoDashboard } from '../shared/mto-dashboard.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
 import { SiteScope, allowedSites, siteAccessChanges } from '../server/site-scope.ts';
@@ -404,4 +407,46 @@ test('the sample workspace has an account limited to North fabrication yard in W
     assert.deepEqual([...allowedSites(store, user, 'weld') as Set<string>], [NORTH]);
     assert.equal(store.list(USER_SITES).length, 1, 'runs once');
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('documents, the ISO Book and the MTO dashboard inputs follow project site access (forged ids of the other main project)', async t => {
+  const f = await fixture(t);
+  seedInspectionSamples(f.store); seedMtoLogistics(f.store, SYSTEM); seedMtoDashboard(f.store, SYSTEM);
+  const writer = f.profile('Document writer', { generalPermission: RW, materialsPermission: ADMIN, weldingPermission: RW });
+  const north = f.account('North documents', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC }, { weld: [NORTH] });
+  const river = f.account('River documents', { profileId: writer, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [RIVER] });
+  await north.login(); await river.login();
+  const status = async (as: typeof north.as, path: string, pilot: string, options: Options = {}) => (await as.request(path, { pilot, ...options })).status;
+
+  // Isometric-, project- and record-scoped PDF documents: the other main project is unknown (404), the own one prints.
+  for (const path of ['/pdf/lisl-gu?isoId=iso-4', '/pdf/weld-cards?isoId=iso-4', '/pdf/punch-list-blank?isoId=iso-4', '/pdf/welders-summary?isoId=iso-4',
+    '/pdf/ndt-request?requestNo=R-2026-0004', '/pdf/ndt-pre-request?requestNo=R-2026-0003', '/pdf/punch-list?isoId=iso-4', '/pdf/flange-report?isoId=iso-4',
+    '/pdf/certification-index?siteId=site-river', '/pdf/certification-index?projectId=project-steam']) assert.equal(await status(north.as, path, 'weld'), 404, path);
+  for (const path of ['/pdf/lisl-gu?isoId=iso-1', '/pdf/ndt-request?requestNo=NDT-2026-0001', '/pdf/punch-list?isoId=iso-1', '/pdf/flange-report?isoId=iso-1', '/pdf/certification-index?siteId=site-north']) assert.equal(await status(north.as, path, 'weld'), 200, path);
+  const files = f.store.list('attachments').length;
+  assert.equal(await status(north.as, '/pdf/ndt-request?requestNo=R-2026-0004', 'weld', { method: 'POST' }), 404, 'attach to a request of the other main project');
+  assert.equal(f.store.list('attachments').length, files, 'nothing was attached');
+  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=PL-2026-0009', 'mto'), 404, 'pick list of North');
+  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=PL-2026-0010', 'mto'), 200, 'pick list of Riverside');
+  assert.equal(await status(river.as, '/pdf/mto-report?isoId=iso-1', 'mto'), 404);
+
+  // ISO Book: the isometrics of the other main project are unknown, also next to an allowed one.
+  assert.equal(await status(north.as, '/iso-book/parts?isoIds=iso-4', 'weld'), 404);
+  assert.equal(await status(north.as, '/iso-book/parts?isoIds=iso-1', 'weld'), 200);
+  assert.equal(await status(north.as, '/iso-book', 'weld', { method: 'POST', data: { isoIds: ['iso-1', 'iso-4'], parts: ['task-sheet'] } }), 404);
+  assert.equal(await status(river.as, '/iso-book', 'mto', { method: 'POST', data: { isoIds: ['iso-1'], parts: ['task-sheet'] } }), 404);
+  const riverFile = (await json<{ record: Row }>(await f.upload(f.admin, 'mto', 'isometrics', 'iso-4', 'river-book.txt'))).record;
+  const book = await north.as.request('/iso-book', { pilot: 'weld', method: 'POST', data: { isoIds: ['iso-1'], parts: ['task-sheet', 'punch-list', 'flange-report', 'ndt'] } });
+  assert.equal(book.status, 200, await book.clone().text());
+  assert.ok(!Buffer.from(await book.arrayBuffer()).includes(String(riverFile.name)), 'no file of the other main project');
+
+  // MTO dashboard: every collection it reads holds only records of the account's main project (or global ones).
+  const scope = resolver(f.store);
+  const data = await json<Bootstrap>(await river.as.request('/bootstrap', { pilot: 'mto' }));
+  for (const key of [...MTO_DASHBOARD_REQUIRED, ...MTO_DASHBOARD_OPTIONAL]) {
+    assert.ok(Array.isArray(data.rows[key]), `${key} is delivered`);
+    for (const row of data.rows[key]) assert.notEqual(scope.siteOf(key, row), NORTH, `${key} ${row.id} belongs to North`);
+  }
+  const board = mtoDashboard(data.rows).board;
+  assert.ok(board.length > 0 && board.every(row => RIVER_ISOS.includes(row.isoId)), 'the operations board lists Riverside isometrics only');
 });

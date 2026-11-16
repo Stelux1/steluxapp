@@ -3,9 +3,10 @@ import type { Store } from '../store.ts';
 import { AppError } from '../store.ts';
 import type { documentStorage } from '../documents.ts';
 import { actorOf, type AuthRequest } from '../auth.ts';
-import { PDF_DOCUMENTS, type PdfResult } from './documents.ts';
+import { scopeRows } from '../site-scope.ts';
+import { canDocument, PDF_DOCUMENTS, type PdfResult } from './documents.ts';
 import { RESOURCES } from '../../shared/resources.ts';
-import { canReport, canResource, REPORT_RESOURCES } from '../../shared/permissions.ts';
+import { canResource, REPORT_RESOURCES } from '../../shared/permissions.ts';
 import { projectInPilot } from '../../shared/project-scope.ts';
 import type { Availability, Row } from '../../shared/types.ts';
 
@@ -35,7 +36,7 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
     const definition = availability?.features.includes('pilots') ? PDF_DOCUMENTS.find(item => item.key === req.params.document) : undefined;
     if (!definition || attach && !(definition.scope === 'scoped' && definition.attachable)) throw new AppError(404, 'This document does not exist.');
     const user = (req as unknown as AuthRequest).user;
-    if (definition.scope === 'project' ? !canResource(user, definition.resource, 'show') : !canReport(user, definition.report, 'export')) throw new AppError(403, 'Your permission profile does not allow this document.');
+    if (!canDocument(user, definition)) throw new AppError(403, 'Your permission profile does not allow this document.');
     // Query values are short, except the list of chosen welds and the note of a request document.
     const query = Object.fromEntries(Object.entries(req.query).filter((entry): entry is [string, string] => typeof entry[1] === 'string').map(([key, value]) => [key, value.slice(0, key === 'welds' ? 8000 : 2100)]));
     const readable = (primary: string[]) => Object.fromEntries(RESOURCES.filter(resource => canResource(user, resource.key)).map(resource => [resource.key, readableRows(req, resource.key, true).filter(row => !primary.includes(resource.key) || canResource(user, resource.key, 'export', row))]));
@@ -46,7 +47,8 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
       const chosen = query.projectId ? projects.find(row => row.id === query.projectId) : null;
       if (query.projectId && !chosen) throw new AppError(404, 'This project could not be found.');
       const siteId = String(chosen?.siteId ?? query.siteId ?? '');
-      const site = siteId ? store.list('sites').find(row => row.id === siteId) ?? null : null;
+      // A main project outside the account's project site access is unknown to it (server/site-scope.ts).
+      const site = siteId ? scopeRows('sites', store.list('sites')).find(row => row.id === siteId) ?? null : null;
       if (query.siteId && !site) throw new AppError(404, 'This main project could not be found.');
       result = await definition.build({ store, documents, user, rows: readable([]), query, now, publicOrigin, origin, project: chosen ?? null, site });
     } else {
