@@ -22,6 +22,7 @@ export function seed(store: Store) {
       lislGuField1: 'LGU-NFY-07', lislGuField2: 'Rev. 3', lislGuField3: '2026-09-01', lislGuSpec1: 'Welded to the project piping specification PS-NFY-2026', lislGuSpec2: 'Welds carry welder code and weld number',
       lislMvDocNo: 'LMV-NFY-02', lislMvVersion: 'Rev. 1', lislMvDate: '2026-09-01', lislMvSpec1: 'Welded to the project piping specification PS-NFY-2026', lislMvSpec2: 'Consumables traceable by heat number',
       lislRevOwnerLine: 'Client heat transport standard HT-STD-12', lislRevDocNo: 'LGR-NFY-03', lislRevVersion: 'Rev. 2', lislRevDate: '2026-09-01',
+      ownerName: 'Northgate Pipeline Owner', ownerStandard: 'Owner standard OS-PL-210 - pipeline construction', wqDocNo: 'FORM-LISL-014', wqVersion: '3', wqDate: '2026-03-01', issDocTemplate: 'TPL-ISS-007 rev 2', issSupplier: 'Stelux Engineering', issTrain: 'Train 2', issFluidService: 'Cooling water, fluid group 2', issNdtStandard: 'EN ISO',
       weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10,
       fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 });
     add('sites', 'site-river', { name: 'Riverside installation', address: '42 Harbour Lane', residence: 'Antwerp', zip: '2000' });

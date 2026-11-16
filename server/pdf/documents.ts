@@ -7,6 +7,9 @@ import { lislPdf, type LislVariant } from './lisl.ts';
 import { lislGuPdf, ownerLislResult, type OwnerFormInput } from './lisl-gu.ts';
 import { lislMvPdf } from './lisl-mv.ts';
 import { lislGuRevPdf } from './lisl-gu-rev.ts';
+import { issPdf } from './lisl-iss.ts';
+import { wqPdf, type WqVersion } from './lisl-wq.ts';
+import { issModel, wqModel } from '../../shared/pdf-lisl-iss-wq.ts';
 import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
 import type { Row, User } from '../../shared/types.ts';
 
@@ -59,6 +62,26 @@ const ownerLisl = (key: string, title: string, suffix: string, render: (input: O
   key, title, report: 'lisl', build: request => ownerLislResult(request, lislOptions(request.query), suffix, render),
 });
 
+/** Owner-specific LISL forms: no dialog options; the owner texts come from the main project's Document settings. */
+const lislIss: PdfDocumentDefinition = {
+  key: 'lisl-iss', title: 'LISL Report [ISS]', report: 'lisl',
+  async build({ store, documents, iso, rows, now }) {
+    const company = companyForDocuments(store, documents), model = issModel(rows, iso.id, company?.company.name ?? '');
+    if (!model) throw new AppError(404, 'This isometric could not be found.');
+    const { bytes } = await issPdf({ model, company, generatedAt: now });
+    return { bytes, fileName: `${isoDate(now)}-${safe(model.base.project?.internnumber, 'project')}-LISL-ISS` };
+  },
+};
+const lislWq = (key: string, title: string, version: WqVersion, suffix: string): PdfDocumentDefinition => ({
+  key, title, report: 'lisl',
+  async build({ store, documents, iso, rows, now }) {
+    const model = wqModel(rows, iso.id);
+    if (!model) throw new AppError(404, 'This isometric could not be found.');
+    const { bytes } = await wqPdf({ model, version, company: companyForDocuments(store, documents), generatedAt: now });
+    return { bytes, fileName: `${isoDate(now)}-${safe(model.base.project?.internnumber, 'project')}-LISL-${suffix}` };
+  },
+});
+
 export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
   lisl('lisl', 'LISL Report', 'a4', ''),
   lisl('lisl-a3', 'LISL Report (A3)', 'a3', '-A3'),
@@ -67,4 +90,7 @@ export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
   ownerLisl('lisl-mv', 'LISL Report [MV]', '-MV', lislMvPdf),
   ownerLisl('lisl-gu-rev2', 'LISL Report [GU Rev 2]', '-GU-Rev2', input => lislGuRevPdf(input, 2)),
   ownerLisl('lisl-gu-rev3', 'LISL Report [GU Rev 3]', '-GU-Rev3', input => lislGuRevPdf(input, 3)),
+  lislIss,
+  lislWq('lisl-wq', 'LISL Report [WQ]', 'v1', 'WQ'),
+  lislWq('lisl-wq2', 'LISL Report [WQ ver 2]', 'v2', 'WQ-ver2'),
 ];
