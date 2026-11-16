@@ -6,6 +6,7 @@ import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
+import { ReleaseStatus } from './releases.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
@@ -103,6 +104,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
         <Fact label="Priority">{priorityLabel(iso.priority)}</Fact>
       </dl>
       <PhaseFlags iso={iso}/>
+      <ReleaseStatus iso={iso}/>
       {pilot?.pilot.key === 'mto' && <div className="iso-material-slot" data-slot="material-status" aria-hidden="true"/>}
     </Card>
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>

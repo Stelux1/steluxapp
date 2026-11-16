@@ -8,6 +8,7 @@ import { requirementExecution } from '../shared/materials.ts';
 import { WELD_ENTRY_ACTIONS, runWeldEntryAction } from './weld-entry.ts';
 import { INSPECTION_ACTION_KEYS } from '../shared/inspections.ts';
 import { inspectionRules } from './inspections.ts';
+import { assignFieldPackage, releaseIsometrics, reopenRelease } from './releases.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -240,14 +241,9 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       if (options.inspectionRules) inspectionRules(store, actor).ensureRepair(result);
       return { resource: 'welds', record: result };
     }
-    if (key === 'release') {
-      const type = str(data.type); if (!['Prefab', 'Field', 'Hydrotest'].includes(type)) throw new AppError(422, 'Choose a release type.');
-      const reportNo = str(data.reportNo); if (!reportNo) throw new AppError(422, 'Enter a report number.');
-      if (data.engineerId) ensure('qa_engineers', data.engineerId); if (data.signatureId) ensure('signatures', data.signatureId);
-      const number = store.next(type === 'Hydrotest' ? 'HYDRO' : 'REL'); const created = [];
-      for (const id of ids(data.isoIds, 'isometric')) { ensure('isometrics', id); created.push(add('releases', { number, isoId: id, type, reportNo, date, engineerId: data.engineerId || '', signatureId: data.signatureId || '', note })); }
-      return { resource: 'releases', records: created };
-    }
+    if (key === 'release') return releaseIsometrics(store, data, actor, { date, note });
+    if (key === 'reopen-release') return reopenRelease(store, data, actor);
+    if (key === 'assign-fwp') return assignFieldPackage(store, data, actor);
     if (key === 'phases') {
       const phases: Input = {};
       for (const f of phaseFields) if (data[f.name] && data[f.name] !== 'Keep current') { if (!['Complete', 'Incomplete'].includes(String(data[f.name]))) throw new AppError(422, 'Select a valid phase value.'); phases[f.name] = data[f.name] === 'Complete'; }

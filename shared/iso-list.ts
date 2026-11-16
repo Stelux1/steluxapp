@@ -49,7 +49,7 @@ export function isoListContext(source: IsoListSource): IsoListContext {
     for (const result of live(source.results).sort(newest).reverse()) latest.set(`${result.weldId}|${textOf(result.type)}`, result);
   }
   const releases = source.releases ? live(source.releases) : null;
-  const released = (type: string) => releases ? new Set(releases.filter(row => row.type === type).map(row => String(row.isoId))) : null;
+  const released = (type: string) => releases ? new Set(releases.filter(row => row.type === type && row.status !== 'Reopened').map(row => String(row.isoId))) : null;
   return { planning: source.planning === true, weldsByIso, shopIsos, latest, prefab: released('Prefab'), field: released('Field') };
 }
 

@@ -4,7 +4,8 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Store } from '../server/store.ts';
+import { Store, SYSTEM } from '../server/store.ts';
+import { runAction } from '../server/workflows.ts';
 import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
@@ -70,17 +71,18 @@ test('rule (c): project certificates follow the welder-data project links (linke
   assert.deepEqual(certificateErrors({ projectCertificates: false }, { certificate1Id: 'elsewhere' }, [1], certificates, 'p1', context), {});
 });
 
-test('rule (d): a weld is locked by the release of its own phase and unlocked when the release is archived', () => {
+test('rule (d): a weld is locked by the release of its own phase and unlocked when the release is reopened or archived (releases rule)', () => {
   const types = [row('shop', { name: 'Butt Weld - Shop', location: 'Shop' }), row('field', { name: 'Butt Weld - Field', location: 'Field' }), row('named', { name: 'Socket weld - Field' }), row('plain', { name: 'HOOK-UP' })];
-  const releases = [row('r1', { isoId: 'i1', type: 'Field' }), row('r2', { isoId: 'i2', type: 'Prefab' }), row('r3', { isoId: 'i3', type: 'Hydrotest' }), row('r4', { isoId: 'i4', type: 'Field', _archived: true })];
+  const releases = [row('r1', { isoId: 'i1', type: 'Field' }), row('r2', { isoId: 'i2', type: 'Prefab' }), row('r3', { isoId: 'i3', type: 'Hydrotest' }), row('r4', { isoId: 'i4', type: 'Field', _archived: true }), row('r5', { isoId: 'i5', type: 'Field', status: 'Reopened' }), row('r6', { isoId: 'i6', type: 'Prefab', status: 'Released' })];
   const context = lockContext(types, releases);
   const lock = (isoId: string, typeId: string) => weldLock({ isoId, typeId }, context);
   assert.equal(lock('i1', 'field').locked, true); assert.equal(lock('i1', 'field').release, 'Field'); assert.equal(lock('i1', 'named').locked, true, 'older types are read from their name');
   assert.equal(lock('i1', 'shop').locked, false, 'shop welds stay open with only a Field release');
   assert.equal(lock('i2', 'shop').locked, true); assert.equal(lock('i2', 'shop').release, 'Prefab'); assert.equal(lock('i2', 'field').locked, false);
   assert.equal(lock('i1', 'plain').locked, false, 'without a phase the weld is not locked'); assert.equal(weldLock({ isoId: 'i1' }, context).locked, false);
-  assert.equal(lock('i3', 'field').locked, false, 'a hydrotest release does not lock welds'); assert.equal(lock('i4', 'field').locked, false, 'a reopened or removed release unlocks');
-  assert.match(lock('i1', 'field').reason, /Reopen the release/);
+  assert.equal(lock('i3', 'field').locked, false, 'a hydrotest release does not lock welds'); assert.equal(lock('i4', 'field').locked, false, 'a removed release unlocks'); assert.equal(lock('i5', 'field').locked, false, 'a Reopened release unlocks');
+  assert.equal(lock('i6', 'shop').locked, true); assert.match(lock('i6', 'shop').reason, /Reopen the Prefab release/);
+  assert.match(lock('i1', 'field').reason, /Reopen the Field release/);
   assert.equal(weldLocation(row('x', { name: 'HOOK-UP' })), null);
 });
 
@@ -257,6 +259,11 @@ test('rule (d) through HTTP: locked welds cannot be edited, deleted or restored;
   // Removing the Field release unlocks weld-12 at once; the Prefab release still holds weld-3.
   archiveRelease(f.store, 'iso-3', 'Field');
   assert.equal((await f.act('save-weld', { weldId: 'weld-12', kr: 'K9' })).status, 201); assert.equal((await f.act('save-weld', { weldId: 'weld-3', kr: 'K9' })).status, 423);
+  // Reopening the Prefab release (the releases flow keeps the record with status Reopened) unlocks weld-3 too.
+  runAction(f.store, 'reopen-release', { isoId: 'iso-3', type: 'Prefab', reason: 'Weld repair on spool 3' }, SYSTEM);
+  assert.equal((await f.act('save-weld', { weldId: 'weld-3', kr: 'K9' })).status, 201, 'a Reopened release no longer locks');
+  runAction(f.store, 'release', { isoIds: ['iso-3'], type: 'Prefab', reportNo: 'PR-REL-3' }, SYSTEM);
+  assert.equal((await f.act('save-weld', { weldId: 'weld-3', kr: 'K8' })).status, 423, 'releasing again locks again');
   // Delete, show deleted and bring back; a new Field release locks the deleted field weld against coming back.
   const added = await f.act('save-weld', { isoId: 'iso-3', weldNo: 'W902', typeId: 'weld-type-0' }); assert.equal(added.status, 201);
   const id = added.body.record.id as string;

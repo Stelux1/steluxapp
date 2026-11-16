@@ -214,7 +214,7 @@ test('profiles without pilots keep their features, un-prefixed routes and module
   assert.equal(availabilityFor('full'), undefined);
   assert.deepEqual(availabilityFor('welding-demo')!.features, ['documents', 'history', 'table-export', 'table-print']);
   assert.deepEqual(availabilityFor('access-prototype')!.features, ['documents', 'history', 'table-export', 'table-print', 'lisl', 'project-bulk-edit', 'local-access']);
-  assert.deepEqual(availabilityFor('welding-workspace')!.features, ['documents', 'history', 'table-export', 'table-print', 'lisl', 'project-bulk-edit', 'project-planning', 'pilots', 'inspections']);
+  assert.deepEqual(availabilityFor('welding-workspace')!.features, ['documents', 'history', 'table-export', 'table-print', 'lisl', 'project-bulk-edit', 'releases', 'project-planning', 'pilots', 'inspections']);
   const f = await fixture(t); await f.setup();
   for (const route of ['/weld', '/mto', '/weld/welding/welds', '/mto/workspace/projects']) assert.equal((await f.request(route)).status, 404, route);
   assert.equal((await f.request('/welding/welds')).status, 200);

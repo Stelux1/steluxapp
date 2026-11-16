@@ -1,6 +1,7 @@
 import type { Row } from './types.ts';
 import { mandatoryFields, projectCertificates, wpsValidation } from './site-settings.ts';
 import { certificatesForProject as projectCertificatesOf } from './welder-data.ts';
+import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
 
 /**
  * Weld table and weld entry on the isometric (Weld Pilot). Pure functions over plain rows: the server uses them
@@ -109,28 +110,24 @@ export function weldDiameterText(weld: Values, diameter?: Values | null): string
 // ---------------------------------------------------------------------------------------------------------------
 // Rule (d): the lock
 
-/** Releases of the isometrics and the weld types, grouped once for a whole table. */
-export interface LockContext { locations: Map<string, 'Shop' | 'Field' | null>; prefab: Set<string>; field: Set<string>; }
-/** A release counts while it is on file; reopening or removing it archives the record and unlocks the welds. */
-export const isActiveRelease = (release: Row) => !release._archived;
+/**
+ * The lock rule is owned by the releases flow (shared/releases.ts `weldLocked` / `weldLockReason`: a release counts
+ * while it is not archived and not Reopened). The context carries the weld types with their Shop/Field location
+ * resolved by `weldLocation` (older types without a location are read from their name) and the releases.
+ */
+export interface LockContext { weldTypes: Row[]; releases: Row[]; }
 export function lockContext(weldTypes: Row[] | null | undefined, releases: Row[] | null | undefined): LockContext {
-  const active = (releases || []).filter(isActiveRelease);
-  return {
-    locations: new Map((weldTypes || []).map(type => [type.id, weldLocation(type)])),
-    prefab: new Set(active.filter(row => row.type === 'Prefab').map(row => String(row.isoId))),
-    field: new Set(active.filter(row => row.type === 'Field').map(row => String(row.isoId))),
-  };
+  return { weldTypes: (weldTypes || []).map(type => ({ ...type, location: weldLocation(type) ?? '' })), releases: releases || [] };
 }
 export interface WeldLock { locked: boolean; /** The release that locks the weld. */ release: 'Prefab' | 'Field' | null; reason: string; }
 /**
- * Welds of a completed phase are read-only: field welds while the isometric has a Field release, shop welds
- * while it has a Prefab release. A weld whose type is not set yet has no phase and stays editable.
+ * Welds of a completed phase are read-only: field welds while the isometric has an active Field release, shop welds
+ * while it has an active Prefab release. A weld whose type is not set yet has no phase and stays editable.
  */
 export function weldLock(weld: Values, context: LockContext): WeldLock {
-  const location = weld.typeId ? context.locations.get(String(weld.typeId)) ?? null : null, iso = String(weld.isoId ?? '');
-  if (location === 'Field' && context.field.has(iso)) return { locked: true, release: 'Field', reason: 'The Field release of this isometric makes its field welds read-only. Reopen the release to change them.' };
-  if (location === 'Shop' && context.prefab.has(iso)) return { locked: true, release: 'Prefab', reason: 'The Prefab release of this isometric makes its shop welds read-only. Reopen the release to change them.' };
-  return { locked: false, release: null, reason: '' };
+  const row = weld as Row;
+  if (!weldLocked(row, undefined, context.releases, context.weldTypes)) return { locked: false, release: null, reason: '' };
+  return { locked: true, release: weldPhase(row, context.weldTypes) === 'shop' ? 'Prefab' : 'Field', reason: weldLockReason(row, undefined, context.releases, context.weldTypes) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESO
 import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
+import { RELEASE_ACTIONS } from './releases.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -124,6 +125,10 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Set phase (bulk and single) and Copy isometrics: only the flags the user changes are sent.
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');
+    // Prefab / Field release pages, Reopen, request archive and field work packages (see shared/releases.ts).
+    for (const key of ['releases', 'field_packages']) deliverResource(availability, key);
+    Object.assign(availability.actions, structuredClone(RELEASE_ACTIONS));
+    availability.features.push('releases');
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.

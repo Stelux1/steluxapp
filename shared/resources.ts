@@ -4,6 +4,7 @@ import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
 import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, DEFECT_GROUPS, WELD_LOCATIONS } from './weld-catalogs.ts';
 import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELDS, INSPECTION_WELD_FIELDS } from './inspections.ts';
+import { RELEASE_EXTRA_FIELDS } from './releases.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { ASME_GROUP_NUMBERS, ASME_P_NUMBERS, CERT_TYPES, ISO_15608_GROUPS, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS } from './welder-data.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
@@ -150,6 +151,8 @@ extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
 ])]);
 // Weld entry on the isometric (hosted): stored table order, weld process and the coating of the weld itself.
 extend('welds', [n('sortOrder', 'Table order', { hidden: true, min: 0 }), r('processId', 'Weld process', 'weld_processes', { section: 'Welders & traceability' }), r('coatingWeldId', 'Coating weld', 'coatings', { section: 'Welders & traceability' })]);
+// Release records keep who released, the document numbering and signature titles, and Reopen (see shared/releases.ts).
+extend('releases', RELEASE_EXTRA_FIELDS);
 extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
 // NDT / visual inspection / PWHT flow (shared/inspections.ts): hidden fields its dialogs write; "Not applicable" for visual inspection.
 extend('welds', INSPECTION_WELD_FIELDS); extend('inspection_results', INSPECTION_RESULT_FIELDS); extend('inspection_requests', INSPECTION_REQUEST_FIELDS);

@@ -104,6 +104,10 @@ export function seed(store: Store) {
     action('release', { isoIds: ['iso-3'], type: 'Prefab', reportNo: 'PFR-002', engineerId: 'qa-1', date: '2026-10-22' });
     action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
+    // Field work packages: descriptions, a second package for the steam network and the first assignments (see shared/releases.ts).
+    store.update('field_packages', 'fwp-1', { description: 'Cooling water loop, area 1: prefab spools erected and welded in the field.' }, store.get('field_packages', 'fwp-1')._version, SYSTEM);
+    add('field_packages', 'fwp-2', { name: 'Steam header — Area 2', number: 'FWP-002', projectId: 'project-steam', description: 'Riverside steam header and branches, installed after the cooling loop.' });
+    for (const [isoId, packageId] of [['iso-1', 'fwp-1'], ['iso-2', 'fwp-1'], ['iso-4', 'fwp-2']]) store.update('isometrics', isoId, { fieldPackageId: packageId }, store.get('isometrics', isoId)._version, SYSTEM);
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });
     if ('record' in po && po.record) { const line = store.list('order_lines').find(l => l.orderId === po.record?.id)!; action('receive', { orderId: po.record.id, warehouseId: 'warehouse-main', date: '2026-10-20', items: [{ lineId: line.id, quantity: 12, chargeNo: 'H-1043' }] }); }
