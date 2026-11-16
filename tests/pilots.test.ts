@@ -30,6 +30,13 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(PILOT_MAP.weld.groups.map(group => group.title), ['General data', 'Start', 'Welder data', 'Weld data', 'Material data', 'NDT data', 'Welding data', 'Releases', 'System']);
   assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'Calculations', 'System']);
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);
+  // Iso overview: Weld Pilot "Welding data" right after ITPs (the reference's ITP templates are not built) and before
+  // NDT/PWHT Manager; MTO Pilot "Projects data" last, after Pick List archive. Both open the "Project search" dialog.
+  const labels = (key: 'weld' | 'mto', title: string) => PILOT_MAP[key].groups.find(group => group.title === title)!.items.map(item => item.label);
+  const weldData = labels('weld', 'Welding data');
+  assert.equal(weldData[weldData.indexOf('ITPs') + 1], 'Iso overview'); assert.ok(weldData.indexOf('Iso overview') < weldData.indexOf('NDT/PWHT Manager'));
+  assert.deepEqual(labels('mto', 'Projects data').slice(-2), ['Pick List archive', 'Iso overview']);
+  for (const key of ['weld', 'mto'] as const) { const item = PILOT_MAP[key].groups.flatMap(group => group.items).find(entry => entry.label === 'Iso overview')!; assert.equal(item.action, 'iso-overview'); assert.deepEqual(pilotItemResources(item), ['projects', 'isometrics']); }
   // Reference items without a page in this application are not listed.
   for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'NDT Batch Import', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
@@ -37,7 +44,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
 test('every menu item resolves to a real page and resource items use resourcePath()', () => {
   catalog.configureCatalog();
   for (const { pilot, item } of items) {
-    if (item.action) { assert.equal(item.action, 'password'); continue; }
+    if (item.action) { assert.ok(['password', 'iso-overview'].includes(item.action), item.label); continue; }
     const path = pilotItemPath(item)!; const route = path.split('?')[0];
     for (const key of pilotItemResources(item)) assert.ok(RESOURCE_MAP[key], `${pilot.key} ${item.label}: ${key}`);
     if (item.resource && !item.path) assert.equal(path, resourcePath(item.resource), item.label);

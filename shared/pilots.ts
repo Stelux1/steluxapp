@@ -16,8 +16,8 @@ export interface PilotItem {
   path?: string;
   resources?: string[];
   reports?: string[];
-  /** A control rather than a page, such as the change-password dialog. */
-  action?: 'password';
+  /** A control rather than a page: the change-password dialog, or the "Project search" dialog of Iso overview. */
+  action?: 'password' | 'iso-overview';
 }
 export interface PilotGroup { title: string; items: PilotItem[]; }
 export interface Pilot { key: PilotKey; title: string; module: Module; color: string; description: string; groups: PilotGroup[]; }
@@ -27,6 +27,8 @@ const p = (label: string, path: string, need: Pick<PilotItem, 'resources' | 'rep
 const PROJECT_SITES = p('Project sites', '/workspace/main-projects', { resources: ['sites'] });
 const PASSWORD: PilotItem = { label: 'Change password', action: 'password' };
 const DASHBOARD = p('Dashboard', '/dashboard');
+/** Iso overview: a "Project search" dialog that opens the chosen project's isometrics page (needs projects and isometrics). */
+const ISO_OVERVIEW: PilotItem = { label: 'Iso overview', action: 'iso-overview', resources: ['projects', 'isometrics'] };
 
 /** Menus in the reference order and wording. Reference items without a page here are left out until they exist. */
 export const PILOTS: Pilot[] = [
@@ -37,7 +39,7 @@ export const PILOTS: Pilot[] = [
     { title: 'Weld data', items: [r('PQR', 'pqr'), r('WPS methods', 'wps'), r('Weld process', 'weld_processes'), r('Weld type', 'weld_types'), r('Coating', 'coatings'), r('Spools', 'spools')] },
     { title: 'Material data', items: [r('Weld diameters', 'diameters'), r('Material part', 'material_parts'), r('Type of material', 'material_types'), r('Material supplier', 'suppliers'), r('Welding wire', 'welding_wires'), r('Certifications', 'certifications')] },
     { title: 'NDT data', items: [r('NDT process groups', 'ndt_groups'), r('NDT process', 'ndt_processes'), r('Defect codes', 'ndt_defect_codes'), r('NDT locations', 'ndt_locations'), r('PWHT process', 'pwht_processes'), r('PWHT locations', 'pwht_locations')] },
-    { title: 'Welding data', items: [r('Projects', 'projects'), r('Isometrics list', 'isometrics'), r('ITPs', 'itps'), r('Weld register', 'welds'), p('Data LISL', '/welding/lisl', { reports: ['lisl'] }), p('NDT/PWHT Manager', MANAGER_PATH, { resources: ['welds', 'inspection_requests'] }), r('Inspection results', 'inspection_results'), r('QA/QC engineers', 'qa_engineers'), p('Export weld data', '/welding/reports', { reports: ['lisl', 'wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'] })] },
+    { title: 'Welding data', items: [r('Projects', 'projects'), r('Isometrics list', 'isometrics'), r('ITPs', 'itps'), ISO_OVERVIEW, r('Weld register', 'welds'), p('Data LISL', '/welding/lisl', { reports: ['lisl'] }), p('NDT/PWHT Manager', MANAGER_PATH, { resources: ['welds', 'inspection_requests'] }), r('Inspection results', 'inspection_results'), r('QA/QC engineers', 'qa_engineers'), p('Export weld data', '/welding/reports', { reports: ['lisl', 'wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'] })] },
     { title: 'Releases', items: [p('Prefab release', '/welding/releases?view=prefab', { resources: ['releases'] }), p('Field release', '/welding/releases?view=field', { resources: ['releases'] }), r('Assign Iso to FWP', 'field_packages'), r('Hydrotest release', 'test_systems'), p('Request archive', '/welding/releases?view=archive', { resources: ['releases'] }), r('Punch lists', 'punchlists'), r('Flange Management', 'flanges')] },
     { title: 'System', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Signatures', 'signatures'), r('Company data', 'company_data')] },
   ] },
@@ -46,7 +48,7 @@ export const PILOTS: Pilot[] = [
     { title: 'Start', items: [DASHBOARD] },
     { title: 'Materials', items: [r('Material database', 'materials'), r('Material part', 'material_parts'), r('Type of material', 'material_types'), r('UOMs', 'uoms'), r('Spools', 'spools'), r('Operation Phases', 'operation_phases'), r('Material supplier', 'suppliers')] },
     { title: 'Order / Take in', items: [p('Order materials', '/materials/order-materials', { resources: ['iso_materials', 'orders', 'order_lines'] }), p('Pending order', '/materials/pending-orders', { resources: ['orders', 'order_lines'] }), p('Material take in', '/materials/take-in', { resources: ['receipts', 'orders', 'order_lines'] }), r('Material inventory', 'stock'), r('Transfer orders', 'transfer_orders'), p('Materials list', '/materials/materials-list', { resources: ['iso_materials', 'stock'] }), r('Isometric materials', 'iso_materials'), p('Order archive', '/materials/order-archive', { resources: ['orders', 'order_lines'] }), r('Certifications', 'certifications')] },
-    { title: 'Projects data', items: [r('Projects', 'projects'), r('Isometrics list', 'isometrics'), p('Isometric execution', '/materials/iso-execution', { resources: ['iso_materials', 'stock', 'reservations'] }), r('Pick List archive', 'picklists')] },
+    { title: 'Projects data', items: [r('Projects', 'projects'), r('Isometrics list', 'isometrics'), p('Isometric execution', '/materials/iso-execution', { resources: ['iso_materials', 'stock', 'reservations'] }), r('Pick List archive', 'picklists'), ISO_OVERVIEW] },
     { title: 'Logistic', items: [r('Service companies', 'service_companies'), p('Service request', '/materials/service-spools', { resources: ['spools', 'service_requests'] }), p('Service req. - Materials', '/materials/service-materials', { resources: ['iso_materials', 'material_locations'] }), r('Request archive', 'service_requests'), r('Laydown areas', 'laydowns'), r('Laydown materials', 'material_laydowns')] },
     { title: 'Calculations', items: [p('MTO & calculations', '/materials/planning', { reports: ['mto', 'calculation', 'cut-list'] }), r('Calculation norms', 'calculation_norms')] },
     { title: 'System', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Company data', 'company_data')] },

@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
-import { BrowserRouter, Link, useLocation } from 'react-router-dom';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { BrowserRouter, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Boxes, ChevronDown, LayoutGrid, Loader2, LogOut, ScanLine, ShieldAlert } from 'lucide-react';
 import { PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemResources, splitPilotPath, type Pilot, type PilotItem, type PilotKey } from '../shared/pilots.ts';
 import { pageAvailable } from '../shared/release.ts';
@@ -7,7 +7,7 @@ import type { User } from '../shared/types.ts';
 import { RESOURCES, RESOURCE_MAP } from './catalog.ts';
 import { useWorkspace } from './context.tsx';
 import { resourcePath } from './records.tsx';
-import { EmptyState } from './components.tsx';
+import { EmptyState, Modal } from './components.tsx';
 import { Wordmark } from './brand.tsx';
 import { post } from './api.ts';
 
@@ -86,9 +86,10 @@ const queryOf = (path: string) => path.includes('?') ? path.slice(path.indexOf('
 /** Sidebar of the current pilot, rendered from `shared/pilots.ts`. Items appear only where their page is available. */
 export function PilotNavigation({ onPassword }: { onPassword: () => void }) {
   const state = usePilot()!; const { user, canRecord, canReadReport } = useWorkspace(); const location = useLocation();
+  const [searching, setSearching] = useState(false);
   const target = (item: PilotItem) => item.resource && RESOURCE_MAP[item.resource] && !item.path ? resourcePath(item.resource) : pilotItemPath(item);
   const visible = (item: PilotItem) => {
-    if (item.action) return true;
+    if (item.action) return pilotItemResources(item).every(key => canRecord(key));
     const to = target(item); if (!to) return false;
     if (item.resource && !RESOURCE_MAP[item.resource]) return false;
     return pageAvailable(user.availability, pathOnly(to), RESOURCES) && pilotItemResources(item).every(key => canRecord(key)) && (!item.reports || item.reports.some(key => canReadReport(key)));
@@ -100,10 +101,37 @@ export function PilotNavigation({ onPassword }: { onPassword: () => void }) {
   if (!state.entered) return <p className="pilot-nav-note">{state.pilot.title} is not included in your permission profile.</p>;
   return <>{groups.map(group => <details key={state.pilot.key + group.title} className="nav-group pilot-nav-group" open={group.items.includes(active!)}>
     <summary>{group.title}<ChevronDown size={13}/></summary>
-    {group.items.map(item => item.action === 'password'
-      ? <button key={item.label} type="button" className="sub-nav-item pilot-nav-button" onClick={onPassword}>{item.label}</button>
+    {group.items.map(item => item.action
+      ? <button key={item.label} type="button" className="sub-nav-item pilot-nav-button" onClick={item.action === 'password' ? onPassword : () => setSearching(true)}>{item.label}</button>
       : <Link key={item.label} to={target(item)!} className={`sub-nav-item${item === active ? ' active' : ''}`} aria-current={item === active ? 'page' : undefined}>{item.label}</Link>)}
-  </details>)}</>;
+  </details>)}{searching && <ProjectSearch onClose={() => setSearching(false)}/>}</>;
+}
+
+const projectLabel = (project: Record<string, unknown>) => [project.internnumber, project.description].map(value => String(value ?? '').trim()).filter(Boolean).join(' - ') || 'Unnamed project';
+
+/**
+ * Iso overview → "Project search": choose one of the projects visible in this pilot and main project, then Search
+ * opens its isometrics page. The input filters the project list as the user types (a native combobox).
+ */
+function ProjectSearch({ onClose }: { onClose: () => void }) {
+  const { rows } = useWorkspace(); const navigate = useNavigate(); const id = useId();
+  const projects = (rows.projects || []).filter(project => !project._archived).map(project => ({ id: project.id, label: projectLabel(project) })).sort((a, b) => a.label.localeCompare(b.label, 'en', { numeric: true }));
+  const [query, setQuery] = useState(''), [error, setError] = useState('');
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const wanted = query.trim().toLowerCase();
+    const match = projects.find(project => project.label.toLowerCase() === wanted) || (wanted ? projects.filter(project => project.label.toLowerCase().includes(wanted)) : []).find((_, index, list) => list.length === 1);
+    if (!match) { setError(wanted ? 'Choose one project from the list.' : 'Choose a project.'); return; }
+    onClose(); navigate(`/workspace/projects/${match.id}/isometrics`);
+  }
+  return <Modal title="Project search" subtitle="Open the isometric overview of a project." onClose={onClose}>
+    {projects.length ? <form onSubmit={submit}><div className="modal-body">
+      {error && <div className="alert error" role="alert">{error}</div>}
+      <div className="field"><label htmlFor={`${id}-project`}>Project</label><input id={`${id}-project`} list={`${id}-projects`} value={query} onChange={event => { setQuery(event.target.value); setError(''); }} placeholder="Search intern prj. no. or description" autoComplete="off" aria-invalid={Boolean(error)} required/>
+        <datalist id={`${id}-projects`}>{projects.map(project => <option key={project.id} value={project.label}/>)}</datalist></div>
+    </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">Search</button></div></form>
+      : <><div className="modal-body"><EmptyState title="No projects" description="No project is visible in this main project."/></div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Cancel</button></div></>}
+  </Modal>;
 }
 
 /** The pilot block in the sidebar: title in the pilot colour and the way back to the selector. */
