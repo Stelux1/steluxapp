@@ -18,7 +18,7 @@ import { resourcePath } from '../client/records.tsx';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
-const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports'];
+const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive'];
 const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.map(item => ({ pilot, group, item }))));
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
@@ -145,7 +145,7 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['weld']);
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
-  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'uoms', 'orders', 'order_lines', 'stock', 'movements', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
+  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'uoms', 'orders', 'order_lines', 'receipts', 'stock', 'movements', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
   // Material part, type of material and supplier are shared catalogs of both pilots.
   for (const key of ['material_parts', 'material_types', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   assert.equal((await f.request('/api/reports/mto')).status, 403);

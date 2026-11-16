@@ -6,6 +6,7 @@ import { Store, AppError, positive, qty, validDate, today, type Actor } from './
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
 import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
+import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -41,6 +42,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
     };
     const movement = (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra: Input = {},custom=false) => add(tool ? 'tool_movements' : 'movements', { number: store.next(tool ? 'TM' : 'MM'), [tool ? 'articleId' : custom?'customMaterialId':'materialId']: itemId, warehouseId, quantity: qty(amount), type, date, note, ...extra });
     if (MTO_MATERIAL_ACTIONS.includes(key)) { const mto = runMtoMaterialAction(store, key, data, actor)!; return mto.records ? { resource: mto.resource, records: mto.records } : { resource: mto.resource, record: mto.record! }; }
+    const procurement: ProcurementContext = { store, date, note, ensure, add, patch, balance, movement };
+    if (key === 'correct-receipt') { const done = correctReceipt(procurement, data); return { resource: done.resource, record: done.record }; }
     if (key === 'order'||key==='order-requirements') {
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
       let items:Input[]=[];let projectId=str(data.projectId);
@@ -55,7 +58,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       return { resource: 'orders', record: order };
     }
     if (key === 'receive') {
-      const order = ensure('orders', data.orderId); const wh = warehouse(data.warehouseId, false);
+      const order = ensure('orders', data.orderId); const wh = warehouse(receivingWarehouseId(store, data.warehouseId), false);
       const supplierId=str(data.supplierId)||String(order.supplierId||'');if(!supplierId)throw new AppError(422,'Choose the delivery supplier.');ensure('suppliers',supplierId);
       if (order.status === 'Cancelled' || order.status === 'Received') throw new AppError(409, 'This order has no outstanding deliveries.');
       if (!Array.isArray(data.items) || !data.items.length) throw new AppError(422, 'Enter at least one received quantity.');
@@ -70,6 +73,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
         const chargeNo = str(item.chargeNo);
         balance(false, material.record.id, wh.id, chargeNo, amount,material.custom);
         movement(false, 'Receipt', material.record.id, wh.id, amount, { chargeNo,requirementId:line.requirementId||'',isoId:line.isoId||'', note: `${order.number}${note ? ' · ' + note : ''}` },material.custom);
+        recordReceipt(procurement, { order, line, warehouseId: wh.id, supplierId, chargeNo, quantity: amount });
       }
       const lines = store.list('order_lines').filter(l => l.orderId === order.id);
       const status = lines.every(l => Number(l.received) >= Number(l.quantity)) ? 'Received' : 'Partially received';
