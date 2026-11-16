@@ -6,6 +6,7 @@ import { RESOURCE_MAP } from './catalog.ts';
 import { availableWps } from './catalog.ts';
 import { useWorkspace } from './context.tsx';
 import { formatDate, formatNumber } from './api.ts';
+import { enabledOptions } from '../shared/weld-catalogs.ts';
 
 export function Modal({ title, subtitle, children, onClose, wide = false }: { title: string; subtitle?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const titleId = useId();
@@ -125,13 +126,15 @@ export function Dropdown({ trigger, label, children, className = '', menuClassNa
   </div>;
 }
 export function FieldInput({ field, value, onChange, error, values = {}, allowedIds }: { field: Field | ActionField; value: unknown; onChange: (value: unknown) => void; error?: string; values?: Record<string, unknown>;allowedIds?:string[] }) {
-  const { rows, user, label, projectScopeEnabled } = useWorkspace();
+  const { rows, user, label, projectScopeEnabled, siteId } = useWorkspace();
   if (projectScopeEnabled && field.ref === 'projects' && /^(Project|Project scope)$/.test(field.label)) field = { ...field, label: 'Subproject' };
   const uniqueId=useId(); const id = `field-${field.name}-${uniqueId.replaceAll(':','')}`;
   if(field.hidden)return null;
   let options = field.ref ? (rows[field.ref] || []).filter(r => !r._archived) : [];
   if(field.refCategory)options=options.filter(r=>r.category===field.refCategory);
   if(allowedIds)options=options.filter(r=>allowedIds.includes(r.id));
+  // Catalogs switched off on the active main project are not offered; the value already stored stays selectable.
+  if(field.ref)options=enabledOptions(field.ref,options,siteId,rows,value);
   if (field.ref === 'spools' && values.isoId) options = options.filter(r => r.isoId === values.isoId);
   if (field.ref === 'iso_materials' && values.isoId) options = options.filter(r => r.isoId === values.isoId);
   if (field.ref === 'certifications' && /^certificate[12]Id$/.test(field.name)) {

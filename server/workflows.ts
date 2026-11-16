@@ -265,7 +265,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       const carried = RESOURCE_MAP.isometrics.fields.filter(field => !leftOut.has(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
       const wpsRows = Object.fromEntries(['projects', 'wps_projects', 'wps_sites'].map(name => [name, store.list(name)]));
       const copies: Row[] = [];
-      for (const source of sources) {
+      // A copy keeps the references its source had, even to catalog records since switched off on the site.
+      store.keepingReferences(() => { for (const source of sources) {
         const copy = add('isometrics', { ...Object.fromEntries(carried.map(name => [name, source[name]])), projectId: target.id });
         const counts: string[] = [];
         // Spools are created on the copy when a copied weld or cut-list line names one.
@@ -305,7 +306,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
         }
         store.audit('isometrics', copy.id, 'copied', `Copied from ${source.isoNo} (${store.display('projects', ensure('projects', source.projectId))})${counts.length ? ' with ' + counts.join(', ') : ''}`, actor);
         copies.push(store.get('isometrics', copy.id));
-      }
+      } });
       return { resource: 'isometrics', records: copies };
     }
     if (key === 'revision') {

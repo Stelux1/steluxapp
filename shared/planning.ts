@@ -1,6 +1,8 @@
 import { materialRecord } from './materials.ts';
 import type { Row } from './types.ts';
-export const PLANNING_RESOURCES = ['calculation_norms', 'calculation_lines', 'cut_list'];
+import { CATALOG_TABLES } from './weld-catalogs.ts';
+/** Resources whose tables the hosted preparation step creates (planning, and the weld catalog tables). */
+export const PLANNING_RESOURCES = ['calculation_norms', 'calculation_lines', 'cut_list', ...CATALOG_TABLES];
 
 const active = (rows: Record<string, Row[]>, key: string) => (rows[key] || []).filter(row => !row._archived);
 const round = (value: number) => Math.round(value * 1e6) / 1e6;

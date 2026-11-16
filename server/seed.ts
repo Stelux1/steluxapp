@@ -1,5 +1,6 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
+import { seedWeldCatalogs } from './weld-catalogs-seed.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
@@ -16,8 +17,8 @@ export function seed(store: Store) {
       weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10,
       fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 });
     add('sites', 'site-river', { name: 'Riverside installation', address: '42 Harbour Lane', residence: 'Antwerp', zip: '2000' });
-    add('companies', 'company-stelux', { name: 'Stelux Engineering', residence: 'Belgrade', email: 'projects@example.com' });
-    add('companies', 'company-north', { name: 'Northline Process', residence: 'Rotterdam', email: 'office@example.com' });
+    add('companies', 'company-stelux', { name: 'Stelux Engineering', address: '12 Knez Mihailova', zip: '11000', residence: 'Belgrade', phone: '+381 11 555 0100', email: 'projects@example.com' });
+    add('companies', 'company-north', { name: 'Northline Process', address: '7 Maasboulevard', zip: '3063', residence: 'Rotterdam', phone: '+31 10 555 0150', email: 'office@example.com' });
     add('warehouses', 'warehouse-main', { name: 'Main warehouse', siteId: 'site-north', companyId: 'company-stelux', use: 'Both', residence: 'Rotterdam' });
     add('warehouses', 'warehouse-field', { name: 'Field stores', siteId: 'site-river', companyId: 'company-stelux', use: 'Both', residence: 'Antwerp' });
     add('suppliers', 'supplier-steel', { name: 'Atlas Steel Supply', residence: 'Breda', email: 'orders@example.com' });
@@ -52,19 +53,11 @@ export function seed(store: Store) {
     add('roles', 'role-welder', { name: 'Welder' });
     for (let i = 1; i <= 4; i++) add('welders', `welder-${i}`, { name: ['Alex Taylor', 'Robin Lane', 'Casey Brooks', 'Jordan Reed'][i - 1], number: `W-${String(i).padStart(3, '0')}`, companyId: 'company-stelux', roleId: 'role-welder', status: 'Active',globallyDeployable:true });
     ['141 — TIG', '111 — MMA', '135 — MAG', '136 — FCAW'].forEach((name, i) => add('weld_processes', `process-${i}`, { name, code: name.slice(0, 3) }));
-    ['Butt Weld - Field', 'Butt Weld - Shop', 'Branch welds - Field', 'Branch welds - Shop', 'Socket welds - Shop', 'Socket welds - Field', 'Fillet Weld - Shop', 'Fillet Weld - Field', 'Longitudinal Welds - Shop', 'Longitudinal Welds - Field', 'HOOK-UP', 'Victaulic Joint - Shop', 'Victaulic Joint - Field', 'Reinforcement Pad GW - Shop', 'Reinforcement Pad GW - Field', 'Reinforcement Pad FW - Shop', 'Reinforcement Pad FW - Field'].forEach((name, i) => add('weld_types', `weld-type-${i}`, { name, location: name.includes('Field') ? 'Field' : 'Shop', sort: i + 1 }));
-    add('coatings', 'coating-none', { name: 'UNCOATED' });
+    seedWeldCatalogs(store);
     [['1/2"', 21.3, 0.5, 66.9], ['3/4"', 26.7, 0.75, 83.8], ['1"', 33.4, 1, 104.9], ['1.1/4"', 42.2, 1.25, 132.5], ['1.1/2"', 48.3, 1.5, 151.7], ['2"', 60.3, 2, 189.3], ['2.1/2"', 73, 2.5, 229.2], ['3"', 88.9, 3, 279.1], ['4"', 114.3, 4, 358.9], ['6"', 168.3, 6, 528.5], ['8"', 219.1, 8, 688]].forEach(([diameter, size, sizeinch, outline], i) => add('diameters', `diameter-${i + 1}`, { diameter, size, sizeinch, outline, sorting: i + 1 }));
     add('pqr', 'pqr-1', { name: 'STX-PQR-001', standard: 'ISO 15614-1', processId: 'process-0' });
     add('wps', 'wps-1', { name: 'STX-WPS-141-01', method: '141', definition:'Sample procedure — see the attached specification',jointType:'BW',allProjects:true,siteIds:['site-north','site-river'], processId: 'process-0', pqrId: 'pqr-1', standard: 'ISO 15609-1' });
     add('welding_wires', 'wire-1', { name: 'WIRE-316L-01', classification: 'ER316L', diameter: 2.4, manufacturer: 'Sample Filler Co.', chargeNo: 'H-1042' });
-    add('ndt_groups', 'ndt-vol', { name: 'Volumetric examination' });
-    ['RT', 'UT', 'PT', 'MT', 'VT'].forEach((name, i) => add('ndt_processes', `ndt-${i}`, { name, groupId: 'ndt-vol' }));
-    add('ndt_locations', 'ndt-shop', { name: 'Fabrication shop' });
-    add('pwht_processes', 'pwht-1', { name: 'Controlled post-weld heat treatment' });
-    add('pwht_locations', 'pwht-shop', { name: 'Heat treatment bay' });
-    add('qa_engineers', 'qa-1', { name: 'Morgan Lee', companyId: 'company-stelux', email: 'quality@example.com' });
-    ['Isometric drawing', 'ITP', 'NDT report', 'Material certificate', 'Signed release'].forEach((name, i) => add('attachment_names', `attachment-type-${i}`, { name }));
     for (let i = 1; i <= 30; i++) add('welds', `weld-${i}`, { weldNo: `W${String(i).padStart(3, '0')}`, isoId: `iso-${(i - 1) % 9 + 1}`, spoolId: `spool-${(i - 1) % 9 + 1}`, typeId: `weld-type-${i % 4}`, welder1Id: `welder-${i % 4 + 1}`, wpsId: 'wps-1', diameterId: i % 2 ? 'diameter-6' : 'diameter-9', lengthMode: 'Diameter', date: `2026-10-${String(Math.min(21, i)).padStart(2, '0')}`, datefit: '2026-10-01', ndoReq: true, pwhtReq: i === 2 || i === 11, wire1Id: 'wire-1', chargeNo1: 'H-1042', chargeNo2: i === 29 ? '' : 'H-1042', coating1Id: 'coating-none' });
     for (let i = 1; i <= 18; i++) {
       const result = action('inspection-request', { weldIds: [`weld-${i}`], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-19' });

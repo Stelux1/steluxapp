@@ -11,6 +11,7 @@ import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
+import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -100,6 +101,13 @@ export class Store {
     if (!raw) throw new AppError(404, `The ${this.resource(key).singular} could not be found.`);
     return unpack(raw);
   }
+  /** Depth of `keepingReferences` calls: while above zero, the "Enabled on this site" rule does not refuse references. */
+  private keptReferences = 0;
+  /**
+   * Run writes that carry references over from existing records (copy isometrics): the rule refusing references to
+   * catalog records switched off on the site applies to newly chosen references only, so a copy keeps what its source had.
+   */
+  keepingReferences<T>(fn: () => T): T { this.keptReferences++; try { return fn(); } finally { this.keptReferences--; } }
   validate(key: string, input: Record<string, unknown>, existing?: Row,actor:Actor=SYSTEM): RecordData {
     const resource = this.resource(key);
     const data: RecordData = {};
@@ -132,6 +140,7 @@ export class Store {
       data[field.name] = value as Value;
     }
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
+    if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
@@ -188,6 +197,7 @@ export class Store {
       const result = this.get(key, id);
       this.audit(key, id, 'created', `Created ${this.resource(key).singular} ${this.display(key, result)}`, actor);
       this.syncRelations(key,id,input,actor);
+      applyEnablement(this, key, id, input, actor);
       return result;
     });
   }
@@ -203,6 +213,7 @@ export class Store {
       }
       this.audit(key, id, 'updated', `Updated ${this.resource(key).singular} ${this.display(key, existing)}`, actor);
       this.syncRelations(key,id,input,actor);
+      applyEnablement(this, key, id, input, actor);
       return this.get(key, id);
     });
   }
