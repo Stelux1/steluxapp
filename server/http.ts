@@ -366,7 +366,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && resource.key === 'materials') { req.body.changes = materialMassEdit(req.body.changes); assertMaterialsInScope(store, req.body.ids); }
     dropCompletionInput(resource.key, req.body.changes);
     access.input(resource.key, req.body.changes);
-    if (pilots && resource.key === 'isometrics' && ['xRay', 'itpId', 'itp2Id'].some(name => Object.hasOwn(req.body.changes, name))) throw new AppError(422, 'X Ray % and the ITP links cannot be bulk edited. Use Link ITP on the isometric.');
+    if (pilots && resource.key === 'isometrics' && ['xRay', 'itpId', 'itp2Id', 'testSystemId'].some(name => Object.hasOwn(req.body.changes, name))) throw new AppError(422, 'X Ray %, the test system and the ITP links cannot be bulk edited. Use Link ITP on the isometric; the Hydrotest release assigns the test system.');
     // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && resource.key !== 'materials' && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');

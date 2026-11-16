@@ -1,5 +1,6 @@
 import type { Field, Row } from './types.ts';
 import { itpNdtPercent, itpsForProject } from './itp-dashboard.ts';
+import { isoTestSystemError } from './project-iso-forms.ts';
 
 /**
  * ITPs page and Link ITP (Weld Pilot), built from the vendor manual (chapter "18. ITPs") and the reference's ITP
@@ -139,6 +140,7 @@ export const unlinkValues = (slot: 1 | 2): Record<string, string> => slot === 1 
 export function isoWriteErrors(input: Record<string, unknown>, existing: Row | undefined, itps: Row[]): Record<string, string> {
   const errors: Record<string, string> = {};
   if (input.xRay !== undefined && text(input.xRay) !== text(existing?.xRay)) errors.xRay = X_RAY_READONLY;
+  const testSystem = isoTestSystemError(input, existing); if (testSystem) errors.testSystemId = testSystem;
   const changed = (field: 'itpId' | 'itp2Id') => input[field] !== undefined && text(input[field]) !== text(existing?.[field]) && Boolean(text(input[field]));
   const next = { ...existing, ...input };
   const primary = linked(next, 'itpId', itps), secondary = linked(next, 'itp2Id', itps);

@@ -13,6 +13,94 @@ import { availabilityFor, projectResource } from '../shared/release.ts';
 import { availableWps, RELATIONS, relationIds } from '../shared/welding.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
 import * as catalog from '../client/catalog.ts';
+import { hostedFieldOrder } from '../shared/welder-data.ts';
+import { isoWriteErrors } from '../shared/itps.ts';
+import { ISO_EDIT_FILES_NOTE, PROJECT_FORM_ORDER, PROJECT_LIST_HEADERS, isoDocumentType, isoFiles, pdfFileError } from '../shared/project-iso-forms.ts';
+
+// ----- hosted project and isometric forms (iso-shared-022 / -027 / -031) ----------------------------------------------------------
+
+const formRow = (id: string, data: Record<string, unknown> = {}): Row => ({ id, _version: 1, _archived: false, _createdAt: '2026-10-01T00:00:00.000Z', _updatedAt: '2026-10-01T00:00:00.000Z', ...data } as Row);
+const hostedResource = (key: string) => projectResource(availabilityFor('welding-workspace'), RESOURCES.find(resource => resource.key === key)!);
+const shownFields = (key: string, record?: Row) => hostedFieldOrder(key, hostedResource(key).fields, record).filter(field => !field.hidden);
+
+test('hosted Projects list: Sub Projects | Plant location | Project description | Contact name | Authority | Status (%), no record-state column', () => {
+  const projects = hostedResource('projects');
+  assert.deepEqual(projects.columns, ['internnumber', 'externnumber', 'description', 'contact', 'authority']);
+  assert.deepEqual([...projects.columns.map(name => projects.fields.find(field => field.name === name)!.label), 'Status (%)'], PROJECT_LIST_HEADERS);
+  assert.deepEqual(PROJECT_LIST_HEADERS, ['Sub Projects', 'Plant location', 'Project description', 'Contact name', 'Authority', 'Status (%)']);
+  assert.ok(!projects.columns.includes('status'));
+  // The catalog the browser installs keeps these columns (it relabelled them for the profiles without pilots only).
+  catalog.configureCatalog(availabilityFor('welding-workspace'));
+  assert.deepEqual(catalog.RESOURCE_MAP.projects.columns, projects.columns);
+  assert.equal(catalog.RESOURCE_MAP.projects.fields.find(field => field.name === 'description')!.label, 'Project description');
+  catalog.configureCatalog();
+  // The other profiles keep their own columns and labels.
+  const prototype = projectResource(availabilityFor('access-prototype'), RESOURCES.find(resource => resource.key === 'projects')!);
+  assert.equal(prototype.fields.find(field => field.name === 'internnumber')!.label, 'Internal project number');
+  assert.ok(prototype.columns.includes('status'));
+});
+
+test('hosted Add / Edit project: the reference field order, our own fields in "More", title Add project and button Add', () => {
+  const projects = hostedResource('projects');
+  assert.deepEqual(projects.wording, { add: 'Add project', edit: 'Edit project', remove: 'Delete project' });
+  const form = shownFields('projects');
+  assert.deepEqual(form.slice(0, PROJECT_FORM_ORDER.length).map(field => field.name), PROJECT_FORM_ORDER);
+  assert.deepEqual(form.slice(0, 8).map(field => field.label), ['Sub Projects', 'Plant location', 'Contact name', 'Phone', 'Authority', 'Project description', 'Weld Pilot', 'MTO Pilot']);
+  // The reference fields are in the open first section; the description is no longer behind a collapsed "Notes".
+  assert.ok(form.slice(0, 8).every(field => !field.section));
+  assert.equal(form[0].required, true);
+  assert.deepEqual(form.slice(8).filter(field => field.section !== 'More').map(field => field.name), []);
+  assert.deepEqual(form.filter(field => field.section === 'More').map(field => field.name).slice(0, 5), ['siteId', 'companyId', 'status', 'startdate', 'enddate']);
+  // Weld Pilot and MTO Pilot are ticked by default; there are no boxes for applications we do not run.
+  assert.deepEqual(form.filter(field => field.type === 'checkbox' && /Pilot/.test(field.label)).map(field => [field.name, field.default]), [['weldPilot', true], ['mtoPilot', true]]);
+  assert.ok(!form.some(field => /civil|est/i.test(field.name)));
+  // Other profiles keep the shared order and the Applications section.
+  const prototype = projectResource(availabilityFor('access-prototype'), RESOURCES.find(resource => resource.key === 'projects')!);
+  assert.equal(prototype.wording, undefined);
+  assert.equal(prototype.fields[0].name, 'internnumber'); assert.equal(prototype.fields.find(field => field.name === 'description')!.section, 'Notes');
+});
+
+test('hosted Add / Edit isometric: reference labels and order, Test system and X Ray % read-only, no ASME / ASME2 / NDT % duplicates, phase flags only via Set phase', () => {
+  const iso = hostedResource('isometrics');
+  const hidden = (name: string) => iso.fields.find(field => field.name === name)!.hidden === true;
+  for (const name of ['asme', 'asme2', 'ndtPercentage']) assert.ok(hidden(name), `${name} stays stored but is not offered`);
+  for (const name of ['prefab_materials', 'prefab_est', 'prefab_welds', 'prefab_doc', 'field_doc', 'field_test', 'field_release', 'prep_finished']) assert.ok(hidden(name), `${name} is set with Set phase only`);
+  const readonly = iso.fields.filter(field => field.readonly && !field.hidden).map(field => field.name).sort();
+  assert.ok(readonly.includes('testSystemId') && readonly.includes('xRay'));
+  assert.equal(iso.fields.find(field => field.name === 'testSystemId')!.label, 'Test system');
+  // Add: the order of weld__iso__0001.txt:976-1092 (Project is ours: the reference adds from inside one project; the reference's picker pair comes as ITP No / ITP Field).
+  const add = shownFields('isometrics');
+  const reference = ['Iso number', 'IRN', 'Revision number', 'ITP No', 'ITP Field', 'Asset tag', 'Drawing no. 1', 'Date', 'NoBo Reg. no.', 'NoBo serial', 'Piping class', 'Test pressure', 'Test system', 'Test medium', 'X Ray %', 'NDT norm', 'PED Cat.-Mod', 'Nom. diameter', 'Material', 'Paint spec.', 'RAL', 'Insulation', 'Elevation', 'X axis', 'Y axis', 'Zone / Area', 'Priority', 'Chemical clean', 'Tracing Spec', 'Norm No.', 'Norm', 'NoBo', 'PWHT', 'Memo'];
+  assert.deepEqual(add.map(field => field.label).filter(label => reference.includes(label)), reference);
+  assert.deepEqual(add.slice(0, 2).map(field => field.label), ['Iso number', hostedResource('isometrics').fields.find(field => field.name === 'projectId')!.label]);
+  // Edit (weld__iso__0001__edit-isometric.txt): Asset tag before IRN, the Memo is "Instructions for field personnel".
+  const edit = shownFields('isometrics', formRow('iso-1')).map(field => field.label);
+  assert.deepEqual(edit.filter(label => reference.includes(label) || label === 'Instructions for field personnel'), ['Iso number', 'Asset tag', 'IRN', ...reference.slice(2, 5), ...reference.slice(6, 33), 'Instructions for field personnel']);
+  assert.equal(edit.indexOf('Asset tag') < edit.indexOf('IRN'), true);
+  assert.equal(add.indexOf(add.find(field => field.label === 'IRN')!) < add.indexOf(add.find(field => field.label === 'Asset tag')!), true);
+  // The reference's Priority list.
+  assert.deepEqual(add.find(field => field.name === 'priority')!.options, ['No priority', 'Prio 1', 'Prio 2', 'Prio 3', 'Prio 4', 'Prio 5']);
+  // Our own fields follow the reference ones in a "More" section; the other profiles keep their form.
+  assert.deepEqual(add.filter(field => field.section === 'More').map(field => field.name).sort(), ['area', 'fieldPackageId', 'pressureTestPlan']);
+  const prototype = projectResource(availabilityFor('access-prototype'), RESOURCES.find(resource => resource.key === 'isometrics')!);
+  assert.ok(prototype.fields.filter(field => ['asme', 'asme2', 'testSystemId'].includes(field.name)).every(field => !field.hidden && !field.readonly));
+});
+
+test('hosted isometric form files: three PDF inputs on Add, one on Edit with the ITP catalog note; documents are saved under the drawing revision', () => {
+  assert.deepEqual(isoFiles(false).map(input => input.label), ['Isometric', 'ITP document', 'ITP document Field']);
+  assert.deepEqual(isoFiles(true).map(input => input.label), ['Isometric']);
+  assert.equal(ISO_EDIT_FILES_NOTE, 'ITP PDFs are managed in the ITP catalog. Select ITPs above; the latest revision is synced automatically.');
+  assert.deepEqual(isoFiles(false).map(input => isoDocumentType(input.kind, { revNo: '2', itpRevNo: '', itp2RevNo: '1' })), ['ISO revision 2', 'ITP', 'ITP 2 revision 1']);
+  assert.equal(pdfFileError('drawing.pdf'), ''); assert.equal(pdfFileError('drawing.png'), 'Choose a PDF file.');
+});
+
+test('the test system of an isometric is assigned in the Hydrotest release, not typed in its form', () => {
+  const stored = formRow('iso-1', { testSystemId: 'ts-1' });
+  assert.deepEqual(Object.keys(isoWriteErrors({ testSystemId: 'ts-2' }, stored, [])), ['testSystemId']);
+  assert.deepEqual(Object.keys(isoWriteErrors({ testSystemId: '' }, stored, [])), ['testSystemId']);
+  assert.deepEqual(isoWriteErrors({ testSystemId: 'ts-1', description: 'x' }, stored, []), {});   // the unchanged value of a form
+  assert.deepEqual(isoWriteErrors({ testSystemId: '' }, formRow('iso-2'), []), {});          // a new isometric starts without one
+});
 
 const password = 'Evaluation-Test-Password';
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {

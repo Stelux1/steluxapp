@@ -129,7 +129,8 @@ test('the summary never names another project\'s test system (test systems may h
   const f = await fixture(t);
   const river = f.store.create('test_systems', { name: 'RIVER-TS-07', projectId: 'project-steam', medium: 'Water', pressure: '10 bar' }, SYSTEM);
   const shared = f.store.create('test_systems', { name: 'SHARED-TS-01', medium: 'Water', pressure: '10 bar' }, SYSTEM);
-  const put = (id: string, data: Record<string, unknown>) => f.admin.request(`/records/isometrics/${id}`, { method: 'PUT', pilot: 'weld', data: { ...data, _version: f.store.get('isometrics', id)._version } });
+  // The Hydrotest release assigns an isometric's test system; the record form no longer takes it (iso-shared-031), so the test assigns it as that release does.
+  const put = async (id: string, data: Record<string, unknown>) => { f.store.update('isometrics', id, data, f.store.get('isometrics', id)._version, SYSTEM); return { status: 200 }; };
   // 1. Test systems are composed at spool level and mix projects (reference PTC 01 holds spools of two projects): no
   //    same-project rule on isometrics or on the test system any more (lead decision, weld-releases-027).
   assert.equal((await put('iso-1', { testSystemId: shared.id })).status, 200);

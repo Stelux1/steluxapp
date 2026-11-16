@@ -79,7 +79,7 @@ test('the hosted profile delivers every site setting and both pilot switches, ot
   assert.deepEqual(sections.slice(-3), ['Project settings', 'Document settings', 'Iso progress']);
   assert.deepEqual(site.fields.filter(field => field.section === 'Iso progress').map(field => field.name), PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(activity => activity.field)]));
   const project = projectResource(hosted, RESOURCE_MAP.projects);
-  assert.deepEqual(project.fields.filter(field => field.section === 'Applications').map(field => [field.name, field.label, field.default]), [['weldPilot', 'Weld Pilot', true], ['mtoPilot', 'MTO Pilot', true]]);
+  assert.deepEqual(project.fields.filter(field => field.name === 'weldPilot' || field.name === 'mtoPilot').map(field => [field.name, field.label, field.default]), [['weldPilot', 'Weld Pilot', true], ['mtoPilot', 'MTO Pilot', true]]);
   assert.deepEqual(availabilityFor('full'), undefined);
 });
 
