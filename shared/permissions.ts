@@ -45,8 +45,16 @@ export function scopeLevel(user:User,key:string):number{
  const own=user.permissions[area.module];
  return user.availability?.features.includes('pilots')&&SHARED_PILOT_SCOPES.includes(key)?Math.max(own,user.permissions.materials,user.permissions.welding):own;
 }
-export function canScope(user:User,key:string,verb:PermissionVerb='show'){
+/**
+ * Areas a pilot may read but never change although they belong to the other pilot: inside Weld Pilot the Material
+ * database (6), so certificates and welds show their material and a certificate can choose one. It opens to accounts
+ * that may read certifications (18) or welds (63) there; every other verb stays refused.
+ */
+export const PILOT_READ_SCOPES:Partial<Record<PilotKey,{area:string;through:string[]}[]>>={weld:[{area:'6',through:['18','63']}]};
+const pilotRead=(user:User,key:string)=>user.availability?.features.includes('pilots')&&user.pilot?PILOT_READ_SCOPES[user.pilot]?.find(entry=>entry.area===key):undefined;
+export function canScope(user:User,key:string,verb:PermissionVerb='show'):boolean{
  const area=areas.get(key);if(!area)return false;
+ const borrowed=pilotRead(user,key);if(borrowed)return verb==='show'&&borrowed.through.some(source=>canScope(user,source,'show'));
  if(user.capabilities)return Boolean(user.capabilities[key]?.includes(verb));
  const level=['show','export','print'].includes(verb)?1:area.module==='settings'?3:2;
  return scopeLevel(user,key)>=level;
@@ -102,6 +110,8 @@ export function canResource(user:User,key:string,verb:PermissionVerb='show',row?
   if(key==='signatures')return signatureAccess(user,verb,row);
  }
  const scopes=user.availability&&!row&&['inspection_requests','inspection_results'].includes(key)?user.availability.inspectionTypes.flatMap(type=>resourceScopes(key,{type})):resourceScopes(key,row);
+ // An area read across the pilot boundary is read only: no export or print either (PILOT_READ_SCOPES).
+ if(verb!=='show'&&scopes.length&&scopes.every(scope=>pilotRead(user,scope)))return false;
  return scopes.some(scope=>canScope(user,scope,scopeOperation(scope,verb)));
 }
 export function actionScope(key:string,data:Record<string,unknown>={}):[string,PermissionVerb]{

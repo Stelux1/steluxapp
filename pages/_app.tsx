@@ -30,6 +30,7 @@ import '../client/mto-logistics.css';
 import '../client/mto-dashboard.css';
 import '../client/pdf-documents.css';
 import '../client/iso-book.css';
+import '../client/certifications.css';
 
 export default function WorkspaceApp({ Component, pageProps }: AppProps) {
   return <Component {...pageProps}/>;

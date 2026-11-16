@@ -19,6 +19,8 @@ export interface Resource {
   key: string; title: string; singular: string; module: Module; group: string;
   description: string; fields: Field[]; columns: string[]; display: string;
   unique?: string[][]; readonly?: boolean; source?: string; actions?: string[]; createAction?: string;
+  /** List headers that differ from the field labels (the form keeps the field label). */
+  columnLabels?: Record<string, string>;
 }
 export type PermissionVerb='show'|'insert'|'edit'|'delete'|'export'|'import'|'print';
 export type PermissionRules=Record<string,PermissionVerb[]>;

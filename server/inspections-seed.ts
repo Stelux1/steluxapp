@@ -18,7 +18,7 @@ export function seedInspectionSamples(store: Store) {
     // W005: RT not accepted with porosity over 14 mm; the repair weld W005R1 is welded but not examined yet.
     rules.run('ndt-weld', { weldId: 'weld-5', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-005-01', reportNo: 'RT-2026-005', date: '2026-10-20', result: 'Rejected', naLength: 14, defectType: '2013' }] });
     const w005r1 = store.list('welds').find(row => row.repairOfId === 'weld-5');
-    if (w005r1) set(w005r1.id, { welder1Id: 'welder-2', datefit: '2026-10-22', date: '2026-10-23', wire1Id: 'wire-1' });
+    if (w005r1) set(w005r1.id, { welder1Id: 'welder-2', datefit: '2026-10-22', date: '2026-10-23', wire1Id: has('welding_wires', 'wire-3') ? 'wire-3' : 'wire-1' });
     rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-13', 'weld-7'] });
     // W011: RT not accepted with slag; repair weld W011R1 re-examined and accepted, two tracers of the same welder.
     rules.run('ndt-weld', { weldId: 'weld-11', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-011-01', reportNo: 'RT-2026-011', date: '2026-10-20', result: 'Rejected', naLength: 22, defectType: '301' }] });

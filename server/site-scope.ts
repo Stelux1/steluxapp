@@ -3,6 +3,7 @@ import type { RequestHandler } from 'express';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { SCOPE_PILOTS, SITE_REFUSED, SITE_RULES, SITE_SCOPE_ALL, USER_SITES, scopeLimited, siteIdsField, siteScopeField, type ScopePilot } from '../shared/site-scope.ts';
 import type { Row } from '../shared/types.ts';
+import { SITE_OWNED, ownerSites } from '../shared/welder-data.ts';
 import { AppError, type Store } from './store.ts';
 
 /**
@@ -20,6 +21,8 @@ import { AppError, type Store } from './store.ts';
 
 /** Marks "belongs to no main project" and "cannot be told" in the resolver. */
 const GLOBAL = '', UNRESOLVED = '\u0000unresolved';
+/** Prefix of a record that belongs to several main projects (an older certificate or wire linked to projects of more than one). */
+const SEVERAL = '\u0000several\u0000';
 export type AllowedSites = 'all' | Set<string>;
 
 /** The main projects an account may reach in a pilot: "all" unless its scope there is "Specific project site(s)". */
@@ -31,6 +34,7 @@ export function allowedSites(store: Store, account: Row, pilot: ScopePilot): All
 export class SiteScope {
   private rows = new Map<string, Map<string, Row>>();
   private sites = new Map<string, string>();
+  private ownerLists = new Map<string, { links: Row[]; projects: Row[] }>();
   /** While the scope resolves a parent itself, its own `store.get` calls are not checked. */
   private resolving = 0;
   constructor(private store: Store, readonly pilot: ScopePilot, readonly allowed: Set<string>) {}
@@ -53,10 +57,24 @@ export class SiteScope {
     this.sites.set(memo, site);
     return site;
   }
+  /**
+   * A certificate or welding wire saved before it carried its main project: the main projects of its linked projects
+   * (shared/welder-data.ts `ownerSites`); one for all projects stays shared (GLOBAL), one linked to several main
+   * projects is reachable from any of them (SEVERAL).
+   */
+  private ownerSite(key: string, row: Row | Record<string, unknown>): string {
+    const owned = SITE_OWNED[key];
+    // One read of the links and projects per request.
+    let lists = this.ownerLists.get(key);
+    if (!lists) { lists = { links: this.store.list(owned.links, true), projects: this.store.list('projects', true) }; this.ownerLists.set(key, lists); }
+    const sites = ownerSites(key, row, lists);
+    return sites === 'all' ? GLOBAL : sites.length === 1 ? sites[0] : SEVERAL + sites.join('\u0000');
+  }
   /** The main project of a record: its id, GLOBAL, or UNRESOLVED. The record's own fields are always read from `row`. */
   siteOf(key: string, row: Row | Record<string, unknown>, depth = 0): string {
     const rule = SITE_RULES[key];
     if (!rule || depth > 8) return UNRESOLVED;
+    if (SITE_OWNED[key] && !(typeof row.siteId === 'string' && row.siteId)) return this.ownerSite(key, row);
     if (rule === 'global') return GLOBAL;
     if (rule === 'site') return String(row.id || '') || UNRESOLVED;
     if (rule === 'entity') {
@@ -72,6 +90,7 @@ export class SiteScope {
   /** Whether the account may see or change this record. */
   allows(key: string, row: Row | Record<string, unknown>): boolean {
     const site = this.siteOf(key, row);
+    if (site.startsWith(SEVERAL)) return site.slice(SEVERAL.length).split('\u0000').some(id => this.allowed.has(id));
     return site === GLOBAL || site !== UNRESOLVED && this.allowed.has(site);
   }
   allowsSite(siteId: string) { return this.allowed.has(siteId); }

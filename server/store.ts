@@ -18,6 +18,7 @@ import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
+import { HOSTED_OPTIONAL } from '../shared/welder-data.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -152,7 +153,9 @@ export class Store {
       if(key==='isometrics'&&field.name==='xRay'&&typeof value==='number')value=String(value);
       if(key==='flanges')value=flangeStoredValue(field,value);
       if(key==='isometrics'&&existing&&['itpRevNo','itp2RevNo'].includes(field.name)&&input[field.name]===undefined&&existing[field.name]===undefined){const type=field.name==='itpRevNo'?'ITP':'ITP 2';value=this.list('revisions').find(r=>r.isoId===existing.id&&r.type===type)?.revNo??field.default??'0';}
-      if (field.required && (value === '' || value === null || value === undefined)) { errors[field.name] = `${field.label} is required.`; continue; }
+      // The hosted profile leaves a few shared requirements out (an attest number is optional in the reference).
+      const required = field.required && !(this.hostedRules && HOSTED_OPTIONAL[key]?.includes(field.name));
+      if (required && (value === '' || value === null || value === undefined)) { errors[field.name] = `${field.label} is required.`; continue; }
       if (field.type === 'checkbox') {
         if (typeof value !== 'boolean') errors[field.name] = `${field.label} must be checked or unchecked.`;
       } else if (field.type === 'number') {
@@ -162,7 +165,7 @@ export class Store {
       } else if (typeof value !== 'string') errors[field.name] = `${field.label} must be text.`;
       else {
         const text = value.trim(); value = text;
-        if (field.required && !text) errors[field.name] = `${field.label} is required.`;
+        if (required && !text) errors[field.name] = `${field.label} is required.`;
         if (text.length > 20_000) errors[field.name] = `${field.label} is too long.`;
         if (field.type === 'email' && text && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) errors[field.name] = 'Enter a valid email address.';
         if (field.type === 'date' && text) { try { validDate(text, field.label); } catch (e) { errors[field.name] = (e as Error).message; } }
@@ -297,7 +300,8 @@ export class Store {
     if(['order_lines','stock','movements','picklists'].includes(key)&&row.customMaterialId)return this.display('custom_materials',this.get('custom_materials',row.customMaterialId,true));
     const def = this.resource(key); const f = def.fields.find(f => f.name === def.display);
     if (f?.ref && row[f.name]) { try { return this.display(f.ref, this.get(f.ref, row[f.name], true)); } catch { return 'Unavailable record'; } }
-    return String(row[def.display] || row.name || row.id);
+    // A certificate without an attest number is known by its index number.
+    return String(row[def.display] || row.name || (key === 'certifications' ? row.indexNo : '') || row.id);
   }
   syncRelations(key:string,id:string,input:Record<string,unknown>,actor:Actor=SYSTEM){
     for(const relation of RELATIONS[key]||[]){

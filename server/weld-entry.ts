@@ -1,6 +1,7 @@
 import { Store, AppError, today, SYSTEM, type Actor } from './store.ts';
 import { availableWps } from '../shared/welding.ts';
 import type { Row } from '../shared/types.ts';
+import { inOwnerSite } from '../shared/welder-data.ts';
 import {
   MASS_EDIT_FIELDS, WELD_ENTRY_FIELDS, certificateErrors, hasWelder, lockContext, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent, orderedWelds,
   planWeldRange, readMassEdit, weldLock, welderWpsErrors,
@@ -165,9 +166,9 @@ export function seedWeldEntry(store: Store) {
   // Certificates of fittings and flanges next to the pipe certificates of the welder-data sample (certificate-1..3), in
   // the same format: generated index numbers, certificate type, type of material, material part and project links.
   const certificates: [string, Values][] = [
-    ['cert-h1043', { name: 'ATT-26-1191', indexNo: '0004', chargeNo: 'H-1043', certType: '3.1', materialId: 'material-2', materialTypeId: 'material-type-a106b', materialPartId: 'part-1', basicMaterial: 'C-Si', supplierId: 'supplier-steel', date: '2026-09-02', standard: 'EN 10204 3.1', materialCode: 'A234 WPB', diameter: '2"', schedule: '40', wallThickness: '3.91', materialDescription: '90° long radius elbow', allProjects: false, projectIds: ['project-cooling'], controlled: true, accepted: true }],
-    ['cert-h2211', { name: 'ATT-26-1198', indexNo: '0005', chargeNo: 'H-2211', certType: '3.1', materialId: 'material-7', materialTypeId: 'material-type-a312-316l', materialPartId: 'part-1', basicMaterial: 'Cr-Ni-Mo', supplierId: 'supplier-pipe', date: '2026-09-09', standard: 'EN 10204 3.1', materialCode: 'A403 WP316L', diameter: '4"', schedule: '10S', wallThickness: '3.05', materialDescription: '90° elbow, stainless steel 316L', allProjects: false, projectIds: ['project-steam'], controlled: true, accepted: true }],
-    ['cert-h3305', { name: 'ATT-26-1215', indexNo: '0006', chargeNo: 'H-3305', certType: '3.1', materialId: 'material-3', materialTypeId: 'material-type-a106b', materialPartId: 'part-2', basicMaterial: 'C-Si', supplierId: 'supplier-steel', date: '2026-09-16', standard: 'EN 10204 3.1', materialCode: 'A105', diameter: '2"', schedule: '150', wallThickness: '', materialDescription: 'Weld neck flange, class 150', allProjects: false, projectIds: ['project-skid'], controlled: true, accepted: false }],
+    ['cert-h1043', { siteId: 'site-north', diameterId: 'diameter-6', name: 'ATT-26-1191', indexNo: '0004', chargeNo: 'H-1043', certType: '3.1', materialId: 'material-2', materialTypeId: 'material-type-a106b', materialPartId: 'part-1', basicMaterial: 'C-Si', supplierId: 'supplier-steel', date: '2026-09-02', standard: 'EN 10204 3.1', materialCode: 'A234 WPB', diameter: '2"', schedule: '40', wallThickness: '3.91', materialDescription: '90° long radius elbow', allProjects: false, projectIds: ['project-cooling'], controlled: true, accepted: true }],
+    ['cert-h2211', { siteId: 'site-river', diameterId: 'diameter-9', name: 'ATT-26-1198', indexNo: '0005', chargeNo: 'H-2211', certType: '3.1', materialId: 'material-7', materialTypeId: 'material-type-a312-316l', materialPartId: 'part-1', basicMaterial: 'Cr-Ni-Mo', supplierId: 'supplier-pipe', date: '2026-09-09', standard: 'EN 10204 3.1', materialCode: 'A403 WP316L', diameter: '4"', schedule: '10S', wallThickness: '3.05', materialDescription: '90° elbow, stainless steel 316L', allProjects: false, projectIds: ['project-steam'], controlled: true, accepted: true }],
+    ['cert-h3305', { siteId: 'site-north', diameterId: 'diameter-6', name: 'ATT-26-1215', indexNo: '0006', chargeNo: 'H-3305', certType: '3.1', materialId: 'material-3', materialTypeId: 'material-type-a106b', materialPartId: 'part-2', basicMaterial: 'C-Si', supplierId: 'supplier-steel', date: '2026-09-16', standard: 'EN 10204 3.1', materialCode: 'A105', diameter: '2"', schedule: '150', wallThickness: '3.91', materialDescription: 'Weld neck flange, class 150', allProjects: false, projectIds: ['project-skid'], controlled: true, accepted: false }],
   ];
   for (const [id, data] of certificates) { try { add('certifications', id, data); } catch { /* material absent */ } }
   // Weld table order for every sample isometric, and welds of the first isometrics traced to certificates.
@@ -185,11 +186,14 @@ export function seedWeldEntry(store: Store) {
   for (const [id, one, two] of [['weld-4', 'EXISTING', 'CONN ISO'], ['weld-13', 'CONN ISO', 'EXISTING']] as const) { try { const weld = store.get('welds', id); store.update('welds', id, { chargeNo1: one, chargeNo2: two }, weld._version, SYSTEM); } catch { /* absent */ } }
   // Every other sample weld whose charge number matches exactly one sample certificate is traced to it, so Idx and Material show.
   const sampleCertificates = store.list('certifications');
+  // Only a certificate of the weld's own main project (shared/welder-data.ts → SITE_OWNED).
+  const isoSite = new Map(store.list('isometrics').map(iso => [iso.id, String(store.list('projects').find(project => project.id === iso.projectId)?.siteId ?? '')]));
+  const owned = { links: store.list('certificate_projects'), projects: store.list('projects') };
   for (const weld of store.list('welds')) {
     const changes: Values = {};
     for (const side of [1, 2] as const) {
       const charge = String(weld[`chargeNo${side}`] ?? '').trim(); if (!charge || weld[`certificate${side}Id`]) continue;
-      const matches = sampleCertificates.filter(row => String(row.chargeNo ?? '').trim() === charge); if (matches.length !== 1) continue;
+      const matches = sampleCertificates.filter(row => String(row.chargeNo ?? '').trim() === charge && inOwnerSite('certifications', row, isoSite.get(String(weld.isoId)) ?? '', owned)); if (matches.length !== 1) continue;
       Object.assign(changes, { [`certificate${side}Id`]: matches[0].id, [`material${side}Id`]: matches[0].materialId ?? '' });
     }
     if (Object.keys(changes).length) { try { store.update('welds', weld.id, changes, weld._version, SYSTEM); } catch { /* a rule of the sample refuses it: leave the weld as it is */ } }

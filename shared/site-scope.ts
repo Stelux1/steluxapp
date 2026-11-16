@@ -63,7 +63,8 @@ export const SITE_RULES: Record<string, SiteRule> = {
   // Materials catalogs (global)
   suppliers: 'global', material_parts: 'global', material_types: 'global', uoms: 'global', operation_phases: 'global',
   calculation_norms: 'global', materials: 'global', custom_materials: 'global', material_laydowns: 'global', service_companies: 'global',
-  certifications: 'global',
+  // A certificate belongs to one main project (its siteId); one saved before that follows its linked projects (server/site-scope.ts).
+  certifications: shared(SITE),
   laydowns: shared(SITE),
   // Material records of an isometric
   calculation_lines: via(ISO), cut_list: via(ISO), iso_materials: via(ISO),
@@ -83,11 +84,13 @@ export const SITE_RULES: Record<string, SiteRule> = {
   // Welding catalogs and welder data (global); their links to projects and sites follow the linked record.
   roles: 'global', welder_customs_catalog: 'global', certificate_types: 'global', welders: 'global', welder_certificates: 'global',
   weld_processes: 'global', weld_types: 'global', coatings: 'global', diameters: 'global', qualification_options: 'global',
-  pqr: 'global', wps: 'global', welding_wires: 'global', ndt_groups: 'global', ndt_processes: 'global', ndt_defect_codes: 'global',
+  pqr: 'global', wps: 'global', ndt_groups: 'global', ndt_processes: 'global', ndt_defect_codes: 'global',
   ndt_locations: 'global', pwht_processes: 'global', pwht_locations: 'global', qa_engineers: 'global', attachment_names: 'global', itps: 'global',
   wps_pqr: 'global', welder_customs: 'global',
   wps_projects: via(PROJECT), wps_sites: via(SITE), itp_projects: via(PROJECT), welder_sites: via(SITE),
   certificate_projects: via(PROJECT), wire_projects: via(PROJECT),
+  // A welding wire belongs to one main project like a certificate.
+  welding_wires: shared(SITE),
   // Welding records
   welds: via(ISO),
   inspection_requests: via(['weldId', 'welds']),

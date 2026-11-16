@@ -31,6 +31,8 @@ import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
+import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
+import { CERTIFICATE_FLAG_FIELDS } from '../shared/welder-data.ts';
 import { assertAccountReach, assertCopyInScope, assertSiteAccessEdit, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteScopeFor, type SiteScope } from './site-scope.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
@@ -119,7 +121,9 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const catalogBulk = availability?.features.includes('pilots') && enablementKey(/^\/bulk\/([^/]+)$/.exec(req.path)?.[1] || '');
     // Mass edit of the Material database (MTO Pilot catalogs); other hosted bulk routes stay closed.
     const materialBulk = pilots && req.path === '/bulk/materials';
-    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
+    // Controlled / Accepted on the checked certificates (only those two fields, see the bulk route).
+    const certificateBulk = pilots && req.path === '/bulk/certifications';
+    if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk && !certificateBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
     // The rest of the request runs inside the account's project site scope (derived once, see server/site-scope.ts).
     runInSiteScope(scope, next);
   });
@@ -165,9 +169,11 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   registerIsoBookRoutes({ app, store, documents, availability, access, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   registerMtoStockRoutes(app, store, availability, access);
+  if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
+    if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
@@ -216,6 +222,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
     access.input(resource.key, req.body.changes);
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
+    if (pilots && resource.key === 'certifications' && Object.keys(req.body.changes).some(k => !CERTIFICATE_FLAG_FIELDS.includes(k) || typeof req.body.changes[k] !== 'boolean')) throw new AppError(404, 'This resource could not be found.');
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
     const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
   });

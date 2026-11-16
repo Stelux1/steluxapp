@@ -48,7 +48,7 @@ export const WELDER_DATA_PAGES: Record<string, string[]> = {
   material_parts: names('name custom'),
   material_types: names('name typeOfSteel materialDescription basicMaterial materialGroup lucefinGroup iso15608 asmePNumber asmeGroup isoAsme'),
   welding_wires: names('name classification diameter chargeNo description materialTypeId norm certType attestNo supplierId allProjects controlled accepted projectIds'),
-  certifications: names('name indexNo chargeNo certType materialId materialTypeId materialPartId basicMaterial diameter schedule wallThickness hotYield impactStrength supplierId allProjects controlled accepted description projectIds'),
+  certifications: names('name indexNo chargeNo certType materialId materialTypeId materialPartId basicMaterial diameter diameterId schedule wallThickness hotYield impactStrength supplierId allProjects controlled accepted description projectIds siteId'),
 };
 /** Resources delivered without a menu page of their own. */
 export const WELDER_DATA_RECORDS: Record<string, string[]> = {
@@ -67,7 +67,7 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   material_parts: { name: 'Part' },
   material_types: { name: 'Type of material' },
   welding_wires: { name: 'Index number', classification: 'Rod type', diameter: 'mm', certType: 'Certificate-type', description: 'Note' },
-  certifications: { name: 'Attest number', chargeNo: 'Charge number', certType: 'Certificate-type', materialId: 'Material No', diameter: 'Diameter', description: 'Note' },
+  certifications: { name: 'Attest number', chargeNo: 'Charge number', certType: 'Certificate-type', materialId: 'Material', diameter: 'Diameter', diameterId: 'Diameter', description: 'Note' },
   welder_certificates: { certificateTypeId: 'Certificate', processId: 'Weld process' },
   // Punch lists → Add item (capture of 2026-11-16): the category select is "Type", the isometric select "ISO".
   punchlists: { category: 'Type', isoId: 'ISO' },
@@ -93,6 +93,22 @@ export const HOSTED_COLUMNS: Record<string, string[]> = {
   certifications: ['indexNo', 'chargeNo', 'certType', 'name', 'materialId', 'materialTypeId', 'materialPartId', 'basicMaterial', 'diameter', 'schedule', 'wallThickness', 'supplierId', 'controlled', 'accepted'],
   suppliers: ['name', 'address', 'email', 'phone'],
 };
+/** List headers of the reference where they are shorter than the form labels (capture weld__material__certifications.txt:302). */
+export const HOSTED_COLUMN_LABELS: Record<string, Record<string, string>> = {
+  certifications: { materialId: 'Material No', diameter: 'Dia.', controlled: 'Ctrl.', accepted: 'Accp.' },
+};
+/**
+ * Fields the hosted profile keeps on the record but does not offer as inputs: the certificate's diameter text follows the
+ * chosen Weld diameter, its basic material comes from the Type of material, and date / standard / material code /
+ * description of material are not in the reference form. `siteId` is the main project the certificate belongs to.
+ */
+export const HOSTED_HIDDEN: Record<string, string[]> = {
+  certifications: names('diameter basicMaterial date standard materialCode materialDescription'),
+};
+/** Optional in the hosted profile although the shared definition requires them (the reference form has no required mark). */
+export const HOSTED_OPTIONAL: Record<string, string[]> = { certifications: ['name'] };
+/** The Add certification form of the reference, in its order (capture weld__material__certifications.txt:69-118). */
+export const CERTIFICATE_FORM_FIELDS = names('chargeNo name materialId diameterId materialPartId materialTypeId schedule wallThickness hotYield impactStrength certType supplierId allProjects projectIds controlled accepted description');
 /** Required in the hosted profile (the shared definitions stay as they were for the other profiles). */
 export const HOSTED_REQUIRED: Record<string, [string, string][]> = {
   roles: [['abbreviation', 'Abbreviation']],
@@ -106,7 +122,9 @@ export function hostedField(resource: string, field: Field): Field {
   const label = HOSTED_LABELS[resource]?.[field.name];
   const required = HOSTED_REQUIRED[resource]?.some(([name]) => name === field.name);
   const grouped = field.name === 'allProjects' ? { section: 'Links & availability' } : {};
-  return label || required || Object.keys(grouped).length ? { ...field, ...(label ? { label } : {}), ...(required ? { required: true } : {}), ...grouped } : field;
+  const hidden = HOSTED_HIDDEN[resource]?.includes(field.name) ? { hidden: true } : {};
+  const optional = HOSTED_OPTIONAL[resource]?.includes(field.name) ? { required: false } : {};
+  return label || required || Object.keys(grouped).length || Object.keys(hidden).length || Object.keys(optional).length ? { ...field, ...(label ? { label } : {}), ...(required ? { required: true } : {}), ...grouped, ...hidden, ...optional } : field;
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -245,9 +263,15 @@ export function linkedSites(allProjects: unknown, projectIds: string[], projects
   const siteIds = new Set(projects.filter(project => projectIds.includes(project.id)).map(project => String(project.siteId)));
   return sites.filter(site => !site._archived && siteIds.has(site.id));
 }
-/** Missing fields of a certificate when any main project it applies to has "Mandatory fields" on. Empty when none does. */
+/**
+ * Missing fields of a certificate when its main project has "Mandatory fields" on. A certificate saved before
+ * certificates belonged to one main project (no `siteId`) is judged by every main project it applies to. Empty when
+ * the setting is off.
+ */
 export function certificateMandatoryErrors(merged: Record<string, unknown>, projectIds: string[], projects: Row[], sites: Row[]): Record<string, string> {
-  if (!linkedSites(merged.allProjects, projectIds, projects, sites).some(site => site.mandatoryFields === true)) return {};
+  const owner = text(merged.siteId);
+  const judged = owner ? sites.filter(site => site.id === owner) : linkedSites(merged.allProjects, projectIds, projects, sites);
+  if (!judged.some(site => site.mandatoryFields === true)) return {};
   const errors: Record<string, string> = {};
   for (const [name, label] of CERTIFICATE_MANDATORY) if (!text(merged[name])) errors[name] = `${label} is required for a project with mandatory fields.`;
   return errors;
@@ -268,4 +292,70 @@ export function certificatesForProject(args: { certificates: Row[]; links: Row[]
 /** Project filter of the certifications and welding wire lists. `links` are the rows of the matching link resource. */
 export function linkedToProject(row: Row, links: Row[], ownerKey: string, projectId: string): boolean {
   return row.allProjects !== false || links.some(link => !link._archived && link[ownerKey] === row.id && link.projectId === projectId);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// One main project per certificate and welding wire (reference: the lists are per project site)
+// ---------------------------------------------------------------------------------------------------------
+/** Records that belong to one main project, with the link resource of their projects. */
+export const SITE_OWNED: Record<string, { links: string; ownerKey: string }> = {
+  certifications: { links: 'certificate_projects', ownerKey: 'certificateId' },
+  welding_wires: { links: 'wire_projects', ownerKey: 'wireId' },
+};
+/**
+ * The main projects a certificate or welding wire belongs to: its own `siteId`. A record saved before records had one
+ * (derived when reading, nothing is rewritten) belongs to the main projects of its linked projects; it is `'all'` when it
+ * is for all projects or links none, so it stays shared as it was until it is saved with a main project.
+ */
+export function ownerSites(key: string, row: Record<string, unknown>, rows: { links?: Row[]; projects?: Row[] }): string[] | 'all' {
+  const own = text(row.siteId);
+  if (own) return [own];
+  const owned = SITE_OWNED[key];
+  if (!owned || row.allProjects !== false) return 'all';
+  // An archived record keeps the links archived together with it.
+  const projectIds = new Set((rows.links || []).filter(link => (!link._archived || row._archived && link.ownerArchived) && link[owned.ownerKey] === row.id).map(link => String(link.projectId)));
+  const sites = [...new Set((rows.projects || []).filter(project => projectIds.has(project.id)).map(project => text(project.siteId)).filter(Boolean))].sort();
+  return sites.length ? sites : 'all';
+}
+/** Whether a certificate or wire is offered in a main project (an empty `siteId` means every main project). */
+export function inOwnerSite(key: string, row: Record<string, unknown>, siteId: string, rows: { links?: Row[]; projects?: Row[] }): boolean {
+  if (!siteId) return true;
+  const sites = ownerSites(key, row, rows);
+  return sites === 'all' || sites.includes(siteId);
+}
+/** Next index number within one main project: records of other main projects do not count, shared older ones do. */
+export function nextSiteIndexNumber(key: string, field: string, siteId: string, records: Row[], rows: { links?: Row[]; projects?: Row[] }): string {
+  return nextIndexNumber(records.filter(record => inOwnerSite(key, record, siteId, rows)).map(record => record[field]));
+}
+/** The Weld diameter whose Diameter is the given text (an older certificate's free-text diameter), or '' when none or several match. */
+export function diameterIdFor(value: unknown, diameters: Row[]): string {
+  const wanted = text(value).replace(/\s+/g, '').toLowerCase();
+  if (!wanted) return '';
+  const matches = diameters.filter(row => !row._archived && text(row.diameter).replace(/\s+/g, '').toLowerCase() === wanted);
+  return matches.length === 1 ? matches[0].id : '';
+}
+/** List value of a certificate column that the reference derives: Basic material comes from the Type of material. */
+export function certificateBasicMaterial(certificate: Row, types: Row[] = []): string {
+  const type = types.find(row => row.id === certificate.materialTypeId);
+  return text(type?.basicMaterial) || text(certificate.basicMaterial);
+}
+/** Reference messages of the Controlled / Accepted bar (capture weld__start__dashboard.txt:8858). */
+export const CERTIFICATE_FLAG_MESSAGES = { tooMany: 'Too many certificates. Narrow the search or project filter first.', pick: 'Choose Yes or No for Controlled, Accepted, or both.', failed: 'The certificates could not be updated.' };
+export const FLAG_CHOICES = [['', "Don't change"], ['1', 'Yes'], ['0', 'No']] as const;
+/** The changes of the bar: only Controlled / Accepted set to Yes or No; null when neither is chosen. */
+export function certificateFlagChanges(controlled: string, accepted: string): Record<string, boolean> | null {
+  const changes: Record<string, boolean> = {};
+  if (controlled === '1' || controlled === '0') changes.controlled = controlled === '1';
+  if (accepted === '1' || accepted === '0') changes.accepted = accepted === '1';
+  return Object.keys(changes).length ? changes : null;
+}
+/** Fields a bulk change of certificates may touch in the hosted profile. */
+export const CERTIFICATE_FLAG_FIELDS = ['controlled', 'accepted'];
+/** Every use of a certificate on a weld: project, isometric and weld number ("Show certification"). */
+export function certificateUses(certificateId: string, rows: { welds?: Row[]; isometrics?: Row[]; projects?: Row[] }): { weldId: string; project: string; isometric: string; weld: string }[] {
+  const isos = new Map((rows.isometrics || []).map(row => [row.id, row])), projects = new Map((rows.projects || []).map(row => [row.id, row]));
+  return (rows.welds || []).filter(weld => !weld._archived && (weld.certificate1Id === certificateId || weld.certificate2Id === certificateId)).map(weld => {
+    const iso = isos.get(String(weld.isoId)), project = iso ? projects.get(String(iso.projectId)) : undefined;
+    return { weldId: weld.id, project: text(project?.internnumber), isometric: text(iso?.isoNo), weld: text(weld.weldNo) };
+  }).sort((a, b) => a.project.localeCompare(b.project, 'en', { numeric: true }) || a.isometric.localeCompare(b.isometric, 'en', { numeric: true }) || a.weld.localeCompare(b.weld, 'en', { numeric: true }));
 }

@@ -11,13 +11,14 @@ import { api, post, ApiError, formatNumber, apiUrl } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Modal, FieldInput, revealInvalidField } from './components.tsx';
 import { PermissionProfileEditor } from './permission-profile-editor.tsx';
+import { CertificationRecordEditor } from './certifications.tsx';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { enabledOnSite } from '../shared/weld-catalogs.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
 import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
-export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
+export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:props.resourceKey==='certifications'?<CertificationRecordEditor record={props.record} onClose={props.onClose} fallback={<ResourceEditor {...props}/>}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
   const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.active?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):true}:{})}));

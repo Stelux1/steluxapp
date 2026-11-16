@@ -4,7 +4,7 @@ import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
-import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
+import { HOSTED_COLUMNS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
@@ -170,6 +170,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
     for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
     for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
+    // Certificates and welding wires carry the main project they belong to (shared/welder-data.ts → SITE_OWNED).
+    for (const key of Object.keys(SITE_OWNED)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), 'siteId'])];
     // Weld table and weld entry on the isometric: the entry fields of a weld and the actions behind the form.
     deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer'));
     availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS];
@@ -238,6 +240,7 @@ export function projectResource(availability: Availability | undefined, resource
     ...resource, description: descriptions[resource.key] || resource.description,
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
+    ...(pilots && HOSTED_COLUMN_LABELS[resource.key] ? { columnLabels: HOSTED_COLUMN_LABELS[resource.key] } : {}),
     fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
