@@ -521,3 +521,13 @@ test('w1-left-7: Roles words its title and Add Role as the reference does; the W
   // The list hides the delete action for exactly the rows the server refuses (client/records.tsx uses isWelderRole).
   assert.equal(isWelderRole(welderRole), true); assert.equal(isWelderRole(row('r', { name: 'Welding inspector' })), false);
 });
+
+// ----- wave 3 integration (E10): the Deactivate confirmation of the Welders list ------------------------------------------
+test('E10: Deactivate asks "Set this welder inactive?" before the welder moves to the inactive tab; Activate asks nothing', async () => {
+  const { WELDER_DEACTIVATE_CONFIRM } = await import('../shared/welder-data.ts');
+  const { readFileSync } = await import('node:fs');
+  assert.equal(WELDER_DEACTIVATE_CONFIRM, 'Set this welder inactive?');
+  const source = readFileSync('client/welder-data.tsx', 'utf8');
+  assert.match(source, /welder\.status === 'Inactive' \? void setActive\(welder, true\) : setDeactivating\(welder\)/, 'Activate at once, Deactivate through the question');
+  assert.match(source, /<p>\{WELDER_DEACTIVATE_CONFIRM\}<\/p>[\s\S]{0,400}void setActive\(welder, false\)/, 'OK deactivates');
+});

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowUpDown, Bell, BellOff, Pause, Play, ChevronLeft, ChevronRight, ChevronDown, CreditCard, Download, FileText, MoreHorizontal, Paperclip, Pencil, Plus, Printer, RotateCcw, Settings, SlidersHorizontal, Trash2, User } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
-import { DEFAULT_WELDER_PAGE_SIZE, NO_WELDER_FILTER, SUMMARY_LIST, WELDERCARD_LINE_COLUMNS, WELDERCARD_LISTS, WELDERCARD_PATH, WELDER_FILTER_ORDER, WELDER_PAGE_SIZES, activeText, cardLineCells, cardOptions, cardOptionsListed, customsOfWelder, defaultWelderSite, documentNameOptions, documentNote, documentWps, expiringQualifications, filterWelders, joinIds, joinWqNos, notificationsOn, notifyDays, roleText, splitIds, splitWqNos, summaryListOf, todayIso, welderCardHeading, welderCardLines, welderDocuments, welderFilterCount, welderOnSite, welderTab, welderTabCounts, welderWqNumbers, wpsChoices, wqNoOf, type WelderCardFilter, type WelderTab } from '../shared/welder-data.ts';
+import { DEFAULT_WELDER_PAGE_SIZE, NO_WELDER_FILTER, SUMMARY_LIST, WELDER_DEACTIVATE_CONFIRM, WELDERCARD_LINE_COLUMNS, WELDERCARD_LISTS, WELDERCARD_PATH, WELDER_FILTER_ORDER, WELDER_PAGE_SIZES, activeText, cardLineCells, cardOptions, cardOptionsListed, customsOfWelder, defaultWelderSite, documentNameOptions, documentNote, documentWps, expiringQualifications, filterWelders, joinIds, joinWqNos, notificationsOn, notifyDays, roleText, splitIds, splitWqNos, summaryListOf, todayIso, welderCardHeading, welderCardLines, welderDocuments, welderFilterCount, welderOnSite, welderTab, welderTabCounts, welderWqNumbers, wpsChoices, wqNoOf, type WelderCardFilter, type WelderTab } from '../shared/welder-data.ts';
 import { RELATIONS, relationIds } from './catalog.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import { api, apiUrl, formatDate, formatNumber, post } from './api.ts';
@@ -29,7 +29,7 @@ export function WeldersPage() {
   const [filter, setFilter] = useState<WelderCardFilter>(NO_WELDER_FILTER); const [filterOpen, setFilterOpen] = useState(false);
   const [sort, setSort] = useState<{ column: Column; direction: 1 | -1 }>({ column: 'number', direction: 1 });
   const [page, setPage] = useState(0); const [size, setSize] = useState(DEFAULT_WELDER_PAGE_SIZE);
-  const [editor, setEditor] = useState<Row | 'new' | null>(null); const [dialog, setDialog] = useState<Dialog>(null); const [archiving, setArchiving] = useState<Row | null>(null);
+  const [editor, setEditor] = useState<Row | 'new' | null>(null); const [dialog, setDialog] = useState<Dialog>(null); const [archiving, setArchiving] = useState<Row | null>(null); const [deactivating, setDeactivating] = useState<Row | null>(null);
   const sites = RELATIONS.welders?.find(relation => relation.field === 'siteIds');
   const linkedSites = (welder: Row) => sites ? relationIds(allRows, sites, welder.id) : [];
   const projectNames = (welder: Row) => linkedSites(welder).map(id => label('sites', id));
@@ -51,7 +51,7 @@ export function WeldersPage() {
   const creatable = canRecord('welders', 'insert');
   const csvUrl = (format: string) => apiUrl(`/export/welders?format=${format}&archived=true&ids=${shownRows.map(row => row.id).join(',') || '__none__'}`);
   if (!canRecord('welders')) return <EmptyState title="This area is restricted" description="Your profile does not include welders."/>;
-  /** Deactivate / Activate: one request, no confirmation (the welder moves to the other tab). */
+  /** Deactivate / Activate: one request (the welder moves to the other tab). Deactivate first asks "Set this welder inactive?" as the reference does. */
   async function setActive(welder: Row, active: boolean) {
     try { await api(`/records/welders/${welder.id}`, { method: 'PUT', body: JSON.stringify({ status: active ? 'Active' : 'Inactive', _version: welder._version }) }); await refresh(); notify(active ? 'Welder activated.' : 'Welder deactivated.'); }
     catch (error) { notify((error as Error).message); }
@@ -83,12 +83,16 @@ export function WeldersPage() {
             <button onClick={() => setDialog({ kind: 'files', welder })}><Paperclip size={14}/>Certificates and files</button>
             <button onClick={() => setDialog({ kind: 'card', welder })}><CreditCard size={14}/>Welder card</button>
             {canRecord('welders', 'delete', welder) && <button onClick={() => setArchiving(welder)}>{welder._archived ? <><RotateCcw size={14}/>Restore</> : <><Trash2 size={14}/>Delete</>}</button>}
-            {canRecord('welders', 'edit', welder) && !welder._archived && <button onClick={() => void setActive(welder, welder.status === 'Inactive')}>{welder.status === 'Inactive' ? <><Play size={14}/>Activate</> : <><Pause size={14}/>Deactivate</>}</button>}</Dropdown></td></tr>)}</tbody></table></TableScroll>
+            {canRecord('welders', 'edit', welder) && !welder._archived && <button onClick={() => welder.status === 'Inactive' ? void setActive(welder, true) : setDeactivating(welder)}>{welder.status === 'Inactive' ? <><Play size={14}/>Activate</> : <><Pause size={14}/>Deactivate</>}</button>}</Dropdown></td></tr>)}</tbody></table></TableScroll>
       {!shownRows.length && <EmptyState title={q || filterCount ? 'No matching welders' : tab === 'deleted' ? 'No deleted welders' : tab === 'inactive' ? 'No inactive welders' : 'No welders yet'} description={q || filterCount ? 'Try another search or reset the filters.' : tab === 'active' ? 'Add your first welder to get started.' : 'Welders appear here when their status or deletion changes.'} action={q || filterCount ? <button className="btn" onClick={reset}>Reset filters</button> : creatable && tab === 'active' ? <button className="btn primary" onClick={() => setEditor('new')}><Plus size={16}/>Add Welder</button> : undefined}/>}
       <div className="table-footer"><span role="status" aria-live="polite">{shownRows.length ? `${current * size + 1}–${Math.min((current + 1) * size, shownRows.length)}` : '0'} of {formatNumber(shownRows.length, 0)} welders</span><div><span>Rows per page</span><select aria-label="Rows per page" value={size} onChange={event => { setSize(Number(event.target.value)); setPage(0); }}>{WELDER_PAGE_SIZES.map(value => <option key={value}>{value}</option>)}</select><button className="icon-btn" disabled={current === 0} aria-label="Previous page" onClick={() => setPage(current - 1)}><ChevronLeft size={17}/></button><span>{current + 1} / {pages}</span><button className="icon-btn" disabled={current >= pages - 1} aria-label="Next page" onClick={() => setPage(current + 1)}><ChevronRight size={17}/></button></div></div>
     </div>
     {editor && <RecordEditor resourceKey="welders" record={editor === 'new' ? undefined : editor} onClose={() => setEditor(null)}/>}
     {archiving && <ArchiveRecordDialog resourceKey="welders" record={archiving} onClose={() => setArchiving(null)}/>}
+    {deactivating && <Modal title="Deactivate" subtitle={String(deactivating.name || deactivating.number || '')} onClose={() => setDeactivating(null)}>
+      <div className="modal-body"><p>{WELDER_DEACTIVATE_CONFIRM}</p></div>
+      <div className="modal-footer"><button type="button" className="btn" onClick={() => setDeactivating(null)}>Cancel</button><button type="button" className="btn primary" autoFocus onClick={() => { const welder = deactivating; setDeactivating(null); void setActive(welder, false); }}>OK</button></div>
+    </Modal>}
     {dialog?.kind === 'show' && <WelderShowDialog welderId={dialog.welder.id} homeLocation={homeLocation(dialog.welder)} onClose={() => setDialog(null)}/>}
     {dialog?.kind === 'files' && <WelderFilesDialog welderId={dialog.welder.id} onClose={() => setDialog(null)}/>}
     {dialog?.kind === 'card' && <WelderCardDialog welderId={dialog.welder.id} onClose={() => setDialog(null)}/>}

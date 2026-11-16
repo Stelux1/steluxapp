@@ -49,6 +49,8 @@ export const WELDERCARD_LINE_COLUMNS: { list: WelderCardListKey; label: string; 
 /** The selects of "Filter" in the reference's order (the weld card list names). */
 export const WELDER_FILTER_ORDER: WelderCardListKey[] = ['wire', 'process', 'dia', 'dikte', 'pos', 'bw', 'asme'];
 export const SUMMARY_LIST = 'Summary list';
+/** The reference asks before Deactivate (I2a-welders-catalogs: `confirm('Set this welder inactive?')`); Activate asks nothing. */
+export const WELDER_DEACTIVATE_CONFIRM = 'Set this welder inactive?';
 export const CUSTOM_PREFIX = 'Custom - ', CERTIFICATE_PREFIX = 'Certificate - ';
 /** Notify days of a qualification or document that has none of its own. */
 export const DEFAULT_NOTIFY_DAYS = 30;
