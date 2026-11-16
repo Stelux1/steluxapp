@@ -233,15 +233,43 @@ export function assertSiteProfiles(store: Store, input: Record<string, unknown>)
   }
 }
 /**
+ * The main projects an administrator reaches in a pilot when judging access it gives to accounts: none in a pilot it
+ * is not enabled in (sec1-001), otherwise `allowedSites`.
+ */
+export function actorReach(store: Store, actor: Row, pilot: ScopePilot): AllowedSites {
+  return actor[`${pilot}Enabled`] === false ? new Set() : allowedSites(store, actor, pilot);
+}
+const enabledIn = (value: unknown) => value !== false;
+const text = (value: unknown) => value === undefined || value === null ? '' : String(value);
+/**
+ * The pilots in which a change of an existing account switches the pilot on or off or changes the profile it works
+ * under there (`weldEnabled` / `mtoEnabled`, `weldProfileId` / `mtoProfileId`, and `profileId`, which applies in every
+ * pilot the account is enabled in where no pilot profile is chosen). These widen or narrow access like the project site
+ * access does (sec1-001, sec1-002). A new account's reach is judged as saved (`assertAccountReach`).
+ */
+export function pilotAccessChanges(input: Record<string, unknown>, existing?: Row): ScopePilot[] {
+  if (!existing) return [];
+  const profileChanged = input.profileId !== undefined && text(input.profileId) !== text(existing.profileId);
+  return SCOPE_PILOTS.filter(pilot => {
+    const enabled = input[`${pilot}Enabled`], profile = input[`${pilot}ProfileId`];
+    const wasEnabled = enabledIn(existing[`${pilot}Enabled`]), isEnabled = enabled === undefined ? wasEnabled : enabledIn(enabled);
+    if (isEnabled !== wasEnabled) return true;
+    if (profile !== undefined && text(profile) !== text(existing[`${pilot}ProfileId`])) return true;
+    return profileChanged && (wasEnabled || isEnabled);
+  });
+}
+/**
  * Only an administrator who reaches every main project in a pilot may change another account's project site
- * access there, so access cannot be widened by an account that does not have it itself.
+ * access there, switch the pilot on or off for it or change its profile there, so access cannot be widened by an
+ * account that does not have it itself. Nobody changes these for its own account.
  */
 export function assertSiteAccessEdit(store: Store, actorId: string, input: Record<string, unknown>, existing?: Row) {
-  const changes = siteAccessChanges(store, input, existing);
-  if (!changes.length) return;
-  if (existing && existing.id === actorId) throw new AppError(403, 'You cannot change your own project site access. Ask another administrator.');
+  const sites = siteAccessChanges(store, input, existing), grants = pilotAccessChanges(input, existing);
+  if (!sites.length && !grants.length) return;
+  if (existing && existing.id === actorId) throw new AppError(403, sites.length ? 'You cannot change your own project site access. Ask another administrator.' : 'You cannot change your own applications or permission profiles. Ask another administrator.');
   const actor = store.get('users', actorId);
-  if (changes.some(pilot => allowedSites(store, actor, pilot) !== 'all')) throw new AppError(403, 'Only an administrator with access to all project sites can change project site access.');
+  if (sites.some(pilot => actorReach(store, actor, pilot) !== 'all')) throw new AppError(403, 'Only an administrator with access to all project sites can change project site access.');
+  if (grants.some(pilot => actorReach(store, actor, pilot) !== 'all')) throw new AppError(403, 'Only an administrator with access to all project sites of an application can change its access or permission profile.');
 }
 
 /**
@@ -254,7 +282,7 @@ export function assertSiteAccessEdit(store: Store, actorId: string, input: Recor
 export function assertAccountReach(store: Store, actorId: string, account: Row) {
   const actor = store.get('users', actorId);
   for (const pilot of SCOPE_PILOTS) {
-    const mine = allowedSites(store, actor, pilot);
+    const mine = actorReach(store, actor, pilot);
     if (mine === 'all' || account[`${pilot}Enabled`] === false) continue;
     const theirs = allowedSites(store, account, pilot);
     if (theirs === 'all' || [...theirs].some(id => !mine.has(id))) throw new AppError(403, 'This account reaches main projects outside your project site access. Ask an administrator with access to all project sites.');
