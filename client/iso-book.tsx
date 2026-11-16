@@ -23,11 +23,11 @@ function save(blob: Blob, fileName: string) {
  * ISO Book dialog: the parts of the book as checkboxes in the reference order. `choose` lets the user pick the
  * isometrics inside the dialog ("Generate multiple books"); otherwise `isos` are the ones named by the caller.
  */
-export function IsoBookDialog({ isos, choose = false, onClose }: { isos: Row[]; choose?: boolean; onClose: () => void }) {
+export function IsoBookDialog({ isos, choose = false, grouping: initialGrouping = 'by-isometric', onClose }: { isos: Row[]; choose?: boolean; /** How several isometrics are combined when the dialog opens ("Generate grouped Iso book" opens it on by-part). */ grouping?: BookGrouping; onClose: () => void }) {
   const id = useId();
   const [picked, setPicked] = useState<string[]>(choose ? [] : isos.map(iso => iso.id));
   const [listing, setListing] = useState<BookPartsResponse | null>(null), [loading, setLoading] = useState(false), [loadError, setLoadError] = useState(''), [reload, setReload] = useState(0);
-  const [checked, setChecked] = useState<Set<string>>(new Set()), [grouping, setGrouping] = useState<BookGrouping>('by-isometric');
+  const [checked, setChecked] = useState<Set<string>>(new Set()), [grouping, setGrouping] = useState<BookGrouping>(initialGrouping);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [done, setDone] = useState('');
   const first = useRef(true);
   const key = picked.join(',');

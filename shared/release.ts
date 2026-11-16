@@ -7,6 +7,7 @@ import { FLANGE_ATTACHMENT_FIELDS, FLANGE_RECORD_RESOURCES } from './flanges.ts'
 import { CATALOG_SITES, HOSTED_COMPANY_FIELDS, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogField, catalogResource } from './weld-catalogs.ts';
 import { hostedSiteFields } from './site-settings.ts';
 import { itpHostedField } from './itps.ts';
+import { hostedIsometricResource, hostedProjectResource } from './project-iso-forms.ts';
 import { WELDERCARD_PATH, HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
@@ -302,7 +303,9 @@ export function projectResource(availability: Availability | undefined, resource
   // List headers of the reference: one lookup for the list page (catalog fields name theirs with `columnLabel`, the material data in HOSTED_COLUMN_LABELS).
   const columnLabels = { ...Object.fromEntries(projected.fields.filter(f => f.columnLabel).map(f => [f.name, f.columnLabel!])), ...HOSTED_COLUMN_LABELS[resource.key] };
   // Form order of the reference (shared/welder-data.ts); the other profiles keep the order of the shared definition.
-  return { ...projected, ...(Object.keys(columnLabels).length ? { columnLabels } : {}), fields: hostedFieldOrder(resource.key, projected.fields) };
+  // Projects and isometrics: the reference columns, labels and fields (shared/project-iso-forms.ts).
+  const shaped = resource.key === 'projects' ? hostedProjectResource(projected) : resource.key === 'isometrics' ? hostedIsometricResource(projected) : projected;
+  return { ...shaped, ...(Object.keys(columnLabels).length ? { columnLabels } : {}), fields: hostedFieldOrder(resource.key, shaped.fields) };
 }
 export function projectAction(availability: Availability | undefined, action: ActionDefinition): ActionDefinition {
   if (!availability) return action;

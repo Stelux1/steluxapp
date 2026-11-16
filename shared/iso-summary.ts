@@ -6,6 +6,7 @@ import { punchCounts, type PunchCounts } from './punch.ts';
 import { hydrotestState } from './hydrotest.ts';
 import { isoFlags, isoKpiFacts, isoListContext, type IsoFlags, type IsoKpiFacts } from './iso-list.ts';
 import { wdiProgress } from './wdi.ts';
+import { qaCounts, type QaCounts } from './iso-overview.ts';
 
 /**
  * The summary of one isometric: the numbers its header and the isometrics list show, as aggregates only.
@@ -38,6 +39,8 @@ export interface IsoSummary {
   flags: IsoFlags;
   /** What the isometric adds to the KPI cards. */
   kpi: IsoKpiFacts;
+  /** The open examinations behind the QA badges of the project's Iso overview (counts per examination); null when welds or results are not delivered. */
+  qa: QaCounts | null;
   /** MTO quantity budgets of the progress drivers (pipe m, supports and appendages pcs per Shop / Field); absent without classified lines. */
   budgets?: ProgressBudgets;
   /** Material status % (shared/mto-materials.ts `materialStatus`): covered ÷ required, one decimal; null while nothing is required or the material records are not delivered. */
@@ -139,6 +142,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       quality: { percent: quality.percent, accepted: quality.accepted, rejected: quality.rejected },
       blockers: { total: blockers.total, groups: blockers.groups.map(group => ({ key: group.key, count: group.count })) },
       flags, kpi: isoKpiFacts(flags),
+      qa: context.weldsByIso && context.latest ? qaCounts(welds.get(iso.id) || [], (weldId, type) => context.latest!.get(`${weldId}|${type}`)) : null,
       ...(input.budgets ? { budgets: input.budgets } : {}),
       materialStatus: { percent: material },
       punch: source.punch ? punchCounts(punch.get(iso.id) || []) : null,

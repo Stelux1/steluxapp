@@ -427,7 +427,7 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   for (const [id, item] of Object.entries(view.isoSummaries!)) {
     // budgets is present only while the isometric has classified material lines; every other key always.
     // budgets and testSystemName are present only where they apply; every other key always.
-    assert.deepEqual(Object.keys(item).filter(key => key !== 'budgets' && key !== 'testSystemName').sort(), ['blockers', 'flags', 'hydrotest', 'kpi', 'materialStatus', 'progress', 'punch', 'quality'], id);
+    assert.deepEqual(Object.keys(item).filter(key => key !== 'budgets' && key !== 'testSystemName').sort(), ['blockers', 'flags', 'hydrotest', 'kpi', 'materialStatus', 'progress', 'punch', 'qa', 'quality'], id);
     // The one label: the isometric's own test system name, nothing else of the test system.
     const iso = f.store.get('isometrics', id), system = iso.testSystemId ? f.store.get('test_systems', String(iso.testSystemId)) : undefined;
     assert.equal(item.testSystemName, system ? String(system.name) : undefined, `${id} test system name`);

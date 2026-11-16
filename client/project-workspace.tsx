@@ -26,6 +26,8 @@ import { IsoMaterialsPanel } from './mto-materials.tsx';
 import { pagePilots } from '../shared/pilots.ts';
 import { headingHasOptions } from '../shared/iso-pages.ts';
 import { FillIrnOption } from './iso-irn.tsx';
+import { ProjectIsoOverview } from './project-iso-overview.tsx';
+export { ProjectIsoOverview };
 import type { Row } from '../shared/types.ts';
 
 export function MainProjects() {
@@ -103,11 +105,11 @@ export function ProjectOverview() {
 
 export function SubprojectWorkspace() {
   const { projectId = '' } = useParams();
-  const { rows, canRecord } = useWorkspace();
+  const { rows, canRecord } = useWorkspace(); const pilot = usePilot();
   const [editor, setEditor] = useState(false);
   const project = rows.projects?.find(row => row.id === projectId && !row._archived);
   if (!project || !canRecord('isometrics')) return <EmptyState title="Subproject unavailable" description="Choose a subproject in the selected main project."/>;
-  return <><div className="page subproject-banner"><Link className="text-link" to="/workspace/projects"><ArrowLeft size={15}/>Subprojects</Link><div><div><span className="eyebrow">SUBPROJECT {String(project.internnumber)}</span><h2>{String(project.description || project.internnumber)}</h2><p>{String(project.contact || '')}{project.contact && ' · '}{String(project.status || 'Active')}</p></div><FillIrnOption project={project}/>{canRecord('projects', 'edit', project) && <button className="btn" onClick={() => setEditor(true)}><Pencil size={15}/>Edit subproject</button>}</div></div><TablePage key={projectId} resourceKey="isometrics" scopeProjectId={projectId}/>{editor && <RecordEditor resourceKey="projects" record={project} onClose={() => setEditor(false)}/>}</>;
+  return <><div className="page subproject-banner"><Link className="text-link" to="/workspace/projects"><ArrowLeft size={15}/>Subprojects</Link><div><div><span className="eyebrow">SUBPROJECT {String(project.internnumber)}</span><h2>{String(project.description || project.internnumber)}</h2><p>{String(project.contact || '')}{project.contact && ' · '}{String(project.status || 'Active')}</p></div>{!pilot && <FillIrnOption project={project}/>}{canRecord('projects', 'edit', project) && <button className="btn" onClick={() => setEditor(true)}><Pencil size={15}/>Edit subproject</button>}</div></div>{pilot ? <ProjectIsoOverview key={projectId} project={project}/> : <TablePage key={projectId} resourceKey="isometrics" scopeProjectId={projectId}/>}{editor && <RecordEditor resourceKey="projects" record={project} onClose={() => setEditor(false)}/>}</>;
 }
 
 function DrawingUpload({ iso, kind, onClose }: { iso: Row; kind: string; onClose: () => void }) {

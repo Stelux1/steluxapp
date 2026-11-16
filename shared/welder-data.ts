@@ -6,6 +6,7 @@
 import type { Field, Row } from './types.ts';
 import type { Relation } from './welding.ts';
 import { PHASE_LABELS } from './iso-pages.ts';
+import { isometricFormFields } from './project-iso-forms.ts';
 
 type SiteLike = Record<string, unknown> | undefined | null;
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : value === null || value === undefined ? '' : String(value).trim();
@@ -163,6 +164,8 @@ const FLAT_FORMS = ['welders'];
  * name keep their order after those it does (the sort is stable).
  */
 export function hostedFieldOrder<T extends { name: string; section?: string }>(resource: string, fields: T[], record?: Record<string, unknown>): T[] {
+  // Add and Edit isometric list the reference fields in their own orders (shared/project-iso-forms.ts).
+  if (resource === 'isometrics') return isometricFormFields(fields, record);
   const order = HOSTED_FIELD_ORDER[resource];
   if (!order) return fields;
   // Edit personnel info (capture weld__welder__welders__edit.txt) has no Combination box; Welder 1 / Welder 2 stay for a welder that is one.
