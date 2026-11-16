@@ -36,11 +36,34 @@ export function itpsForProject(itps: Row[], links: Row[], projectId: unknown): R
 }
 
 /**
- * The effective ITP / KNR of an isometric for the dashboard: slot 1, otherwise slot 2. Free-text numbers that
- * are not linked to the register carry no NDT %, so they do not count as linked.
+ * The first linked ITP / KNR of an isometric: slot 1, otherwise slot 2. Free-text numbers that are not linked to the
+ * register carry no NDT %, so they do not count as linked. The dashboard decides per weld (`weldItpId`).
  */
 export function isoItpId(iso: Row | undefined | null): string {
   return text(iso?.itpId) || text(iso?.itp2Id);
+}
+
+/**
+ * The ITP / KNR a weld counts under (reference dashboard: a Field weld of iso 0001 sits under its ITP No 2, the
+ * untyped and Shop welds under ITP No 1). Field welds take slot 2, or slot 1 when that entry covers Shop+Field (it
+ * hides slot 2); every other weld takes slot 1. An empty slot leaves the weld without ITP / KNR (10 % fallback).
+ * `itps` is only needed for the Shop+Field case.
+ */
+export function weldItpId(iso: Row | undefined | null, location: unknown, itps: Row[] = []): string {
+  const primary = text(iso?.itpId);
+  if (text(location) !== 'Field') return primary;
+  const secondary = text(iso?.itp2Id);
+  if (secondary) return secondary;
+  const entry = primary ? live(itps).find(row => row.id === primary) : undefined;
+  const scope = text(entry?.scope).toLowerCase();
+  return entry && scope !== 'shop' && scope !== 'field' ? primary : '';
+}
+
+/** Number of isometrics linked to each register entry (either slot), the "Usage" of the ITP/KNR Manager. */
+export function itpUsage(itps: Row[], isometrics: Row[]): Map<string, number> {
+  const usage = new Map<string, number>(live(itps).map(itp => [itp.id, 0]));
+  for (const iso of live(isometrics)) for (const id of new Set([text(iso.itpId), text(iso.itp2Id)].filter(Boolean))) if (usage.has(id)) usage.set(id, usage.get(id)! + 1);
+  return usage;
 }
 
 export interface IsoItpLinks { errors: Record<string, string>; values: Record<string, string>; }
