@@ -443,12 +443,14 @@ test('a full assembly record through the API: passes, bolts, leak tests, labels,
   assert.equal((await f.request(`/api/flanges/${id}/workflow`, 'POST', { to_status: 'Assembled' })).status, 201, 'Flanges Edit records a workflow action');
   assert.equal((await f.request(`/api/flanges/${id}/workflow`, 'POST', { to_status: 'Released' })).status, 403, 'release needs the commit right');
   await f.signIn('Flange QC', { permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '5': ['show'], '64': ['show'], '100': ['show', 'insert', 'edit', 'delete', 'import'] }) });
-  assert.equal((await f.form(`/api/flanges/${id}/signatures`, signForm('QA/QC', { qc_note: 'Checked on site.' }))).status, 201);
-  assert.equal((await f.request(`/api/flanges/${id}/record`, 'POST', completeRecord())).status, 422, 'a record signed by QA/QC cannot change');
   // Release refuses with the first missing gate check: the latest leak test failed.
   const early = await json(await f.request(`/api/flanges/${id}/workflow`, 'POST', { to_status: 'Released' }));
   assert.equal(early.status, 422); assert.match(early.body.error!, /Passed mandatory leak test/);
+  // The passed leak test is recorded before the QA/QC sign-off: after it the record's evidence is closed (sec2-005).
   assert.equal((await f.request(`/api/flanges/${id}/leak-tests`, 'POST', { test_type: 'Hydrostatic', pressure_value: '15', pressure_unit: 'bar', result: 'Passed', tested_at: '2026-11-16T13:00' })).status, 201);
+  assert.equal((await f.form(`/api/flanges/${id}/signatures`, signForm('QA/QC', { qc_note: 'Checked on site.' }))).status, 201);
+  assert.equal((await f.request(`/api/flanges/${id}/record`, 'POST', completeRecord())).status, 422, 'a record signed by QA/QC cannot change');
+  assert.equal((await f.request(`/api/flanges/${id}/leak-tests`, 'POST', { test_type: 'Hydrostatic', pressure_value: '15', pressure_unit: 'bar', result: 'Passed', tested_at: '2026-11-16T14:00' })).status, 422, 'no evidence after the QA/QC sign-off');
   assert.match((await json(await f.request(`/api/flanges/${id}/workflow`, 'POST', { to_status: 'Released' }))).body.error!, /Registered protocol PDF/);
   // The immutable PDF: stored once with its SHA-256; opened only while the hash matches.
   const generated = await json(await f.request(`/api/flanges/${id}/protocol-pdf`, 'POST', {})); assert.equal(generated.status, 201);

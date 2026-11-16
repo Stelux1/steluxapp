@@ -133,7 +133,8 @@ function addIsoParts(store: Store, isoId: string, iso: ImportPlan['isometrics'][
  */
 export function commitProjectImport(store: Store, input: SheetRow[], columns: ImportColumn[], options: CommitOptions): CommitResult {
   return store.transaction(() => {
-    const plan = planImport(input, columns, options.context(), options);
+    const context = options.context();
+    const plan = planImport(input, columns, context, options);
     options.allow?.(plan);
     const result: CommitResult = { projects: { created: 0, updated: 0 }, isometrics: { created: 0, updated: 0 }, welds: 0, materials: 0, skipped: plan.summary.errors };
     const projectIds = new Map<string, string>();
@@ -176,7 +177,8 @@ export function commitProjectImport(store: Store, input: SheetRow[], columns: Im
       const inFile = new Set(input.map(row => text(row.values['projects.internnumber'])).filter(Boolean));
       const used = new Set(store.list('isometrics').map(iso => String(iso.projectId)));
       const kept: string[] = []; let deleted = 0;
-      for (const project of store.list('projects').filter(row => row.siteId === options.siteId && !inFile.has(text(row.internnumber)))) {
+      // Only projects of the import's pilot (sec2-006): a project switched off for it does not exist there and is never cleaned.
+      for (const project of store.list('projects').filter(row => row.siteId === options.siteId && !context.hiddenProjects?.has(row.id) && !inFile.has(text(row.internnumber)))) {
         if (used.has(project.id)) { kept.push(text(project.internnumber)); continue; }
         store.archive('projects', project.id, project._version, options.actor); deleted++;
       }

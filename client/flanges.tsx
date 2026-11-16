@@ -150,6 +150,8 @@ function FlangeDetail({ flange }: { flange: Row }) {
   const item = flangeItems([flange], activeRows(rows, 'isometrics'), activeRows(rows, 'projects'))[0];
   const editable = canRecord('flanges', 'edit', flange);
   const gate = releaseGate(rows, flange.id);
+  // After the QA/QC sign-off the server refuses new passes, bolts, leak tests, labels and deviations (sec2-005): their forms are hidden.
+  const latest = latestRecord(rows.flange_records, flange.id), evidenceOpen = !(latest && recordSignatures(rows.flange_signatures, latest.id)['QA/QC']);
   const [editing, setEditing] = useState(false);
   return <div className="page flange-detail">
     <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES · FLANGE MANAGEMENT</div><h1>Flange ID: {text(flange.flange_id) || '—'}</h1><p>{[item.projectName, item.isoNo].filter(Boolean).join(' · ')}</p></div>
@@ -165,11 +167,11 @@ function FlangeDetail({ flange }: { flange: Row }) {
     <ValidationPreview flange={flange}/>
     <Workflow flange={flange} gate={gate} editable={editable}/>
     <AssemblyRecord flange={flange} item={item} editable={editable}/>
-    <PassRegistration flange={flange} editable={editable}/>
-    <BoltRegistration flange={flange} editable={editable}/>
+    <PassRegistration flange={flange} editable={editable && evidenceOpen}/>
+    <BoltRegistration flange={flange} editable={editable && evidenceOpen}/>
     <Signatures flange={flange} editable={editable}/>
     <ProtocolPdf flange={flange} editable={editable}/>
-    <Registrations flange={flange} editable={editable}/>
+    <Registrations flange={flange} editable={editable && evidenceOpen}/>
     <FlangeManagement embedded/>
     {editing && <RecordEditor resourceKey="flanges" record={flange} onClose={() => setEditing(false)}/>}
   </div>;

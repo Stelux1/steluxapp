@@ -19,6 +19,7 @@ import { AppError, type Store } from './store.ts';
 export const RIGHTS_REFUSED = 'Changing the profile of an account or the rights of a profile needs the Edit right on both User accounts and Profiles.';
 export const PASSWORD_REFUSED = 'Setting the password of another account needs the Edit right on both User accounts and Profiles.';
 export const SELF_REFUSED = 'You cannot widen your own access. Ask another administrator.';
+export const STOREHOUSE_REFUSED = 'Only an administrator with access to all project sites of MTO Pilot can tick Storehouse manager.';
 export const PROFILE_REACH_REFUSED = 'This profile is used by accounts that reach main projects outside your project site access. Ask an administrator with access to all project sites.';
 
 const PROFILE_FIELDS = ['profileId', 'weldProfileId', 'mtoProfileId'];
@@ -68,6 +69,13 @@ export function assertRightsWrite(store: Store, actor: User, key: string, before
   if (key === 'users') {
     const changed = PROFILE_FIELDS.some(name => text(before?.[name]) !== text(after[name])) || JSON.stringify(siteMaps(before)) !== JSON.stringify(siteMaps(after));
     if (changed && !canChangeRights(actor)) throw new AppError(403, RIGHTS_REFUSED);
+    // Storehouse manager unlocks Adjust quantity (sec2-004): an access change like a profile. Never on one's own account; on
+    // another account only with the right to change rights and from an administrator reaching every main project in MTO Pilot.
+    if ((before?.storehouseManager === true) !== (after.storehouseManager === true)) {
+      if (!canChangeRights(actor)) throw new AppError(403, RIGHTS_REFUSED);
+      if (before?.id === actor.id) throw new AppError(403, SELF_REFUSED);
+      if (actorReach(store, store.get('users', actor.id), 'mto') !== 'all') throw new AppError(403, STOREHOUSE_REFUSED);
+    }
     if (!before || before.id !== actor.id) return;
     for (const pilot of SCOPE_PILOTS) {
       const was = effectiveProfileId(before, pilot), now = effectiveProfileId(after, pilot);

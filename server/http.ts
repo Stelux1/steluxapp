@@ -60,7 +60,7 @@ import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope,
 import { registerProjectImportRoutes } from './project-import.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
-import { activeSite, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
+import { activeSite, allowPilotSwitch, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
 /** User accounts of the hosted pilots: a new account has no application ticked, and a ticked application needs a profile (access-users-profiles-004). Runs after the access checks. */
 function checkUserApplications(body: Record<string, unknown>, existing?: Row) {
@@ -299,7 +299,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {
-    const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
+    const resource = access.resource(String(req.params.resource));
+    if (pilots && resource.key === 'projects') allowPilotSwitch(String(req.params.id), req.body ?? {}); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
     if (pilots && resource.key === 'materials') { assertMaterialsInScope(store, [String(req.params.id)]); if (ENABLEMENT_INPUT.some(name => req.body[name] !== undefined)) throw new AppError(422, 'Use Home location to change the project sites of a material.'); }
     dropCompletionInput(resource.key, req.body);
