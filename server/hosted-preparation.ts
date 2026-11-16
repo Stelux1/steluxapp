@@ -10,8 +10,12 @@
  */
 import type { PrepareResult } from './hosted-schema.ts';
 
-/** A data step after the schema: counts of what it adds or changes (all 0 when there is nothing to do). */
-export interface DataStep { name: string; run: (options: { dryRun: boolean }) => object }
+/**
+ * A data step after the schema: counts of what it adds (all 0 when there is nothing to do). A step only inserts rows,
+ * into the tables it names in `inserts` (plus one audit entry per row); it never updates or deletes a stored row,
+ * counters included. The report lists those tables under `dataStepTables` (scripts/rehearse-hosted-upgrade.mjs checks them).
+ */
+export interface DataStep { name: string; inserts: string[]; run: (options: { dryRun: boolean }) => object }
 export interface PreparationParts {
   /** Read-only: whether the schema is already at this release. */
   schemaUpToDate: () => boolean;
@@ -32,16 +36,17 @@ export function runHostedPreparation(parts: PreparationParts, dryRun: boolean): 
   // Data steps can only be counted on a schema of this release; on an older one they are pending with the schema.
   const counted = schemaUpToDate ? Object.fromEntries(parts.dataSteps.map(step => [step.name, step.run({ dryRun: true })])) : undefined;
   const pending = !schemaUpToDate || Object.values(counted!).some(changes);
+  const dataStepTables = Object.fromEntries(parts.dataSteps.map(step => [step.name, step.inserts]));
   if (dryRun) {
     const schema = parts.prepareSchema({ dryRun: true });
     const data = Object.fromEntries(parts.dataSteps.map(step => [step.name, counted?.[step.name] ?? SCHEMA_FIRST]));
-    return { ...schema, ...data, upToDate: !pending, message: pending ? 'Dry run: the schema changes listed under "created" were applied and rolled back, the data steps were counted. Nothing was changed and no backup was written.' : 'Dry run: the hosted database is already prepared. Nothing to do.' };
+    return { ...schema, ...data, dataStepTables, upToDate: !pending, message: pending ? 'Dry run: the schema changes listed under "created" were applied and rolled back, the data steps were counted. Nothing was changed and no backup was written.' : 'Dry run: the hosted database is already prepared. Nothing to do.' };
   }
   if (!pending) return { upToDate: true, message: 'The hosted database is already prepared. Nothing to do; nothing was changed and no backup was needed.' };
   const backup = parts.backup();
   const schema = parts.prepareSchema({ dryRun: false });
   const data = Object.fromEntries(parts.dataSteps.map(step => [step.name, step.run({ dryRun: false })]));
-  const outcome = { backup, ...schema, ...data, upToDate: false };
+  const outcome = { backup, ...schema, ...data, dataStepTables, upToDate: false };
   parts.record?.(backup, outcome);
   return outcome;
 }
