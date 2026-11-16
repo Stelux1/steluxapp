@@ -8,6 +8,7 @@ import { Store, AppError } from './store.ts';
 import { effectiveProfileId, publicUser } from './auth.ts';
 import { availableWps } from '../shared/welding.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
+import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
@@ -75,6 +76,10 @@ export function releaseAccess(store: Store, availability?: Availability) {
     const errors = missingRequired(key, value, existing);
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
   }
+  /** Weld entry rules and the lock of completed phases for the plain record routes of the hosted profile. */
+  function weldRecord(key: string, value: Record<string, unknown>, existing?: Row) { if (pilots && key === 'welds') assertWeldEntry(store, value, existing); }
+  /** Deleting or bringing back a weld of a completed phase is refused too. */
+  function archive(key: string, row: Row) { if (pilots && key === 'welds') assertWeldUnlocked(store, row); }
   function audit(account: User, event: AuditEvent): AuditEvent | null {
     try {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
@@ -161,7 +166,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
     return output;
   }
-  return { user, resource, visible, record, input, complete, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
+  return { user, resource, visible, record, input, complete, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

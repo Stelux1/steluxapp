@@ -150,7 +150,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
-    access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body);
+    access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
@@ -158,7 +158,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.put('/api/records/:resource/:id', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
-    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
+    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
@@ -170,6 +170,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.post('/api/records/:resource/:id/archive', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'delete',access.record(resource.key,String(req.params.id),true));
     if (resource.readonly) throw new AppError(405, 'Transaction history cannot be archived.');
+    access.archive(resource.key, access.record(resource.key,String(req.params.id),true));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
   });
@@ -307,7 +308,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const translated = store.translate(error);
     if (translated instanceof AppError) {
       // Error handlers see no route params, so the resource comes from the path; only delivered fields may be named.
-      const key=String(_req.params.resource||/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||'');
+      const key=String(_req.params.resource||/^\/api\/(?:records|bulk)\/([^/?]+)/.exec(_req.path)?.[1]||''||(/^\/api\/actions\/(?:save-weld|add-welds|mass-edit-welds|reorder-welds)$/.test(_req.path)?'welds':''));
       const fields=translated.fields?Object.fromEntries(Object.entries(translated.fields).filter(([name])=>access.field(key,name))):undefined;
       const message=availability&&translated.status===409?'This record is in use or has changed. Refresh and check its linked records.':availability&&translated.fields&&!Object.keys(fields||{}).length?'Please check the record and try again.':translated.message;
       res.status(translated.status).json({ error: message, ...(fields&&Object.keys(fields).length?{fields}:{}), ...(translated.code?{code:translated.code}:{}) });

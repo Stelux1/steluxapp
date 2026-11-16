@@ -147,6 +147,8 @@ extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
   r(`material${i}Id`, `Material ${i}`, 'materials', { section: `Material side ${i}` }),
   r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),
 ])]);
+// Weld entry on the isometric (hosted): stored table order, weld process and the coating of the weld itself.
+extend('welds', [n('sortOrder', 'Table order', { hidden: true, min: 0 }), r('processId', 'Weld process', 'weld_processes', { section: 'Welders & traceability' }), r('coatingWeldId', 'Coating weld', 'coatings', { section: 'Welders & traceability' })]);
 extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
 // Pilots profile only (hidden elsewhere, see projectResource): descriptive account fields and access per application.
 // A missing / true "enabled" flag and an empty pilot profile mean "use the permission profile", so existing accounts keep working.

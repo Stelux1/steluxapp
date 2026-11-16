@@ -1,0 +1,59 @@
+/* Weld table and weld entry on the isometric (Weld Pilot). Tokens come from brand.css. */
+.weld-panel { padding: 0; overflow: hidden; }
+.weld-panel-heading { flex-wrap: wrap; gap: 12px 16px; padding: 18px 20px 12px; align-items: center; }
+.weld-panel-heading > div:first-child { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.weld-panel-heading h2 { margin: 0; }
+.weld-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.weld-views { margin: 0; }
+.weld-views-bar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.weld-panel > .alert { margin: 0 20px 12px; }
+.weld-panel .table-scroll-wrap { border-top: 1px solid var(--line); }
+.weld-legend { display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 20px 16px; font-size: 13px; }
+
+.weld-table { min-width: 1280px; }
+.weld-table th { white-space: nowrap; font-size: 12px; }
+.weld-table td { vertical-align: middle; font-size: 13px; }
+.weld-table .select-cell { width: 40px; text-align: center; }
+.weld-table .weld-no { font-weight: 600; white-space: nowrap; }
+.weld-table .weld-material { min-width: 150px; max-width: 220px; overflow-wrap: anywhere; }
+.weld-table .weld-material.existing, .weld-table .weld-material.connected { color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+.weld-table .weld-options { white-space: nowrap; }
+.weld-table .weld-options .icon-btn { margin-inline-end: 2px; }
+.weld-sort-head, .weld-sort-cell { width: 92px; white-space: nowrap; }
+.weld-sort-cell { display: table-cell; }
+.weld-sort-cell .icon-btn { padding: 4px; }
+.weld-grip { display: inline-flex; align-items: center; padding: 4px 2px; color: var(--muted); cursor: grab; touch-action: none; }
+.weld-grip:active { cursor: grabbing; }
+.weld-row-dragging { opacity: .45; }
+.weld-row-locked { background: color-mix(in srgb, var(--surface-blue) 55%, transparent); }
+.weld-lock { display: inline-flex; align-items: center; color: var(--muted); padding: 4px; }
+.weld-type { display: inline-block; min-width: 34px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-blue); font-weight: 600; font-size: 12px; text-align: center; cursor: help; }
+.weld-type:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.weld-drop-end td { padding: 14px; text-align: center; color: var(--muted); border: 2px dashed var(--border-strong); background: var(--surface-blue); }
+
+/* Yes / No cells of the four inspection columns: not required is calm, required stays red while open. */
+.weld-flag { display: inline-block; min-width: 36px; padding: 2px 8px; border-radius: 6px; font-weight: 600; font-size: 12px; text-align: center; }
+.weld-flag.no { color: #0b6b47; background: #e3f6ee; }
+.weld-flag.yes { color: #a5252f; background: #fde8ea; }
+
+/* Forms and dialogs */
+.weld-form .form-section > .form-grid { padding-top: 12px; }
+.weld-form .field input[readonly] { background: var(--surface-blue); color: var(--muted); }
+.weld-range-link { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.weld-range-preview { margin: 14px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--surface-blue); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.weld-clearable { display: flex; flex-direction: column; gap: 4px; }
+.weld-clearable .checkbox-field { margin: 0; }
+.weld-delete-list { columns: 3; margin: 8px 0 0; padding-inline-start: 20px; max-height: 220px; overflow: auto; }
+.btn.primary.danger { background: #b4232f; border-color: #b4232f; }
+.btn.primary.danger:hover:not(:disabled) { background: #8f1b25; border-color: #8f1b25; }
+
+@media (max-width: 560px) {
+  .weld-panel-heading { padding: 16px 16px 10px; }
+  .weld-actions { margin-left: 0; width: 100%; }
+  .weld-actions > .btn, .weld-actions > .dropdown { flex: 1 1 auto; }
+  .weld-panel > .alert { margin-inline: 16px; }
+  .weld-legend { padding-inline: 16px; }
+  .weld-views-bar { justify-content: stretch; }
+  .weld-delete-list { columns: 2; }
+}
+@media print { .weld-actions, .weld-sort-cell, .weld-sort-head, .weld-table .select-cell, .weld-table .weld-options { display: none; } }
