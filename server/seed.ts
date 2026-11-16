@@ -1,5 +1,6 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
+import { seedHydrotest } from './hydrotest.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
@@ -90,6 +91,7 @@ export function seed(store: Store) {
     action('release', { isoIds: ['iso-3'], type: 'Prefab', reportNo: 'PFR-002', engineerId: 'qa-1', date: '2026-10-22' });
     action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
+    seedHydrotest(store);
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });
     if ('record' in po && po.record) { const line = store.list('order_lines').find(l => l.orderId === po.record?.id)!; action('receive', { orderId: po.record.id, warehouseId: 'warehouse-main', date: '2026-10-20', items: [{ lineId: line.id, quantity: 12, chargeNo: 'H-1043' }] }); }

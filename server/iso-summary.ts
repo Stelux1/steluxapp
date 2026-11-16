@@ -22,7 +22,7 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
   return isoSummaries({
     isometrics, projects: load('projects') || [], sites: load('sites') || [],
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),
-    releases: load('releases'), punch: load('punchlists'), requirements: load('iso_materials'),
+    releases: load('releases'), punch: load('punchlists'), testSystems: load('test_systems'), hydrotestRequests: load('hydrotest_requests'), requirements: load('iso_materials'),
     planning: Boolean(availability?.features.includes('project-planning')),
   });
 }

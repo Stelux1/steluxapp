@@ -1,4 +1,5 @@
 import type { ActionDefinition, ActionField, Module } from './types.ts';
+import { HYDROTEST_ACTIONS } from './hydrotest.ts';
 const ref = (name: string, label: string, resource: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'ref', ref: resource, required: true, ...extra });
 const text = (name: string, label: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'text', ...extra });
 const number = (name = 'quantity', label = 'Quantity', extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'number', min: 0.000001, required: true, ...extra });
@@ -34,6 +35,7 @@ add('phases', 'Set isometric phases', 'general', 'Update the phase flags for the
 add('copy-isometrics', 'Copy isometrics', 'general', 'Copy the checked isometrics into another subproject of the same main project. An ISO number that already exists in the target stops the whole copy.', [ref('isoIds', 'Isometrics', 'isometrics', { multiple: true }), ref('projectId', 'Target project', 'projects'), text('copyWelds', 'Copy welds', { type: 'checkbox', default: false, hint: 'Weld definitions only: no welders, dates, charge numbers, inspections or releases.' }), text('copyMaterials', 'Copy materials', { type: 'checkbox', default: false, hint: 'Material requirements with quantity and phase, without orders, stock or picks.' }), text('copyCalculations', 'Copy calculations', { type: 'checkbox', default: false, hint: 'Calculation and cut-list lines that refer to the copied materials. Needs Copy materials.' })], 'Copy isometrics');
 add('revision', 'Add drawing revision', 'general', 'Preserve the current revision before assigning the new revision number.', [ref('isoId', 'Isometric', 'isometrics'), text('type', 'Document', { type: 'select', options: ['ISO', 'ITP', 'ITP 2'], default: 'ISO', required: true }), text('revNo', 'New revision', { required: true }), date, text('comment', 'Comment', { type: 'textarea' })], 'Add revision');
 add('remove-material-quantity','Remove quantity by revision','materials','Reduce the requirement and retain its revision reference in the quantity log.',[ref('requirementId','Material requirement','iso_materials'),ref('revisionId','Revision','revisions'),number('quantity','Quantity to remove',{min:0.01,step:0.01}),date,note],'Remove quantity');
+defs.push(...HYDROTEST_ACTIONS);
 export const ACTIONS = Object.fromEntries(defs.map(d => [d.key, d]));
 export const ACTION_LIST = defs;
 export function actionPermission(key: string): Module { return ACTIONS[key].module; }

@@ -2,6 +2,7 @@ import type { ActionDefinition, Availability, Field, Resource, Row } from './typ
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -124,6 +125,11 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures', 'company_data']) deliverResource(availability, key);
+    // Hydrotest release (shared/hydrotest.ts): test systems carry the client's acceptance; requests have no page of their own
+    // (they open from the test system), so they are delivered without a menu entry.
+    deliverResource(availability, 'test_systems', ['accepted']);
+    for (const resource of HYDROTEST_RESOURCES) availability.resources[resource.key] = resource.fields.map(field => field.name);
+    for (const action of HYDROTEST_ACTIONS) availability.actions[action.key] = action.fields.map(field => field.name);
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
