@@ -186,7 +186,9 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
  * the tracers of this weld while its NA is still unsaved go with the dialog's Save (`onPendingChange`).
  */
 function NdtTracerPanel({ weld, welderId, onPendingChange }: { weld: Row; welderId: string; onPendingChange: (ids: string[] | null) => void }) {
-  const { rows, refresh, notify } = useWorkspace();
+  const { rows: scoped, allRows, refresh, notify } = useWorkspace();
+  // Tracers and candidates may lie on other isometrics and projects of the site: look them up in all rows of the pilot.
+  const rows = allRows.welds ? allRows : scoped;
   const [enabled, setEnabled] = useState(() => activeRows(rows, 'welds').some(row => row.tracerOfId === weld.id));
   const [state, setState] = useState<{ loading: boolean; error: string; proposal?: TracerProposal }>({ loading: false, error: '' });
   const [selection, setSelection] = useState<Record<string, string[]>>({});
@@ -265,7 +267,9 @@ function UploadButton({ onClick }: { onClick: () => void }) { const { canRun } =
 
 /** "Tracer details" (reference #weldTracerDetailModal): read only — the original rejected weld, the linked tracers and their NDT results. */
 export function TracerDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
-  const { rows, label } = useWorkspace();
+  const { rows: scoped, allRows, label } = useWorkspace();
+  // The source and the tracers may lie on other isometrics and projects of the site.
+  const rows = allRows.welds ? allRows : scoped;
   const detail = tracerDetail(weld, activeRows(rows, 'welds'), rows.inspection_results);
   const place = (row: Row) => { const context = weldContext(rows, row); return { project: context.projectName, iso: context.isoName }; };
   return <Modal wide title={TRACER_DETAIL_TEXTS.title} onClose={onClose}>
