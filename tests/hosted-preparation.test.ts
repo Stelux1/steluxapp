@@ -37,8 +37,8 @@ function workspace(t: { after: (fn: () => void) => void }, { schemaBehind = true
     schemaUpToDate: () => schema,
     prepareSchema: ({ dryRun }) => { const before = schema; if (!dryRun && !schema) { journal.push('schema'); schema = true; } return result(dryRun, before); },
     dataSteps: [
-      { name: 'catalogData', run: ({ dryRun }) => { const counts = upgradeWeldCatalogs(store, { dryRun }); if (!dryRun && Object.values(counts).some(Boolean)) journal.push('catalogData'); return counts; } },
-      { name: 'diameterCatalog', run: ({ dryRun }) => { const added = dryRun ? missingDiameterCatalog(store).length : loadDiameterCatalog(store); if (!dryRun && added) journal.push('diameterCatalog'); return { added }; } },
+      { name: 'catalogData', inserts: ['ndt_defect_codes'], run: ({ dryRun }) => { const counts = upgradeWeldCatalogs(store, { dryRun }); if (!dryRun && Object.values(counts).some(Boolean)) journal.push('catalogData'); return counts; } },
+      { name: 'diameterCatalog', inserts: ['diameters'], run: ({ dryRun }) => { const added = dryRun ? missingDiameterCatalog(store).length : loadDiameterCatalog(store); if (!dryRun && added) journal.push('diameterCatalog'); return { added }; } },
     ],
     backup: () => { journal.push('backup'); return `backup-${journal.length}`; },
     record: () => journal.push('record'),
@@ -170,6 +170,75 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   assert.deepEqual(runHostedPreparation(parts, true).catalogData, { defectCodesAdded: 0 });
   assert.deepEqual(runHostedPreparation(parts, true).projectHoldings, { holdings: 0, quantity: 0 });
   assert.deepEqual(snapshot(), settled);
+});
+
+/**
+ * The rule as the rehearsal on the copy of the live database checks it: every row of EVERY table (counters, audit,
+ * metadata and credentials included) that existed before the preparation is byte for byte the same afterwards, keyed by
+ * its primary key; only new rows are added. The first version of the projectHoldings step drew its movement numbers from
+ * the MM counter (live: counters.MM 48 → 50) and added a holding onto an existing site inventory row.
+ */
+test('hosted preparation never touches a counter or any other stored row: upgrade bookings carry their own numbers, a second run adds nothing, normal use continues the MM counter', async () => {
+  const { runAction } = await import('../server/workflows.ts');
+  const { UPGRADE_MOVEMENT_PREFIX } = await import('../server/mto-stock.ts');
+  const store = new Store(':memory:'); seed(store);
+  try {
+    // The live-like workspace: counters in use, project holdings of the first version, one of them on a charge the site already holds.
+    for (let i = 0; i < 3; i++) store.next('MM');
+    store.db.exec(`DELETE FROM stock WHERE json_extract(data, '$.locationKind') = 'site'`);
+    store.create('stock', { materialId: 'material-5', customMaterialId: '', locationKind: 'site', siteId: 'site-north', warehouseId: '', chargeNo: 'H-1042', quantity: 2 }, SYSTEM);
+    for (const [siteId, quantity] of [['site-river', 7], ['site-north', 3]] as const) store.create('movements', { number: store.next('MM'), materialId: 'material-5', warehouseId: 'warehouse-main', siteId, type: 'Project transfer', quantity: -quantity, chargeNo: 'H-1042', date: '2026-10-01' }, SYSTEM);
+    const counterBefore = (store.db.prepare(`SELECT value FROM counters WHERE key='MM'`).get() as { value: number }).value;
+
+    // Every table of the database, every row keyed by its primary key, every column as stored.
+    const tables = (store.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as { name: string }[]).map(row => row.name);
+    const snapshot = () => new Map(tables.map(name => {
+      const keys = (store.db.prepare(`PRAGMA table_info("${name}")`).all() as { name: string; pk: number }[]).filter(column => column.pk).sort((a, b) => a.pk - b.pk).map(column => column.name);
+      const rows = store.db.prepare(`SELECT * FROM "${name}"`).all() as Record<string, unknown>[];
+      return [name, new Map(rows.map(row => [JSON.stringify(keys.length ? keys.map(key => row[key]) : row), JSON.stringify(row)]))] as const;
+    }));
+    const before = snapshot(), movementsBefore = new Set(store.list('movements', true).map(move => move.id));
+    assert.ok(before.get('counters')!.size > 0 && tables.includes('audit'), 'counters and the audit trail are present');
+    const parts: PreparationParts = {
+      schemaUpToDate: () => true,
+      prepareSchema: ({ dryRun }) => ({ dryRun, upToDate: true, created: { tables: [], columns: [], foreignKeys: [], indexes: [], rowLevelSecurity: [] }, columns: [], counts: {}, recordsPreserved: true } as unknown as PrepareResult),
+      dataSteps: hostedDataSteps(() => store),
+      backup: () => 'backup',
+    };
+    const report = runHostedPreparation(parts, false);
+    assert.deepEqual(report.projectHoldings, { holdings: 2, quantity: 10 });
+    assert.deepEqual(report.dataStepTables, { catalogData: ['ndt_defect_codes'], diameterCatalog: ['diameters'], projectHoldings: ['stock', 'movements'], spoolNames: ['spool_names'] }, 'the report names the tables its data steps insert into');
+    const after = snapshot();
+    for (const [name, rows] of before) for (const [key, stored] of rows) assert.equal(after.get(name)!.get(key), stored, `${name} ${key} is unchanged`);
+    const added = Object.fromEntries([...after].map(([name, rows]) => [name, [...rows.keys()].filter(key => !before.get(name)!.has(key)).length]).filter(([, count]) => count));
+    assert.deepEqual(Object.keys(added).sort(), ['audit', 'movements', 'stock'], 'only site inventory rows, their movements and the audit entries of both are added');
+    assert.equal(added.audit, added.movements + added.stock, 'one audit entry per inserted row');
+    const declared = new Set(['audit', ...Object.values(report.dataStepTables as Record<string, string[]>).flat()]);
+    assert.ok(Object.keys(added).every(name => declared.has(name)), 'rows are added only to tables the report names');
+    assert.equal((store.db.prepare(`SELECT value FROM counters WHERE key='MM'`).get() as { value: number }).value, counterBefore, 'the MM counter is untouched');
+
+    // The upgrade bookings: their own numbering, one per holding, each holding a new site inventory row.
+    const booked = store.list('movements', true).filter(move => !movementsBefore.has(move.id));
+    assert.deepEqual(booked.map(move => [move.siteId, move.type, move.quantity, move.warehouseId]).sort(), [['site-north', 'Project transfer', 3, ''], ['site-river', 'Project transfer', 7, '']]);
+    for (const move of booked) assert.match(String(move.number), new RegExp(`^${UPGRADE_MOVEMENT_PREFIX}[0-9a-f]{8}-1$`), 'an upgrade number, not a counter number');
+    assert.equal(new Set(booked.map(move => move.number)).size, 2);
+    const north = store.list('stock').filter(row => row.locationKind === 'site' && row.siteId === 'site-north');
+    assert.deepEqual(north.map(row => Number(row.quantity)).sort(), [2, 3], 'the existing site row keeps its 2; the holding of 3 is a row of its own');
+
+    // A second run, real or dry, adds nothing.
+    const settled = snapshot();
+    assert.equal(runHostedPreparation(parts, false).upToDate, true);
+    assert.deepEqual(runHostedPreparation(parts, true).projectHoldings, { holdings: 0, quantity: 0 });
+    assert.deepEqual(snapshot(), settled);
+
+    // Normal use afterwards: a movement through the application takes the next ordinary MM number.
+    store.transaction(() => runAction(store, 'stock-add', { siteId: 'site-river', materialId: 'material-5', quantity: 1, chargeNo: 'H-1042', date: '2026-11-01' }, { id: 'tester', name: 'Test engineer' }));
+    const numbers = store.list('movements', true).map(move => String(move.number));
+    const expected = `MM-${new Date().getUTCFullYear()}-${String(counterBefore + 1).padStart(4, '0')}`;
+    assert.ok(numbers.includes(expected), `the new movement is ${expected}`);
+    assert.equal(numbers.filter(number => number === expected).length, 1, 'no number is used twice');
+    assert.equal(new Set(numbers).size, numbers.length, 'every movement number is unique');
+  } finally { store.close(); }
 });
 
 test('E7: the data steps after wave 3 are the three insert-only steps; the standard defect codes are the 98 of the reference (58 added in wave 3), inserted only when missing', () => {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Express } from 'express';
 import { currentSiteScope, scopeRows } from './site-scope.ts';
 import { AppError, SYSTEM, qty, today, validDate, type Actor, type Store } from './store.ts';
@@ -83,6 +84,10 @@ export function takeFromSite(store: Store, actor: Actor, siteId: string, refs: R
  * transfer / Project return movements with a site) is booked into that site's Material inventory, one site-side
  * Project transfer movement per site, material and charge. Idempotent: afterwards no holding is left, so a second run
  * changes nothing. A dry run only counts.
+ *
+ * It only inserts (the owner's rule for an upgrade): each holding becomes a NEW site inventory row (never added onto an
+ * existing one) and a NEW movement whose number is `upgradeMovementNumber`, not drawn from the MM counter, so no counter
+ * and no stored row changes.
  */
 export function migrateProjectHoldings(store: Store, options: { dryRun: boolean } = { dryRun: false }) {
   const holdings = unmigratedHoldings({ movements: store.list('movements', true) });
@@ -91,11 +96,23 @@ export function migrateProjectHoldings(store: Store, options: { dryRun: boolean 
   store.transaction(() => {
     for (const holding of holdings) {
       const refs = { materialId: holding.materialId, customMaterialId: holding.customMaterialId };
-      changeSiteStock(store, SYSTEM, holding.siteId, refs, holding.chargeNo, holding.quantity);
-      store.create('movements', { number: store.next('MM'), ...refs, warehouseId: '', siteId: holding.siteId, type: 'Project transfer', quantity: holding.quantity, chargeNo: holding.chargeNo, date: today(), note: 'Material held by the project, booked into the project site inventory.' }, SYSTEM);
+      store.create('stock', { ...refs, locationKind: 'site', siteId: holding.siteId, warehouseId: '', chargeNo: holding.chargeNo, quantity: holding.quantity }, SYSTEM);
+      const number = upgradeMovementNumber(holding, store.list('movements', true));
+      store.create('movements', { number, ...refs, warehouseId: '', siteId: holding.siteId, type: 'Project transfer', quantity: holding.quantity, chargeNo: holding.chargeNo, date: today(), note: 'Material held by the project, booked into the project site inventory.' }, SYSTEM);
     }
   });
   return { holdings: holdings.length, quantity };
+}
+/** Prefix of the movement numbers the hosted upgrade books; ordinary numbers are `MM-<year>-<counter>` (Store.next). */
+export const UPGRADE_MOVEMENT_PREFIX = 'MM-UPG-';
+/**
+ * The number of an upgrade booking: the prefix, a stable code of the holding (site, material, charge) and the count of
+ * upgrade bookings of that holding so far, e.g. `MM-UPG-3f9a0c12-1`. It never comes from a counter, so it cannot collide
+ * with an ordinary number, and the same holding gets the same number on every copy of the database.
+ */
+export function upgradeMovementNumber(holding: { siteId: string; identity: string; chargeNo: string }, movements: Row[]): string {
+  const base = `${UPGRADE_MOVEMENT_PREFIX}${createHash('sha256').update(`${holding.siteId}|${holding.identity}|${holding.chargeNo}`).digest('hex').slice(0, 8)}-`;
+  return `${base}${movements.filter(move => String(move.number ?? '').startsWith(base)).length + 1}`;
 }
 
 /**

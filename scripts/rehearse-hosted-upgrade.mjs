@@ -67,16 +67,44 @@ async function query(sql, values) {
   await client.connect();
   try { return await client.query(sql, values); } finally { await client.end(); }
 }
-/** Independent digest of every table except sessions (generated columns excluded). */
-async function digests() {
+/**
+ * Independent row snapshot of every table except sessions (generated columns excluded): per table, a map from each row's
+ * primary key (counters by their key; the whole row for a table without one) to an md5 of the row as PostgreSQL prints it.
+ * It reads the database directly and shares nothing with the application's own comparison.
+ */
+async function snapshot() {
   const tables = (await query("SELECT tablename FROM pg_tables WHERE schemaname='stelux' AND tablename<>'sessions' ORDER BY 1")).rows.map(row => row.tablename);
   const output = {};
   for (const table of tables) {
     const columns = (await query("SELECT column_name FROM information_schema.columns WHERE table_schema='stelux' AND table_name=$1 AND is_generated='NEVER' ORDER BY column_name", [table])).rows.map(row => `"${row.column_name}"`).join(',');
-    const row = (await query(`SELECT count(*)::int AS n, md5(coalesce(string_agg(md5(t::text), '' ORDER BY md5(t::text)), '')) AS d FROM (SELECT ${columns} FROM stelux."${table}") t`)).rows[0];
-    output[table] = `${row.n}:${row.d}`;
+    const keys = (await query("SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey) WHERE i.indrelid=format('stelux.%I',$1::text)::regclass AND i.indisprimary ORDER BY array_position(i.indkey::int2[], a.attnum)", [table])).rows.map(row => `t."${row.attname}"`);
+    const key = keys.length ? `json_build_array(${keys.join(',')})::text` : 'md5(t::text)';
+    const rows = (await query(`SELECT ${key} AS k, md5(t::text) AS d FROM (SELECT ${columns} FROM stelux."${table}") t`)).rows;
+    output[table] = new Map(rows.map(row => [row.k, row.d]));
   }
   return output;
+}
+/**
+ * The owner's rule for an upgrade: every row that existed before is present and byte-identical after, in every table;
+ * new rows only in `allowed` tables. Returns the problems (table and first differing keys) and the rows added per table.
+ */
+function compareSnapshots(before, after, allowed) {
+  const problems = [], added = {};
+  const first = keys => `${keys.slice(0, 5).join(', ')}${keys.length > 5 ? ` (+${keys.length - 5} more)` : ''}`;
+  for (const [table, rows] of Object.entries(before)) {
+    const now = after[table];
+    if (!now) { problems.push(`${table}: the table is gone`); continue; }
+    const missing = [...rows.keys()].filter(key => !now.has(key)), changed = [...rows].filter(([key, digest]) => now.has(key) && now.get(key) !== digest).map(([key]) => key);
+    if (missing.length) problems.push(`${table}: ${missing.length} pre-existing row(s) missing, first ${first(missing)}`);
+    if (changed.length) problems.push(`${table}: ${changed.length} pre-existing row(s) changed, first ${first(changed)}`);
+  }
+  for (const [table, rows] of Object.entries(after)) {
+    const fresh = [...rows.keys()].filter(key => !before[table]?.has(key));
+    if (!fresh.length) continue;
+    added[table] = fresh.length;
+    if (!allowed.has(table)) problems.push(`${table}: ${fresh.length} row(s) added to a table no data step names, first ${first(fresh)}`);
+  }
+  return { problems, added };
 }
 async function step(name, action) {
   if (failed) { report('SKIP', name, 'an earlier step failed'); return; }
@@ -87,7 +115,7 @@ const helper = join(work, 'old-helper.mjs');
 const oldModule = path => pathToFileURL(join(oldDir, path)).href;
 
 let server;
-let before, dry;
+let before, dry, prepared;
 try {
   await step('Target is a disposable loopback database', async () => `${target.hostname}:${pgConfig.port}/${databaseName}`);
   await step(`Export old code (${oldRef})`, async () => {
@@ -147,27 +175,33 @@ try {
     }
     return 'empty tables dropped (their incoming foreign keys go with them)';
   });
-  await step('Record digests of the old database', async () => { before = await digests(); return `${Object.keys(before).length} tables`; });
+  await step('Record a row snapshot of the old database', async () => { before = await snapshot(); return `${Object.keys(before).length} tables, ${Object.values(before).reduce((sum, rows) => sum + rows.size, 0)} rows`; });
   await step('New code: dry run', async () => {
     dry = run('dry run', join(root, 'server/prepare-welding.ts'), { cwd: runDir, args: ['--dry-run'], json: true });
     if (!dry.dryRun || dry.upToDate) throw new Error('The dry run found nothing to prepare.');
     if (existsSync(join(runDir, 'backups'))) throw new Error('The dry run wrote a backup.');
-    const after = await digests();
-    if (JSON.stringify(after) !== JSON.stringify(before)) throw new Error('The dry run changed the database.');
+    const { problems, added } = compareSnapshots(before, await snapshot(), new Set());
+    if (problems.length || Object.keys(added).length) throw new Error(`The dry run changed the database: ${problems.join('; ')}`);
     const created = dry.created;
     return `would create ${created.tables.length} table(s) [${created.tables.join(', ')}], ${created.columns.length} reference column(s), ${created.foreignKeys.length} foreign key(s), ${created.indexes.length} index(es), RLS on ${created.rowLevelSecurity.length}; pre-existing: ${Object.entries(dry.counts).map(([name, count]) => `${name}=${count}`).join(' ')}`;
   });
   await step('New code: preparation (backup first)', async () => {
-    const result = run('preparation', join(root, 'server/prepare-welding.ts'), { cwd: runDir, json: true });
+    const result = prepared = run('preparation', join(root, 'server/prepare-welding.ts'), { cwd: runDir, json: true });
     if (!existsSync(join(result.backup, 'stelux-postgres.sql')) || !existsSync(join(result.backup, 'preparation.json'))) throw new Error('The backup or its preparation record is missing.');
     if (JSON.stringify(result.created) !== JSON.stringify(dry.created)) throw new Error('The preparation differs from its dry run.');
     return `created ${result.created.tables.length} table(s), ${result.created.columns.length} column(s), ${result.created.foreignKeys.length} foreign key(s), ${result.created.indexes.length} index(es); backup written`;
   });
-  await step('Every pre-existing record is unchanged (independent digest)', async () => {
-    const after = await digests();
-    const changed = Object.keys(before).filter(table => after[table] !== before[table]);
-    if (changed.length) throw new Error(`changed: ${changed.join(', ')}`);
-    return `${Object.keys(before).length} tables identical, ${Object.keys(after).length - Object.keys(before).length} new`;
+  await step('Every pre-existing row is unchanged; new rows only where the data steps insert (independent row comparison)', async () => {
+    const tables = prepared.dataStepTables;
+    if (!tables || typeof tables !== 'object') throw new Error('The preparation report does not name the tables its data steps insert into (dataStepTables).');
+    const stepTables = new Set(Object.values(tables).flat());
+    // The audit trail receives one entry per inserted row, and only for rows the data steps inserted.
+    const { problems, added } = compareSnapshots(before, await snapshot(), new Set([...stepTables, 'audit']));
+    const inserted = Object.entries(added).filter(([table]) => stepTables.has(table)).reduce((sum, [, count]) => sum + count, 0);
+    if ((added.audit || 0) > inserted) problems.push(`audit: ${added.audit} entries added for ${inserted} inserted row(s)`);
+    for (const [table, count] of Object.entries(added).sort()) console.log(`       added ${String(count).padStart(6)} row(s) to ${table}`);
+    if (problems.length) throw new Error(problems.join('; '));
+    return `${Object.keys(before).length} tables, every pre-existing row identical (counters included); added: ${Object.entries(added).sort().map(([table, count]) => `${table}=${count}`).join(' ') || 'nothing'}`;
   });
   await step('Idempotency: a second run has nothing to do', async () => {
     const again = run('second preparation', join(root, 'server/prepare-welding.ts'), { cwd: runDir, json: true });
