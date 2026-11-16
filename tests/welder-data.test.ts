@@ -129,6 +129,9 @@ test('the hosted profile delivers the welder and material data pages with the re
   const view = (key: string) => projectResource(hosted, RESOURCE_MAP[key]);
   const labels = (key: string) => view(key).columns.map(name => view(key).fields.find(field => field.name === name)?.label);
   assert.deepEqual(labels('roles'), ['Role', 'Abbreviation', 'Max amount tasks', 'Lead role?']);
+  // The Roles page words its title and dialogs as the reference does (capture weld__welder__roles.txt); the full profile keeps its own.
+  assert.deepEqual([view('roles').title, view('roles').wording], ['Roles', { add: 'Add Role', edit: 'Edit role', remove: 'Delete role' }]);
+  assert.equal(RESOURCE_MAP.roles.title, 'Welder roles');
   assert.deepEqual(labels('diameters'), ['Diameter', 'Size in mm', 'Size in inches', 'Outline in mm', 'Sorting']);
   assert.deepEqual(labels('material_parts'), ['Part', 'Custom']);
   assert.deepEqual(labels('material_types'), ['Type of material', 'Type of steel', 'Material description', 'Basic material', 'Material group', 'ISO / ASME']);

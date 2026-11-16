@@ -179,6 +179,8 @@ export const CATALOG_WORDING: Record<string, CatalogWording> = {
   pwht_processes: { title: 'PWHT process', add: 'Add PWHT process', edit: 'Edit PWHT process', remove: 'Delete PWHT process' },
   pwht_locations: { title: 'PWHT locations', add: 'Add PWHT location', edit: 'Edit PWHT location', remove: 'Delete PWHT location' },
   qa_engineers: { title: 'QA/QC engineers', add: 'Add QA/QC engineer', edit: 'Edit QA/QC engineer', remove: 'Delete QA/QC engineer' },
+  // Weld Pilot → Welder → Roles (capture weld__welder__roles.txt: title, #addRole, Edit role, #deleteRole, 5/20/50/100/500 rows).
+  roles: { title: 'Roles', add: 'Add Role', edit: 'Edit role', remove: 'Delete role' },
 };
 /**
  * Catalog pages whose row action reads "Delete" and asks "Are you sure?" in the hosted profile, as the reference does.

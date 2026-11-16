@@ -349,6 +349,7 @@ test('catalog pages carry the reference titles, add buttons and dialog headings 
     pwht_processes: ['PWHT process', 'Add PWHT process', 'Edit PWHT process', 'Delete PWHT process'],
     pwht_locations: ['PWHT locations', 'Add PWHT location', 'Edit PWHT location', 'Delete PWHT location'],
     qa_engineers: ['QA/QC engineers', 'Add QA/QC engineer', 'Edit QA/QC engineer', 'Delete QA/QC engineer'],
+    roles: ['Roles', 'Add Role', 'Edit role', 'Delete role'],
   };
   for (const [key, [title, add, edit, remove]] of Object.entries(expected)) {
     const resource = catalog(key);
