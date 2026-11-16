@@ -24,6 +24,11 @@ export const TRANSFER_PRIORITIES = ['Normal', 'Urgent'] as const;
 /** The reference's statuses are not known: an order is open until it is completed (movements applied) or cancelled. */
 export const TRANSFER_STATUSES = ['Open', 'Completed', 'Cancelled'] as const;
 export const CORRECTION_REASONS = ['Import error', 'Name correction', 'Other'] as const;
+/** Reasons of Adjust quantity and of Remove material (reference #adjustLagerQuantity, #removeLagerItem). */
+export const ADJUST_REASONS = ['Loss', 'Damage', 'Found', 'Count correction', 'Other'] as const;
+export const REMOVE_REASONS = ['Imported by mistake', 'No longer held', 'Other'] as const;
+/** Every reason a stock movement may carry. */
+export const MOVEMENT_REASONS = [...new Set<string>([...CORRECTION_REASONS, ...ADJUST_REASONS, ...REMOVE_REASONS])];
 /** Movement types this flow adds to the existing receipt / issue / transfer / adjustment types. */
 export const MOVEMENT_TYPES = ['Project transfer', 'Project return', 'Correction', 'Removal', 'Return to inventory'] as const;
 export const MAX_LENGTHS = { materialGroup: 100, articleNo: 100, uom: 20, description: 2000, dia: 20, lbs: 20, reasonText: 500, chargeNo: 100, materialNo: 100, comment: 500 } as const;
@@ -214,12 +219,13 @@ export const MATERIALS_LIST_COLUMNS = [
   { key: 'materialNo', label: 'Mat.no.' }, { key: 'description', label: 'Description' }, { key: 'quantity', label: 'Qty.', type: 'number' as const },
   { key: 'ordered', label: 'Ord.?' }, { key: 'inventory', label: 'Inv.', type: 'number' as const }, { key: 'picked', label: 'Picked', type: 'number' as const },
 ];
-export interface MaterialsListFilters { siteId?: string; projectId?: string; isoId?: string; query?: string; }
+export interface MaterialsListFilters { siteId?: string; projectId?: string; isoId?: string; query?: string; /** Filter materials: Ordered Yes / No (reference #filterMaterialList). */ ordered?: string; }
 /**
- * Ord.? says whether the requirement is covered by orders (Yes / Partly / No); Inv. is what the isometric's project
- * site holds in its Material inventory and no pick list claims yet; Picked is the quantity issued to the isometric.
+ * Ord.? says whether the requirement is fully covered by orders (Yes) or not (No), exactly as the isometric's Materials
+ * tab; Inv. is what the isometric's project site holds in its Material inventory and no pick list claims yet; Picked is
+ * the quantity issued to the isometric.
  */
-export const orderedState = (required: number, ordered: number) => ordered >= required && required > 0 ? 'Yes' : ordered > 0 ? 'Partly' : 'No';
+export const orderedState = (required: number, ordered: number): 'Yes' | 'No' => Math.max(0, required - ordered) <= 1e-9 ? 'Yes' : 'No';
 /** The materials of the active main project (or of one project / isometric), computed from the current records. */
 export function materialsList(rows: Record<string, Row[]>, filters: MaterialsListFilters = {}) {
   const projects = new Map(live(rows, 'projects').map(project => [project.id, project]));
@@ -235,8 +241,174 @@ export function materialsList(rows: Record<string, Row[]>, filters: MaterialsLis
       };
       return { id: entry.requirement.id, values };
     })
+    .filter(row => !filters.ordered || row.values.ordered === filters.ordered)
     .filter(row => !query || Object.values(row.values).some(value => String(value).toLowerCase().includes(query)))
     .sort((a, b) => String(a.values.project).localeCompare(String(b.values.project)) || String(a.values.iso).localeCompare(String(b.values.iso)) || String(a.values.materialNo).localeCompare(String(b.values.materialNo)));
+}
+
+// ---- Reserved quantity, certificates of inventory rows -------------------------------------------------------
+
+/** What open transfer orders already hold of one storehouse line (reference "Reserved on open orders"). */
+export function reservedOnOpenOrders(rows: Record<string, Row[]>, stock: Row): number {
+  const open = new Set(live(rows, 'transfer_orders').filter(order => order.status === 'Open').map(order => order.id));
+  return round6(live(rows, 'transfer_order_items').filter(item => open.has(String(item.orderId)) && item.stockId === stock.id).reduce((sum, item) => sum + Number(item.quantity), 0));
+}
+/** An open transfer order that holds a storehouse line blocks its removal. */
+export const blocksRemoval = (rows: Record<string, Row[]>, stock: Row) => reservedOnOpenOrders(rows, stock) > 0;
+
+/** The certificates of a Material No in a project site's inventory: those of the catalog material for each charge the site holds. */
+export function inventoryCertificates(rows: Record<string, Row[]>, inventory: { lines: Row[] }): Row[] {
+  const seen = new Set<string>(), found: Row[] = [];
+  for (const line of inventory.lines) for (const cert of lineCertificates(rows, line)) if (!seen.has(cert.id)) { seen.add(cert.id); found.push(cert); }
+  return found;
+}
+/** The certificate ids of a transfer order item (stored as one comma-separated text). */
+export const itemCertIds = (item: Row) => String(item.certIds || '').split(',').map(id => id.trim()).filter(Boolean);
+
+// ---- Screens: what each menu and dialog offers ------------------------------------------------------------------
+
+/** The Options of a Material inventory row, in the reference's order (mto__order__material-inventory); storehouse operations are not among them. */
+export const INVENTORY_ROW_OPTIONS = { log: 'Material log', label: 'Print QR label', transfer: 'Request transfer to storehouse (Transfer Order)', remove: 'Remove material from inventory' } as const;
+/** The buttons of the Material inventory toolbar: a direct transfer to a project exists only on storehouse lines. */
+export const INVENTORY_TOOLBAR = ['New Transfer Order', 'Add'] as const;
+/** The Options of a storehouse line (dialog titles of the reference; the menu labels themselves are not captured). */
+export const STOREHOUSE_LINE_OPTIONS = ['Material log', 'Transfer to project', 'Move to other storehouse', 'Return to inventory', 'Correction', 'Edit storehouse item', 'Adjust quantity', 'Remove material', 'Audit trail', 'View certificates', 'Print QR label'] as const;
+
+export interface OrderItemDraft { materialNo: string; description: string; /** The quantity the item starts with: the full balance. */ quantity: number; uom: string; stockId: string; /** The most the item may take. */ balance: number; certificates: Row[] }
+/**
+ * The items a New Transfer Order opens with (reference _buildStoItemRow): one per checked inventory row or storehouse
+ * line, Material No fixed, quantity = maximum = the balance, every certificate of the material offered (all ticked by the dialog).
+ */
+export function prefilledOrderItems(rows: Record<string, Row[]>, context: TransferContext, inventory: InventoryRow[] = [], lines: Row[] = []): OrderItemDraft[] {
+  if (context === 'inventory') return inventory.map(row => ({ materialNo: row.details.materialNo, description: row.details.description, quantity: row.quantity, uom: row.details.uom, stockId: '', balance: row.quantity, certificates: inventoryCertificates(rows, row) }));
+  if (context === 'store') return lines.map(line => { const details = stockDetails(rows, line); return { materialNo: details.materialNo, description: details.description, quantity: Number(line.quantity), uom: details.uom, stockId: line.id, balance: Number(line.quantity), certificates: lineCertificates(rows, line) }; });
+  return [];
+}
+/** The quantity a transfer to a project starts with: one line starts empty, the bulk dialog starts every line at its full balance. */
+export const transferAmountDefault = (lines: Row[], line: Row) => lines.length > 1 ? String(Number(line.quantity)) : '';
+
+// ---- Material log ---------------------------------------------------------------------------------------------
+
+export interface MaterialLogRow { id: string; /** When it was booked (ISO), for the time of day. */ at: string; date: string; action: string; reference: string; user: string; /** Signed: plus = into the place, minus = out of it. */ quantity: number; }
+/**
+ * What the Material log shows for a movement: Date | Action | reference ('-' column) | User | Quantity (reference
+ * showMaterialInventoryLog). Texts captured in the reference: 'Received from <supplier>' / 'Ord. No. <no>', 'Sent to
+ * storehouse <name>' / '-', 'Isometric execution <ISO No>' / 'Pick List <no>'. The other movements have no captured text;
+ * they read as the plain sentence below (unverified).
+ */
+export function movementAction(rows: Record<string, Row[]>, move: Row): { action: string; reference: string } {
+  const named = (key: string, id: unknown, field = 'name') => String(live(rows, key).find(row => row.id === id)?.[field] ?? '');
+  const quantity = Number(move.quantity), type = String(move.type), site = Boolean(move.siteId) && !move.warehouseId;
+  const first = String(move.note || '').split(' · ')[0].trim();
+  const order = move.transferOrder ? live(rows, 'transfer_orders').find(row => row.number === move.transferOrder) : undefined;
+  if (type === 'Receipt' && quantity > 0) {
+    const purchase = live(rows, 'orders').find(row => row.number === first);
+    return purchase ? { action: `Received from ${named('suppliers', purchase.supplierId) || 'the supplier'}`, reference: `Ord. No. ${purchase.number}` } : { action: 'Received', reference: '-' };
+  }
+  if (type === 'Issue') {
+    const iso = named('isometrics', move.isoId, 'isoNo');
+    return { action: iso ? `Isometric execution ${iso}` : 'Issued', reference: first ? `Pick List ${first}` : '-' };
+  }
+  if (type === 'Removal') return { action: site ? 'Removed from inventory' : 'Removed from storehouse', reference: String(move.reasonText || move.note || '-') };
+  if (type === 'Correction') return { action: 'Correction', reference: String(move.reasonText || move.note || '-') };
+  if (type === 'Adjustment') {
+    if (site && quantity > 0) return { action: 'Added to inventory', reference: '-' };
+    return { action: 'Adjustment', reference: String(move.reasonText || move.note || '-') };
+  }
+  if (order) {
+    const toStorehouse = named('warehouses', order.toWarehouseId), fromStorehouse = named('warehouses', order.fromWarehouseId || move.warehouseId);
+    if (quantity < 0 && toStorehouse) return { action: `Sent to storehouse ${toStorehouse}`, reference: '-' };
+    if (quantity < 0 && order.siteId) return { action: `Sent to project site ${named('sites', order.siteId)}`, reference: '-' };
+    if (quantity > 0 && order.fromSiteId && site) return { action: `Received from project site ${named('sites', order.fromSiteId)}`, reference: String(order.number) };
+    if (quantity > 0 && fromStorehouse && site) return { action: `Received from storehouse ${fromStorehouse}`, reference: String(order.number) };
+    return { action: quantity < 0 ? 'Sent out' : 'Received', reference: String(order.number) };
+  }
+  if (type === 'Project transfer' || type === 'Return to inventory') return quantity > 0 && site ? { action: type === 'Project transfer' ? 'Received from a storehouse' : 'Returned from a storehouse', reference: '-' } : { action: `Sent to ${named('sites', move.siteId) || 'the project site'}`, reference: '-' };
+  return { action: type, reference: String(move.number || '-') };
+}
+/** The log rows of some movements, oldest first. */
+export function materialLogRows(rows: Record<string, Row[]>, moves: Row[]): MaterialLogRow[] {
+  return [...moves].sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a._createdAt).localeCompare(String(b._createdAt)))
+    .map(move => ({ id: move.id, at: String(move._createdAt || ''), date: String(move.date || ''), ...movementAction(rows, move), user: String(move.byName || '-'), quantity: Number(move.quantity) }));
+}
+/** The Material log of one Material No in a project site's inventory. */
+export const siteMaterialLog = (rows: Record<string, Row[]>, siteId: string, identity: string) => materialLogRows(rows, siteInventoryLog(rows, siteId, identity));
+
+// ---- Material search over storehouses and project site inventories --------------------------------------------
+
+export const SEARCH_LIMIT = 200;
+export interface SearchFilters { locations: string[]; group: string; dia: string; schedule: string; text: string }
+export interface SearchRow { key: string; kind: LocationKind; place: string; stock: Row; details: StockDetails; certificates: number }
+/** A text counts as a search term when one of its words has at least three characters (reference _storehouseSearchHasTerm). */
+export const searchHasTerm = (value: string) => value.replace(/[+\-<>()~*"@]+/g, ' ').split(/\s+/).some(part => part.length >= 3);
+/** The places the search can look in: every storehouse and every project site (a location value is `warehouse:<id>` or `site:<id>`). */
+export function searchLocations(rows: Record<string, Row[]>) {
+  return [...live(rows, 'warehouses').filter(row => row.use !== 'Tools').map(row => ({ value: `warehouse:${row.id}`, label: String(row.name) })), ...live(rows, 'sites').map(row => ({ value: `site:${row.id}`, label: String(row.name) }))];
+}
+/**
+ * Search material across storehouses and project site inventories (reference #datatableStorehouseSearch): at least one
+ * location or a search term; zero balances are hidden; at most 200 rows. `state` tells the page which notice to show.
+ */
+export function searchStock(rows: Record<string, Row[]>, filters: SearchFilters): { rows: SearchRow[]; state: 'need' | 'empty' | 'capped' | 'ok' } {
+  const text = filters.text.trim().toLowerCase();
+  if (!filters.locations.length && !searchHasTerm(text)) return { rows: [], state: 'need' };
+  const places = new Map<string, string>([...live(rows, 'warehouses').map(row => [`warehouse:${row.id}`, String(row.name)] as const), ...live(rows, 'sites').map(row => [`site:${row.id}`, String(row.name)] as const)]);
+  const contains = (value: string, wanted: string) => !wanted.trim() || value.toLowerCase().includes(wanted.trim().toLowerCase());
+  const found = live(rows, 'stock').filter(stock => Number(stock.quantity) > 0).map(stock => {
+    const kind = locationKind(stock), id = kind === 'site' ? `site:${stock.siteId}` : `warehouse:${stock.warehouseId}`;
+    return { stock, kind, id, details: stockDetails(rows, stock) };
+  })
+    .filter(entry => places.has(entry.id) && (!filters.locations.length || filters.locations.includes(entry.id)))
+    .filter(entry => contains(entry.details.group, filters.group) && contains(entry.details.dia, filters.dia) && contains(entry.details.lbs, filters.schedule))
+    .filter(entry => !text || entry.details.description.toLowerCase().includes(text) || entry.details.materialNo.toLowerCase().includes(text))
+    .sort((a, b) => places.get(a.id)!.localeCompare(places.get(b.id)!) || a.details.materialNo.localeCompare(b.details.materialNo) || String(a.stock.chargeNo || '').localeCompare(String(b.stock.chargeNo || '')))
+    .map(entry => ({ key: entry.stock.id, kind: entry.kind, place: places.get(entry.id)!, stock: entry.stock, details: entry.details, certificates: lineCertificates(rows, entry.stock).length }));
+  if (!found.length) return { rows: [], state: 'empty' };
+  return found.length > SEARCH_LIMIT ? { rows: found.slice(0, SEARCH_LIMIT), state: 'capped' } : { rows: found, state: 'ok' };
+}
+
+// ---- Storehouse transactions ----------------------------------------------------------------------------------
+
+export interface Transaction { key: string; /** The five-digit report number; '' on movements written before report numbers existed. */ reportNo: string; at: string; date: string; type: string; from: string; to: string; user: string; items: number; moves: Row[] }
+/**
+ * The storehouse transactions: movements that touch a storehouse, grouped by the report number of the operation that
+ * wrote them (one transfer, however many lines, is one transaction). A movement without a report number (written before
+ * they existed) is listed alone and without one. Newest first (reference #datatableStorehouseTransactions).
+ */
+export function storehouseTransactions(rows: Record<string, Row[]>): Transaction[] {
+  const groups = new Map<string, Row[]>();
+  for (const move of live(rows, 'movements')) {
+    const key = move.reportNo ? `report:${move.reportNo}` : `single:${move.id}`;
+    groups.set(key, [...(groups.get(key) || []), move]);
+  }
+  const placeName = (move: Row) => move.warehouseId ? String((live(rows, 'warehouses').find(row => row.id === move.warehouseId)?.name) ?? '') : move.siteId ? `Inventory · ${String(live(rows, 'sites').find(row => row.id === move.siteId)?.name ?? '')}` : '';
+  return [...groups].filter(([, moves]) => moves.some(move => move.warehouseId)).map(([key, moves]) => {
+    const ordered = [...moves].sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)));
+    const out = ordered.find(move => Number(move.quantity) < 0), into = ordered.find(move => Number(move.quantity) > 0);
+    const order = ordered.map(move => move.transferOrder ? live(rows, 'transfer_orders').find(row => row.number === move.transferOrder) : undefined).find(Boolean);
+    const types = new Set(ordered.map(move => String(move.type)));
+    const type = order ? String(order.type) : types.has('Project transfer') ? 'Storehouse → Project' : types.has('Return to inventory') ? 'Return → Inventory' : types.has('Transfer in') || types.has('Transfer out') ? 'Storehouse → Storehouse' : String(ordered[0].type);
+    const lone = !into && !out ? ordered[0] : undefined;
+    return {
+      key, reportNo: String(ordered[0].reportNo || ''), at: String(ordered[0]._createdAt || ''), date: String(ordered[0].date || ''), type,
+      from: out ? placeName(out) : lone ? placeName(lone) : '-', to: into ? placeName(into) : '-', user: String(ordered[0].byName || '-'),
+      items: new Set(ordered.map(move => `${materialIdentity(move)}|${move.chargeNo || ''}`)).size, moves: ordered,
+    };
+  }).sort((a, b) => b.at.localeCompare(a.at) || b.reportNo.localeCompare(a.reportNo));
+}
+
+// ---- QR labels ----------------------------------------------------------------------------------------------------
+
+export interface MaterialLabel { materialNo: string; description: string; dia: string; lbs: string; uom: string; /** What the QR code encodes: the Material No. */ payload: string }
+/** The labels of some Material Nos, each number once (reference material-label.php, one label per Material No); a number the catalogs do not hold is reported in `missing`. */
+export function materialLabels(rows: Record<string, Row[]>, materialNos: string[]): { labels: MaterialLabel[]; missing: string[] } {
+  const labels: MaterialLabel[] = [], missing: string[] = [];
+  for (const wanted of [...new Set(materialNos.map(no => no.trim()).filter(Boolean))]) {
+    const material = live(rows, 'materials').find(row => row.materialNo === wanted) ?? live(rows, 'custom_materials').find(row => row.materialNo === wanted);
+    if (!material) { missing.push(wanted); continue; }
+    labels.push({ materialNo: wanted, description: String(material.description || ''), dia: String(material.dia || ''), lbs: String(material.lbs || ''), uom: String(material.uom || ''), payload: wanted });
+  }
+  return { labels, missing };
 }
 
 // ---- Resources ----------------------------------------------------------------------------------------------
@@ -253,6 +425,7 @@ export function applyMtoStock(resources: Resource[]) {
   warehouses.fields.splice(1, 0, t('location', 'Location'));
   warehouses.fields.push(t('description', 'Description', { type: 'textarea', section: 'Notes' }));
   warehouses.columns = ['name', 'location', 'address', 'residence', 'phone', 'description', 'siteId', 'use'];
+  warehouses.description = 'The company’s storehouses, shared by every project site. Search their material, transfer it to a project site and follow every transaction.';
   const stock = find('stock');
   // A site inventory row has no storehouse: the field stays (older rows and every storehouse line carry it) but is optional.
   stock.fields.find(field => field.name === 'warehouseId')!.required = false;
@@ -263,7 +436,7 @@ export function applyMtoStock(resources: Resource[]) {
   );
   const movements = find('movements');
   movements.fields.find(field => field.name === 'type')!.options!.push(...MOVEMENT_TYPES);
-  movements.fields.push(ref('siteId', 'Project site', 'sites'), sel('reason', 'Reason', CORRECTION_REASONS), t('reasonText', 'Reason text'), t('transferOrder', 'Transfer order'));
+  movements.fields.push(ref('siteId', 'Project site', 'sites'), sel('reason', 'Reason', MOVEMENT_REASONS), t('reasonText', 'Reason text'), t('transferOrder', 'Transfer order'), t('reportNo', 'Report No.'), t('byName', 'User'));
   // Pick-list lines and reservations name the project site whose inventory they draw on.
   find('picklists').fields.push(ref('siteId', 'Project site', 'sites', { hidden: true }));
   find('reservations').fields.push(ref('siteId', 'Project site', 'sites', { hidden: true }));
@@ -279,7 +452,7 @@ export function applyMtoStock(resources: Resource[]) {
     key: 'transfer_order_items', title: 'Transfer order items', singular: 'transfer order item', module: 'materials', group: 'Order & inventory', readonly: true, display: 'materialNo',
     description: 'The materials and quantities of a transfer order.',
     fields: [ref('orderId', 'Transfer order', 'transfer_orders', { required: true }), t('materialNo', 'Material no.', { required: true }), t('description', 'Description'),
-      t('quantity', 'Quantity', { type: 'number', min: MIN_QUANTITY, step: 0.01, required: true }), t('uom', 'UOM'), t('stockId', 'Inventory line', { hidden: true })],
+      t('quantity', 'Quantity', { type: 'number', min: MIN_QUANTITY, step: 0.01, required: true }), t('uom', 'UOM'), t('stockId', 'Inventory line', { hidden: true }), t('certIds', 'Certificates', { hidden: true })],
     columns: ['orderId', 'materialNo', 'description', 'quantity', 'uom'],
   });
 }
@@ -301,17 +474,18 @@ const reasonText = (required: boolean) => field('reasonText', 'Reason text', 'te
 const defs: ActionDefinition[] = [];
 const add = (key: string, title: string, description: string, fields: ActionField[], submit = title) => defs.push({ key, title, module: 'materials', description, fields, submit });
 // Material inventory of the active project site (area 16).
-add('stock-add', 'Add material from DB', 'Put a catalog material into the Material inventory of the project site.', [siteField('Project site', { hidden: true }), field('materialId', 'Material', 'ref', { ref: 'materials', required: true }), field('chargeNo', 'Charge / heat number', 'text'), quantity(), dateField, noteField], 'Add to inventory');
+add('stock-add', 'Add material', 'Put a catalog material into the Material inventory of the project site.', [siteField('Project site', { hidden: true }), field('materialId', 'Material', 'ref', { ref: 'materials', required: true }), field('chargeNo', 'Charge / heat number', 'text', { hidden: true }), quantity(), dateField, noteField], 'Add');
 add('inventory-remove', 'Remove material from inventory', 'Take a quantity of one Material No out of the project site’s inventory. The comment is logged.', [siteField('Project site', { hidden: true }), field('materialId', 'Material', 'ref', { ref: 'materials' }), field('customMaterialId', 'Custom material', 'ref', { ref: 'custom_materials', hidden: true }), quantity(), field('comment', 'Comment', 'text', { required: true }), dateField], 'Remove');
 // Storehouse lines (area 75).
 add('stock-to-project', 'Transfer material from storehouse to project', 'Move storehouse material into the Material inventory of a project site, with the chosen certificates.', [siteField('Destination project site'), itemsField('Materials'), dateField, noteField], 'Transfer');
 add('stock-move', 'Move to other storehouse', 'Move a quantity (or all of it) to another storehouse. Both balances change together.', [stockField, field('toWarehouseId', 'Destination storehouse', 'ref', { ref: 'warehouses', required: true }), quantity({ required: false }), allField('Move all'), dateField, noteField], 'Move');
 add('stock-return', 'Return to inventory', 'Move storehouse material back into the Material inventory of the project site.', [stockField, siteField('Project site', { hidden: true }), quantity({ label: 'Quantity to return', required: false }), allField('Return all'), dateField, noteField], 'Return');
-add('stock-correct', 'Correct entry', 'Fix the wording of a storehouse line. A reason is required and the change is logged.', [stockField,
-  field('materialGroup', 'Material group', 'text', { required: true }), field('articleNo', 'Article no', 'text'), field('uom', 'UOM', 'text', { required: true }), field('description', 'Description', 'textarea', { required: true }), field('dia', 'DIA', 'text'), field('lbs', 'LBS / SCH', 'text'),
-  field('reason', 'Reason', 'select', { options: [...CORRECTION_REASONS], required: true }), reasonText(false), field('chargeNo', 'Certificate charge', 'text'), dateField], 'Save correction');
-add('stock-adjust', 'Adjust quantity', 'Set the counted quantity of a storehouse line. The difference is logged with your reason.', [stockField, field('quantity', 'New quantity', 'number', { min: 0, step: 0.01, required: true }), reasonText(true), dateField], 'Adjust');
-add('stock-remove', 'Remove from storehouse', 'Take the line out of the storehouse, for example because it was imported by mistake. Any remaining quantity is written off.', [stockField, reasonText(true), noteField, dateField], 'Remove');
+add('stock-correction', 'Correction', 'Remove a quantity from a storehouse line, with the reason. The quantity is written off and logged.', [stockField, quantity({ label: 'Quantity to remove' }), field('reasonText', 'Reason', 'text', { required: true }), dateField], 'Apply correction');
+add('stock-correct', 'Edit storehouse item', 'Fix the wording of a storehouse line. A reason is required and the change is logged.', [stockField,
+  field('materialGroup', 'Material group', 'text'), field('articleNo', 'Article No', 'text'), field('uom', 'UOM', 'text'), field('description', 'Description', 'text'), field('dia', 'DIA', 'text'), field('lbs', 'LBS/SCH', 'text'),
+  field('reason', 'Reason', 'select', { options: [...CORRECTION_REASONS], required: true }), field('reasonText', 'Explanation', 'text'), field('chargeNo', 'Charge', 'text', { hidden: true }), dateField], 'Save');
+add('stock-adjust', 'Adjust quantity', 'Set the counted quantity of a storehouse line. The difference is logged with your reason.', [stockField, field('quantity', 'New quantity', 'number', { min: 0, step: 0.01, required: true }), field('reason', 'Reason', 'select', { options: [...ADJUST_REASONS], required: true }), field('reasonText', 'Explanation', 'text'), dateField], 'Save');
+add('stock-remove', 'Remove material', 'Take the line out of the storehouse. Any remaining quantity is written off. An open transfer order blocks removal.', [stockField, field('reason', 'Reason', 'select', { options: [...REMOVE_REASONS], required: true }), field('reasonText', 'Explanation', 'text'), dateField], 'Remove material');
 // Transfer orders (area 16).
 add('transfer-order-create', 'New Transfer Order', 'Plan a move between project site inventories and storehouses. Nothing moves until the order is completed.', [field('type', 'Type', 'select', { options: [...TRANSFER_TYPES], required: true }), field('priority', 'Priority', 'select', { options: [...TRANSFER_PRIORITIES], default: 'Normal' }),
   field('fromWarehouseId', 'From storehouse', 'ref', { ref: 'warehouses' }), field('fromSiteId', 'From project site', 'ref', { ref: 'sites', hidden: true }), field('siteId', 'To project site', 'ref', { ref: 'sites' }), field('toWarehouseId', 'To storehouse', 'ref', { ref: 'warehouses' }), field('notes', 'Notes (optional)', 'textarea'), itemsField('Order items'), dateField], 'New Transfer Order');
@@ -320,7 +494,7 @@ add('transfer-order-cancel', 'Cancel transfer order', 'Cancel an open order. No 
 export const MTO_STOCK_ACTIONS = defs;
 export const isMtoStockAction = (key: string) => defs.some(def => def.key === key);
 /** The actions on storehouse lines: they are run from the Storehouses page of MTO Pilot. */
-export const STOREHOUSE_ACTIONS = ['stock-to-project', 'stock-move', 'stock-return', 'stock-correct', 'stock-adjust', 'stock-remove'];
+export const STOREHOUSE_ACTIONS = ['stock-to-project', 'stock-move', 'stock-return', 'stock-correction', 'stock-correct', 'stock-adjust', 'stock-remove'];
 /**
  * Permission area and verb of each action. Inventory operations sit with "Material inventory" (16: show, insert,
  * delete, export, import), the storehouse-line operations with "Storehouses" (75: show, insert, edit, delete, …).
@@ -329,7 +503,7 @@ export const STOREHOUSE_ACTIONS = ['stock-to-project', 'stock-move', 'stock-retu
  */
 export const MTO_STOCK_ACTION_SCOPES: Record<string, [string, 'insert' | 'edit' | 'delete']> = {
   'stock-add': ['16', 'insert'], 'inventory-remove': ['16', 'delete'],
-  'stock-to-project': ['75', 'insert'], 'stock-move': ['75', 'insert'], 'stock-return': ['75', 'insert'], 'stock-correct': ['75', 'edit'], 'stock-adjust': ['75', 'edit'], 'stock-remove': ['75', 'delete'],
+  'stock-to-project': ['75', 'insert'], 'stock-move': ['75', 'insert'], 'stock-return': ['75', 'insert'], 'stock-correction': ['75', 'edit'], 'stock-correct': ['75', 'edit'], 'stock-adjust': ['75', 'edit'], 'stock-remove': ['75', 'delete'],
   'transfer-order-create': ['16', 'insert'], 'transfer-order-complete': ['16', 'insert'], 'transfer-order-cancel': ['16', 'insert'],
 };
 

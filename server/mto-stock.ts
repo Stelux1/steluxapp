@@ -7,7 +7,7 @@ import { reportCsv, type Report } from '../shared/reports.ts';
 import { reportWorkbook } from './report-export.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { AuthRequest } from './auth.ts';
-import { CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, TRANSFER_PRIORITIES, TRANSFER_TYPES, isSiteStock, isStorehouseLine, lineCertificates, materialsList, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity } from '../shared/mto-stock.ts';
+import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, isSiteStock, isStorehouseLine, itemCertIds, lineCertificates, materialsList, reservedOnOpenOrders, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity } from '../shared/mto-stock.ts';
 import { nextSiteIndexNumber } from '../shared/welder-data.ts';
 
 type Input = Record<string, unknown>;
@@ -131,20 +131,23 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     if (existing) return change(existing, delta);
     return store.create('stock', { ...refsOf(from), locationKind: 'storehouse', warehouseId, chargeNo, quantity: qty(delta), ...copyWording(from as Row) }, actor);
   };
+  /** The report number of this operation: five digits, taken when the first movement is written, shared by all of them (one transfer = one report). */
+  let reportNo = '';
+  const report = () => reportNo ||= String(store.next('TR').split('-').pop()).padStart(5, '0');
   /** A movement of a storehouse line (`warehouseId`) or of a project site's inventory (`siteId`, no storehouse). */
   const movement = (type: string, row: Row | Input, place: { warehouseId: string; siteId?: string } | { siteId: string }, signed: number, extra: Input = {}) =>
-    store.create('movements', { number: store.next('MM'), ...refsOf(row), warehouseId: 'warehouseId' in place ? place.warehouseId : '', siteId: place.siteId || '', type, quantity: qty(signed), chargeNo: String(row.chargeNo || ''), date, note, ...extra }, actor);
+    store.create('movements', { number: store.next('MM'), ...refsOf(row), warehouseId: 'warehouseId' in place ? place.warehouseId : '', siteId: place.siteId || '', type, quantity: qty(signed), chargeNo: String(row.chargeNo || ''), date, note, reportNo: report(), byName: actor.name, ...extra }, actor);
   const audit = (row: Row, action: string, summary: string) => store.audit('stock', row.id, action, summary, actor);
   const describe = (amount: number, row: Row) => `${amount} ${stockDetails(catalog(), row).uom}`.trim();
   /** Copy the ticked certificates of a storehouse line to the destination project site, each with its next index number. */
-  const copyCertificates = (row: Row, ids: unknown, siteId: string) => {
+  const copyCertificates = (row: Row, ids: unknown, siteId: string, strict = true) => {
     if (ids === undefined || ids === null) return [] as Row[];
     if (!Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string')) throw new AppError(422, 'Choose the certificates to transfer from the list.');
     const offered = new Map(lineCertificates({ certifications: store.list('certifications') }, row).map(cert => [cert.id, cert]));
     const copies: Row[] = [];
     for (const id of new Set(ids as string[])) {
       const cert = offered.get(id);
-      if (!cert) throw new AppError(422, 'A chosen certificate does not belong to this storehouse line.');
+      if (!cert) { if (strict) throw new AppError(422, 'A chosen certificate does not belong to this storehouse line.'); continue; }
       const all = store.list('certifications', true);
       if (all.some(other => !other._archived && other.siteId === siteId && other.name === cert.name && String(other.chargeNo || '') === String(cert.chargeNo || '') && other.materialId === cert.materialId)) continue;
       const { id: _id, _version, _archived, _createdAt, _updatedAt, indexNo: _index, siteId: _site, projectIds: _projects, ...values } = cert as Row & { projectIds?: unknown };
@@ -230,19 +233,28 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     return { resource: 'stock', record: updated };
   }
 
+  if (key === 'stock-correction') {
+    const row = line(data.stockId), reasonText = limited(data.reasonText, 'Reason', MAX_LENGTHS.reasonText, true, 'reasonText');
+    const amount = positiveQuantity(data.quantity, 'Quantity to remove');
+    const updated = change(row, -amount);
+    movement('Correction', row, { warehouseId: String(row.warehouseId) }, -amount, { reasonText, note: note || reasonText });
+    audit(row, 'corrected', `Correction: removed ${describe(amount, row)} of ${nameOf(row)} (${reasonText})`);
+    return { resource: 'stock', record: updated };
+  }
+
   if (key === 'stock-correct') {
     const row = line(data.stockId), before = stockDetails(catalog(), row);
     const next = {
-      materialGroup: limited(data.materialGroup, 'Material group', MAX_LENGTHS.materialGroup, true, 'materialGroup'), articleNo: limited(data.articleNo, 'Article no', MAX_LENGTHS.articleNo),
-      uom: limited(data.uom, 'UOM', MAX_LENGTHS.uom, true, 'uom'), description: limited(data.description, 'Description', MAX_LENGTHS.description, true, 'description'),
-      dia: limited(data.dia, 'DIA', MAX_LENGTHS.dia), lbs: limited(data.lbs, 'LBS / SCH', MAX_LENGTHS.lbs),
+      materialGroup: limited(data.materialGroup, 'Material group', MAX_LENGTHS.materialGroup, false, 'materialGroup'), articleNo: limited(data.articleNo, 'Article No', MAX_LENGTHS.articleNo),
+      uom: limited(data.uom, 'UOM', MAX_LENGTHS.uom, false, 'uom'), description: limited(data.description, 'Description', MAX_LENGTHS.description, false, 'description'),
+      dia: limited(data.dia, 'DIA', MAX_LENGTHS.dia), lbs: limited(data.lbs, 'LBS/SCH', MAX_LENGTHS.lbs),
     };
     const reason = text(data.reason);
     if (!(CORRECTION_REASONS as readonly string[]).includes(reason)) throw new AppError(422, 'Choose the reason for this correction.', { reason: 'Choose a reason.' });
-    const reasonText = limited(data.reasonText, 'Reason text', MAX_LENGTHS.reasonText, reason === 'Other', 'reasonText');
-    const chargeNo = data.chargeNo === undefined ? String(row.chargeNo || '') : limited(data.chargeNo, 'Certificate charge', MAX_LENGTHS.chargeNo);
-    const shown: Record<string, string> = { 'Material group': before.group, 'Article no': before.articleNo, UOM: before.uom, Description: before.description, DIA: before.dia, 'LBS / SCH': before.lbs };
-    const wanted: Record<string, string> = { 'Material group': next.materialGroup, 'Article no': next.articleNo, UOM: next.uom, Description: next.description, DIA: next.dia, 'LBS / SCH': next.lbs };
+    const reasonText = limited(data.reasonText, 'Explanation', MAX_LENGTHS.reasonText, reason === 'Other', 'reasonText');
+    const chargeNo = data.chargeNo === undefined ? String(row.chargeNo || '') : limited(data.chargeNo, 'Charge', MAX_LENGTHS.chargeNo);
+    const shown: Record<string, string> = { 'Material group': before.group, 'Article No': before.articleNo, UOM: before.uom, Description: before.description, DIA: before.dia, 'LBS/SCH': before.lbs };
+    const wanted: Record<string, string> = { 'Material group': next.materialGroup, 'Article No': next.articleNo, UOM: next.uom, Description: next.description, DIA: next.dia, 'LBS/SCH': next.lbs };
     const changes = Object.keys(wanted).filter(name => wanted[name] !== shown[name]).map(name => `${name}: "${shown[name]}" → "${wanted[name]}"`);
     if (chargeNo !== String(row.chargeNo || '')) {
       changes.push(`Charge: "${row.chargeNo || ''}" → "${chargeNo}"`);
@@ -252,27 +264,34 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     if (!changes.length) throw new AppError(422, 'Change at least one value before saving a correction.');
     const updated = store.update('stock', row.id, { ...next, chargeNo, corrected: true }, row._version, actor);
     movement('Correction', row, { warehouseId: String(row.warehouseId) }, 0, { chargeNo, reason, reasonText, note: changes.join('; ') });
-    audit(row, 'corrected', `Corrected ${nameOf(updated)} (${reason}${reasonText ? `: ${reasonText}` : ''}) · ${changes.join('; ')}`);
+    audit(row, 'corrected', `Edited ${nameOf(updated)} (${reason}${reasonText ? `: ${reasonText}` : ''}) · ${changes.join('; ')}`);
     return { resource: 'stock', record: updated };
   }
 
   if (key === 'stock-adjust') {
-    const row = line(data.stockId), reasonText = limited(data.reasonText, 'Reason text', MAX_LENGTHS.reasonText, true, 'reasonText');
+    const row = line(data.stockId), reason = text(data.reason);
+    if (!(ADJUST_REASONS as readonly string[]).includes(reason)) throw new AppError(422, 'Choose the reason for this adjustment.', { reason: 'Choose a reason.' });
+    const reasonText = limited(data.reasonText, 'Explanation', MAX_LENGTHS.reasonText, false, 'reasonText');
     if (typeof data.quantity !== 'number' || !Number.isFinite(data.quantity) || data.quantity < 0 || Math.abs(data.quantity * 100 - Math.round(data.quantity * 100)) > 1e-6) throw new AppError(422, 'The new quantity must be zero or more, in steps of 0.01.', { quantity: 'Enter zero or more, in steps of 0.01.' });
     const target = qty(data.quantity), delta = qty(target - Number(row.quantity));
+    const reserved = reservedOnOpenOrders({ transfer_orders: store.list('transfer_orders'), transfer_order_items: store.list('transfer_order_items') }, row);
+    if (target < reserved) throw new AppError(422, `The new quantity cannot be below ${reserved}, the quantity reserved on open orders.`, { quantity: `Enter at least ${reserved}, the quantity reserved on open orders.` });
     if (delta === 0) throw new AppError(422, 'The new quantity equals the current quantity.', { quantity: 'Enter a different quantity.' });
     const updated = change(row, delta);
-    movement('Adjustment', row, { warehouseId: String(row.warehouseId) }, delta, { reasonText, note: note || reasonText });
-    audit(row, 'adjusted', `Adjusted ${nameOf(row)} from ${row.quantity} to ${target} (${reasonText})`);
+    movement('Adjustment', row, { warehouseId: String(row.warehouseId) }, delta, { reason, reasonText, note: note || reasonText || reason });
+    audit(row, 'adjusted', `Adjusted ${nameOf(row)} from ${row.quantity} to ${target} (${reason}${reasonText ? `: ${reasonText}` : ''})`);
     return { resource: 'stock', record: updated };
   }
 
   if (key === 'stock-remove') {
-    const row = line(data.stockId), reasonText = limited(data.reasonText, 'Reason text', MAX_LENGTHS.reasonText, true, 'reasonText');
+    const row = line(data.stockId), reason = text(data.reason);
+    if (!(REMOVE_REASONS as readonly string[]).includes(reason)) throw new AppError(422, 'Choose the reason for removing this material.', { reason: 'Choose a reason.' });
+    const reasonText = limited(data.reasonText, 'Explanation', MAX_LENGTHS.reasonText, false, 'reasonText');
+    if (blocksRemoval({ transfer_orders: store.list('transfer_orders'), transfer_order_items: store.list('transfer_order_items') }, row)) throw new AppError(409, 'An open transfer order blocks removal. Complete or cancel it first.');
     const remaining = qty(row.quantity);
-    if (remaining > 0) movement('Removal', row, { warehouseId: String(row.warehouseId) }, -remaining, { reasonText, note: note || reasonText });
+    if (remaining > 0) movement('Removal', row, { warehouseId: String(row.warehouseId) }, -remaining, { reason, reasonText, note: note || reasonText || reason });
     const archived = store.archive('stock', row.id, row._version, actor);
-    audit(row, 'removed', `Removed ${nameOf(row)} from the storehouse (${reasonText}); ${remaining} written off`);
+    audit(row, 'removed', `Removed ${nameOf(row)} from the storehouse (${reason}${reasonText ? `: ${reasonText}` : ''}); ${remaining} written off`);
     return { resource: 'stock', record: archived };
   }
 
@@ -308,6 +327,17 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     const toId = route.to === 'storehouse' ? storehouse(data.toWarehouseId).id : '';
     if (route.to === 'storehouse' && fromId && fromId === toId) throw new AppError(422, 'Choose two different storehouses.', { toWarehouseId: 'Choose a different storehouse.' });
     const rows = catalog();
+    /** The certificates ticked on an item: existing certifications of the item's material, each once. */
+    const certificateIds = (value: unknown, materialNo: string, number: string) => {
+      if (value === undefined || value === null) return '';
+      if (!Array.isArray(value) || value.length > 200 || value.some(id => typeof id !== 'string')) throw new AppError(422, `${number}: Choose the certificates from the list.`);
+      const known = store.list('certifications');
+      for (const id of new Set(value as string[])) {
+        const cert = known.find(row => row.id === id), material = cert?.materialId ? store.list('materials').find(row => row.id === cert.materialId) : undefined;
+        if (!cert || !material || String(material.materialNo).trim().toLowerCase() !== materialNo.trim().toLowerCase()) throw new AppError(422, `${number}: A chosen certificate does not belong to this material.`);
+      }
+      return [...new Set(value as string[])].join(',');
+    };
     const prepared = items.map((item, index) => {
       const number = `Item ${index + 1}`;
       const source = sources[index];
@@ -315,9 +345,14 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
       if (source && route.from === 'inventory' && (!isSiteStock(source) || source.siteId !== fromSiteId)) throw new AppError(422, `${number} is not in the inventory of this project site.`);
       if (source && route.to === 'storehouse' && source.warehouseId === toId) throw new AppError(422, `${number} is already in that storehouse.`);
       const details = source ? stockDetails(rows, source) : undefined;
+      const materialNo = limited(item?.materialNo ?? details?.materialNo, `${number}: Material no.`, MAX_LENGTHS.materialNo, true), amount = positiveQuantity(item?.quantity, `${number}: Quantity`);
+      // The quantity may not exceed what the source holds (reference: max = balance); a material the source does not hold at all is left to the completion.
+      const same = (row: Row) => stockDetails(rows, row).materialNo.trim().toLowerCase() === materialNo.trim().toLowerCase();
+      const held = source ? [source] : route.from === 'inventory' ? siteStock({ stock: store.list('stock') }, fromSiteId).filter(same) : store.list('stock').filter(row => isStorehouseLine(row) && (!fromId || row.warehouseId === fromId) && same(row));
+      if (held.length) { const balance = qty(held.reduce((sum, row) => sum + Number(row.quantity), 0)); if (amount > balance + 1e-9) throw new AppError(422, `${number}: Quantity exceeds available balance (${balance}).`, { items: 'Quantity exceeds available balance.' }); }
       return {
-        materialNo: limited(item?.materialNo ?? details?.materialNo, `${number}: Material no.`, MAX_LENGTHS.materialNo, true), description: limited(item?.description ?? details?.description, `${number}: Description`, MAX_LENGTHS.description),
-        quantity: positiveQuantity(item?.quantity, `${number}: Quantity`), uom: limited(item?.uom ?? details?.uom, `${number}: UOM`, MAX_LENGTHS.uom), stockId: source?.id || '',
+        materialNo, description: limited(item?.description ?? details?.description, `${number}: Description`, MAX_LENGTHS.description),
+        quantity: amount, uom: limited(item?.uom ?? details?.uom, `${number}: UOM`, MAX_LENGTHS.uom), stockId: source?.id || '', certIds: certificateIds(item?.certIds, materialNo, number),
       };
     });
     const order = store.create('transfer_orders', { number: store.next('TO'), type, priority, status: 'Open', fromWarehouseId: fromId, fromSiteId, siteId, toWarehouseId: toId, date, notes: limited(data.notes, 'Notes', 2000) }, actor);
@@ -341,9 +376,14 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     const orderFields = { transferOrder: String(order.number) };
     const deliveredTo = route.to === 'storehouse' ? label(order.toWarehouseId) : `the inventory of ${siteName(order.siteId)}`;
     /** Deliver one taken part to the order's destination with the movement of the receiving side. */
-    const deliver = (source: Row, take: number, type: string) => {
+    const deliver = (source: Row, take: number, type: string, certIds: string[] = []) => {
       if (route.to === 'storehouse') { receiving(source, String(order.toWarehouseId), take); movement(type, source, { warehouseId: String(order.toWarehouseId) }, take, { ...orderFields, note: `${order.number}` }); }
-      else { changeSiteStock(store, actor, String(order.siteId), refsOf(source), String(source.chargeNo || ''), take, copyWording(source)); movement(type, source, { siteId: String(order.siteId) }, take, { ...orderFields, note: `${order.number}` }); }
+      else {
+        changeSiteStock(store, actor, String(order.siteId), refsOf(source), String(source.chargeNo || ''), take, copyWording(source));
+        // The certificates ticked on the item travel with the material to the destination project site.
+        const copies = certIds.length ? copyCertificates(source, certIds, String(order.siteId), false) : [];
+        movement(type, source, { siteId: String(order.siteId) }, take, { ...orderFields, note: `${order.number}${copies.length ? ` · certificates ${copies.map(cert => `${cert.name} (index ${cert.indexNo})`).join(', ')}` : ''}` });
+      }
     };
     for (const item of items) {
       let remaining = qty(item.quantity);
@@ -358,7 +398,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
           if (take <= 0) continue;
           change(current, -take);
           movement('Transfer out', current, { siteId: from }, -take, { ...orderFields, note: `${order.number} · To ${deliveredTo}` });
-          deliver(current, take, 'Transfer in');
+          deliver(current, take, 'Transfer in', itemCertIds(item));
           remaining = qty(remaining - take);
         }
         if (remaining > 0) throw new AppError(409, `Not enough ${item.materialNo} in the inventory of ${siteName(from)}. Missing: ${remaining}.`);
@@ -374,7 +414,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
           if (take <= 0) continue;
           change(source, -take);
           movement(type || 'Transfer out', source, { warehouseId: String(source.warehouseId), ...(order.siteId ? { siteId: String(order.siteId) } : {}) }, -take, { ...orderFields, note: `${order.number} · To ${deliveredTo}` });
-          deliver(source, take, type || 'Transfer in');
+          deliver(source, take, type || 'Transfer in', itemCertIds(item));
           remaining = qty(remaining - take);
         }
         if (remaining > 0) throw new AppError(409, `Not enough ${item.materialNo} in ${from ? label(from) : 'its storehouse'}. Missing: ${remaining}.`);
@@ -394,7 +434,7 @@ export function registerMtoStockRoutes(app: Express, store: Store, availability:
     // The page needs Show on its own area, Material list (78), besides the records it reads.
     if (!canResource(user, 'iso_materials') || !canResource(user, 'stock') || !canScope(user, '78')) throw new AppError(403, 'Your permission profile does not allow this action.');
     const param = (name: string) => typeof req.query[name] === 'string' ? String(req.query[name]).slice(0, 150) : '';
-    const filters = { siteId: param('siteId'), projectId: param('projectId'), isoId: param('isoId'), query: param('q').slice(0, 500) };
+    const filters = { siteId: param('siteId'), projectId: param('projectId'), isoId: param('isoId'), query: param('q').slice(0, 500), ordered: ['Yes', 'No'].includes(param('ordered')) ? param('ordered') : '' };
     // Access per project site: a limited request lists only its main projects' records (server/site-scope.ts).
     const rows = Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock'].map(key => [key, scopeRows(key, store.list(key))]));
     const list = materialsList(rows, filters);
