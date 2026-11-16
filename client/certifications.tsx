@@ -40,11 +40,26 @@ export function CertificationRecordEditor({ record, onClose, fallback }: { recor
   return user.availability?.features.includes('pilots') ? <CertificationEditor record={record} onClose={onClose}/> : <>{fallback}</>;
 }
 
+/**
+ * The Project field of the reference form: one multi-select (ALL, then the projects of this main project) in place of the "all
+ * projects" checkbox and the linked-projects list, as on the welding wire. ALL stands for the stored `allProjects`; the linked
+ * projects stay stored as links.
+ */
+export const certificateProjectField = (field: Field): Field => ({ ...field, label: 'Project', showIf: undefined, allField: 'allProjects', section: undefined } as Field);
+/**
+ * Edit certification (reference): Diameter, Material part and Type of material start with a "--------" choice that clears the value;
+ * the Add form has none (its first option is chosen). The Material is shown read-only with a Change link (see the editor).
+ */
+export const CERTIFICATE_EDIT_BLANK = '--------';
+export const CERTIFICATE_EDIT_BLANK_FIELDS = ['diameterId', 'materialPartId', 'materialTypeId'];
+export const certificateFieldFor = (field: Field, editing: boolean): Field => editing && CERTIFICATE_EDIT_BLANK_FIELDS.includes(field.name) ? { ...field, blank: CERTIFICATE_EDIT_BLANK } : field;
+/** The names the form renders: the stored `allProjects` checkbox is the ALL entry of the Project field, not a field of its own. */
+export const certificateFormNames = CERTIFICATE_FORM_FIELDS.filter(name => name !== 'allProjects');
 /** Add certification / Edit certification of the reference: its fields in its order, the file, and in Edit Duplicate certificate with Copy file. */
 export function CertificationEditor({ record, onClose }: { record?: Row; onClose: () => void }) {
   const def = RESOURCE_MAP.certifications; const { rows, siteId, refresh, notify, canRecord } = useWorkspace();
   const relation = (RELATIONS.certifications || []).find(item => item.field === 'projectIds');
-  const fields = CERTIFICATE_FORM_FIELDS.map(name => name === 'projectIds' ? relationFields('certifications').find(field => field.name === name) as Field | undefined : def.fields.find(field => field.name === name)).filter((field): field is Field => Boolean(field));
+  const fields = certificateFormNames.map(name => name === 'projectIds' ? (relationFields('certifications').find(field => field.name === name) as Field | undefined) && certificateProjectField(relationFields('certifications').find(field => field.name === name) as Field) : def.fields.find(field => field.name === name)).filter((field): field is Field => Boolean(field));
   const materials = activeRows(rows, 'materials');
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const initial: Record<string, unknown> = Object.fromEntries(def.fields.filter(field => CERTIFICATE_FORM_FIELDS.includes(field.name)).map(field => [field.name, record?.[field.name] ?? field.default ?? (field.type === 'checkbox' ? false : '')]));
@@ -55,6 +70,8 @@ export function CertificationEditor({ record, onClose }: { record?: Row; onClose
   });
   const chosenMaterial = materials.find(row => row.id === values.materialId) || (rows.materials || []).find(row => row.id === values.materialId);
   const [materialText, setMaterialText] = useState(() => chosenMaterial ? materialOption(chosenMaterial) : '');
+  // Edit: the stored Material No is shown read-only until Change is chosen (a certificate without a material shows the search field).
+  const [changing, setChanging] = useState(() => !record || !chosenMaterial);
   const [file, setFile] = useState<File | null>(null); const [copyFile, setCopyFile] = useState(false);
   const [error, setError] = useState(''); const [problems, setProblems] = useState<Record<string, string>>({}); const [busy, setBusy] = useState('');
   const id = useId().replaceAll(':', ''); const listId = `cert-materials-${id}`;
@@ -113,12 +130,16 @@ export function CertificationEditor({ record, onClose }: { record?: Row; onClose
       <div className="modal-body">
         {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
         <div className="form-grid">
-          {fields.map(field => field.name === 'materialId' ? <div key={field.name} className="field">
+          {fields.map(field => field.name === 'materialId' && !changing ? <div key={field.name} className="field cert-material-fixed">
+            <label htmlFor={`cert-material-${id}`}>{materialField?.label || 'Material'}</label>
+            <input id={`cert-material-${id}`} type="text" readOnly disabled value={text(chosenMaterial?.materialNo)}/>
+            <button type="button" className="text-link" onClick={() => setChanging(true)}>Change</button>
+          </div> : field.name === 'materialId' ? <div key={field.name} className="field">
             <label htmlFor={`cert-material-${id}`}>{materialField?.label || 'Material'}</label>
             <input id={`cert-material-${id}`} type="text" list={listId} placeholder="Choose Material from DB" autoComplete="off" value={materialText} aria-invalid={Boolean(problems.materialId)} aria-describedby={problems.materialId ? `cert-material-${id}-error` : `cert-material-${id}-hint`} onChange={event => chooseMaterial(event.target.value)}/>
             <datalist id={listId}>{materials.map(row => <option key={row.id} value={materialOption(row)}/>)}</datalist>
             {problems.materialId ? <small id={`cert-material-${id}-error`} className="field-error">{problems.materialId}</small> : <small id={`cert-material-${id}-hint`} className="cert-material-hint">Type a material number; Material part and Type of material are filled from it.</small>}
-          </div> : <FieldInput key={field.name} field={field} value={values[field.name]} values={values} error={problems[field.name]} onChange={value => change(field.name, value)}/>)}
+          </div> : <FieldInput key={field.name} field={certificateFieldFor(field, Boolean(record))} value={values[field.name]} values={values} error={problems[field.name]} setValue={change} onChange={value => change(field.name, value)}/>)}
           {canAttach && <div className="field full-width">
             <label htmlFor={`cert-file-${id}`}>File</label>
             <input id={`cert-file-${id}`} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={event => setFile(event.target.files?.[0] || null)}/>

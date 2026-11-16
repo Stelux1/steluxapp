@@ -13,9 +13,12 @@ import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
-import { ATTACHMENT_POSITIONS, CATALOG_SITES, enablementKey, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, FORM_ENABLEMENT, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, qaEngineerCompany, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { ATTACHMENT_POSITIONS, CATALOG_SITES, enablementKey, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, EDIT_FIELD_OVERRIDES, FORM_ENABLEMENT, HOSTED_TITLES, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogFormLabels, editFields, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, qaEngineerCompany, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { STANDARD_DEFECT_CODES, isStandardDefectCode, standardDefectCodeId } from '../shared/defect-codes.ts';
 import { upgradeWeldCatalogs } from '../server/catalog-upgrade.ts';
+import { PROGRESS_DEFAULTS, PROGRESS_PHASES, progressSumsOk } from '../shared/site-settings.ts';
+import { dedicatedEditor } from '../client/dialogs.tsx';
+import { copyTargets } from '../client/wps.tsx';
 import type { Bootstrap, Row } from '../shared/types.ts';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
@@ -45,15 +48,24 @@ test('a ref select offers the enabled records plus the value already stored', ()
   assert.equal(enabledOptions('materials', options, 'north', rows).length, 3);
 });
 
-test('defect codes follow the defect norm of the site and the per-site enablement', () => {
+test('the NA defect list is the codes enabled on the main project, whatever their norm; a stored code is always listed', () => {
   const codes = [row('1', { code: '401', norm: 'ISO 6520-1' }), row('2', { code: 'B31-CR', norm: 'ASME B31.3' }), row('3', { code: 'PO', norm: 'Current list' }), row('4', { code: '100', norm: '' }), row('5', { code: '2011', norm: 'ISO 6520-1' }), row('6', { code: '999', norm: 'ISO 6520-1', _archived: true })];
   const rows = { ndt_defect_codes: codes, catalog_sites: [link('ndt_defect_codes', '5', 'north', false)] };
   const codeList = (site: Record<string, unknown> | null, id = 'north') => selectableDefectCodes(rows, site, id).map(c => c.code);
-  assert.deepEqual(codeList({ id: 'north', defectNorm: 'ISO 6520-1' }), ['100', '401', 'PO']);
-  assert.deepEqual(codeList({ id: 'north', defectNorm: 'ASME B31.3' }), ['100', 'B31-CR', 'PO']);
-  assert.deepEqual(codeList({ id: 'north', defectNorm: 'No norm selected' }), ['100', '401', 'B31-CR', 'PO'], 'no norm: every enabled code');
-  assert.deepEqual(codeList({ id: 'river', defectNorm: 'ISO 6520-1' }, 'river'), ['100', '401', '2011', 'PO'], 'enablement is per site');
-  assert.equal(defectCodeMatchesNorm({ norm: 'Current list' }, 'API 1104'), true);
+  assert.deepEqual(codeList({ id: 'north', defectNorm: 'ISO 6520-1' }), ['100', '401', 'B31-CR', 'PO'], 'the norm does not narrow the list: enablement decides');
+  assert.deepEqual(codeList({ id: 'north', defectNorm: 'No norm selected' }), ['100', '401', 'B31-CR', 'PO'], 'no norm: the enabled list as it stands');
+  assert.deepEqual(codeList({ id: 'river', defectNorm: 'ISO 6520-1' }, 'river'), ['100', '401', '2011', 'B31-CR', 'PO'], 'enablement is per site');
+  // The Zandbak case: no norm and only the 11 "Current list" codes enabled -> exactly those 11.
+  const current = ['GI', 'FMI', 'UW', 'CR', 'CS', 'LI', 'OW', 'LOF', 'PO', 'SI', 'RSC'];
+  const every = STANDARD_DEFECT_CODES.map(code => row(`${code[4]}-${code[0]}`, { code: code[0], norm: code[4] }));
+  const zandbak = { ndt_defect_codes: every, catalog_sites: every.filter(code => code.norm !== 'Current list').map(code => link('ndt_defect_codes', code.id, 'zandbak', false)) };
+  assert.deepEqual(selectableDefectCodes(zandbak, { id: 'zandbak', defectNorm: 'No norm selected' }, 'zandbak').map(c => c.code).sort(), [...current].sort(), 'the 11 enabled codes and nothing else');
+  // A disabled code stored on the weld is still listed for that weld (and only for it).
+  assert.deepEqual(selectableDefectCodes(rows, null, 'north', '2011').map(c => c.code), ['100', '401', '2011', 'B31-CR', 'PO']);
+  assert.ok(!selectableDefectCodes(rows, null, 'north').some(c => c.code === '2011'), 'not listed for another weld');
+  assert.ok(!selectableDefectCodes(rows, null, 'north', '999').some(c => c.code === '999'), 'an archived code is not brought back');
+  // One entry per code text even where two norms share it (IP of ASME B31.3 and of API 1104).
+  assert.equal(selectableDefectCodes(zandbak, null, 'other').filter(c => c.code === 'IP').length, 1);
   assert.deepEqual(DEFECT_CODE_NORMS, ['Current list', 'ISO 6520-1', 'ASME B31.3', 'API 1104']);
 });
 
@@ -65,8 +77,8 @@ test('attachment names are ordered before / after the isometric, then by manual 
 test('the hosted profile requires the reference fields; the shared resource keeps them optional', () => {
   assert.deepEqual(missingRequired('weld_types', { name: 'Butt' }), { location: 'Shop/Field is required.', abbreviation: 'Abbreviation is required.' });
   assert.deepEqual(missingRequired('weld_types', { name: 'Butt', location: 'Shop', abbreviation: 'BW' }), {});
-  assert.deepEqual(missingRequired('weld_types', { description: 'x' }, row('w', { location: 'Shop', abbreviation: 'BW' })), {}, 'stored values count on an edit');
-  assert.deepEqual(missingRequired('weld_types', { abbreviation: ' ' }, row('w', { location: 'Shop', abbreviation: 'BW' })), { abbreviation: 'Abbreviation is required.' });
+  assert.deepEqual(missingRequired('weld_types', { description: 'x' }, row('w', { location: 'Shop', abbreviation: 'BW', jointType: 'BW' })), {}, 'stored values count on an edit');
+  assert.deepEqual(missingRequired('weld_types', { abbreviation: ' ' }, row('w', { location: 'Shop', abbreviation: 'BW', jointType: 'BW' })), { abbreviation: 'Abbreviation is required.' });
   assert.deepEqual(Object.keys(missingRequired('qa_engineers', { name: 'Ana' })), ['company']);
   assert.deepEqual(Object.keys(missingRequired('companies', { name: 'Co' })), ['address']);
   for (const key of ['weld_types', 'coatings', 'ndt_processes', 'pwht_processes', 'qa_engineers', 'companies']) {
@@ -181,8 +193,8 @@ test('hosted: reference-required fields are enforced on create and edit, in both
   assert.equal((await f.request('/api/records/companies', 'POST', { name: 'Harbour Welding BV', address: '5 Dockside', phone: '+31 10 555 0199' })).status, 201);
   response = await f.request('/api/records/ndt_defect_codes', 'POST', { code: 'X1' });
   assert.equal(response.status, 422); assert.deepEqual(Object.keys((await body(response)).fields!), ['english']);
-  assert.equal((await f.request('/api/records/ndt_defect_codes', 'POST', { code: '2012', english: 'Uniform porosity', dutch: 'Gelijkmatige porositeit', group: 'Cavity', norm: 'ISO 6520-1', isoRef: '2012' })).status, 201);
-  assert.equal((await f.request('/api/records/ndt_defect_codes', 'POST', { code: '2012', english: 'Duplicate', group: 'Cavity', norm: 'ISO 6520-1' })).status, 409);
+  assert.equal((await f.request('/api/records/ndt_defect_codes', 'POST', { code: '9012', english: 'Uniform porosity', dutch: 'Gelijkmatige porositeit', group: 'Cavity', norm: 'ISO 6520-1', isoRef: '2012' })).status, 201);
+  assert.equal((await f.request('/api/records/ndt_defect_codes', 'POST', { code: '9012', english: 'Duplicate', group: 'Cavity', norm: 'ISO 6520-1' })).status, 409);
   assert.equal((await f.request('/api/records/ndt_defect_codes', 'POST', { code: 'Q', english: 'Odd', group: 'Other' })).status, 422);
   response = await f.request('/api/records/attachment_names', 'POST', { name: 'Welder certificates', isoBook: true, hydrotest: false, position: 'Before Isometric', sort: 3 });
   assert.equal(response.status, 201); assert.equal((await body(response)).record!.isoBook, true);
@@ -358,6 +370,8 @@ test('catalog pages carry the reference titles, add buttons and dialog headings 
     weld_processes: ['Weld process', 'Add welding process', 'Edit welding process', 'Delete welding process'],
     weld_types: ['Weld type', 'Add weld type', 'Edit weld type', 'Delete weld type'],
     coatings: ['Coating', 'Add coating', 'Edit coating', 'Delete coating'],
+    // The groups page reuses the process wording for its add button and dialog (weld__ndt__process-groups.txt:47,187,193).
+    ndt_groups: ['NDT process groups', 'Add NDT process', 'Edit NDT process group', 'Delete NDT process group'],
     ndt_processes: ['NDT process', 'Add NDT process', 'Edit NDT process', 'Delete NDT process'],
     ndt_defect_codes: ['Defect codes', 'Add', 'Edit', 'Delete'],
     ndt_locations: ['NDT locations', 'Add NDT location', 'Edit NDT location', 'Delete NDT location'],
@@ -506,17 +520,24 @@ test('QA/QC engineers: Company is required free text in the hosted profile', asy
 
 test('the standard defect codes: ISO 6520-1, ASME B31.3 and API 1104, locked, and none of the invented ones', () => {
   const norm = (name: string) => STANDARD_DEFECT_CODES.filter(code => code[4] === name).map(code => code[0]);
-  assert.deepEqual(norm('ISO 6520-1'), ['100', '101', '102', '103', '104', '105', '106', '201', '202', '301', '302', '303', '304', '401', '402', '501', '502', '503', '504', '505', '506', '507', '508', '509', '510', '511']);
-  assert.deepEqual(norm('ASME B31.3'), ['CRACK', 'LOF', 'IP', 'ROUND', 'ELONG', 'UC', 'REINF']);
-  assert.deepEqual(norm('API 1104'), ['C', 'IP', 'IPD', 'ICP', 'IF', 'BT', 'P']);
+  // All 98 rows of the reference list: 63 + 9 + 15 + the 11 "Current list" codes (weld__ndt__defect-codes.txt).
+  assert.equal(STANDARD_DEFECT_CODES.length, 98);
+  assert.deepEqual(['ISO 6520-1', 'ASME B31.3', 'API 1104', 'Current list'].map(name => norm(name).length), [63, 9, 15, 11]);
+  assert.deepEqual(norm('ISO 6520-1').slice(0, 26), ['100', '101', '102', '103', '104', '105', '106', '201', '202', '301', '302', '303', '304', '401', '402', '501', '502', '503', '504', '505', '506', '507', '508', '509', '510', '511']);
+  assert.deepEqual(norm('ASME B31.3').slice(0, 7), ['CRACK', 'LOF', 'IP', 'ROUND', 'ELONG', 'UC', 'REINF']);
+  assert.deepEqual(norm('API 1104').slice(0, 7), ['C', 'IP', 'IPD', 'ICP', 'IF', 'BT', 'P']);
+  assert.deepEqual(norm('Current list'), ['GI', 'FMI', 'UW', 'CR', 'CS', 'LI', 'OW', 'LOF', 'PO', 'SI', 'RSC']);
+  const one = (code: string, normName: string) => STANDARD_DEFECT_CODES.find(c => c[0] === code && c[4] === normName)!;
+  assert.deepEqual(one('5213', 'ISO 6520-1'), ['5213', 'Insufficient throat thickness', 'Te kleine a-hoogte', 'Shape', 'ISO 6520-1', '5213']);
+  assert.deepEqual(one('RSC', 'Current list'), ['RSC', 'Root surface concavity', 'Wortelinkeping', '', 'Current list', ''], 'the reference shows - as group and ISO reference of the Current list codes');
   assert.equal(new Set(STANDARD_DEFECT_CODES.map(code => standardDefectCodeId(code[0], code[4]))).size, STANDARD_DEFECT_CODES.length, 'ids are unique');
-  assert.ok(STANDARD_DEFECT_CODES.every(code => DEFECT_GROUPS.includes(code[3]) && code[2] && code[1]), 'every code has its texts and a known group');
+  assert.ok(STANDARD_DEFECT_CODES.every(code => (DEFECT_GROUPS.includes(code[3]) || (code[3] === '' && code[4] === 'Current list')) && code[2] && code[1]), 'every code has its texts and a known group');
   const dutch = (code: string, normName: string) => STANDARD_DEFECT_CODES.find(c => c[0] === code && c[4] === normName)![2];
   assert.deepEqual([dutch('102', 'ISO 6520-1'), dutch('401', 'ISO 6520-1'), dutch('402', 'ISO 6520-1'), dutch('501', 'ISO 6520-1'), dutch('502', 'ISO 6520-1'), dutch('507', 'ISO 6520-1')], ['Dwarscheur', 'Bindingsfout', 'Onvolledige doorlassing', 'Inkarteling', 'Te hoge sluitlaag', 'Lineaire hoog-laag']);
   const store = new Store(':memory:'); seed(store);
   const codes = store.list('ndt_defect_codes');
   assert.equal(codes.length, STANDARD_DEFECT_CODES.length); assert.ok(codes.every(code => code.system === true));
-  for (const invented of ['B31-CR', 'B31-IP', 'B31-CV', 'PO', 'SL', 'LF', '2011', '2013', '2015', '601']) assert.ok(!codes.some(code => code.code === invented), invented);
+  for (const invented of ['B31-CR', 'B31-IP', 'B31-CV', 'SL', 'LF']) assert.ok(!codes.some(code => code.code === invented), invented);
   assert.equal(codes.filter(code => code.code === 'IP').length, 2); assert.deepEqual(codes.filter(code => code.code === 'IP').map(code => code.norm).sort(), ['API 1104', 'ASME B31.3']);
   assert.equal(isLockedRecord('ndt_defect_codes', codes[0], true), true); assert.equal(isLockedRecord('ndt_defect_codes', codes[0], false), false);
   assert.equal(isLockedRecord('ndt_defect_codes', row('x', { system: false }), true), false);
@@ -547,7 +568,7 @@ test('activating a norm switches every code of that norm on for the main project
   const store = new Store(':memory:'); seed(store);
   const api = store.list('ndt_defect_codes').filter(code => code.norm === 'API 1104'), asme = store.list('ndt_defect_codes').filter(code => code.norm === 'ASME B31.3');
   for (const code of [...api, ...asme]) setAvailability(store, 'ndt_defect_codes', code.id, 'site-river', false, SYSTEM);
-  assert.equal(activateDefectNorm(store, 'site-river', 'API 1104', SYSTEM), 7);
+  assert.equal(activateDefectNorm(store, 'site-river', 'API 1104', SYSTEM), api.length);
   const rows = { catalog_sites: store.list(CATALOG_SITES) };
   assert.ok(api.every(code => enabledOnSite('ndt_defect_codes', code, 'site-river', rows)));
   assert.ok(asme.every(code => !enabledOnSite('ndt_defect_codes', code, 'site-river', rows)), 'other norms unchanged');
@@ -594,17 +615,17 @@ test('the upgrade step only adds the missing standard defect codes; a matching o
   for (const [code, english, dutch, group, norm] of old) store.create('ndt_defect_codes', { code, english, dutch, group, norm, system: false }, SYSTEM);
   const engineer = store.get('qa_engineers', 'qa-1'); store.update('qa_engineers', engineer.id, { company: '' }, engineer._version, SYSTEM);
   const before = ['ndt_defect_codes', 'qa_engineers'].map(key => store.list(key, true));
-  assert.deepEqual(upgradeWeldCatalogs(store, { dryRun: true }), { defectCodesAdded: STANDARD_DEFECT_CODES.length - 1 }, 'the dry run counts what it would add');
+  assert.deepEqual(upgradeWeldCatalogs(store, { dryRun: true }), { defectCodesAdded: STANDARD_DEFECT_CODES.length - 2 }, 'the dry run counts what it would add');
   assert.equal(store.list('ndt_defect_codes').length, 3, 'and adds nothing');
-  assert.deepEqual(upgradeWeldCatalogs(store), { defectCodesAdded: STANDARD_DEFECT_CODES.length - 1 });
+  assert.deepEqual(upgradeWeldCatalogs(store), { defectCodesAdded: STANDARD_DEFECT_CODES.length - 2 });
   const active = store.list('ndt_defect_codes');
-  assert.equal(active.length, STANDARD_DEFECT_CODES.length + 2, 'the two old codes that are not standard stay');
+  assert.equal(active.length, STANDARD_DEFECT_CODES.length + 1, 'the old code that is not standard stays; 401 and PO are standard codes the client already holds');
   for (const row of before.flat()) assert.deepEqual(store.get(row.code !== undefined ? 'ndt_defect_codes' : 'qa_engineers', row.id, true), row, 'every stored record stays byte for byte');
   const fusion = active.find(code => code.code === '401' && code.norm === 'ISO 6520-1')!;
   assert.deepEqual([fusion.system, fusion.dutch, fusion.group], [false, 'Bindfout', 'Lack of fusion'], 'the client\'s own texts stay');
   assert.equal(isStandardDefectCode(fusion), true, 'and it counts as the standard code'); assert.equal(isLockedRecord('ndt_defect_codes', fusion, true), true);
   assert.ok(!active.some(code => code.id === standardDefectCodeId('401', 'ISO 6520-1')), 'no second 401 of ISO 6520-1');
-  assert.ok(active.some(code => code.code === 'B31-CR') && active.some(code => code.code === 'PO'), 'nothing is removed');
+  assert.ok(active.some(code => code.code === 'B31-CR') && active.filter(code => code.code === 'PO').length === 1, 'nothing is removed, no second PO');
   assert.equal(active.filter(code => code.code === 'IP').length, 2);
   assert.equal(store.get('qa_engineers', 'qa-1').company, '', 'the engineer is not written');
   const second = upgradeWeldCatalogs(store);
@@ -677,4 +698,97 @@ test('Weld Pilot shows no laydown or service-company fields on the spools page; 
   }
   assert.equal(pilotResource(spools, 'mto'), spools); assert.equal(pilotResource(spools, undefined), spools);
   const types = catalog('weld_types'); assert.equal(pilotResource(types, 'weld'), types, 'other resources are returned as they are');
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Wave 3: labels and small forms of the catalogs that wave 1 left
+// ---------------------------------------------------------------------------------------------------------
+test('NDT process form: NDT process, Description, Method, File, Welder Performance Report (WPR), Enable on this site; the groups page adds "Add NDT process"', () => {
+  const process = catalog('ndt_processes');
+  assert.deepEqual(catalogFormLabels('ndt_processes', process.fields, 'Zandbak'), ['NDT process', 'Description', 'Method', 'File', 'Welder Performance Report (WPR)', 'Enable on this site (Zandbak)']);
+  assert.deepEqual(catalogFormLabels('ndt_groups', catalog('ndt_groups').fields, 'Zandbak'), ['NDT process group', 'Description'], 'no file input on other forms');
+  assert.equal(catalog('ndt_groups').wording?.add, 'Add NDT process');
+  assert.equal(catalog('ndt_groups').title, 'NDT process groups', 'the page title stays the groups title');
+  assert.equal(RESOURCE_MAP.ndt_groups.wording, undefined, 'the full profile keeps its own add label');
+});
+
+test('NDT locations form has the one field and no Notes section; PQR page title reads PQR', () => {
+  assert.deepEqual(visible('ndt_locations').map(f => [f.name, f.section]), [['name', undefined]]);
+  assert.ok(!catalog('ndt_locations').fields.some(f => f.section === 'Notes'));
+  assert.equal(catalog('pqr').title, 'PQR'); assert.equal(HOSTED_TITLES.pqr, 'PQR');
+  assert.equal(RESOURCE_MAP.pqr.title, 'Procedure qualifications', 'the other profiles keep their title');
+});
+
+test('the Edit dialogs differ from the Add dialogs as in the reference; Add is unchanged', () => {
+  const edit = (key: string) => editFields(key, catalog(key).fields), add = (key: string) => catalog(key).fields;
+  const field = (list: ReturnType<typeof add>, name: string) => list.find(f => f.name === name)!;
+  assert.deepEqual([field(add('roles'), 'name').label, field(edit('roles'), 'name').label], ['Role', 'Function']);
+  assert.deepEqual([field(add('weld_types'), 'jointType').required ?? false, field(edit('weld_types'), 'jointType').required, field(add('weld_types'), 'grooveType').label, field(edit('weld_types'), 'grooveType').label], [false, true, 'Groove type', 'Groove shape']);
+  assert.deepEqual([field(add('ndt_groups'), 'description').required ?? false, field(edit('ndt_groups'), 'description').required], [false, true]);
+  assert.deepEqual([field(add('diameters'), 'sizeinch').required ?? false, field(edit('diameters'), 'sizeinch').required, field(add('diameters'), 'sizeinch').decimal, field(edit('diameters'), 'sizeinch').decimal, field(edit('diameters'), 'outline').decimal, field(edit('diameters'), 'size').decimal], [false, true, true, false, false, true]);
+  const names = (list: ReturnType<typeof add>) => list.map(f => f.name);
+  const wire = names(add('welding_wires'));
+  assert.ok(wire.indexOf('controlled') < wire.indexOf('accepted'), 'Add: Controlled, Accepted');
+  assert.ok(names(edit('welding_wires')).indexOf('accepted') < names(edit('welding_wires')).indexOf('controlled'), 'Edit: Accepted before Controlled');
+  assert.deepEqual([...names(edit('welding_wires'))].sort(), [...wire].sort(), 'nothing is added or lost');
+  assert.deepEqual(Object.keys(EDIT_FIELD_OVERRIDES).sort(), ['diameters', 'ndt_groups', 'roles', 'weld_types']);
+  const coatings = add('coatings');
+  assert.equal(editFields('coatings', coatings), coatings, 'a resource without overrides is returned as it is');
+});
+
+test('hosted: the edit-only required fields are refused on an update and accepted on a create; the WPS weld process is optional on an update only', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  // Weld type: Joint type is required when editing.
+  const created = (await body(await f.request('/api/records/weld_types', 'POST', { name: 'Test fillet', location: 'Shop', abbreviation: 'TF' }))).record!;
+  let response = await f.request(`/api/records/weld_types/${created.id}`, 'PUT', { abbreviation: 'TF2', _version: created._version });
+  assert.equal(response.status, 422); assert.equal((await body(response)).fields!.jointType, 'Joint type is required.');
+  response = await f.request(`/api/records/weld_types/${created.id}`, 'PUT', { abbreviation: 'TF2', jointType: 'FW', _version: created._version });
+  assert.equal(response.status, 200);
+  // NDT process group: Description is optional on a create, required on an update.
+  const group = (await body(await f.request('/api/records/ndt_groups', 'POST', { name: 'ECT' }))).record!;
+  response = await f.request(`/api/records/ndt_groups/${group.id}`, 'PUT', { name: 'ECT-2', _version: group._version });
+  assert.equal(response.status, 422); assert.equal((await body(response)).fields!.description, 'Description is required.');
+  response = await f.request(`/api/records/ndt_groups/${group.id}`, 'PUT', { description: '', _version: group._version });
+  assert.equal(response.status, 422);
+  response = await f.request(`/api/records/ndt_groups/${group.id}`, 'PUT', { description: 'Eddy current', _version: group._version });
+  assert.equal(response.status, 200);
+  // Weld diameter: Size in inches is required on an update.
+  const diameter = (await body(await f.request('/api/records/diameters', 'POST', { diameter: 'DN9999', size: '219,1' }))).record!;
+  response = await f.request(`/api/records/diameters/${diameter.id}`, 'PUT', { outline: 5, _version: diameter._version });
+  assert.equal(response.status, 422); assert.equal((await body(response)).fields!.sizeinch, 'Size in inches is required.');
+  response = await f.request(`/api/records/diameters/${diameter.id}`, 'PUT', { sizeinch: 4.5, _version: diameter._version });
+  assert.equal(response.status, 200);
+  // WPS method: Weld process is required on a create and optional on an update.
+  const wps = f.store.get('wps', 'wps-1');
+  response = await f.request(`/api/records/wps/${wps.id}`, 'PUT', { method: '', _version: wps._version });
+  assert.equal(response.status, 200, 'optional when editing');
+  response = await f.request('/api/records/wps', 'POST', { name: 'NEW-WPS', definition: 'Sample definition' });
+  assert.equal(response.status, 422); assert.ok((await body(response)).fields!.method, 'required when adding');
+});
+
+test('Edit from the record detail of a WPS or PQR opens the dedicated editor (hosted); other resources and profiles keep the generic one', () => {
+  assert.equal(dedicatedEditor('wps', true), 'wps'); assert.equal(dedicatedEditor('pqr', true), 'pqr');
+  assert.equal(dedicatedEditor('wps', false), undefined, 'the other profiles have no dedicated editor');
+  for (const key of ['welds', 'weld_types', 'certifications', 'ndt_processes']) assert.equal(dedicatedEditor(key, true), undefined, key);
+});
+
+test('the Copy WPS dialogs list every project site in creation order with the current main project chosen', () => {
+  const sites = [row('site-b', { name: 'Beta', _createdAt: '2026-02-01T00:00:00.000Z' }), row('site-a', { name: 'Alpha', _createdAt: '2026-01-01T00:00:00.000Z' }), row('site-c', { name: 'Gamma', _createdAt: '2026-03-01T00:00:00.000Z' }), row('site-x', { name: 'Archived', _archived: true, _createdAt: '2025-01-01T00:00:00.000Z' })];
+  assert.deepEqual(copyTargets(sites, 'site-b').sites.map(site => site.id), ['site-a', 'site-b', 'site-c'], 'creation order, not by name, the current one included, archived left out');
+  assert.equal(copyTargets(sites, 'site-b').selected, 'site-b', 'the current main project is chosen');
+  assert.equal(copyTargets(sites, 'unknown').selected, 'site-a', 'else the first one');
+  assert.deepEqual(copyTargets([], 'site-a'), { sites: [], selected: '' });
+  // Equal creation times fall back to the id order (the reference lists 1, 2, 10).
+  const same = ['site-10', 'site-2', 'site-1'].map(id => row(id, { _createdAt: '2026-01-01T00:00:00.000Z' }));
+  assert.deepEqual(copyTargets(same, 'site-2').sites.map(site => site.id), ['site-1', 'site-2', 'site-10']);
+});
+
+test('the Site activities sum is green when the Site phase is 0; Shop, Field and the phase total only at exactly 100', () => {
+  const site = (extra: Record<string, unknown>) => ({ ...PROGRESS_DEFAULTS, ...extra });
+  assert.equal(progressSumsOk(site({})).activities.site, true, 'Site phase 0 and Site activities 0');
+  assert.equal(progressSumsOk(site({ [PROGRESS_PHASES[0].field]: 40, [PROGRESS_PHASES[1].field]: 40, [PROGRESS_PHASES[2].field]: 20 })).activities.site, false, 'Site phase 20 and Site activities 0');
+  const siteFields = PROGRESS_PHASES[2].activities.map(activity => activity.field);
+  const filled = site({ [PROGRESS_PHASES[0].field]: 40, [PROGRESS_PHASES[1].field]: 40, [PROGRESS_PHASES[2].field]: 20, [siteFields[0]]: 60, [siteFields[1]]: 40 });
+  assert.equal(progressSumsOk(filled).activities.site, true, 'Site activities 60 + 40');
+  assert.deepEqual([progressSumsOk(site({})).activities.shop, progressSumsOk(site({})).activities.field, progressSumsOk(site({})).phases], [false, false, true], 'Shop and Field activities need 100 whatever the phase; the phases total 50 + 50 + 0');
 });

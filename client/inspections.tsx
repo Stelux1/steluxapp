@@ -123,7 +123,7 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
   const documents = (rows.attachments || []).filter(file => !file._archived && file.entityType === 'inspection_requests' && file.entityId === request?.id);
   // Defect codes enabled on the weld's main project and matching its defect norm (weld catalogs); a stored value is kept.
   const site = rows.sites?.find(row => row.id === context.project?.siteId) ?? allRows.sites?.find(row => row.id === context.project?.siteId);
-  const defects = selectableDefectCodes(rows, site, String(context.project?.siteId || '')).map(code => ({ value: String(code.code), label: [code.code, code.english].filter(Boolean).join(' — ') }));
+  const defects = selectableDefectCodes(rows, site, String(context.project?.siteId || ''), naResult?.defectType).map(code => ({ value: String(code.code), label: [code.code, code.english].filter(Boolean).join(' — ') }));
   if (na.defectType && !defects.some(option => option.value === na.defectType)) defects.unshift({ value: na.defectType, label: na.defectType });
   const ownWelders = weldWelderIds(weld).map(id => rows.welders?.find(row => row.id === id)).filter((row): row is Row => Boolean(row)).map(row => ({ value: row.id, label: [row.welderCode || row.number, row.name].filter(Boolean).map(String).join(', ') }));
   if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing NDT results"/>;

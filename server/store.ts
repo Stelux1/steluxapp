@@ -17,7 +17,7 @@ import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/typ
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
-import { ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
+import { EDIT_OPTIONAL, ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
 import { isStandardDefectCode } from '../shared/defect-codes.ts';
 import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
@@ -187,7 +187,7 @@ export class Store {
       if(key==='material_parts'&&field.name==='custom'&&typeof value==='boolean')value=value?'Yes':'';
       if(key==='isometrics'&&existing&&['itpRevNo','itp2RevNo'].includes(field.name)&&input[field.name]===undefined&&existing[field.name]===undefined){const type=field.name==='itpRevNo'?'ITP':'ITP 2';value=this.list('revisions').find(r=>r.isoId===existing.id&&r.type===type)?.revNo??field.default??'0';}
       // The hosted profile leaves a few shared requirements out (an attest number is optional in the reference).
-      const required = field.required && !(this.hostedRules && HOSTED_OPTIONAL[key]?.includes(field.name));
+      const required = field.required && !(this.hostedRules && HOSTED_OPTIONAL[key]?.includes(field.name)) && !(this.hostedRules && existing && EDIT_OPTIONAL[key]?.includes(field.name));
       if (required && (value === '' || value === null || value === undefined)) { errors[field.name] = `${field.label} is required.`; continue; }
       if (field.type === 'checkbox') {
         if (typeof value !== 'boolean') errors[field.name] = `${field.label} must be checked or unchecked.`;

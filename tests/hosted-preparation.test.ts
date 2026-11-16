@@ -125,7 +125,7 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
     dataSteps: hostedDataSteps(() => store),
     backup: () => 'backup',
   };
-  const missing = STANDARD_DEFECT_CODES.length - 2;
+  const missing = STANDARD_DEFECT_CODES.length - 3; // 401 (ISO 6520-1), IP (ASME B31.3) and PO (Current list) are already held under their own texts
 
   const dry = runHostedPreparation(parts, true);
   assert.deepEqual(dry.catalogData, { defectCodesAdded: missing }, 'the dry run reports only what it would add'); assert.deepEqual(dry.diameterCatalog, { added: 0 });
@@ -142,7 +142,7 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   const siteRows: Row[] = (added.stock as string[]).map(id => store.get("stock", id));
   assert.deepEqual(siteRows.map(row => [row.locationKind, row.siteId, row.materialId, row.chargeNo, row.quantity]).sort(), [['site', 'site-north', 'material-5', 'H-1042', 3], ['site', 'site-river', 'material-5', 'H-1042', 7]]);
   assert.deepEqual((added.movements as string[]).map((id): Row => store.get('movements', id)).map(row => [row.siteId, row.type, row.quantity]).sort(), [['site-north', 'Project transfer', 3], ['site-river', 'Project transfer', 7]]);
-  assert.deepEqual(new Set(added.ndt_defect_codes), new Set(STANDARD_DEFECT_CODES.filter(([code, , , , norm]) => !(code === '401' && norm === 'ISO 6520-1') && !(code === 'IP' && norm === 'ASME B31.3')).map(([code, , , , norm]) => standardDefectCodeId(code, norm))), 'the missing standard codes exist');
+  assert.deepEqual(new Set(added.ndt_defect_codes), new Set(STANDARD_DEFECT_CODES.filter(([code, , , , norm]) => !(code === '401' && norm === 'ISO 6520-1') && !(code === 'IP' && norm === 'ASME B31.3') && !(code === 'PO' && norm === 'Current list')).map(([code, , , , norm]) => standardDefectCodeId(code, norm))), 'the missing standard codes exist');
 
   // What the user sees: the matching old code is locked and refused, the engineer shows the linked company.
   const rows = ((await (await request('/api/bootstrap')).json()) as Bootstrap).rows;

@@ -96,3 +96,11 @@
 .duplicate-options legend { padding: 0; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .duplicate-options label { display: flex; align-items: center; gap: 9px; padding: 5px 0; font-size: 13px; color: var(--ink); }
 .modal-footer .duplicate-site-button { margin-right: auto; }
+
+/* Company data: scaled preview of the application selector with the logo's size and padding. */
+.company-logo-preview-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.company-logo-preview { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 100%; overflow: hidden; }
+.company-logo-preview img { display: block; max-width: min(104px, 100%); object-fit: contain; }
+.company-logo-preview strong { font-size: 12px; }
+.company-logo-preview-tiles { display: flex; gap: 6px; }
+.company-logo-preview-tiles i { display: block; width: 72px; height: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-blue); }

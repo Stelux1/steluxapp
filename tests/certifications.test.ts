@@ -19,7 +19,10 @@ import { projectScope } from '../shared/project-scope.ts';
 import { SITE_RULES, USER_SITES } from '../shared/site-scope.ts';
 import { CERTIFICATE_FORM_FIELDS, certificateBasicMaterial, certificateMandatoryErrors, flagBulkChanges, certificateUses, diameterIdFor, inOwnerSite, nextSiteIndexNumber, ownerSites } from '../shared/welder-data.ts';
 import { CERTIFICATE_IMPORT_COLUMNS, importRow } from '../shared/certifications.ts';
-import type { Module, Row, User } from '../shared/types.ts';
+import { relationFields } from '../shared/welding.ts';
+import { subprojectField } from '../client/components.tsx';
+import { CERTIFICATE_EDIT_BLANK_FIELDS, certificateFieldFor, certificateFormNames, certificateProjectField } from '../client/certifications.tsx';
+import type { ActionField, Module, Row, User } from '../shared/types.ts';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 const row = (id: string, data: Record<string, unknown> = {}): Row => ({ id, _version: 1, _archived: false, _createdAt: '', _updatedAt: '', ...data }) as Row;
@@ -365,4 +368,42 @@ test('Export to ZIP and Duplicate certificate', async t => {
   assert.equal((await reader.request('/certifications/certificate-1/duplicate', { method: 'POST', data: { values: { chargeNo: 'X' } } })).status, 403);
   const river = await f.signIn('River dup', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write' }, { weld: ['site-river'] });
   assert.equal((await river.request('/certifications/certificate-1/duplicate', { method: 'POST', data: { values: { chargeNo: 'X' } } })).status, 403);
+});
+
+test('the certification Project field is one multi-select: ALL stands for all projects, the other projects are those of this main project', async t => {
+  // The form: no "all projects" checkbox and no showIf list, one Project field where the linked projects were.
+  const relation = relationFields('certifications').find(field => field.name === 'projectIds')!;
+  assert.equal(relation.showIf?.[0], 'allProjects', 'before: the list only appeared after unticking the checkbox');
+  const project = certificateProjectField(relation) as ActionField;
+  assert.deepEqual([project.label, project.multiple, project.ref, project.allField, project.showIf], ['Project', true, 'projects', 'allProjects', undefined]);
+  assert.equal(subprojectField(project, true).label, 'Project', 'the main-project relabel to Subproject does not apply to it');
+  assert.equal(subprojectField({ name: 'projectId', label: 'Project', type: 'ref', ref: 'projects' }, true).label, 'Subproject', 'other Project selects keep it');
+  assert.ok(!certificateFormNames.includes('allProjects') && certificateFormNames.includes('projectIds'));
+  assert.deepEqual(certificateFormNames, CERTIFICATE_FORM_FIELDS.filter(name => name !== 'allProjects'), 'the rest of the form keeps its order');
+  assert.ok(RESOURCE_MAP.certifications.fields.some(field => field.name === 'allProjects'), 'allProjects stays stored');
+  // The server: ALL sets allProjects, a project of another main project is refused, ALL replaces the linked projects.
+  const f = await fixture(t);
+  const data = (extra: Record<string, unknown>) => ({ siteId: 'site-north', chargeNo: 'H-9', certType: '3.1', diameterId: 'diameter-6', materialPartId: 'part-0', materialTypeId: 'material-type-a106b', schedule: '40', wallThickness: '3.91', ...extra });
+  let response = await f.admin.request('/records/certifications', { method: 'POST', data: data({ allProjects: false, projectIds: ['project-cooling'] }) });
+  assert.equal(response.status, 201); const linked = (await json(response)).record;
+  assert.deepEqual([linked.allProjects, f.store.list('certificate_projects').filter(link => link.certificateId === linked.id).map(link => link.projectId)], [false, ['project-cooling']]);
+  response = await f.admin.request(`/records/certifications/${linked.id}`, { method: 'PUT', data: { allProjects: true, projectIds: [], _version: linked._version } });
+  assert.equal(response.status, 200); assert.equal((await json(response)).record.allProjects, true, 'ALL chosen');
+  assert.deepEqual(f.store.list('certificate_projects').filter(link => link.certificateId === linked.id), [], 'the linked projects are cleared');
+  response = await f.admin.request('/records/certifications', { method: 'POST', data: data({ allProjects: false, projectIds: ['project-steam'] }) });
+  assert.equal(response.status, 422); assert.equal((await json(response)).fields.projectIds, 'Choose projects of this main project.');
+  response = await f.admin.request(`/records/certifications/${linked.id}`, { method: 'PUT', data: { allProjects: false, projectIds: ['project-steam'], _version: f.store.get('certifications', linked.id)._version } });
+  assert.equal(response.status, 422, 'also when editing');
+});
+
+test('Edit certification: Diameter, Material part and Type of material start with "--------"; Add keeps its own first option', () => {
+  const form = projectResource(hosted, RESOURCE_MAP.certifications).fields;
+  for (const name of ['diameterId', 'materialPartId', 'materialTypeId']) {
+    const field = form.find(item => item.name === name)!;
+    assert.equal(certificateFieldFor(field, true).blank, '--------', `${name} in Edit`);
+    assert.equal(certificateFieldFor(field, false), field, `${name} in Add is untouched`);
+  }
+  const other = form.find(item => item.name === 'schedule')!;
+  assert.equal(certificateFieldFor(other, true), other, 'other fields are untouched');
+  assert.deepEqual(CERTIFICATE_EDIT_BLANK_FIELDS, ['diameterId', 'materialPartId', 'materialTypeId']);
 });

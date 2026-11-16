@@ -76,6 +76,15 @@ export function progressTotals(site: SiteLike) {
   };
 }
 
+/**
+ * Which running sums of the hosted form count as OK (green): the phases and the Shop and Field activities at exactly 100;
+ * the Site activities also while the Site phase is 0 (reference paint(): a Site phase of 0 excuses them, as in the validation below).
+ */
+export function progressSumsOk(site: SiteLike) {
+  const totals = progressTotals(site), weights = progressWeights(site);
+  return { phases: totals.phases === 100, activities: Object.fromEntries(PROGRESS_PHASES.map(phase => [phase.key, totals.activities[phase.key] === 100 || (phase.key === 'site' && weights.phases.site <= 0)])) as Record<PhaseKey, boolean> };
+}
+
 export interface ProgressValidation { valid: boolean; message: string; fields: Record<string, string>; }
 /**
  * All-empty is valid (weights never entered: records written before the weights existed, or without them). Once any

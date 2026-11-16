@@ -47,6 +47,7 @@ import { registerCertificationRoutes, requireOwnerSite } from './certifications.
 import { registerWpsRoutes } from './wps.ts';
 import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
+import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
 import { activeSite, assertAccountReach, assertCopyInScope, assertSiteAccessEdit, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
@@ -178,9 +179,11 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra, ...siteRows });
   });
   // The company logo of Company data, for the application selector (any signed-in account: it is the workspace's own branding).
-  app.get('/api/company-logo', (_req, res) => {
+  app.get('/api/company-logo', (req, res) => {
     const logo = pilots ? companyForDocuments(store, documents)?.logo : null;
     if (!logo) throw new AppError(404, 'No company logo is saved.');
+    // `?sizing=1`: the logo's size and padding in pixels (Company data) as JSON, for the selector to apply.
+    if (req.query.sizing !== undefined) { res.setHeader('Cache-Control', 'no-store'); res.json(logoSizing(store.list(COMPANY_RESOURCE).find(row => companyFromRow(row)))); return; }
     res.setHeader('Content-Type', logo.subarray(0, 4).toString('latin1') === '\x89PNG' ? 'image/png' : 'image/jpeg'); res.setHeader('Cache-Control', 'no-store'); res.send(logo);
   });
   // The bell (hosted profile): the signed-in account's own notifications in the current pilot, nothing else. Each route sees

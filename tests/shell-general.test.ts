@@ -22,6 +22,7 @@ import { DUPLICATE_PARTS, copyName, duplicateParts } from '../shared/site-duplic
 import { SITE_DEFAULT_SORT, SITE_LIST_COLUMNS, SITE_PAGE_SIZES, siteListRows } from '../shared/site-list.ts';
 import { EMPTY_TABLE_TEXT, NO_MATCH_TEXT, entriesText } from '../shared/ui-texts.ts';
 import { passwordStrength } from '../shared/password-strength.ts';
+import { companyFormLabels, logoSizing } from '../shared/pdf-company.ts';
 import { NOTIFICATION_LIMIT, NO_NOTIFICATIONS, safeNotificationLink, unreadNotifications, visibleNotifications } from '../shared/notifications.ts';
 import { canResource } from '../shared/permissions.ts';
 import { SITE_SCOPE_SPECIFIC, USER_SITES } from '../shared/site-scope.ts';
@@ -331,4 +332,34 @@ test('password strength grows with length and variety; the strength meter shows 
   assert.equal(passwordStrength('').label, ''); assert.equal(passwordStrength('abcdefgh').label, 'Weak'); assert.equal(passwordStrength('Abcdefgh12').label, 'Fair'); assert.equal(passwordStrength('Tr0ub4dor&3-horse-staple').label, 'Strong');
   assert.ok(passwordStrength('a').level < passwordStrength('Abcdefgh12').level && passwordStrength('Abcdefgh12').level < passwordStrength('Tr0ub4dor&3-horse-staple').level);
   assert.match(renderToStaticMarkup(createElement(PasswordStrengthMeter, { password: 'abc' })), /Password strength[\s\S]*Weak/); assert.match(renderToStaticMarkup(createElement(PasswordStrengthMeter, { password: 'Tr0ub4dor&3-horse-staple' })), /level-3[\s\S]*Strong/);
+});
+
+// ----- shell-general-022 Company data: the reference's fields, and the logo sizing on the selector ------------------------------
+test('Company data: the form fields equal the reference list (Name* to Padding bottom) with the Logo after Fax', () => {
+  const company = projectResource(hosted, RESOURCE_MAP.company_data);
+  assert.deepEqual(companyFormLabels(company.fields), ['Name', 'Address', 'Zip code', 'Residence', 'Mailbox number', 'MN-Zip code', 'MN-Residence', 'Phone', 'Fax', 'Logo', 'Logo max height (px)', 'Logo padding top (px)', 'Logo padding bottom (px)']);
+  assert.equal(company.fields.find(item => item.name === 'name')!.required, true);
+  const sizing = (name: string) => company.fields.find(item => item.name === name)!;
+  assert.deepEqual([sizing('logoMaxHeight').min, sizing('logoMaxHeight').max, sizing('logoMaxHeight').default], [32, 400, 286]);
+  assert.deepEqual([sizing('logoPaddingTop').min, sizing('logoPaddingTop').max, sizing('logoPaddingTop').default, sizing('logoPaddingBottom').default], [0, 200, 16, 16]);
+  assert.ok(company.fields.find(item => item.name === 'logoHeight')!.hidden && company.fields.find(item => item.name === 'address2')!.hidden, 'the stored document values stay, off the form');
+});
+test('the logo sizing: older records read the reference defaults, values are clamped, and the selector applies them', async t => {
+  assert.deepEqual(logoSizing(undefined), { maxHeight: 286, paddingTop: 16, paddingBottom: 16 });
+  assert.deepEqual(logoSizing({ name: 'Old record', logoHeight: 18 }), { maxHeight: 286, paddingTop: 16, paddingBottom: 16 }, 'a record saved before the fields existed');
+  assert.deepEqual(logoSizing({ logoMaxHeight: 9999, logoPaddingTop: -5, logoPaddingBottom: '40' }), { maxHeight: 400, paddingTop: 0, paddingBottom: 40 });
+  const f = await fixture(t);
+  const company = await f.admin.request('/records/company_data', 'POST', { name: 'Harbour Welding BV', mailbox: '12', mnZip: '3000', mnResidence: 'Rotterdam', fax: '010 555 0100', logoMaxHeight: 120, logoPaddingTop: 8, logoPaddingBottom: 24 });
+  assert.equal(company.status, 201); const record = (await json<{ record: Row }>(company)).record;
+  assert.deepEqual([record.mailbox, record.mnZip, record.mnResidence, record.fax], ['12', '3000', 'Rotterdam', '010 555 0100']);
+  assert.equal((await f.admin.request('/records/company_data', 'POST', { name: 'Too big', logoMaxHeight: 9999 })).status, 409, 'one company record');
+  assert.equal((await f.admin.request(`/records/company_data/${record.id}`, 'PUT', { logoMaxHeight: 9999, _version: record._version })).status, 422, 'the range is enforced on the server');
+  const form = new FormData(); form.set('entityType', 'company_data'); form.set('entityId', record.id); form.set('documentType', 'Company logo'); form.set('file', new Blob([PNG], { type: 'image/png' }), 'logo.png');
+  assert.equal((await f.admin.request('/files', 'POST', form)).status, 201);
+  const answer = await f.admin.request('/company-logo?sizing=1', 'GET', undefined, null);
+  assert.equal(answer.status, 200); assert.deepEqual(await answer.json(), { maxHeight: 120, paddingTop: 8, paddingBottom: 24 });
+  const user = { id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0 } } as User;
+  const render = (sizing?: { maxHeight: number; paddingTop: number; paddingBottom: number }) => renderToStaticMarkup(createElement(PilotSelector, { user, pilots: PILOTS, onOpen: () => undefined, onLogout: () => undefined, logo: '/logo.png', sizing }));
+  assert.match(render({ maxHeight: 120, paddingTop: 8, paddingBottom: 24 }), /<img[^>]+style="max-height:120px;padding-top:8px;padding-bottom:24px"/);
+  assert.doesNotMatch(render(), /<img[^>]+style=/, 'without saved sizing the stylesheet keeps its size');
 });
