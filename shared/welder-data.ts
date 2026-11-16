@@ -71,6 +71,12 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   welder_certificates: { certificateTypeId: 'Certificate', processId: 'Weld process' },
   // Punch lists → Add item (capture of 2026-11-16): the category select is "Type", the isometric select "ISO".
   punchlists: { category: 'Type', isoId: 'ISO' },
+  // MTO Pilot catalogs (captures mto.md → Logistic, weld-catalogs.md → Material supplier).
+  suppliers: { name: 'Name', zip: 'Zip code', residence: 'Residence', email: 'Email address' },
+  service_companies: { name: 'Name', email: 'Email address' },
+  laydowns: { name: 'Laydown' },
+  warehouses: { name: 'Storehouse name' },
+  material_laydowns: { name: 'Laydown' },
 };
 /** List columns of the reference (labels come from the fields above). */
 export const HOSTED_COLUMNS: Record<string, string[]> = {
@@ -82,6 +88,7 @@ export const HOSTED_COLUMNS: Record<string, string[]> = {
   material_types: ['name', 'typeOfSteel', 'materialDescription', 'basicMaterial', 'materialGroup', 'isoAsme'],
   welding_wires: ['name', 'chargeNo', 'classification', 'materialTypeId', 'diameter', 'certType', 'attestNo', 'supplierId', 'controlled', 'accepted'],
   certifications: ['indexNo', 'chargeNo', 'certType', 'name', 'materialId', 'materialTypeId', 'materialPartId', 'basicMaterial', 'diameter', 'schedule', 'wallThickness', 'supplierId', 'controlled', 'accepted'],
+  suppliers: ['name', 'address', 'email', 'phone'],
 };
 /** Required in the hosted profile (the shared definitions stay as they were for the other profiles). */
 export const HOSTED_REQUIRED: Record<string, [string, string][]> = {

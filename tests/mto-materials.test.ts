@@ -318,3 +318,16 @@ test('the Weld pilot bootstrap carries no order, stock or pick data', async t =>
   assert.ok(materialStatus(mto.rows!.isometrics.find(iso => iso.id === 'iso-1')!, mto.rows!).required > 0);
   assert.ok(isoBudgets(mto.rows!.isometrics.find(iso => iso.id === 'iso-1')!, mto.rows!)?.shop?.materialPipe, 'the sample isometric has a Shop pipe budget');
 });
+
+test('hosted MTO catalogs use the capture wording: suppliers, service companies, laydowns and storehouses; other profiles keep theirs', () => {
+  const resource = (key: string, profile: Parameters<typeof availabilityFor>[0] = HOSTED_RELEASE_PROFILE) => projectResource(availabilityFor(profile), RESOURCES.find(row => row.key === key)!);
+  const columnLabels = (key: string) => { const def = resource(key); return def.columns.map(name => def.fields.find(field => field.name === name)?.label); };
+  assert.deepEqual(columnLabels('suppliers'), ['Name', 'Address', 'Email address', 'Phone']);
+  assert.equal(resource('service_companies').fields.find(field => field.name === 'name')?.label, 'Name');
+  assert.equal(resource('service_companies').fields.find(field => field.name === 'email')?.label, 'Email address');
+  assert.equal(resource('laydowns').fields.find(field => field.name === 'name')?.label, 'Laydown');
+  assert.equal(resource('material_laydowns').fields.find(field => field.name === 'name')?.label, 'Laydown');
+  assert.equal(resource('warehouses').title, 'Storehouses');
+  assert.equal(resource('suppliers', 'full').fields.find(field => field.name === 'name')?.label, 'Supplier name');
+  assert.equal(resource('warehouses', 'full').title, 'Warehouses');
+});

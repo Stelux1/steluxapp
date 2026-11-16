@@ -17,6 +17,9 @@ const byText = (a: unknown, b: unknown) => text(a).localeCompare(text(b), 'en', 
 
 // ----- Material database (MTO Pilot) ----------------------------------------------------------------------------------
 
+/** Column headings of the reference list where they are shorter than the form labels (the Add material form keeps those). */
+const MATERIAL_HEADINGS: Record<string, string> = { componentCode: 'CC', materialGroup: 'Group', description: 'Description' };
+
 /**
  * The Material database page of the pilots profile: reference columns, a search box under every column heading,
  * Mass edit for the checked rows and Add material. Other profiles keep the generic table page.
@@ -26,7 +29,7 @@ export function MaterialDatabase() {
   const def = RESOURCE_MAP.materials;
   const [search, setSearch] = useState<Record<string, string>>({}), [selected, setSelected] = useState<string[]>([]), [page, setPage] = useState(0);
   const [editor, setEditor] = useState<Row | 'new' | null>(null), [bulk, setBulk] = useState(false), [archiving, setArchiving] = useState<Row | null>(null);
-  const columns = def.columns.map(key => def.fields.find(field => field.name === key)!).filter(Boolean);
+  const columns = def.columns.map(key => def.fields.find(field => field.name === key)!).filter(Boolean).map(field => ({ ...field, label: MATERIAL_HEADINGS[field.name] || field.label }));
   const all = activeRows(rows, 'materials');
   const filtered = useMemo(() => all.filter(row => columns.every(column => { const query = (search[column.name] || '').trim().toLowerCase(); return !query || text(row[column.name]).toLowerCase().includes(query); })).sort((a, b) => byText(a.materialGroup, b.materialGroup) || byText(a.materialNo, b.materialNo)), [all, columns, search]);
   const size = 50, pages = Math.max(1, Math.ceil(filtered.length / size)), current = Math.min(page, pages - 1), shown = filtered.slice(current * size, (current + 1) * size);
@@ -186,7 +189,7 @@ function AddCustomMaterial({ iso, onClose }: { iso: Row; onClose: () => void }) 
     <div className="full-width">{input('description', 'Material description', { required: true })}</div>
     {input('componentCode', 'Component code')}
     <Choice label="Progress class" value={str('progressClass')} onChange={set('progressClass')} options={PROGRESS_CLASSES.map(value => ({ value, label: value }))} empty="Not classified" hint="Pipe, supports and appendages feed the progress budget of the isometric." error={fields.progressClass}/>
-    <div className="full-width"><FieldInput field={{ name: 'addToDB', label: 'Also add this material to the Material database', type: 'checkbox' }} value={values.addToDB} onChange={set('addToDB')} error={fields.addToDB}/></div>
+    <div className="full-width"><FieldInput field={{ name: 'addToDB', label: 'add to DB', type: 'checkbox', hint: 'Also saves this material in the Material database for later use.' }} value={values.addToDB} onChange={set('addToDB')} error={fields.addToDB}/></div>
   </Form>;
 }
 
