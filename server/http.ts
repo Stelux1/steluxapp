@@ -53,7 +53,7 @@ import { registerWpsRoutes } from './wps.ts';
 import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope, deriveMaterialRows, materialMassEdit, registerIsoMaterialImportRoutes, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
-import { activeSite, assertAccountReach, assertCopyInScope, assertSiteAccessEdit, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
+import { activeSite, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
 /** User accounts of the hosted pilots: a new account has no application ticked, and a ticked application needs a profile (access-users-profiles-004). Runs after the access checks. */
 function checkUserApplications(body: Record<string, unknown>, existing?: Row) {
@@ -298,6 +298,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && resource.key === 'users') { assertUserInput((req as unknown as AuthRequest).user, req.body, access.record(resource.key, String(req.params.id))); assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); checkUserApplications(req.body, access.record(resource.key, String(req.params.id))); }
     const archiveSite = pilots && resource.key === 'sites' ? siteArchiveInput(req.body) : undefined;
     const before = pilots && (resource.key === 'users' || resource.key === 'profiles') ? access.record(resource.key, String(req.params.id)) : undefined;
+    // An account never changes its own applications or profiles (sec1-002). A widening says so (SELF_REFUSED), the last administrator keeps its 409; any other own change is refused last.
+    const ownChange = pilots && resource.key === 'users' && ownAccessChange((req as unknown as AuthRequest).user.id, req.body, before);
     const row = store.transaction(() => {
       let row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
       if (before) assertRightsWrite(store, (req as unknown as AuthRequest).user, resource.key, before, row);
@@ -306,6 +308,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, row);
       if (resource.key === 'users' && req.body.password) { store.db.prepare('INSERT INTO credentials VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash').run(row.id, passwordHash(req.body.password)); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.id); }
       if (resource.key === 'users' || resource.key === 'profiles') ensureAdmin();
+      assertOwnAccessUnchanged(ownChange);
       return row;
     }); res.json({ record: access.project(resource.key, row) });
   });

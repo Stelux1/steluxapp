@@ -274,18 +274,28 @@ export function pilotAccessChanges(input: Record<string, unknown>, existing?: Ro
     return profileChanged && (wasEnabled || isEnabled);
   });
 }
+export const OWN_ACCESS_REFUSED = 'You cannot change your own applications or permission profiles. Ask another administrator.';
+/** Whether a change of the signed-in account's own record switches one of its applications or changes a profile it works under (sec1-002). */
+export const ownAccessChange = (actorId: string, input: Record<string, unknown>, existing?: Row) => Boolean(existing && existing.id === actorId && pilotAccessChanges(input, existing).length);
 /**
  * Only an administrator who reaches every main project in a pilot may change another account's project site
  * access there, switch the pilot on or off for it or change its profile there, so access cannot be widened by an
- * account that does not have it itself. Nobody changes these for its own account.
+ * account that does not have it itself. Nobody changes these for its own account: its own project site access is
+ * refused here; its own applications and profiles are refused by `assertOwnAccessUnchanged` inside the write's
+ * transaction, after the widening check (server/user-admin.ts) and the last-administrator check have had their say.
  */
 export function assertSiteAccessEdit(store: Store, actorId: string, input: Record<string, unknown>, existing?: Row) {
   const sites = siteAccessChanges(store, input, existing), grants = pilotAccessChanges(input, existing);
   if (!sites.length && !grants.length) return;
-  if (existing && existing.id === actorId) throw new AppError(403, sites.length ? 'You cannot change your own project site access. Ask another administrator.' : 'You cannot change your own applications or permission profiles. Ask another administrator.');
+  if (existing && existing.id === actorId) { if (sites.length) throw new AppError(403, 'You cannot change your own project site access. Ask another administrator.'); return; }
   const actor = store.get('users', actorId);
   if (sites.some(pilot => actorReach(store, actor, pilot) !== 'all')) throw new AppError(403, 'Only an administrator with access to all project sites can change project site access.');
   if (grants.some(pilot => actorReach(store, actor, pilot) !== 'all')) throw new AppError(403, 'Only an administrator with access to all project sites of an application can change its access or permission profile.');
+}
+
+/** The last word on an own change of applications or profiles: always refused, whether it widens or narrows (sec1-002). */
+export function assertOwnAccessUnchanged(ownChange: boolean) {
+  if (ownChange) throw new AppError(403, OWN_ACCESS_REFUSED);
 }
 
 /**

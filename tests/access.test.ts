@@ -266,9 +266,10 @@ test('only administrators manage users and profiles; an administrator creates a 
   assert.equal(await status(await reviewerClient.request(`/records/welds/${weld.id}`, { method: 'PUT', pilot: 'weld', data: { description: 'No', _version: weld._version } })), 403);
   for (const path of ['/bootstrap', '/records/iso_materials', '/records/isometrics', '/reports/mto', '/export/isometrics']) assert.equal(await status(await reviewerClient.request(path, { pilot: 'mto' })), 403, path);
   // Nobody switches its own applications off or changes its own pilot profiles (sec1-002), so no administrator locks itself out that way.
+  // This account is the only administrator: switching both applications off would leave none, so that refusal is the last-administrator one (409).
   const self = f.store.list('users').find(row => row.email === 'access-admin@example.test')!;
-  for (const [pilot, data] of [['weld', { weldEnabled: false, mtoEnabled: false }], ['weld', { weldProfileId: reviewer }], ['mto', { mtoProfileId: reviewer }]] as const) {
-    assert.equal(await status(await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot, data: { ...data, _version: self._version } })), 403, JSON.stringify(data));
+  for (const [pilot, data, code] of [['weld', { weldEnabled: false, mtoEnabled: false }, 409], ['weld', { weldProfileId: reviewer }, 403], ['mto', { mtoProfileId: reviewer }, 403]] as const) {
+    assert.equal(await status(await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot, data: { ...data, _version: self._version } })), code, JSON.stringify(data));
   }
   assert.equal(f.store.get('users', self.id)._version, self._version, 'nothing stored');
   // Last-administrator protection covers access per pilot: with Only review in Weld Pilot the account is still an
@@ -277,7 +278,7 @@ test('only administrators manage users and profiles; an administrator creates a 
   assert.equal(await status(await f.admin.request('/records/users', { pilot: 'weld' })), 403, 'no administrator in Weld Pilot any more');
   assert.equal(await status(await f.admin.request('/records/users', { pilot: 'mto' })), 200, 'still an administrator in MTO Pilot');
   const adminProfile = f.store.get('profiles', String(self.profileId));
-  assert.equal(await status(await f.admin.request(`/records/profiles/${adminProfile.id}`, { method: 'PUT', pilot: 'mto', data: { settingsPermission: NONE, _version: adminProfile._version } })), 409);
+  assert.equal(await status(await f.admin.request(`/records/profiles/${adminProfile.id}`, { method: 'PUT', pilot: 'mto', data: { settingsPermission: NONE, description: 'Administrator', _version: adminProfile._version } })), 409);
 });
 
 test('signatures: own records only, administrators view but never write; images are validated and replaced with history', async t => {
@@ -552,7 +553,8 @@ test('other release profiles: no summaries or copy rules are delivered and Copy 
 // ----- the permissions core: area list, pilot mapping, page areas, signatures, entering a pilot ------------------------
 
 /** A profile with the reference matrix (Detailed permissions): `rules` is {area: verbs}. */
-const detailed = (store: Store, name: string, rules: Record<string, string[]>) => store.create('profiles', { name, permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(rules), generalPermission: NONE, materialsPermission: NONE, weldingPermission: NONE, toolsPermission: NONE, settingsPermission: NONE }).id;
+// A hosted profile needs a description when it is saved (access-users-profiles-009), so the test profiles carry one.
+const detailed = (store: Store, name: string, rules: Record<string, string[]>) => store.create('profiles', { name, description: name, permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(rules), generalPermission: NONE, materialsPermission: NONE, weldingPermission: NONE, toolsPermission: NONE, settingsPermission: NONE }).id;
 
 test('the area list has Visual inspection 116 and ITPs 120; stored local rules are read through an alias; pilots follow the App column', () => {
   const area = (key: string) => PERMISSION_AREAS.find(item => item.key === key);
@@ -696,12 +698,16 @@ test('a new hosted account has no application ticked; a ticked application needs
   const body = { name: 'New person', email: 'new-person@example.test', profileId: full, active: true, password: PASSWORD };
   const created = await json<{ record: Row }>(await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: body }));
   assert.deepEqual([created.record.weldEnabled, created.record.mtoEnabled], [false, false]);
-  const refused = await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { ...body, email: 'two@example.test', weldEnabled: true } });
+  // A ticked application needs a profile: its own, or the account's permission profile, which the server works under where no pilot profile is chosen
+  // (security-review sec1-001 ticks MTO Pilot with the permission profile only). Without either it is refused.
+  const { profileId: _general, ...withoutProfile } = body;
+  const refused = await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { ...withoutProfile, email: 'two@example.test', weldEnabled: true } });
   assert.equal(refused.status, 422); assert.ok((await json<{ fields?: Record<string, string> }>(refused)).fields?.weldProfileId);
+  assert.equal(await status(await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { ...body, email: 'two@example.test', weldEnabled: true } })), 201, 'the permission profile counts');
   assert.equal(await status(await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { ...body, email: 'three@example.test', weldEnabled: true, weldProfileId: full } })), 201);
-  // Editing: ticking an application without a profile is refused; an older account (no flag, no pilot profile) can still be edited for other fields.
+  // Editing: ticking an application without any profile is refused; an older account (no flag, no pilot profile) can still be edited for other fields.
   const row = f.store.get('users', created.record.id);
-  assert.equal(await status(await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { mtoEnabled: true, _version: row._version } })), 422);
+  assert.equal(await status(await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { mtoEnabled: true, profileId: '', _version: row._version } })), 422);
   assert.equal(await status(await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { title: 'Planner', _version: row._version } })), 200);
   const legacy = f.account('Legacy', { profileId: full });
   assert.equal(await status(await f.admin.request(`/records/users/${legacy.id}`, { method: 'PUT', pilot: 'weld', data: { title: 'Fitter', _version: legacy._version } })), 200);
@@ -836,7 +842,7 @@ test('a profile editor without Edit on User accounts edits profiles but not righ
   const as = f.client(); await as.login(keyUser.email);
   const reviewer = detailed(f.store, 'Reviewer matrix', { '63': ['show'] });
   // Profiles: add, rename and describe.
-  const created = await as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name: 'Key user profile', permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '63': ['show', 'edit'] }) } });
+  const created = await as.request('/records/profiles', { method: 'POST', pilot: 'weld', data: { name: 'Key user profile', description: 'Key user', permissionMode: 'Detailed permissions', permissionRules: JSON.stringify({ '63': ['show', 'edit'] }) } });
   assert.equal(created.status, 201);
   let target = f.store.get('profiles', reviewer);
   assert.equal(await status(await as.request(`/records/profiles/${reviewer}`, { method: 'PUT', pilot: 'weld', data: { name: 'Reviewer (renamed)', _version: target._version } })), 200);
@@ -895,10 +901,39 @@ test('an account cannot widen its own profile, its own applications or its own s
   assert.equal(await status(await as.request(`/records/profiles/${managerProfile}`, { method: 'PUT', pilot: 'weld', data: { permissionRules: JSON.stringify({ '26': ALL_26, '53': ALL_53 }), _version: profile._version } })), 200);
   // The last administrator: once the manager is the only one, it cannot narrow itself away.
   const admin = f.store.list('users').find(item => item.email === 'access-admin@example.test')!;
-  assert.equal(await status(await as.request(`/records/users/${admin.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: admin._version } })), 200, 'another administrator remains (the manager)');
+  // The manager is not enabled in MTO Pilot, so it may not archive an account that reaches MTO Pilot (security-review sec1-001); the sample administrator is archived directly.
+  assert.equal(await status(await as.request(`/records/users/${admin.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: admin._version } })), 403, 'an account reaching more than the manager');
+  f.store.archive('users', admin.id, admin._version, { id: 'test', name: 'test' });
   const last = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { profileId: narrower, _version: own()._version } });
   assert.equal(last.status, 409, 'the last administrator cannot be removed');
   assert.equal(own().profileId, managerProfile);
+});
+
+// ----- wave 3 integration (E1): the rules of w3-security-fixes, w3-access-session-sites and w3-access-ui hold together ------
+test('E1: an own narrowing is refused like an own widening, a manager without MTO Pilot creates no MTO account, and a new account starts with both applications off', async t => {
+  const f = await fixture(t);
+  const managerProfile = detailed(f.store, 'Account manager', { '26': ALL_26, '53': ALL_53, '63': ['show'] });
+  const narrower = detailed(f.store, 'Account viewer', { '26': ['show'], '53': ['show'] });
+  const manager = f.account('Account manager', { profileId: managerProfile, weldProfileId: managerProfile, mtoEnabled: false });
+  const as = f.client(); await as.login(manager.email);
+  const own = () => f.store.get('users', manager.id);
+  // Narrowing its own Weld profile passes the widening check (w3-access-session-sites) but no account changes its own profiles (sec1-002).
+  const narrow = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { weldProfileId: narrower, _version: own()._version } });
+  assert.equal(narrow.status, 403); assert.match((await json<{ error: string }>(narrow)).error, /cannot change your own applications or permission profiles/);
+  // Widening says so.
+  const widen = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { weldProfileId: 'profile-admin', _version: own()._version } });
+  assert.equal(widen.status, 403); assert.match((await json<{ error: string }>(widen)).error, /cannot widen your own access/);
+  assert.deepEqual([own().weldProfileId, own().mtoEnabled], [managerProfile, false], 'nothing stored');
+  // Not enabled in MTO Pilot: no account that reaches MTO Pilot (sec1-001), even with Edit on User accounts and Profiles.
+  const users = f.store.list('users').length;
+  assert.equal(await status(await as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'MTO planner', email: 'mto-planner@example.test', profileId: narrower, active: true, mtoEnabled: true, mtoProfileId: narrower, password: PASSWORD } })), 403);
+  assert.equal(f.store.list('users').length, users, 'no account was created');
+  // A new account starts with both applications off (w3-access-ui); ticking Weld Pilot needs a profile, the permission profile counts.
+  const created = await json<{ record: Row }>(await as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'Weld viewer', email: 'weld-viewer@example.test', profileId: narrower, active: true, password: PASSWORD } }));
+  assert.deepEqual([created.record.weldEnabled, created.record.mtoEnabled], [false, false]);
+  const row = f.store.get('users', created.record.id);
+  assert.equal(await status(await as.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { weldEnabled: true, profileId: '', _version: row._version } })), 422, 'no profile at all');
+  assert.equal(await status(await as.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { weldEnabled: true, weldProfileId: narrower, _version: row._version } })), 200);
 });
 
 // ----- w1-left-6: storehouses are MTO Pilot records -----------------------------------------------------------------------

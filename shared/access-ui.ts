@@ -52,8 +52,10 @@ export function withNewUserDefaults(body: Record<string, unknown>): Record<strin
 
 /**
  * An application that is ticked needs a profile (reference: Profile is required once Enabled is ticked). With
- * 'Specific project site(s)' the profile is chosen per project site instead. A change that touches neither the flag nor
- * the profile of an application is not checked, so an older account can still be edited.
+ * 'Specific project site(s)' the profile is chosen per project site instead. The account's permission profile counts
+ * as that profile where no pilot profile is chosen, because the server works under it there (server/auth.ts
+ * `effectiveProfileId`); the hosted form always sends a pilot profile. A change that touches neither the flag nor the
+ * profile of an application is not checked, so an older account can still be edited.
  */
 export function pilotProfileErrors(body: Record<string, unknown>, existing?: Row): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -62,7 +64,7 @@ export function pilotProfileErrors(body: Record<string, unknown>, existing?: Row
     if (existing && body[flag] === undefined && body[profile] === undefined && body[scope] === undefined) continue;
     const enabled = body[flag] ?? existing?.[flag] ?? (existing ? true : false);
     if (enabled !== true || String(body[scope] ?? existing?.[scope] ?? '') === SPECIFIC_SITES) continue;
-    if (!String(body[profile] ?? existing?.[profile] ?? '').trim()) errors[profile] = 'Choose a profile.';
+    if (!String(body[profile] ?? existing?.[profile] ?? '').trim() && !String(body.profileId ?? existing?.profileId ?? '').trim()) errors[profile] = 'Choose a profile.';
   }
   return errors;
 }
