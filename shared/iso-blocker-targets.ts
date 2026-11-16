@@ -1,4 +1,5 @@
 import type { BlockerTarget } from './iso-status.ts';
+import { punchListLink } from './punch.ts';
 
 /**
  * What a click on an item of "What blocks this isometric" opens (reference: the blockers menu of the isometric page):
@@ -18,10 +19,12 @@ export type BlockerOpening =
 /** The id of the Prefab / Field status line on the Status card. */
 export const RELEASE_STATUS_ANCHOR = 'iso-release-status';
 
-/** The punch list of the isometric, the link the reference gives (`page=punchlists&iso_id=…&project_id=…&punch_type=prepunch`). */
-export function punchListUrl(iso: { id: string; projectId?: unknown }, punchType = 'prepunch') {
-  const query = new URLSearchParams({ iso_id: String(iso.id), project_id: String(iso.projectId ?? ''), punch_type: punchType });
-  return `/welding/punchlists?${query}`;
+/**
+ * The punch list of the isometric, the link the reference gives (`page=punchlists&iso_id=…&project_id=…&punch_type=prepunch`):
+ * the Punch lists page reads these filters from the address (shared/punch.ts `punchListLink`).
+ */
+export function punchListUrl(iso: { id: string; projectId?: unknown }, punchType: 'Pre-punch' | 'Punch' = 'Pre-punch') {
+  return punchListLink({ isoId: String(iso.id), projectId: String(iso.projectId ?? ''), punchType });
 }
 
 /**
@@ -32,7 +35,7 @@ export function blockerOpening(target: BlockerTarget | undefined, iso: { id: str
   if (!target) return null;
   switch (target.kind) {
     case 'release': return { dialog: 'release' };
-    case 'punch': return { dialog: 'punch', url: punchListUrl(iso) };
+    case 'punch': return { dialog: 'punch', url: punchListUrl(iso, target.punchType) };
     case 'edit-weld': return target.weldId ? { dialog: 'edit-weld', weldId: target.weldId, readOnly: isLocked(target.weldId) } : null;
     case 'ndt': return target.weldId ? { dialog: 'ndt', weldId: target.weldId, type: 'NDT' } : null;
     case 'ndt-pre': return target.weldId ? { dialog: 'ndt', weldId: target.weldId, type: 'NDT PRE' } : null;

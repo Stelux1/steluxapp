@@ -140,7 +140,7 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
       <div className="modal-body iso-blockers">{status.blockers.groups.map(group => <section key={group.key} aria-label={group.title}>
         <h3>{group.title}<span className="count-pill">{group.count}</span></h3>
         <ul>{group.items.map((item, index) => <li key={`${item.weldId || 'iso'}-${index}`}>{item.target && (!item.target.weldId || canRecord('welds'))
-          ? item.target.kind === 'punch' ? <Link className="text-link" to={punchListUrl(iso)} target="_blank" rel="noreferrer" onClick={() => setBlockers(false)}>{item.message}</Link> : <button className="text-link" onClick={() => openBlocker(item)}>{item.message}</button>
+          ? item.target.kind === 'punch' ? canRecord('punchlists') && pilot?.pilot.key === 'weld' ? <Link className="text-link" to={item.href || punchListUrl(iso, item.target.punchType)} target="_blank" rel="noreferrer" onClick={() => setBlockers(false)}>{item.message}</Link> : item.message : <button className="text-link" onClick={() => openBlocker(item)}>{item.message}</button>
           : item.href && canRecord('punchlists') && pilot?.pilot.key === 'weld' ? <Link className="text-link" to={item.href} target="_blank" rel="noreferrer">{item.message}</Link> : item.message}</li>)}</ul>
       </section>)}</div>
       <div className="modal-footer"><button className="btn" onClick={() => setBlockers(false)}>Close</button></div>

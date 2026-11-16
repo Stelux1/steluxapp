@@ -616,10 +616,26 @@ test('the punch blocker line reads "<n> open pre-punch" and links to the filtere
   const blockers = isoBlockers({ iso, site: row('site'), welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch });
   assert.equal(blockers.total, 2);
   assert.deepEqual(blockers.groups[0].items, [
-    { message: '1 open pre-punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=prepunch', target: { kind: 'punch' } },
-    { message: '1 open punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=punch', target: { kind: 'punch' } },
+    { message: '1 open pre-punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=prepunch', target: { kind: 'punch', punchType: 'Pre-punch' } },
+    { message: '1 open punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=punch', target: { kind: 'punch', punchType: 'Punch' } },
   ]);
   assert.match(read('client/iso-header.tsx'), /item\.href && canRecord\('punchlists'\)/);
+});
+
+test('E2: one punch dialog per isometric: the weld table\'s Punch list option opens the Add item / Complete punch & Sign-off dialog, and each blocker line opens its own filtered list', async () => {
+  const { blockerOpening, punchListUrl } = await import('../shared/iso-blocker-targets.ts');
+  const weldEntry = read('client/weld-entry.tsx'), punch = read('client/punch.tsx');
+  assert.match(weldEntry, /dialog === 'punch' && <PunchDialog isoId=\{iso\.id\}/, 'Options → Punch list opens the per-isometric dialog');
+  assert.ok(!/IsoPunchDialog/.test(weldEntry + punch), 'the second punch dialog is gone');
+  assert.match(punch, /isoId \? 'Complete punch & Sign-off' : 'Report passed'/);
+  const punchRows = [row('1', { isoId: 'iso', punchType: 'Pre-punch', category: A }), row('2', { isoId: 'iso', punchType: 'Punch', category: B })];
+  const iso = row('iso', { projectId: 'project-1' });
+  const items = isoBlockers({ iso, site: row('site'), welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch: punchRows }).groups[0].items;
+  assert.deepEqual(items.map(item => item.message), ['1 open pre-punch', '1 open punch']);
+  for (const item of items) assert.equal((blockerOpening(item.target, iso, () => false) as { url: string }).url, item.href, `${item.message} opens the list the Punch lists page filters by its address`);
+  assert.deepEqual(punchFiltersFromParams(new URL(`http://x${items[1].href}`).searchParams).punchType, 'Punch');
+  assert.equal(punchListUrl(iso), '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=prepunch');
+  assert.match(read('client/iso-header.tsx'), /item\.target\.kind === 'punch' \? canRecord\('punchlists'\) && pilot\?\.pilot\.key === 'weld'/, 'a link in Weld Pilot for an account that reads punch lists, text otherwise');
 });
 
 test('Report passed over HTTP: needs an isometric, waits for open A/B items, shows in the Passed view and takes its evidence', async t => {

@@ -8,7 +8,7 @@ import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
 import { AttachmentCountBadge } from './iso-dialogs.tsx';
 import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
-import { IsoPunchDialog } from './punch.tsx';
+import { PunchDialog } from './punch.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
 import { NDT_ROUNDS } from '../shared/inspections.ts';
@@ -460,7 +460,8 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     {stamping && <StampDialog weld={stamping} data={data} onClose={() => setStamping(null)}/>}
     {dialog === 'mass' && <MassEditDialog iso={iso} data={data} selected={checked} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
     {dialog === 'delete' && <DeleteDialog welds={removing} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
-    {dialog === 'punch' && <IsoPunchDialog iso={iso} onClose={() => setDialog(null)}/>}
+    {/* Options → Punch list opens the isometric's punch dialog (Add item / Complete punch & Sign-off), the same as the Item button of the status card. */}
+    {dialog === 'punch' && <PunchDialog isoId={iso.id} onClose={() => setDialog(null)}/>}
     {restoring && <BringBackDialog weld={restoring} onClose={() => setRestoring(null)}/>}
     {inspection && <inspection.Dialog isoId={str(iso.id)} weldIds={checked.map(weld => weld.id)} onClose={() => setInspection(null)}/>}
   </section>;

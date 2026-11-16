@@ -125,7 +125,7 @@ const round1 = (value: number) => Math.round(value * 10) / 10;
 
 export type BlockerKey = 'release' | 'welds' | 'ndt' | 'repair' | 'punch';
 /** What a click on a blocker item opens (shared/iso-blocker-targets.ts maps it to the dialog): the dialog that fixes the item. */
-export interface BlockerTarget { kind: 'release' | 'edit-weld' | 'ndt' | 'ndt-pre' | 'punch'; /** The weld whose dialog opens (for a repair that exists, the repair weld). */ weldId?: string; }
+export interface BlockerTarget { kind: 'release' | 'edit-weld' | 'ndt' | 'ndt-pre' | 'punch'; /** The weld whose dialog opens (for a repair that exists, the repair weld). */ weldId?: string; /** Punch lines: the phase the filtered Punch lists page opens on. */ punchType?: 'Pre-punch' | 'Punch'; }
 export interface BlockerItem { message: string; /** The weld to open, where the item concerns one. */ weldId?: string; /** The page the line links to (the filtered Punch lists page for the punch lines). */ href?: string; /** The dialog that fixes the item; absent on the count lines of a group the server counted alone. */ target?: BlockerTarget; }
 export interface BlockerGroup { key: BlockerKey; title: string; /** What the group adds to the total ("N open"). */ count: number; items: BlockerItem[]; }
 export interface IsoBlockers { groups: BlockerGroup[]; total: number; }
@@ -194,7 +194,7 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
     // Open items of the blocking categories A and B hold the isometric back (see shared/punch.ts).
     // One line per phase ("1 open pre-punch", "2 open punch"), each linking to the Punch lists page filtered to this isometric and phase.
     const blocking = punchBlocking(live(input.punch).filter(row => row.isoId === input.iso.id));
-    const phase = (kind: 'Pre-punch' | 'Punch'): BlockerItem[] => { const count = blocking.filter(row => punchKind(row) === kind).length; return count ? [{ message: `${count} open ${kind.toLowerCase()}`, href: punchListLink({ isoId: input.iso.id, projectId: text(input.iso.projectId), punchType: kind }), target: { kind: 'punch' } }] : []; };
+    const phase = (kind: 'Pre-punch' | 'Punch'): BlockerItem[] => { const count = blocking.filter(row => punchKind(row) === kind).length; return count ? [{ message: `${count} open ${kind.toLowerCase()}`, href: punchListLink({ isoId: input.iso.id, projectId: text(input.iso.projectId), punchType: kind }), target: { kind: 'punch', punchType: kind } }] : []; };
     add('punch', [...phase('Pre-punch'), ...phase('Punch')], blocking.length);
   }
   return { groups, total: groups.reduce((sum, group) => sum + group.count, 0) };

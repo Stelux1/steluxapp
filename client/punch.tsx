@@ -13,7 +13,7 @@ import { SIGNATURE_KINDS } from '../shared/signatures.ts';
 import {
   EMPTY_PUNCH_FILTERS, PUNCH_DEFAULT_PAGE_SIZE, PUNCH_FILE_LIMIT, PUNCH_FORM_FIELDS, PUNCH_FILE_TYPES, PUNCH_KPI_FILTERS, PUNCH_LETTERS, PUNCH_LIST_PATH, PUNCH_MESSAGES, PUNCH_PAGE_SIZES, PUNCH_PASSED_NEEDS_ISO, PUNCH_PROGRESS_OPTIONS, PUNCH_SIGN_OFF_DOCUMENT, PUNCH_TYPES, PUNCH_TYPE_LABELS, SIGNER_TYPES,
   canTransition, comparePunchRows, finishSummary, isBlockingCategory, matchesPunchFilters, punchApproved, punchCategory, punchCategoryLabel, punchCounts, punchDialogWarnings, punchFiltersFromParams, punchFiltersToParams, punchFinishErrors, punchFormDefaults, punchInputErrors, punchFileProblem,
-  isOverdue, punchKind, punchKpiActive, punchKpis, punchListLink, punchPhaseWarning, punchProgressLabel, punchProjectLabel, punchReportPassedRefusal, punchResizeTarget, punchRowClass, punchStatus, punchToday, withPunchPhases,
+  punchKind, punchKpiActive, punchKpis, punchListLink, punchPhaseWarning, punchProgressLabel, punchProjectLabel, punchReportPassedRefusal, punchResizeTarget, punchRowClass, punchStatus, punchToday, withPunchPhases,
   type PunchCounts, type PunchFilters, type PunchKpiKey, type PunchTransition, type PunchType,
 } from '../shared/punch.ts';
 import type { Field, Row } from '../shared/types.ts';
@@ -528,32 +528,6 @@ function FinishForm({ items, single, inline = false, onClose, onDone }: { items:
   </>;
   if (inline) return <form className="punch-signoff-form" onSubmit={event => void submit(event)} noValidate>{body}{submitButton}</form>;
   return <form onSubmit={event => void submit(event)} noValidate><div className="modal-body">{body}</div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>{submitButton}</div></form>;
-}
-
-// ----- isometric: Options -> Punch list ---------------------------------------------------------------------
-
-/** The weld table's Options -> Punch list: this isometric's punch items with their counts, and Add item (the whole list stays on the Punch lists page). */
-const numberOf = (row: Row) => Number(row.number) || 0;
-export function IsoPunchDialog({ iso, onClose }: { iso: Row; onClose: () => void }) {
-  const { rows, canRecord } = useWorkspace();
-  const [adding, setAdding] = useState(false);
-  const items = useMemo(() => withPunchPhases(activeRows(rows, RESOURCE)).filter(row => row.isoId === iso.id).sort((a, b) => numberOf(b) - numberOf(a) || b._createdAt.localeCompare(a._createdAt)), [rows, iso.id]);
-  const counts = punchCounts(items), today = punchToday();
-  if (adding) return <AddItemForm iso={iso} onClose={() => setAdding(false)}/>;
-  const readable = canRecord(RESOURCE);
-  return <Modal title="Punch lists" subtitle={`ISO: ${text(iso.isoNo)}`} wide onClose={onClose}><div className="modal-body">
-    {!readable ? <EmptyState title="You do not have rights to open this page" description="Your permission profile does not include punch lists."/> : <>
-      {counts.blocking > 0 && <p className="iso-hint" role="status"><AlertCircle size={14} aria-hidden="true"/> {counts.blocking} open item{counts.blocking === 1 ? '' : 's'} in category A or B must be finished and approved before release.</p>}
-      <p className="punch-summary">{counts.prePunchOpen} pre-punch open · {counts.punchOpen} punch open · {counts.overdue} overdue</p>
-      {items.length ? <TableScroll><table className="data-table punch-table"><caption className="sr-only">Punch items of {text(iso.isoNo)}</caption>
-        <thead><tr>{['#', 'Type', 'Description', 'Due date', 'Punch', 'Status'].map(heading => <th key={heading} scope="col">{heading}</th>)}</tr></thead>
-        <tbody>{items.map(row => { const status = punchStatus(row); return <tr key={row.id}>
-          <td className="tabular">{text(row.number) || '—'}</td><td><span className="punch-letter" title={punchCategoryLabel(punchCategory(row.category))}>{punchCategory(row.category)}</span></td>
-          <td className="description-cell" title={text(row.description)}>{text(row.description) || '—'}</td><td className="tabular">{formatDate(row.dueDate)}</td><td>{punchKind(row)}</td>
-          <td><Badge color={STATUS_COLOR[status]}>{status}</Badge>{isOverdue(row, today) && <> <Badge color="red">Overdue</Badge></>}</td></tr>; })}</tbody></table></TableScroll>
-        : <EmptyState title="No punch items for this isometric yet" description="Add the first pre-punch or punch item."/>}
-      <p className="muted">Sign-off, edit and the activity log are on the <Link className="text-link" to={resourcePath(RESOURCE)} onClick={onClose}>Punch lists</Link> page.</p></>}
-  </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Close</button>{readable && canRecord(RESOURCE, 'insert') && <button type="button" className="btn primary" onClick={() => setAdding(true)}><Plus size={16}/>Add item</button>}</div></Modal>;
 }
 
 // ----- isometric header ------------------------------------------------------------------------------------

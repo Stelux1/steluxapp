@@ -48,7 +48,8 @@ test('blocker items carry the target of the dialog that fixes them: release, Edi
     ['Rejection on weld 002, repair 002R1 is still open', { kind: 'ndt', weldId: 'r1' }],
     ['Rejection on weld 010, repair 010R1 is still open', { kind: 'edit-weld', weldId: 'r2a' }],
   ]);
-  assert.deepEqual(items(blockers, 'punch').map(item => item.target), [{ kind: 'punch' }]);
+  // The punch lines carry their phase, so each opens its own filtered Punch lists page (E2).
+  assert.deepEqual(items(blockers, 'punch').map(item => item.target), [{ kind: 'punch', punchType: 'Punch' }]);
 });
 
 test('a blocker target maps to its dialog for every kind; a locked weld opens Edit weld read-only; the punch link filters to the isometric', () => {
