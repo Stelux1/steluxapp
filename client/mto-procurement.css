@@ -1,0 +1,21 @@
+/* MTO Pilot procurement pages: Order materials, Pending order, Material take in, Order archive. */
+.mto-procurement-page .procurement-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; padding: 18px 20px 0; }
+.mto-procurement-page .procurement-filters > .field { flex: 0 1 220px; min-width: 150px; }
+.mto-procurement-page .procurement-filters input[type=date] { width: 100%; }
+.mto-procurement-page .number-cell { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mto-procurement-page th.number-cell { text-align: right; }
+.mto-procurement-page .actions-cell { white-space: nowrap; text-align: right; }
+.mto-procurement-page .actions-cell .btn + .btn { margin-left: 8px; }
+.mto-procurement-page .correction-row td { background: color-mix(in srgb, #b42318 6%, transparent); }
+.modal .wide-field { grid-column: 1 / -1; }
+.modal .wide-field textarea { width: 100%; min-height: 70px; }
+.modal .receipt-line input[type=number] { min-width: 110px; }
+@media (max-width: 760px) {
+  .mto-procurement-page .procurement-filters { padding: 14px 14px 0; gap: 10px; }
+  .mto-procurement-page .procurement-filters > .field { flex: 1 1 100%; }
+  .mto-procurement-page .heading-actions { flex-wrap: wrap; }
+  .mto-procurement-page .actions-cell .btn { margin: 2px 0; }
+}
+@media print {
+  .mto-procurement-page .procurement-filters, .mto-procurement-page .table-toolbar, .mto-procurement-page .heading-actions, .mto-procurement-page .actions-cell, .mto-procurement-page .select-cell { display: none !important; }
+}

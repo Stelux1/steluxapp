@@ -91,9 +91,17 @@ export function seed(store: Store) {
     action('release', { isoIds: ['iso-3'], type: 'Field', reportNo: 'FLR-001', engineerId: 'qa-1', date: '2026-10-25' });
     action('release', { isoIds: ['iso-3'], type: 'Hydrotest', reportNo: 'HTR-001', engineerId: 'qa-1', date: '2026-10-26' });
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
+    // Procurement samples: an order for checked requirements without a supplier (assigned at take-in, delivered in full)
+    // and a correction with its reason on the first order's partial delivery.
+    const requirementOrder = action('order-requirements', { requirementIds: ['requirement-6', 'requirement-7', 'requirement-9'], date: '2026-10-21', note: 'Steam and skid prefab package' });
+    if ('record' in requirementOrder && requirementOrder.record) {
+      const lines = store.list('order_lines').filter(l => l.orderId === requirementOrder.record?.id);
+      action('receive', { orderId: requirementOrder.record.id, supplierId: 'supplier-pipe', warehouseId: 'warehouse-main', date: '2026-10-23', items: lines.map((l, n) => ({ lineId: l.id, quantity: Number(l.quantity), chargeNo: `H-22${String(n + 6).padStart(2, '0')}` })) });
+    }
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });
     if ('record' in po && po.record) { const line = store.list('order_lines').find(l => l.orderId === po.record?.id)!; action('receive', { orderId: po.record.id, warehouseId: 'warehouse-main', date: '2026-10-20', items: [{ lineId: line.id, quantity: 12, chargeNo: 'H-1043' }] }); }
     action('order', { supplierId: 'supplier-pipe', projectId: 'project-steam', date: '2026-10-19', items: [{ materialId: 'material-4', quantity: 42 }, { materialId: 'material-5', quantity: 16 }] });
+    if ('record' in po && po.record) { const delivered = store.list('receipts').find(r => r.orderId === po.record?.id); if (delivered) action('correct-receipt', { receiptId: delivered.id, quantity: 2, date: '2026-10-22', note: 'Delivery note showed 12, two pieces were returned to the carrier' }); }
     action('issue-material', { isoId: 'iso-7', materialId: 'material-7', warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: 8, date: '2026-10-18' });
     action('service', { spoolIds: ['spool-4'], companyId: 'service-coating', services: 'Surface preparation and coating', laydownId: 'laydown-b', date: '2026-10-20' });
     const tools = [['TIG welding set', true, 2], ['Angle grinder 125 mm', true, 3], ['Digital torque wrench', true, 2], ['Pipe alignment clamp', true, 4], ['Welding helmet', true, 4], ['Grinding discs, pack of 10', false, 5], ['Safety gloves, pair', false, 10], ['Hydraulic test pump', true, 1]];
