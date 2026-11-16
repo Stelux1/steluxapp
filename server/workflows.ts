@@ -9,6 +9,8 @@ import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
 import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
 import { isMtoStockAction } from '../shared/mto-stock.ts';
 import { runMtoStock } from './mto-stock.ts';
+import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
+import { runMtoLogisticsAction } from './mto-logistics.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -44,6 +46,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       return existing ? patch(resource, existing, { quantity: next }) : add(resource, { [itemKey]: itemId, warehouseId, chargeNo, quantity: next });
     };
     const movement = (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra: Input = {},custom=false) => add(tool ? 'tool_movements' : 'movements', { number: store.next(tool ? 'TM' : 'MM'), [tool ? 'articleId' : custom?'customMaterialId':'materialId']: itemId, warehouseId, quantity: qty(amount), type, date, note, ...extra });
+    if (MTO_ACTION_KEYS.includes(key)) return runMtoLogisticsAction(key, { store, actor, data, date, note, ensure, add, patch, balance, movement });
     if (MTO_MATERIAL_ACTIONS.includes(key)) { const mto = runMtoMaterialAction(store, key, data, actor)!; return mto.records ? { resource: mto.resource, records: mto.records } : { resource: mto.resource, record: mto.record! }; }
     const procurement: ProcurementContext = { store, date, note, ensure, add, patch, balance, movement };
     if (key === 'correct-receipt') { const done = correctReceipt(procurement, data); return { resource: done.resource, record: done.record }; }
@@ -179,7 +182,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       for (const id of ids(data.spoolIds, 'spool')) {
         const spool = ensure('spools', id);
         if (store.list('service_requests').some(r => r.spoolId === id && r.status !== 'Completed')) throw new AppError(409, `Spool ${spool.name} already has an open service request.`);
-        created.push(add('service_requests', { number,name:str(data.name), spoolId: id, companyId: company.id, laydownId: data.laydownId || '', services, date, status: 'Requested', note }));
+        created.push(add('service_requests', { number,name:str(data.name), spoolId: id, companyId: company.id, laydownId: data.laydownId || '', services, includeDrawings: data.includeDrawings === true, date, status: 'Requested', note }));
         patch('spools', spool, { serviceCompanyId: company.id, laydownId: '' });
       }
       return { resource: 'service_requests', records: created };

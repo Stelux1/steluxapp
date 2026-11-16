@@ -1,5 +1,6 @@
 import { MTO_STOCK_ACTIONS } from './mto-stock.ts';
 import type { ActionDefinition, ActionField, Module } from './types.ts';
+import { MTO_ACTION_DEFS } from './mto-logistics.ts';
 const ref = (name: string, label: string, resource: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'ref', ref: resource, required: true, ...extra });
 const text = (name: string, label: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'text', ...extra });
 const number = (name = 'quantity', label = 'Quantity', extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'number', min: 0.000001, required: true, ...extra });
@@ -22,7 +23,7 @@ for (const kind of ['material', 'tool'] as const) {
 }
 add('rent', 'Rent / issue article', 'tools', 'Returnable articles create a rental. Consumables are recorded as issued.', [ref('articleId', 'Article', 'articles'), ref('warehouseId', 'Warehouse', 'warehouses'), ref('clientId', 'Client', 'clients'), number(), date, text('dueDate', 'Due date', { type: 'date' })], 'Rent / issue');
 add('return', 'Return article', 'tools', 'Record a full or partial return to the original warehouse.', [ref('rentalId', 'Rental', 'rentals'), number(), date, note], 'Record return');
-add('service', 'Create service request', 'materials', 'Send selected spools to a service company and track their current location.', [ref('spoolIds', 'Spools', 'spools', { multiple: true }), ref('companyId', 'Service company', 'service_companies'),text('name','Request name'), text('services', 'Requested services'), ref('laydownId', 'Return laydown', 'laydowns', { required: false }), date, note], 'Create request');
+add('service', 'Create service request', 'materials', 'Send selected spools to a service company and track their current location.', [ref('spoolIds', 'Spools', 'spools', { multiple: true }), ref('companyId', 'Service company', 'service_companies'),text('name','Request name'), text('services', 'Requested services'), text('includeDrawings','Include isometric drawings',{type:'checkbox',default:false}), ref('laydownId', 'Return laydown', 'laydowns', { required: false }), date, note], 'Create request');
 add('complete-service', 'Complete service request', 'materials', 'Close the service request and place the spool at its destination laydown.', [ref('requestIds', 'Service requests', 'service_requests', { multiple: true }), ref('laydownId', 'Destination laydown', 'laydowns', { required: false }), date, note], 'Complete service');
 add('move-spools', 'Move to laydown', 'materials', 'Update the current location of the selected spools.', [ref('spoolIds', 'Spools', 'spools', { multiple: true }), ref('laydownId', 'Laydown area', 'laydowns'), date, note], 'Move spools');
 add('move-materials','Move materials to laydown','materials','Update the location of the checked material requirements.',[ref('requirementIds','Material requirements','iso_materials',{multiple:true}),ref('laydownId','Material laydown','material_laydowns'),date,note],'Move materials');
@@ -39,6 +40,7 @@ add('remove-material-quantity','Remove quantity by revision','materials','Reduce
 add('set-material-type', 'Set type', 'materials', 'Set the operation phase of the checked materials.', [ref('requirementIds', 'Material requirements', 'iso_materials', { multiple: true }), ref('phaseId', 'Type', 'operation_phases')], 'Set type');
 add('archive-iso-materials', 'Delete selected materials', 'materials', 'Remove the checked materials from the isometric. They are archived and can be restored.', [ref('requirementIds', 'Material requirements', 'iso_materials', { multiple: true })], 'Delete selected');
 defs.push(...MTO_STOCK_ACTIONS);
+defs.push(...MTO_ACTION_DEFS);
 export const ACTIONS = Object.fromEntries(defs.map(d => [d.key, d]));
 export const ACTION_LIST = defs;
 export function actionPermission(key: string): Module { return ACTIONS[key].module; }

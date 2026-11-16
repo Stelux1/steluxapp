@@ -69,6 +69,7 @@ export function WorkflowDialog({ actionKey, defaults = {}, onClose }: {actionKey
   const allowedOptions=(name:string)=>{
     if(name==='requestId'&&actionKey==='inspection-result')return activeRows(rows,'inspection_requests').filter(r=>r.status!=='Cancelled'&&canRun(actionKey,{type:r.type})).map(r=>r.id);
     if(name==='requirementIds')return (actionKey==='order-requirements'?requirementExecution(rows).filter(e=>e.toOrder>0).map(e=>e.requirement):activeRows(rows,'iso_materials')).filter(r=>!Array.isArray(defaults.requirementIds)||defaults.requirementIds.includes(r.id)).map(r=>r.id);
+    if(name==='spoolIds'&&Array.isArray(defaults.spoolIds))return defaults.spoolIds as string[];
     if(name==='requestIds'&&['complete-service','complete-material-service'].includes(actionKey))return activeRows(rows,'service_requests').filter(r=>r.status!=='Completed'&&(actionKey==='complete-material-service'?Boolean(r.requirementId):Boolean(r.spoolId))&&(!Array.isArray(defaults.requestIds)||defaults.requestIds.includes(r.id))).map(r=>r.id);
     if(actionKey==='remove-material-quantity'&&name==='requirementId'&&defaults.requirementId)return [String(defaults.requirementId)];
     if(actionKey==='remove-material-quantity'&&name==='revisionId')return activeRows(rows,'revisions').filter(r=>r.type==='ISO'&&r.isoId===rows.iso_materials?.find(m=>m.id===values.requirementId)?.isoId).map(r=>r.id);
