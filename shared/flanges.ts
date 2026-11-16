@@ -14,16 +14,17 @@ const SECTION = {
   operating: 'Operating data',
 } as const;
 const text = (name: string, label: string, section: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', section, ...extra });
-const torque = (name: string, label: string, hint: string): Field => ({ name, label, type: 'number', section: SECTION.tightening, min: 0, step: 0.1, hint });
+/** No `min`: a negative torque gets the plain message of `flangeInputErrors`, not the generic range text. */
+const torque = (name: string, label: string, hint: string): Field => ({ name, label, type: 'number', section: SECTION.tightening, step: 0.1, hint });
 
 /**
  * Field names keep the spelling of records saved before this module (`tightning_date`, `commisioning_date`,
- * `studbolt_afmeting`, ...) so older databases open unchanged. New fields: assetTag, highRisk, testPressure.
+ * `studbolt_afmeting`, ...) so older databases open unchanged. New fields: projectId, highRisk, testPressure. The reference's "Asset tag" is stored in `line_number`; older records may still carry the retired `assetTag` value (see `flangeAssetTag`).
  */
 export const FLANGE_FIELDS: Field[] = [
-  { name: 'isoId', label: 'Isometric', type: 'ref', ref: 'isometrics', required: true, section: SECTION.identification, hint: 'The project follows from the isometric.' },
-  text('flange_id', 'Flange ID', SECTION.identification, { required: true }),
-  text('assetTag', 'Asset tag', SECTION.identification),
+  { name: 'projectId', label: 'Project', type: 'ref', ref: 'projects', section: SECTION.identification, hint: 'Narrows the isometrics. The project always follows the chosen isometric.' },
+  { name: 'isoId', label: 'Isometric', type: 'ref', ref: 'isometrics', required: true, section: SECTION.identification },
+  text('flange_id', 'Flange ID', SECTION.identification),
   text('from_equipment', 'From equipment', SECTION.identification),
   text('to_equipment', 'To equipment', SECTION.identification),
   text('eq_con', 'Equipment connection', SECTION.identification),
@@ -31,7 +32,7 @@ export const FLANGE_FIELDS: Field[] = [
   text('criticality', 'Criticality', SECTION.identification),
   { name: 'highRisk', label: 'High risk', type: 'checkbox', default: false, section: SECTION.identification },
   text('pid', 'P&ID', SECTION.identification),
-  text('line_number', 'Line number', SECTION.identification),
+  text('line_number', 'Asset tag', SECTION.identification),
   text('fluid_code', 'Fluid code', SECTION.identification),
   text('pipe_class', 'Pipe class', SECTION.identification),
   text('area_unit', 'Area/unit', SECTION.identification),
@@ -68,7 +69,7 @@ export const FLANGE_FIELDS: Field[] = [
   text('testPressure', 'Test pressure', SECTION.operating),
 ];
 /** Columns of the generic table (profiles without the dedicated page). */
-export const FLANGE_COLUMNS = ['flange_id', 'isoId', 'assetTag', 'flange_size', 'gasket_type', 'target_moment_nm', 'finished'];
+export const FLANGE_COLUMNS = ['flange_id', 'isoId', 'line_number', 'flange_size', 'gasket_type', 'target_moment_nm', 'finished'];
 
 export const FLANGE_STATUSES = ['Planned', 'Tightened', 'Inspected', 'Finished'] as const;
 export type FlangeStatus = typeof FLANGE_STATUSES[number];
@@ -118,8 +119,33 @@ export function flangeTorqueErrors(values: Record<string, unknown>): Record<stri
   return errors;
 }
 
-/** Everything the server and the form check before a flange is saved. */
-export const flangeInputErrors = (values: Record<string, unknown>) => flangeTorqueErrors(values);
+/**
+ * Everything the server and the form check before master data is saved. The reference does not compare the passes
+ * on save (that belongs to recorded passes: `flangeTorqueErrors`); only a negative torque is refused, in plain words.
+ */
+export const FLANGE_TORQUE_FIELDS = ['first_pass_nm', 'second_pass_nm', 'target_moment_nm', 'max_dev'] as const;
+export function flangeInputErrors(values: Record<string, unknown>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const name of FLANGE_TORQUE_FIELDS) { const value = numeric(values[name]); if (value !== null && value < 0) errors[name] = 'Torque must be 0 or more.'; }
+  return errors;
+}
+
+/** The asset tag of a flange: `line_number` is the reference field; older records may still hold it in `assetTag`. */
+export const flangeAssetTag = (row: Partial<Row> | Record<string, unknown>) => String((filled(row.line_number) ? row.line_number : row.assetTag) ?? '');
+
+/**
+ * What choosing an isometric fills in on the flange form: only the fields that are still empty. Asset tag, IRN, pipe
+ * class and test pressure come from the isometric's own fields. P&ID, area/unit and location have no source on our
+ * isometric and are left alone.
+ */
+export function flangeIsoPrefill(iso: Partial<Row> | Record<string, unknown> | undefined, current: Record<string, unknown>): Record<string, string> {
+  const patch: Record<string, string> = {};
+  if (!iso) return patch;
+  for (const [target, source] of [['line_number', 'assetTag'], ['irnno', 'irn'], ['pipe_class', 'pipingClass'], ['testPressure', 'testPressure']] as const) {
+    if (!filled(current[target]) && filled(iso[source])) patch[target] = String(iso[source]).trim();
+  }
+  return patch;
+}
 
 /**
  * EXTENSION POINT for a real torque catalog. The reference pre-fills the passes and the target moment from the
@@ -149,31 +175,38 @@ export const NO_FLANGE_FILTERS: FlangeFilters = { projectId: '', finished: '', i
 export function flangeItems(flanges: Row[], isometrics: Row[], projects: Row[]): FlangeItem[] {
   const isoById = new Map(isometrics.map(row => [row.id, row])), projectById = new Map(projects.map(row => [row.id, row]));
   return flanges.map(row => {
-    const iso = isoById.get(String(row.isoId)), project = projectById.get(String(iso?.projectId));
-    return { row, isoNo: String(iso?.isoNo ?? ''), projectId: String(iso?.projectId ?? ''), projectName: project ? String(project.internnumber || project.description || '') : '', status: flangeStatus(row) };
+    const iso = isoById.get(String(row.isoId)), projectId = String(iso?.projectId || row.projectId || ''), project = projectById.get(projectId);
+    return { row, isoNo: String(iso?.isoNo ?? ''), projectId, projectName: project ? String(project.internnumber || project.description || '') : '', status: flangeStatus(row) };
   });
 }
 export function filterFlanges(items: FlangeItem[], filters: FlangeFilters): FlangeItem[] {
   const query = filters.query.trim().toLowerCase();
   return items.filter(item => (!filters.projectId || item.projectId === filters.projectId)
     && (!filters.isoId || item.row.isoId === filters.isoId)
-    && (!filters.finished || (filters.finished === 'Yes') === (item.status === 'Finished'))
-    && (!query || [item.projectName, item.isoNo, item.row.flange_id, item.row.assetTag, item.row.flange_size, item.row.gasket_type, item.status].some(value => String(value ?? '').toLowerCase().includes(query))));
+    && (!filters.finished || (filters.finished === 'Yes') === (item.row.finished === true))
+    && (!query || [item.projectName, item.isoNo, item.row.flange_id, flangeAssetTag(item.row), item.row.flange_size, item.row.gasket_type, item.status].some(value => String(value ?? '').toLowerCase().includes(query))));
 }
 /** The flanges of one isometric, for the count on the isometric. */
 export const isoFlangeCount = (flanges: Row[], isoId: string) => flanges.filter(row => !row._archived && row.isoId === isoId).length;
 
-export const FLANGE_LIST_COLUMNS: { key: string; label: string; value: (item: FlangeItem) => string | number }[] = [
+/** Columns of the list as captured; a hidden one is offered in the column chooser (Criticality). The row selection and Options follow them. */
+export const FLANGE_LIST_COLUMNS: { key: string; label: string; hidden?: boolean; value: (item: FlangeItem) => string | number }[] = [
   { key: 'project', label: 'Project', value: item => item.projectName },
   { key: 'iso', label: 'Iso number', value: item => item.isoNo },
   { key: 'flange_id', label: 'Flange ID', value: item => String(item.row.flange_id ?? '') },
-  { key: 'assetTag', label: 'Asset tag', value: item => String(item.row.assetTag ?? '') },
-  { key: 'flange_size', label: 'Flange Size', value: item => String(item.row.flange_size ?? '') },
+  { key: 'assetTag', label: 'Asset tag', value: item => flangeAssetTag(item.row) },
+  { key: 'flange_size', label: 'Flange Size', value: item => [item.row.flange_size, item.row.flange_rating].map(value => String(value ?? '').trim()).filter(Boolean).join(' / ') },
   { key: 'gasket_type', label: 'Gasket Type', value: item => String(item.row.gasket_type ?? '') },
   { key: 'target_moment_nm', label: 'Target Moment (Nm)', value: item => numeric(item.row.target_moment_nm) ?? '' },
+  { key: 'criticality', label: 'Criticality', hidden: true, value: item => String(item.row.criticality ?? '') },
   { key: 'status', label: 'Status', value: item => item.status },
 ];
 
+/** The listed flanges whose id is ticked, in list order. */
+export const selectedFlanges = (items: FlangeItem[], ids: Iterable<string>) => { const chosen = new Set(ids); return items.filter(item => chosen.has(item.row.id)); };
+
+/** Where the QR code of a flange label leads (the flange page of the app). */
+export const flangePath = (id: string) => `/weld/workspace/flanges/${encodeURIComponent(id)}`;
 /** CSV of the listed flanges; cells that a spreadsheet would read as a formula are prefixed with a quote. */
 export function flangesCsv(items: FlangeItem[]): string {
   const cell = (value: unknown) => { let out = String(value ?? ''); if (/^[=+\-@\t\r]/.test(out)) out = `'${out}`; return /[",\n\r]/.test(out) ? `"${out.replaceAll('"', '""')}"` : out; };

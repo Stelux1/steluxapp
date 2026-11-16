@@ -2,7 +2,7 @@ import type { Row } from './types.ts';
 import { printDate, type LabelValueItem } from './pdf-lisl.ts';
 import { naturalCompare, pdfText as text, projectContext, projectItems, type ProjectContext } from './pdf-documents.ts';
 import { PUNCH_FILE_TYPES, PUNCH_KPIS, PUNCH_LETTERS, PUNCH_SIGN_OFF_DOCUMENT, PUNCH_TYPES, isOverdue, matchesPunchKpi, punchCategory, punchKind, punchKpis, punchStatus, punchToday, type PunchKpiKey } from './punch.ts';
-import { filterFlanges, flangeItems, type FlangeItem } from './flanges.ts';
+import { filterFlanges, flangeAssetTag, flangeItems, selectedFlanges, type FlangeItem } from './flanges.ts';
 import { flangeStandard } from './site-settings.ts';
 import { pickListReports, type PickListReport } from './mto-logistics.ts';
 import { materialRecord } from './materials.ts';
@@ -77,18 +77,20 @@ export const blankPunchHeader = (rows: Rows, iso: Row): { context: ProjectContex
 
 // ----- flange report ------------------------------------------------------------------------------------------------------
 
-export interface FlangeReportOptions { isoId: string; projectId: string; finished: '' | 'No' | 'Yes'; q: string }
-/** Options of the Flange report from the query: `isoId` or `projectId` (one of them), `finished=Yes|No`, `q`. */
+export interface FlangeReportOptions { isoId: string; projectId: string; finished: '' | 'No' | 'Yes'; q: string; /** The ticked flanges: when present, exactly these are reported. */ ids?: string[] }
+/** Options of the Flange report from the query: `ids` (the ticked flanges, comma separated) or `isoId` or `projectId`, `finished=Yes|No`, `q`. */
 export function flangeReportOptions(query: Record<string, string>): { options: FlangeReportOptions; error?: string } {
   const options: FlangeReportOptions = { isoId: text(query.isoId), projectId: text(query.projectId), finished: text(query.finished) as FlangeReportOptions['finished'], q: text(query.q) };
-  const error = !options.isoId && !options.projectId ? 'Choose an isometric or a project for the flange report.' : options.finished && !['Yes', 'No'].includes(options.finished) ? 'Choose Yes or No for Finished.' : undefined;
+  const ids = text(query.ids).split(',').map(text).filter(Boolean); if (ids.length) options.ids = [...new Set(ids)];
+  const error = !options.ids && !options.isoId && !options.projectId ? 'Tick the flanges, or choose an isometric or a project, for the flange report.' : options.finished && !['Yes', 'No'].includes(options.finished) ? 'Choose Yes or No for Finished.' : undefined;
   return { options, ...(error ? { error } : {}) };
 }
 export interface FlangeReportModel { options: FlangeReportOptions; items: FlangeItem[]; context: ProjectContext; standard: string; procedureNo: string }
 export function flangeReportModel(rows: Rows, options: FlangeReportOptions, isoIds: Set<string>): FlangeReportModel {
   const isometrics = live(rows.isometrics).filter(iso => isoIds.has(iso.id));
   const flanges = live(rows.flanges).filter(row => isoIds.has(text(row.isoId)));
-  const items = filterFlanges(flangeItems(flanges, isometrics, live(rows.projects)), { projectId: options.projectId, isoId: options.isoId, finished: options.finished, query: options.q })
+  const all = flangeItems(flanges, isometrics, live(rows.projects));
+  const items = (options.ids ? selectedFlanges(all, options.ids) : filterFlanges(all, { projectId: options.projectId, isoId: options.isoId, finished: options.finished, query: options.q }))
     .sort((a, b) => naturalCompare(a.isoNo, b.isoNo) || naturalCompare(text(a.row.flange_id), text(b.row.flange_id)));
   const used = [...new Set(items.map(item => text(item.row.isoId)))].map(id => find(rows, 'isometrics', id)!).filter(Boolean);
   const chosen = options.isoId ? isometrics.filter(iso => iso.id === options.isoId) : [];
@@ -99,7 +101,7 @@ export function flangeReportModel(rows: Rows, options: FlangeReportOptions, isoI
 export const FLANGE_PDF_COLUMNS: { header: string | string[]; width: number; cell(item: FlangeItem): string }[] = [
   { header: 'Flange ID', width: 7, cell: item => text(item.row.flange_id) },
   { header: 'Iso number', width: 7, cell: item => item.isoNo },
-  { header: 'Asset tag', width: 7, cell: item => text(item.row.assetTag) },
+  { header: 'Asset tag', width: 7, cell: item => flangeAssetTag(item.row) },
   { header: ['Flange', 'size'], width: 5, cell: item => text(item.row.flange_size) },
   { header: ['Flange', 'rating'], width: 5, cell: item => text(item.row.flange_rating) },
   { header: ['Gasket', 'type'], width: 7, cell: item => text(item.row.gasket_type) },

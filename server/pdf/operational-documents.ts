@@ -5,7 +5,7 @@ import { companyForDocuments } from './company.ts';
 import type { BookRun, PdfDocumentDefinition, PdfScopedDefinition } from './documents.ts';
 import { requestPdf, visualPdf } from './operational-requests.ts';
 import { hydrotestPdf, releasePdf } from './operational-release.ts';
-import { blankPunchPdf, flangePdf, pickListPdf, punchPdf } from './operational-lists.ts';
+import { blankPunchPdf, flangeLabelsPdf, flangePdf, pickListPdf, punchPdf } from './operational-lists.ts';
 import {
   REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
 } from '../../shared/pdf-documents.ts';
@@ -147,6 +147,20 @@ const flangeReport: PdfScopedDefinition = {
   },
 };
 
+/** Flange labels of the ticked flanges (`ids`), a QR label each. */
+const flangeLabels: PdfScopedDefinition = {
+  key: 'flange-labels', title: 'Flange labels', report: 'pdf-flanges', scope: 'scoped',
+  async build({ rows, isoIds, query, now, publicOrigin, origin }) {
+    const { options } = flangeReportOptions({ ...query, finished: '' });
+    if (!options.ids) throw new AppError(422, 'Tick the flanges to print labels for.');
+    if (options.ids.length > 500) throw new AppError(422, 'Choose at most 500 flanges for one sheet of labels.');
+    const model = flangeReportModel(rows, options, isoIds);
+    if (!model.items.length) throw notFound('These flanges');
+    const { bytes } = await flangeLabelsPdf({ items: model.items, origin: publicOrigin || origin, generatedAt: now });
+    return { bytes, fileName: `${isoDate(now)}-Flange-labels` };
+  },
+};
+
 const pickList: PdfScopedDefinition = {
   key: 'pick-list', title: 'Pick list', report: 'pdf-picklist', scope: 'scoped', bookPart: 'pick-lists',
   bookRuns: (rows, iso) => runsOf(pickListReports({ ...rows, isometrics: (rows.isometrics || []).filter(row => row.id === iso.id) }).filter(report => report.isoId === iso.id).map(report => report.reportNo), 'reportNo'),
@@ -160,5 +174,5 @@ const pickList: PdfScopedDefinition = {
 
 export const OPERATIONAL_DOCUMENTS: (PdfDocumentDefinition | PdfScopedDefinition)[] = [
   requestDefinition('ndt-request'), requestDefinition('ndt-pre-request'), requestDefinition('pwht-request'), visualReport,
-  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, pickList,
+  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList,
 ];

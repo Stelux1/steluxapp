@@ -65,6 +65,8 @@ export interface PdfScopedRequest {
   store: Store; documents: ReturnType<typeof documentStorage>; user: User;
   rows: Record<string, Row[]>; query: Record<string, string>; now: Date;
   isometrics: Row[]; isoIds: Set<string>; projectIds: Set<string>;
+  /** Public origin of the app (for QR codes), as in `PdfRequest`. */
+  origin?: string; publicOrigin?: string;
 }
 /** A document that is not about one isometric from the query (`GET /api/pdf/:key?…` without `isoId`). `attachable`: `POST` also stores the file on `attachTo`. */
 export interface PdfScopedDefinition {
