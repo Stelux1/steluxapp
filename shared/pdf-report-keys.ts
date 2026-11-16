@@ -12,4 +12,5 @@ export const PDF_REPORT_RESOURCES: Record<string, string[]> = {
   'pdf-punch': ['punchlists'],
   'pdf-flanges': ['flanges'],
   'pdf-picklist': ['picklists'],
+  'pdf-order': ['orders'],
 };

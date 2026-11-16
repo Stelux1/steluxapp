@@ -12,7 +12,7 @@ import { inspectionRules } from './inspections.ts';
 import { assignFieldPackage, completePhase, releaseIsometrics, reopenRelease } from './releases.ts';
 import { runPunchAction } from './punch.ts';
 import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
-import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
+import { correctReceipt, orderCheckedMaterials, receiveMaterials, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
 import { isMtoStockAction } from '../shared/mto-stock.ts';
 import { changeSiteStock, receivingSiteId, runMtoStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
@@ -70,6 +70,17 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
     if (MTO_MATERIAL_ACTIONS.includes(key)) { const mto = runMtoMaterialAction(store, key, data, actor)!; return mto.records ? { resource: mto.resource, records: mto.records } : { resource: mto.resource, record: mto.record! }; }
     const procurement: ProcurementContext = { store, actor, date, note, ensure, add, patch, balance, movement };
     if (key === 'correct-receipt') { const done = correctReceipt(procurement, data); return { resource: done.resource, record: done.record }; }
+    // Pilots (hosted): one order line per material, the quantity netted by open orders, five-digit numbers, no supplier yet.
+    if (key === 'order-requirements' && options.hosted) return orderCheckedMaterials(procurement, ids(data.requirementIds, 'material requirement'), !data.date);
+    if (key === 'assign-order-supplier') {
+      // Order archive "Assign order to supplier": the only place an order gets its supplier (a take-in supplier stays on the receipt).
+      const order = ensure('orders', data.orderId); const supplierId = str(data.supplierId);
+      if (!supplierId) throw new AppError(422, 'Choose a supplier.', { supplierId: 'Choose a supplier.' });
+      ensure('suppliers', supplierId);
+      return { resource: 'orders', record: patch('orders', order, { supplierId }) };
+    }
+    // Pilots (hosted): Today rec. may exceed what is open or be negative (a correction); the order keeps its own supplier.
+    if (key === 'receive' && options.hosted) return receiveMaterials(procurement, data, !data.date);
     if (key === 'order'||key==='order-requirements') {
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
       let items:Input[]=[];let projectId=str(data.projectId);

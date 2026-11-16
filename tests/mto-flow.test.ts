@@ -115,7 +115,7 @@ test('the MTO Pilot menu has one item per page, in the reference group order', (
   }, {
     'Order materials': '/materials/order-materials', 'Pending order': '/materials/pending-orders', 'Material take in': '/materials/take-in', 'Order archive': '/materials/order-archive',
     'Material inventory': '/materials/stock', Storehouses: '/workspace/warehouses', 'Transfer orders': '/materials/transfer_orders', 'Materials list': '/materials/materials-list',
-    'Isometric materials': '/materials/iso_materials', 'Isometric execution': '/materials/iso-execution', 'Pick List archive': '/materials/picklists',
+    'Isometric materials': undefined, 'Isometric execution': '/materials/iso-execution', 'Pick List archive': '/materials/picklists',
     'Service request': '/materials/service-spools', 'Service req. - Materials': '/materials/service-materials', 'Request archive': '/materials/service_requests',
   });
 });

@@ -51,6 +51,7 @@ export const NOT_IN_BOOK: Record<string, string> = {
   'weld-labels': 'Weld labels are stuck on the spools; the book\'s Flange labels part is a different label and is deferred.',
   'flange-labels': 'Flange labels are printed for the flanges ticked on the Flange Management page; the book\'s Flange labels part stays deferred.',
   'hydrotest-request': 'A hydrotest request covers a test system of several isometrics; the book has no Hydrotest part.',
+  'order-materials': 'An order of materials covers the checked materials of several isometrics; the book has no order part.',
 };
 
 /** The part a registry document fills: its own `bookPart`, else a match on its key (names of other agents' documents follow the reference's wording). */

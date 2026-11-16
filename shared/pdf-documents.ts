@@ -6,6 +6,8 @@ import { inspectionCellState, latestResult, locationField, processField, NDT_ROU
 import { PHASE_LOCATION, RELEASE_PHASES, releaseDocumentNumber, signatureTitlesOf, weldPhase, type ReleasePhase, type SignatureTitle } from './releases.ts';
 import { punchCounts, punchStatus } from './punch.ts';
 import { HYDROTEST_DOCUMENT_TYPES, HYDROTEST_REQUEST_RESOURCE, SPOOL_COLUMNS, isPdfName, spoolFacts, spoolsOfSystem, storedList } from './hydrotest.ts';
+import { lineIsoIds, materialIdentity, materialRecord, orderProjectIds } from './materials.ts';
+import { momentOf, printMoment } from './mto-procurement.ts';
 
 /**
  * Data side of the operational PDF documents: NDT / NDT Pre / Pre-HT/PWHT requests, the visual inspection report, the
@@ -296,4 +298,41 @@ export const hydrotestIsoCells = (iso: Row, rows: Rows) => [text(iso.isoNo), cur
 /** The signature boxes of the Pressure Test Plan: the six titles of the Document settings, or our three when none is set. */
 export function pressureTestSignatures(model: HydrotestDocumentModel): string[] {
   return model.signatureTitles.length ? model.signatureTitles.map(entry => entry.title) : [`QA/QC engineer${model.engineer ? ` - ${text(model.engineer.name)}` : ''}`, 'Client representative', 'Witness'];
+}
+
+// ----- Order materials (the order document of MTO Pilot) ----------------------------------------------------------------------
+
+export const ORDER_COLUMNS = ['Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Piping class', 'Description', 'Quantity', 'UOM'];
+export interface OrderDocumentModel {
+  order: Row; number: string; date: string; site?: Row;
+  /** The left block of the document: Home location (the main project), Address, Phone, Order number. */
+  items: LabelValueItem[];
+  /** One line per material (lines of an older order made per requirement are merged here too), sorted by Material group. */
+  lines: string[][];
+}
+const quantityText = (value: number) => String(Math.round(value * 1e6) / 1e6);
+/**
+ * The order document "Order materials" of one order, when the order belongs to a project enabled in the pilot
+ * (`projectIds`, through its project or its lines' isometrics). Null otherwise. Piping class: of the isometrics the line
+ * was ordered for.
+ */
+export function orderDocumentModel(rows: Rows, orderId: string, projectIds: Set<string>): OrderDocumentModel | null {
+  const order = find(rows, 'orders', orderId);
+  if (!order || !orderProjectIds(rows, order.id).some(id => projectIds.has(id))) return null;
+  const projects = orderProjectIds(rows, order.id).map(id => find(rows, 'projects', id)).filter(Boolean) as Row[];
+  const site = find(rows, 'sites', projects[0]?.siteId);
+  const groups = new Map<string, { material: Row | undefined; line: Row; quantity: number; isoIds: Set<string> }>();
+  for (const line of live(rows.order_lines).filter(row => row.orderId === order.id)) {
+    const identity = materialIdentity(line), group = groups.get(identity) ?? { material: materialRecord(rows, line), line, quantity: 0, isoIds: new Set<string>() };
+    group.quantity += Number(line.quantity) || 0;
+    for (const isoId of lineIsoIds(rows, line)) group.isoIds.add(isoId);
+    groups.set(identity, group);
+  }
+  const lines = [...groups.values()].map(({ material, line, quantity, isoIds }) => [
+    text(material?.materialGroup), text(material?.articleNo), text(line.materialNo) || text(material?.materialNo), text(line.dia || material?.dia), text(line.lbs || material?.lbs),
+    unique([...isoIds].map(id => text(find(rows, 'isometrics', id)?.pipingClass))).join(', '), text(line.description || material?.description), quantityText(quantity), text(line.uom || material?.uom),
+  ]).sort((a, b) => naturalCompare(a[0], b[0]) || naturalCompare(a[2], b[2]));
+  const address = [text(site?.address), [text(site?.zip), text(site?.residence)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const number = text(order.number);
+  return { order, number, date: printMoment(momentOf(order.date, order.orderedAt), true), site, items: [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, { label: 'Phone', value: text(site?.phone) }, { label: 'Order number', value: number }], lines };
 }
