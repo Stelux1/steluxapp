@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store, SYSTEM } from '../server/store.ts';
@@ -18,7 +20,9 @@ import { isoBlockers } from '../shared/iso-status.ts';
 import {
   MANAGER_PATH, MANAGER_TABS, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
   resultLabel, roundErrors, roundLabel, storedResult, tracerError, tracerSummary, requestNumberError, inspectionFileError,
+  naBlockErrors, roundsHaveNa, roundLockedError, autoReweld, notAccepted, repairDue, repairsOf, tracerProposal, tracerDetail, TRACER_DETAIL_TEXTS,
 } from '../shared/inspections.ts';
+import { TracerDetailBody } from '../client/inspections.tsx';
 import type { Row, User } from '../shared/types.ts';
 
 let sequence = 0;
@@ -33,18 +37,56 @@ test('results and rounds keep their stored values and read like the reference', 
   assert.equal(roundLabel('Additional 1'), 'Additional'); assert.equal(roundLabel('Additional 3'), 'Additional 3');
 });
 
-test('a round validates its result, report number, NA length, defect type and ReWeld?', () => {
+test('a round validates its result and report number; a column without NDT process stays locked', () => {
   assert.deepEqual(roundErrors({ round: 'Initial', result: 'Accepted', reportNo: 'RT-1' }), {});
   assert.ok(roundErrors({ round: 'Initial', result: 'Accepted' }).reportNo);
   assert.ok(roundErrors({ round: 'Initial', filmNo: 'F-1' }).result, 'a film number needs a result');
-  assert.ok(roundErrors({ round: 'Initial', result: 'Accepted', reportNo: 'RT', naLength: 5 }).naLength, 'NA length only with NA');
-  assert.ok(roundErrors({ round: 'Remaining', result: 'Rejected', reportNo: 'RT', defectType: 'Porosity' }).naLength, 'defect type only on Initial');
-  assert.deepEqual(roundErrors({ round: 'Initial', result: 'Rejected', reportNo: 'RT', naLength: 20, defectType: 'Porosity' }, 189.3), {});
-  assert.ok(roundErrors({ round: 'Initial', result: 'Rejected', reportNo: 'RT', naLength: 200 }, 189.3).naLength);
-  assert.ok(roundErrors({ round: 'Initial', reweld: true }).reweld); assert.deepEqual(roundErrors({ round: 'Remaining', reweld: true }), {});
   assert.ok(roundErrors({ round: 'Additional 4' }).round);
+  assert.match(roundLockedError({ round: 'Additional 2', result: 'Accepted', reportNo: 'RT' }), /NDT process of this column/);
+  assert.equal(roundLockedError({ round: 'Additional 2', processId: 'ndt-0', result: 'Accepted', reportNo: 'RT' }), '');
+  assert.equal(roundLockedError({ round: 'Additional 2' }), '', 'an empty locked column is fine');
   assert.equal(requestNumberError(''), ''); assert.equal(requestNumberError('R-1042'), ''); assert.ok(requestNumberError('1042'));
   assert.ok(inspectionFileError('NDT document', 'report.png')); assert.equal(inspectionFileError('NDT document', 'report.PDF'), ''); assert.equal(inspectionFileError('Attachment', 'photo.png'), '');
+});
+
+test('the NA block (NA length, Defect type, Welder for error, ReWeld?) is one set per weld, entered whenever any round is NA', () => {
+  const ndt = (hasNa: boolean, length = 189) => ({ pre: false, hasNa, length, welderIds: ['welder-1', 'welder-2'] });
+  // NA on the Remaining round (reference weld 002 had NA on RT, Accepted on MT): NA length and defect type are accepted.
+  assert.equal(roundsHaveNa([{ result: 'Accepted' }, { result: 'Rejected' }]), true);
+  assert.deepEqual(naBlockErrors({ naLength: '40', defectType: '401', welderForErrorId: 'welder-2', reweld: true }, ndt(true)), {});
+  // Defect type on an NA of any round, Additional 3 included.
+  assert.equal(roundsHaveNa([{ result: '' }, { result: '' }, { result: '' }, { result: '' }, { result: 'Rejected' }]), true);
+  assert.deepEqual(naBlockErrors({ defectType: 'Porosity' }, ndt(true)), {});
+  assert.match(naBlockErrors({ defectType: 'Porosity' }, ndt(false)).naLength, /with a result of NA/, 'without NA the block is empty');
+  assert.match(naBlockErrors({ reweld: true }, ndt(false)).naLength, /with a result of NA/);
+  assert.ok(naBlockErrors({ naLength: '4.5' }, ndt(true)).naLength, 'NA length is digits only (mm)');
+  assert.ok(naBlockErrors({ naLength: '200' }, ndt(true)).naLength, 'NA length within the weld length');
+  assert.ok(naBlockErrors({ welderForErrorId: 'welder-9' }, ndt(true)).welderForErrorId, 'Welder for error is one of the weld\'s welders');
+  // NDT Pre: NA length always disabled, no defect type, welder for error or ReWeld?.
+  assert.ok(naBlockErrors({ naLength: '5' }, { pre: true, hasNa: true }).naLength);
+  assert.deepEqual(naBlockErrors({}, { pre: true, hasNa: true }), {});
+  // ReWeld? is ticked automatically on welds of at most 3 inch.
+  const diameters = [row('d-half', { sizeinch: 0.5 }), row('d-ten', { sizeinch: 10 })];
+  assert.equal(autoReweld(weld('a', { lengthMode: 'Diameter', diameterId: 'd-half' }), diameters), true);
+  assert.equal(autoReweld(weld('b', { lengthMode: 'Diameter', diameterId: 'd-ten' }), diameters), false);
+  assert.equal(autoReweld(weld('c', { lengthMode: 'Length in mm', dialen: 50 }), diameters), false);
+});
+
+test('a ticked ReWeld? counts as not accepted and expects a repair; a weld added by hand as <no>R1 is the repair', () => {
+  const original = weld('o', { weldNo: '002', ndoReq: true });
+  const results = [result('o', 'Rejected', '2024-12-27', { requestId: 'q', round: 'Initial', reweld: true }), result('o', 'Accepted', '2024-12-28', { requestId: 'q', round: 'Remaining' })];
+  assert.equal(notAccepted(original, results), true, 'Initial NA, Remaining Accepted, ReWeld? ticked');
+  assert.equal(repairDue(original, [original], results), true);
+  assert.equal(notAccepted(original, results.map(item => ({ ...item, reweld: false }))), false, 'without ReWeld? the accepted Remaining closes it');
+  const state = repairState(original, [original], results)!; assert.equal(state.open, true); assert.equal(state.repair, undefined);
+  assert.equal(nextRepairNumber(original, [original]), '002R1');
+  // The user adds 002R1 with Add weld (no repairOfId): it is linked by number; a later accepted result closes the repair.
+  const byHand = weld('r', { weldNo: '002R1' }), elsewhere = weld('x', { weldNo: '002R1', isoId: 'other-iso' });
+  assert.deepEqual(repairsOf(original, [original, byHand, elsewhere]).map(w => w.id), ['r']);
+  assert.equal(repairDue(original, [original, byHand], results), false);
+  assert.equal(repairState(original, [original, byHand], [...results, result('r', 'Accepted', '2025-01-05')])!.open, false);
+  const spaced = weld('s', { weldNo: '002 R2' });
+  assert.deepEqual(repairChain(original, [original, byHand, spaced]).map(w => w.weldNo), ['002R1', '002 R2'], 'the reference also writes "001_2 R1"');
 });
 
 test('the inspection cell shows No, Yes while open, requested, accepted and not accepted, with files and the tracer button', () => {
@@ -125,28 +167,104 @@ test('NDT/PWHT Manager: welds enter a tab by flag and move to the archive once a
   assert.deepEqual(managerRequests(MANAGER_TABS[4], requests).map(r => r.id), ['r1']); assert.deepEqual(managerRequests(MANAGER_TABS[7], requests).map(r => r.id), ['r2']);
 });
 
-test('actions: NDT per weld writes rounds, creates the repair weld once and keeps the request status', t => {
+test('actions: NDT per weld writes rounds and the NA block, creates no repair weld and keeps the request status', t => {
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
   const rules = inspectionRules(store, SYSTEM);
-  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', locationId: 'ndt-shop', requestNo: 'R-7001', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-1', reportNo: 'RT-7001', date: '2026-10-25', result: 'Rejected', naLength: 9, defectType: 'Porosity' }, { round: 'Remaining', processId: 'ndt-1' }] });
+  const before = store.list('welds').length;
+  const w = store.get('welds', 'weld-22'); store.update('welds', 'weld-22', { welder2Id: 'welder-4' }, w._version, SYSTEM);
+  // NA on the Remaining round: the NA block is accepted there (weld-inspections-007) and stored on the NA result.
+  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-1', reportNo: 'RT-7001', date: '2026-10-25', result: 'Accepted' }, { round: 'Remaining', processId: 'ndt-1', reportNo: 'UT-7001', date: '2026-10-26', result: 'Rejected' }], naLength: '9', defectType: 'Porosity', welderForErrorId: 'welder-4', reweld: true });
   const w22 = store.get('welds', 'weld-22');
   assert.equal(w22.ndtLocationId, 'ndt-shop'); assert.equal(w22.ndtProcess1Id, 'ndt-0'); assert.equal(w22.ndtProcess2Id, 'ndt-1');
   const request = store.list('inspection_requests').find(r => r.weldId === 'weld-22')!;
-  assert.equal(request.number, 'R-7001'); assert.equal(request.status, 'Rejected');
-  const repairs = store.list('welds').filter(w => w.repairOfId === 'weld-22');
-  assert.equal(repairs.length, 1); assert.equal(repairs[0].weldNo, 'W022R1'); assert.equal(repairs[0].repair, true); assert.equal(repairs[0].ndoReq, true); assert.equal(repairs[0].welder1Id, '');
-  // Saving the same round again neither duplicates the result nor the repair weld.
-  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-1', reportNo: 'RT-7001', date: '2026-10-25', result: 'Rejected', naLength: 9, defectType: 'Porosity' }] });
-  assert.equal(store.list('inspection_results').filter(r => r.weldId === 'weld-22').length, 1);
-  assert.equal(store.list('welds').filter(w => w.repairOfId === 'weld-22').length, 1);
-  // A rejected repair gets the next suffix, linked to the repair.
-  rules.run('inspection-upload', { type: 'NDT', weldIds: [repairs[0].id], rounds: [{ round: 'Initial', reportNo: 'RT-7002', result: 'Rejected' }], date: '2026-10-27' });
-  const second = store.list('welds').find(w => w.repairOfId === repairs[0].id)!; assert.equal(second.weldNo, 'W022R2');
-  // "—" removes a round's result; a film number without a result is refused.
-  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Additional 1', filmNo: 'F-2' }] }), /saved with a result/);
-  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', requestNo: '7001', rounds: [] }), /start with R/);
-  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Initial', result: '' }] });
-  assert.equal(store.list('inspection_results').filter(r => r.weldId === 'weld-22').length, 0); assert.equal(store.get('inspection_requests', request.id).status, 'Open');
+  assert.match(String(request.number), /^R-/); assert.equal(request.status, 'Rejected');
+  const na = store.list('inspection_results').find(r => r.weldId === 'weld-22' && r.round === 'Remaining')!;
+  assert.deepEqual([na.naLength, na.defectType, na.welderForErrorId, na.reweld], [9, 'Porosity', 'welder-4', true]);
+  assert.equal(store.list('inspection_results').find(r => r.weldId === 'weld-22' && r.round === 'Initial')!.naLength, null, 'the accepted round carries no NA values');
+  // An NA result creates no repair weld (weld-inspections-009, scn-SA-N7): the repair is due and named 022R1.
+  assert.equal(store.list('welds').length, before); assert.equal(store.list('welds').some(row => row.repairOfId === 'weld-22'), false);
+  assert.equal(repairDue(w22, store.list('welds'), store.list('inspection_results')), true); assert.equal(nextRepairNumber(w22, store.list('welds')), 'W022R1');
+  rules.run('inspection-upload', { type: 'NDT', weldIds: ['weld-23'], rounds: [{ round: 'Initial', reportNo: 'RT-7002', result: 'Rejected' }], date: '2026-10-27' });
+  assert.equal(store.list('welds').length, before, 'nor does an upload with NA');
+  // Locks of the dialog: request number never typed, NDT location fixed by the request, a column needs its process.
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', requestNo: 'R-9999', rounds: [] }), /cannot be typed/);
+  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', requestNo: request.number, locationId: 'ndt-shop', rounds: [] });
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', locationId: 'ndt-field', rounds: [] }), /location is locked/);
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Additional 2', reportNo: 'RT-X', result: 'Accepted' }] }), /NDT process of this column/);
+  // The NA block needs an NA and the weld's own welder.
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Initial', processId: 'ndt-0', reportNo: 'RT-7001', result: 'Accepted' }], defectType: 'Porosity' }), /with a result of NA/);
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Initial', processId: 'ndt-0', reportNo: 'RT-7001', result: 'Rejected' }], welderForErrorId: 'welder-1' }), /one of the welders/);
+  // NDT Pre: the Welder is required, no NA block.
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT PRE', rounds: [{ round: 'Initial', processId: 'ndt-3', reportNo: 'MT-1', result: 'Accepted' }] }), /Choose the welder/);
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT PRE', welderId: 'welder-3', rounds: [{ round: 'Initial', processId: 'ndt-3', reportNo: 'MT-1', result: 'Rejected' }], naLength: '4' }), /NDT Pre has no NA length/);
+  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT PRE', welderId: 'welder-3', rounds: [{ round: 'Initial', processId: 'ndt-3', reportNo: 'MT-1', result: 'Accepted' }] });
+  assert.equal(currentPre(store, 'weld-22')?.welderId, 'welder-3');
+  // Saving the same round again does not duplicate the result; "—" removes it; a film number without a result is refused.
+  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-1', reportNo: 'RT-7001', date: '2026-10-25', result: 'Accepted' }] });
+  assert.equal(store.list('inspection_results').filter(r => r.weldId === 'weld-22' && r.type === 'NDT').length, 2);
+  assert.throws(() => rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Additional 1', processId: 'ndt-0', filmNo: 'F-2' }] }), /saved with a result/);
+  rules.run('ndt-weld', { weldId: 'weld-22', type: 'NDT', rounds: [{ round: 'Initial', result: '' }, { round: 'Remaining', result: '' }] });
+  assert.equal(store.list('inspection_results').filter(r => r.weldId === 'weld-22' && r.type === 'NDT').length, 0); assert.equal(store.get('inspection_requests', request.id).status, 'Open');
+});
+const currentPre = (store: Store, weldId: string) => store.list('inspection_requests').find(r => r.weldId === weldId && r.type === 'NDT PRE');
+
+test('tracers: the server proposes welds of the rejected weld\'s welder / WPS / ITP-KNR group, at most 2, locked once examined', t => {
+  const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  const rules = inspectionRules(store, SYSTEM);
+  // weld-5 (iso-5, ITP-02, welder-2, WPS wps-1) has an NA; W007 is its sample tracer and already has an NDT request.
+  const add = (id: string, data: Record<string, unknown>) => store.create('welds', { weldNo: id.toUpperCase(), lengthMode: 'Diameter', diameterId: 'diameter-6', ndoReq: false, ...data }, SYSTEM, id);
+  add('g1', { isoId: 'iso-4', welder1Id: 'welder-2', wpsId: 'wps-1', date: '2026-10-06' });
+  add('g2', { isoId: 'iso-6', welder2Id: 'welder-2', wpsId: 'wps-1', date: '2026-10-30' });
+  add('other-welder', { isoId: 'iso-4', welder1Id: 'welder-3', wpsId: 'wps-1' });
+  add('other-wps', { isoId: 'iso-4', welder1Id: 'welder-2', wpsId: 'wps-2' });
+  add('other-itp', { isoId: 'iso-1', welder1Id: 'welder-2', wpsId: 'wps-1' });
+  add('examined', { isoId: 'iso-4', welder1Id: 'welder-2', wpsId: 'wps-1', ndoReq: true });
+  rules.run('mass-inspection-request', { type: 'NDT', weldIds: ['examined'], processIds: ['ndt-0'] });
+  const context = { requests: store.list('inspection_requests'), isometrics: store.list('isometrics'), itps: store.list('itps') };
+  const proposal = tracerProposal(store.get('welds', 'weld-5'), store.list('welds'), store.list('inspection_results'), context);
+  assert.deepEqual(proposal.group, { welderId: 'welder-2', wpsId: 'wps-1', itpCode: 'ITP-02' });
+  const own = proposal.sources.find(entry => entry.source.id === 'weld-5')!;
+  assert.deepEqual(own.candidates.map(c => c.id), ['g1', 'g2'], 'only welds of the group without request or result, nearest weld date first');
+  assert.deepEqual(own.currentTracers.map(c => [c.id, c.locked]), [['weld-7', true]]);
+  assert.equal(own.linked, 1); assert.equal(proposal.status.missingTracers >= 1, true);
+  // A third tracer for one source is refused; removing a tracer with a request is refused; a weld outside the group is refused.
+  assert.throws(() => rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-7', 'g1', 'g2'] }), /at most 2/);
+  assert.throws(() => rules.run('tracers', { weldId: 'weld-5', tracerIds: ['g1'] }), /W007 cannot be removed as a tracer/);
+  assert.throws(() => rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-7', 'other-welder'] }), /not in this welder/);
+  assert.throws(() => rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-7', 'examined'] }), /not in this welder|already has an NDT request/);
+  rules.run('tracers', { assignments: { 'weld-5': ['weld-7', 'g1'] } });
+  assert.equal(store.get('welds', 'g1').tracerOfId, 'weld-5'); assert.equal(store.get('welds', 'g1').ndoReq, true);
+  // A tracer without request or result can be removed again.
+  rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-7'] }); assert.equal(store.get('welds', 'g1').tracerOfId, '');
+  // "Welder for error" moves the group to that welder.
+  assert.equal(tracerProposal(store.get('welds', 'weld-5'), store.list('welds'), store.list('inspection_results'), context, { welderId: 'welder-3' }).group.welderId, 'welder-3');
+  // Tracers picked in the NDT dialog while the NA is entered are saved with Save.
+  rules.run('ndt-weld', { weldId: 'g2', type: 'NDT', rounds: [{ round: 'Initial', processId: 'ndt-0', reportNo: 'RT-G2', result: 'Rejected' }], tracerIds: ['g1'] });
+  assert.equal(store.get('welds', 'g1').tracerOfId, 'g2');
+});
+
+test('"Tracer details" is read only: source, linked tracers and their NDT results, Close only', () => {
+  const source = weld('s', { weldNo: '010' }), linked = weld('t', { weldNo: '004', tracer: true, tracerOfId: 's' }), loose = weld('l', { weldNo: '012', tracer: true });
+  const results = [result('s', 'Rejected', '2026-10-01', { processId: 'rt' }), result('t', 'Accepted', '2026-10-02', { processId: 'mt' })];
+  const detail = tracerDetail(linked, [source, linked, loose], results);
+  assert.equal(detail.source!.weld.id, 's'); assert.equal(detail.linked, 1); assert.equal(detail.tracers[0].clicked, true);
+  assert.deepEqual(detail.tracers[0].results.map(r => r.label), ['Accepted']);
+  const place = () => ({ project: '20240101', iso: '0001' });
+  const html = renderToStaticMarkup(createElement(TracerDetailBody, { detail, place, processName: (id: string) => id.toUpperCase() }));
+  assert.match(html, /Original rejected weld \| Weld: 010/); assert.match(html, /1 linked of 2 required\./); assert.match(html, /Tracer \| Weld: 004/); assert.match(html, /Selected tracer/); assert.match(html, /MT/);
+  assert.doesNotMatch(html, /type="checkbox"|<button|<input/, 'no selection in Tracer details');
+  const alone = renderToStaticMarkup(createElement(TracerDetailBody, { detail: tracerDetail(loose, [source, linked, loose], results), place, processName: (id: string) => id }));
+  assert.match(alone, new RegExp(TRACER_DETAIL_TEXTS.noSource.replace('.', '\\.'))); assert.match(alone, /No NDT results recorded\./);
+});
+
+test('NDT dialog: the label column and five rounds fit the wide dialog body without horizontal scrolling', () => {
+  const css = readFileSync(new URL('../client/inspections.css', import.meta.url), 'utf8');
+  const rule = (selector: string) => { const match = new RegExp(`(^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`).exec(css); assert.ok(match, selector); return match![2]; };
+  const table = rule('.ndt-rounds');
+  assert.match(table, /table-layout: fixed/); assert.match(table, /width: 100%/);
+  const min = Number(/min-width: (\d+)px/.exec(table)![1]); assert.ok(min <= 804, 'the table may shrink to the 804 px body of .modal.wide at 1440 × 900');
+  assert.match(rule('.ndt-rounds input, .ndt-rounds select'), /min-width: 0/, 'controls do not force the columns wider');
+  assert.match(rule('.ndt-tracer-candidate > span'), /overflow-wrap: anywhere/, 'tracer weld labels wrap instead of overlapping (scn-SA-D5)');
 });
 
 test('actions: mass requests, uploads, Pre-HT/PWHT, visual reports and tracers validate and write their records', t => {
@@ -169,21 +287,18 @@ test('actions: mass requests, uploads, Pre-HT/PWHT, visual reports and tracers v
   rules.run('visual-inspection', { weldIds: ['weld-1', 'weld-10'], accepted: ['weld-1'], notApplicable: ['weld-10'], itp: 'ITP 2', activityNo: '5.1', engineerId: 'qa-1', customNo: 'C-1', reportNo: 'VT-1', date: '2026-10-26' });
   const vi = store.list('inspection_results').filter(r => r.reportNo === 'VT-1');
   assert.deepEqual(vi.map(r => r.result).sort(), ['Accepted', 'Not applicable']); assert.equal(vi[0].engineerId, 'qa-1'); assert.equal(vi[0].itp, 'ITP 2');
-  // weld-5 has a rejected sample result: tracers link and unlink.
+  // Tracers need a not-accepted weld (the group rules are covered by the tracer proposal test).
   assert.throws(() => rules.run('tracers', { weldId: 'weld-1', tracerIds: ['weld-13'] }), /not accepted/);
-  rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-13', 'weld-17'] });
-  assert.equal(store.get('welds', 'weld-13').tracerOfId, 'weld-5'); assert.equal(store.get('welds', 'weld-13').tracer, true);
-  rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-17'] });
-  assert.equal(store.get('welds', 'weld-13').tracer, false); assert.equal(store.get('welds', 'weld-13').tracerOfId, '');
 });
 
-test('existing actions create repair welds only where the inspections flow is delivered', t => {
+test('an NA from the record action creates no repair weld in any profile; the repair action still makes one where the flow is delivered', t => {
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
   const before = store.list('welds').length;
   const request = (id: string) => (runAction(store, 'inspection-request', { weldIds: [id], type: 'NDT' }, SYSTEM).records!)[0];
   runAction(store, 'inspection-result', { requestId: request('weld-22').id, result: 'Rejected', reportNo: 'RT-A', round: 'Initial' }, SYSTEM);
-  assert.equal(store.list('welds').length, before, 'other profiles behave as before');
   runAction(store, 'inspection-result', { requestId: request('weld-23').id, result: 'Rejected', reportNo: 'RT-B', round: 'Initial' }, SYSTEM, { inspectionRules: true });
+  assert.equal(store.list('welds').length, before, 'an NA records the result only');
+  runAction(store, 'repair', { weldId: 'weld-23', note: 'Cut out and rewelded', date: '2026-10-28' }, SYSTEM, { inspectionRules: true });
   assert.equal(store.list('welds').find(w => w.repairOfId === 'weld-23')?.weldNo, 'W023R1');
 });
 
@@ -260,7 +375,7 @@ test('HTTP: an inspector saves NDT per weld in Weld Pilot; a reader, another pil
   assert.equal((await inspector.request('/actions/ndt-weld', 'POST', undefined, body)).status, 403, 'a request without a pilot is refused');
   const saved = await inspector.request('/actions/ndt-weld', 'POST', 'weld', body); assert.equal(saved.status, 201);
   const record = (await saved.json()).records[0] as Row; assert.equal(record.defectType, 'Lack of fusion');
-  assert.equal(f.store.list('welds').find(w => w.repairOfId === 'weld-24')?.weldNo, 'W024R1');
+  assert.equal(f.store.list('welds').some(w => w.repairOfId === 'weld-24'), false, 'an NA creates no repair weld');
   // Files: NDT documents must be PDF.
   const request = f.store.list('inspection_requests').find(r => r.weldId === 'weld-24')!;
   const upload = (name: string) => { const form = new FormData(); form.set('entityType', 'inspection_requests'); form.set('entityId', request.id); form.set('documentType', 'NDT document'); form.set('file', new Blob(['%PDF-1.4']), name); return inspector.request('/files', 'POST', 'weld', form); };
@@ -268,8 +383,14 @@ test('HTTP: an inspector saves NDT per weld in Weld Pilot; a reader, another pil
   // Unknown inputs and invalid rounds are refused.
   assert.equal((await inspector.request('/actions/ndt-weld', 'POST', 'weld', { ...body, approvedBy: 'me' })).status, 404);
   assert.equal((await inspector.request('/actions/ndt-weld', 'POST', 'weld', { ...body, rounds: [{ round: 'Initial', result: 'Accepted' }] })).status, 422);
-  // Tracers: allowed for an editor, refused for a reader.
-  assert.equal((await inspector.request('/actions/tracers', 'POST', 'weld', { weldId: 'weld-24', tracerIds: ['weld-28'] })).status, 201);
+  // Tracers: the server proposal lists the group's welds (weld-24: welder-1, WPS wps-2, ITP-02); saving is for an editor only.
+  f.store.create('welds', { weldNo: 'W950', isoId: 'iso-6', welder1Id: 'welder-1', wpsId: 'wps-2', lengthMode: 'Diameter', diameterId: 'diameter-6', date: '2026-10-20' }, SYSTEM, 'weld-950');
+  const proposal = await inspector.request('/tracer-proposal?weldId=weld-24', 'GET', 'weld'); assert.equal(proposal.status, 200);
+  assert.deepEqual((await proposal.json()).proposal.sources[0].candidates.map((c: Row) => c.id), ['weld-950']);
+  assert.equal((await inspector.request('/tracer-proposal?weldId=weld-24&welderId=welder-9', 'GET', 'weld')).status, 422, 'Welder for error must be the weld\'s');
+  assert.equal((await inspector.request('/tracer-proposal?weldId=weld-24', 'GET', 'mto')).status, 403, 'not from MTO Pilot');
+  assert.equal((await inspector.request('/actions/tracers', 'POST', 'weld', { weldId: 'weld-24', tracerIds: ['weld-28'] })).status, 422, 'outside the group');
+  assert.equal((await inspector.request('/actions/tracers', 'POST', 'weld', { assignments: { 'weld-24': ['weld-950'] } })).status, 201);
   const reader = f.client(); await reader.login(f.account('Reader', { weldingPermission: 'Read only', materialsPermission: 'Read only' }));
   assert.equal((await reader.request('/records/inspection_results', 'GET', 'weld')).status, 200);
   for (const [key, data] of [['ndt-weld', body], ['tracers', { weldId: 'weld-24', tracerIds: [] }], ['visual-inspection', { weldIds: ['weld-1'], accepted: ['weld-1'], reportNo: 'VT-X', date: '2026-10-28' }], ['mass-inspection-request', { type: 'NDT', weldIds: ['weld-25'], processIds: ['ndt-0'] }], ['pwht-upload', { weldIds: ['weld-2'], reportNo: 'P' }], ['inspection-upload', { type: 'NDT', weldIds: ['weld-25'], rounds: [{ round: 'Initial', reportNo: 'X', result: 'Accepted' }] }]] as const)

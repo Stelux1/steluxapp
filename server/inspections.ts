@@ -2,7 +2,7 @@ import { Store, AppError, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import {
   NDT_ROUNDS, NDT_TYPES, REPAIR_COPY_FIELDS, REQUEST_PREFIX, EXTRA_RESULT_OPTION, VISUAL_NO_CHOICE, currentRequest, locationField, nextRepairNumber,
-  processField, repairDue, requestNumberError, roundErrors, tracerError, tracersOf, type RoundInput,
+  processField, repairDue, roundErrors, roundLockedError, roundsHaveNa, naBlockErrors, tracerError, tracersOf, tracerProposal, weldWelderIds, type RoundInput, type TracerContext,
   VT_DOCUMENT, VT_ITPS, VT_MODES, VT_NO_WELDS, VT_TICK_ONE, nextVtSeq, vtGenerateError, vtMarks, vtMissingMessage, vtNumber, vtOpenWeldIds, vtWeldIds,
 } from '../shared/inspections.ts';
 
@@ -33,7 +33,11 @@ export function inspectionRules(store: Store, actor: Actor) {
   const welds = () => store.list('welds');
   const results = () => store.list('inspection_results');
 
-  /** Creates the repair weld (`010` → `010R1`) when the weld's latest NDT result is not accepted and it has none yet. */
+  /**
+   * Creates the repair weld (`010` → `010R1`) when the weld's latest NDT result is not accepted and it has none yet.
+   * Only the explicit repair action (and the sample seed) call it: an NA result records the result and nothing more,
+   * as in the reference (weld-inspections-009); the user adds `<no>R1` with Add weld.
+   */
   function ensureRepair(weld: Row): Row | undefined {
     const current = store.get('welds', weld.id);
     if (!repairDue(current, welds(), results())) return undefined;
@@ -52,20 +56,22 @@ export function inspectionRules(store: Store, actor: Actor) {
     return store.create('inspection_requests', { number: str(input.number) || store.next(REQUEST_PREFIX), weldId: weld.id, type, date: today(), status: 'Open', ...input }, actor);
   }
 
+  /** The NA block of one save: written on the save's NA results (one set per weld, reference showNDO). */
+  type NaBlock = { naLength: number | null; defectType: string; welderForErrorId: string; reweld: boolean };
+  const NO_NA: NaBlock = { naLength: null, defectType: '', welderForErrorId: '', reweld: false };
   /** Writes one round of a weld's NDT: updates the round's result, records a new one, or removes it ("—"). */
-  function writeRound(weld: Row, request: Row, type: string, input: RoundInput, fallbackDate: string): Row | null {
+  function writeRound(weld: Row, request: Row, type: string, input: RoundInput, fallbackDate: string, block: NaBlock = NO_NA): Row | null {
     const length = weldLengthMm(store, weld);
-    const errors = roundErrors(input, length);
+    const errors = roundErrors(input);
     if (Object.keys(errors).length) throw new AppError(422, `${NDT_ROUNDS.find(round => round.key === input.round)?.label ?? 'Round'}: ${Object.values(errors)[0]}`);
     if (input.processId) store.get('ndt_processes', input.processId);
     const result = str(input.result);
     const existing = store.list('inspection_results').filter(row => row.weldId === weld.id && row.type === type && row.round === input.round && row.requestId === request.id && str(row.result) !== '');
     if (!result) { for (const row of existing) store.archive('inspection_results', row.id, row._version, actor); return null; }
+    const na = result === 'Rejected' ? block : NO_NA;
     const data = {
       requestId: request.id, weldId: weld.id, type, round: input.round, result, reportNo: str(input.reportNo), filmNo: str(input.filmNo), processId: str(input.processId),
-      date: optionalDate(input.date, 'NDT date') || fallbackDate, examinedLength: length,
-      naLength: input.round === 'Initial' && result === 'Rejected' && input.naLength !== undefined && input.naLength !== '' && input.naLength !== null ? Number(input.naLength) : null,
-      defectType: input.round === 'Initial' && result === 'Rejected' ? str(input.defectType) : '', reweld: input.round === 'Remaining' && input.reweld === true,
+      date: optionalDate(input.date, 'NDT date') || fallbackDate, examinedLength: length, ...na,
     };
     const previous = existing[0];
     for (const extra of existing.slice(1)) store.archive('inspection_results', extra.id, extra._version, actor);
@@ -156,25 +162,70 @@ export function inspectionRules(store: Store, actor: Actor) {
     }
     throw new AppError(422, 'This visual report operation is not available.');
   }
+  const tracerContext = (): TracerContext => ({ requests: store.list('inspection_requests'), isometrics: store.list('isometrics'), itps: store.list('itps') });
+  /** Links exactly `wanted` as the tracers of `source` (reference rules in `tracerError`); linking sets NDT Req. on the tracer. */
+  function linkTracers(source: Row, wanted: string[], options: { pending?: boolean } = {}): Row[] {
+    const all = welds();
+    const error = tracerError(source, wanted, all, results(), { ...tracerContext(), pending: options.pending });
+    if (error) throw new AppError(422, error, { tracerIds: error });
+    for (const tracer of tracersOf(source, all)) if (!wanted.includes(tracer.id)) patch('welds', tracer, { tracer: false, tracerOfId: '' });
+    // A tracer weld is examined: linking sets NDT Req. on it (INFERRED, see PARITY.md).
+    return wanted.map(id => patch('welds', store.get('welds', id), { tracer: true, tracerOfId: source.id, ndoReq: true }));
+  }
+  /** NA block of the input: top-level fields, or (older callers) the values written on an NA round. */
+  function naBlock(data: Input, list: RoundInput[]): { naLength?: unknown; defectType?: unknown; welderForErrorId?: unknown; reweld?: unknown } {
+    const legacy = list.find(item => item.naLength !== undefined || item.defectType !== undefined || item.reweld !== undefined) || {} as RoundInput;
+    const pick = (name: 'naLength' | 'defectType' | 'reweld') => data[name] !== undefined ? data[name] : legacy[name];
+    return { naLength: pick('naLength'), defectType: pick('defectType'), welderForErrorId: data.welderForErrorId, reweld: pick('reweld') };
+  }
 
   return {
     ensureRepair,
+    /** The tracer proposal of the NDT dialog for a weld (GET /api/tracer-proposal). */
+    proposal(query: Input) {
+      const weld = store.get('welds', str(query.weldId));
+      const welderId = str(query.welderId);
+      if (welderId && !weldWelderIds(weld).includes(welderId)) throw new AppError(422, 'Welder for error must be one of the welders of this weld.');
+      return tracerProposal(weld, welds(), results(), tracerContext(), { welderId, pending: query.pending === '1' || query.pending === true });
+    },
     run(key: string, data: Input): { resource: string; record?: Row; records?: Row[] } {
       const date = data.date ? validDate(data.date) : today();
       if (key === 'ndt-weld') {
         const weld = store.get('welds', data.weldId); const type = ndtType(data.type); const pre = type === 'NDT PRE';
-        const locationId = short(data.locationId, 'NDT location'); if (locationId) store.get('ndt_locations', locationId);
-        const requestNo = short(data.requestNo, 'Request number', 40); const numberError = requestNumberError(requestNo); if (numberError) throw new AppError(422, numberError, { requestNo: numberError });
+        const existing = currentRequest(store.list('inspection_requests'), weld.id, type);
+        // Request number: given by the request (mass request or first save), never typed (reference: always disabled).
+        const requestNo = short(data.requestNo, 'Request number', 40);
+        if (requestNo && requestNo !== str(existing?.number)) throw new AppError(422, 'The request number is given by the NDT request and cannot be typed.', { requestNo: 'Given by the request.' });
+        // NDT location: locked once the weld has a request (reference: disabled, the request's location is kept).
+        const storedLocation = str(weld[locationField(pre)]) || str(existing?.locationId);
+        let locationId = short(data.locationId, 'NDT location');
+        if (existing) { if (data.locationId !== undefined && locationId !== storedLocation) throw new AppError(422, 'The NDT location is locked once the weld has a request.', { locationId: 'Locked by the request.' }); locationId = storedLocation; }
+        if (locationId) store.get('ndt_locations', locationId);
+        // NDT Pre: the dialog's Welder is required (reference welderPre).
+        const welderId = short(data.welderId, 'Welder');
+        if (pre && !welderId) throw new AppError(422, 'Choose the welder.', { welderId: 'Choose the welder.' });
+        if (!pre && welderId) throw new AppError(422, 'The NDT dialog shows the weld\'s welders; it does not take a welder.');
+        if (welderId) store.get('welders', welderId);
         const list = rounds(data.rounds ?? [], false);
+        for (const item of list) { const locked = roundLockedError(item); if (locked) throw new AppError(422, `${NDT_ROUNDS.find(round => round.key === item.round)!.label}: ${locked}`); }
+        const hasNa = roundsHaveNa(list);
+        const block = naBlock(data, list);
+        const blockErrors = naBlockErrors({ naLength: block.naLength as string, defectType: block.defectType as string, welderForErrorId: block.welderForErrorId as string, reweld: block.reweld as boolean }, { pre, hasNa, length: weldLengthMm(store, weld), welderIds: weldWelderIds(weld) });
+        if (Object.keys(blockErrors).length) throw new AppError(422, Object.values(blockErrors)[0], blockErrors);
+        if (block.reweld !== undefined && typeof block.reweld !== 'boolean') throw new AppError(422, 'ReWeld? must be ticked or not.');
+        const na: NaBlock = hasNa && !pre ? { naLength: block.naLength === undefined || block.naLength === null || block.naLength === '' ? null : Number(block.naLength), defectType: short(block.defectType, 'Defect type'), welderForErrorId: str(block.welderForErrorId), reweld: block.reweld === true } : NO_NA;
+        const tracerIds = data.tracerIds === undefined ? undefined : optionalIds(data.tracerIds, 'tracer weld');
+        if (tracerIds && (pre || !hasNa)) throw new AppError(422, 'Tracers are chosen while a result is NA.');
         const processes = Object.fromEntries(list.map(item => [processField(pre, NDT_ROUNDS.find(round => round.key === item.round)!.index), str(item.processId)]));
         const updated = patch('welds', weld, { [locationField(pre)]: locationId, ...processes });
         const initial = list.find(item => item.round === 'Initial');
-        const touched = list.some(item => str(item.result)) || requestNo || currentRequest(store.list('inspection_requests'), weld.id, type);
+        const touched = list.some(item => str(item.result)) || existing;
         if (!touched) return { resource: 'welds', record: updated };
-        const request = requestFor(updated, type, { ...(requestNo ? { number: requestNo } : {}), locationId, ...(initial ? { processId: str(initial.processId) } : {}) });
-        const written = list.map(item => writeRound(updated, request, type, item, date)).filter((row): row is Row => Boolean(row));
+        const request = requestFor(updated, type, { locationId, ...(initial ? { processId: str(initial.processId) } : {}), ...(pre ? { welderId } : {}) });
+        const written = list.map(item => writeRound(updated, request, type, item, date, na)).filter((row): row is Row => Boolean(row));
         settle(request);
-        ensureRepair(updated);
+        // Tracers picked in the dialog for this weld while its NA is entered are saved with the NA.
+        if (tracerIds) linkTracers(store.get('welds', weld.id), tracerIds);
         return { resource: 'inspection_results', records: written };
       }
       if (key === 'inspection-upload') {
@@ -185,7 +236,7 @@ export function inspectionRules(store: Store, actor: Actor) {
           const weld = store.get('welds', id);
           const request = requestFor(weld, type);
           for (const item of list) { const row = writeRound(weld, request, type, { round: item.round, reportNo: item.reportNo, result: item.result }, date); if (row) written.push(row); }
-          settle(request); ensureRepair(weld);
+          settle(request);
         }
         return { resource: 'inspection_results', records: written };
       }
@@ -258,12 +309,14 @@ export function inspectionRules(store: Store, actor: Actor) {
         return { resource: 'inspection_results', records: written };
       }
       if (key === 'tracers') {
-        const weld = store.get('welds', data.weldId); const wanted = optionalIds(data.tracerIds, 'tracer weld');
-        const all = welds();
-        const error = tracerError(weld, wanted, all, results()); if (error) throw new AppError(422, error, { tracerIds: error });
-        for (const tracer of tracersOf(weld, all)) if (!wanted.includes(tracer.id)) patch('welds', tracer, { tracer: false, tracerOfId: '' });
-        // A tracer weld is examined: linking sets NDT Req. on it (INFERRED, see PARITY.md).
-        const linked = wanted.map(id => patch('welds', store.get('welds', id), { tracer: true, tracerOfId: weld.id, ndoReq: true }));
+        // One source (weldId + tracerIds), or the NDT dialog's "Save tracers": { sourceId: [tracer ids] } for the group.
+        const assignments: [string, string[]][] = data.assignments !== undefined
+          ? (() => { const value = data.assignments; if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length > 100) throw new AppError(422, 'Choose the tracers per rejected weld.'); return Object.entries(value as Record<string, unknown>).map(([id, list]) => [id, optionalIds(list, 'tracer weld')] as [string, string[]]); })()
+          : [[str(data.weldId), optionalIds(data.tracerIds, 'tracer weld')]];
+        if (!assignments.length || assignments.some(([id]) => !id)) throw new AppError(422, 'Choose the rejected weld.');
+        const chosen = assignments.flatMap(([, list]) => list);
+        if (new Set(chosen).size !== chosen.length) throw new AppError(422, 'A weld can be the tracer of one rejected weld only.');
+        const linked = assignments.flatMap(([id, list]) => linkTracers(store.get('welds', id), list));
         return { resource: 'welds', records: linked };
       }
       throw new AppError(404, 'This action is not available.');

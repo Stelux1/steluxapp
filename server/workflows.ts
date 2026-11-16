@@ -32,7 +32,7 @@ export function weldLength(store: Store, weld: Row) {
   if (weld.lengthMode === 'Length in mm') return Number(weld.dialen) || 0;
   return weld.diameterId ? Number(store.get('diameters', weld.diameterId, true).outline) || 0 : 0;
 }
-/** `inspectionRules`: the profile delivers the inspections flow (hosted), so a not-accepted NDT result also creates its repair weld. */
+/** `inspectionRules`: the profile delivers the inspections flow (hosted), so the repair action also creates the repair weld. */
 export function runAction(store: Store, key: string, data: Input, actor: Actor, options: { inspectionRules?: boolean; hosted?: boolean } = {}) {
   if (!ACTIONS[key]) throw new AppError(404, 'This action does not exist.');
   if (key.startsWith('hydrotest-')) return runHydrotestAction(store, key, data, actor);
@@ -203,7 +203,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       const record = add('inspection_results', { requestId: request.id, weldId: weld.id, reportNo, type: request.type, result, round: data.round || 'Initial', examinedLength: length, naLength: data.naLength ?? null, defectType: data.defectType || '', date, note });
       patch('inspection_requests', request, { status: result });
       store.audit('welds', weld.id, 'inspected', `${request.type} ${result.toLowerCase()} · ${reportNo}`, actor);
-      if (options.inspectionRules) inspectionRules(store, actor).ensureRepair(weld);
+      // An NA records the result only; the repair weld <no>R1 is added by hand (weld-inspections-009).
       return { resource: 'inspection_results', record };
     }
     if (key === 'repair') {

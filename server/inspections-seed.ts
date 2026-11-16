@@ -17,20 +17,25 @@ export function seedInspectionSamples(store: Store) {
     if (!has('ndt_locations', 'ndt-field')) store.create('ndt_locations', { name: 'Field NDT cabin — Area 2' }, SYSTEM, 'ndt-field');
     // W005: RT not accepted with porosity over 14 mm; the repair weld W005R1 is welded but not examined yet.
     rules.run('ndt-weld', { weldId: 'weld-5', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-005-01', reportNo: 'RT-2026-005', date: '2026-10-20', result: 'Rejected', naLength: 14, defectType: '201' }] });
+    // An NA no longer creates the repair weld (weld-inspections-009): the sample adds it the way the repair action does.
+    rules.ensureRepair(store.get('welds', 'weld-5'));
     const w005r1 = store.list('welds').find(row => row.repairOfId === 'weld-5');
     if (w005r1) set(w005r1.id, { welder1Id: 'welder-2', datefit: '2026-10-22', date: '2026-10-23', wire1Id: has('welding_wires', 'wire-3') ? 'wire-3' : 'wire-1' });
-    rules.run('tracers', { weldId: 'weld-5', tracerIds: ['weld-13', 'weld-7'] });
+    // Sample tracers flagged by hand (outside the welder / WPS / ITP-KNR proposal, like the reference's tracers without source).
+    const trace = (sourceId: string, ids: string[]) => { for (const id of ids) set(id, { tracer: true, tracerOfId: sourceId, ndoReq: true }); };
+    trace('weld-5', ['weld-13', 'weld-7']);
     // W011: RT not accepted with slag; repair weld W011R1 re-examined and accepted, two tracers of the same welder.
     rules.run('ndt-weld', { weldId: 'weld-11', type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-011-01', reportNo: 'RT-2026-011', date: '2026-10-20', result: 'Rejected', naLength: 22, defectType: '301' }] });
+    rules.ensureRepair(store.get('welds', 'weld-11'));
     const w011r1 = store.list('welds').find(row => row.repairOfId === 'weld-11');
     if (w011r1) {
       set(w011r1.id, { welder1Id: 'welder-4', datefit: '2026-10-21', date: '2026-10-22', wire1Id: 'wire-1' });
       rules.run('ndt-weld', { weldId: w011r1.id, type: 'NDT', locationId: 'ndt-shop', rounds: [{ round: 'Initial', processId: 'ndt-0', filmNo: 'F-011R1-01', reportNo: 'RT-2026-031', date: '2026-10-24', result: 'Accepted' }] });
     }
-    rules.run('tracers', { weldId: 'weld-11', tracerIds: ['weld-15', 'weld-23'] });
+    trace('weld-11', ['weld-15', 'weld-23']);
     // NDT Pre (MT before the final pass) on three field welds of the steam network.
     for (const id of ['weld-20', 'weld-22', 'weld-24']) set(id, { ndoReqPre: true, ndtPreLocationId: 'ndt-field', ndtPreProcess1Id: 'ndt-3' });
-    rules.run('ndt-weld', { weldId: 'weld-20', type: 'NDT PRE', locationId: 'ndt-field', rounds: [{ round: 'Initial', processId: 'ndt-3', reportNo: 'MT-2026-020', date: '2026-10-18', result: 'Accepted' }] });
+    rules.run('ndt-weld', { weldId: 'weld-20', type: 'NDT PRE', locationId: 'ndt-field', welderId: 'welder-1', rounds: [{ round: 'Initial', processId: 'ndt-3', reportNo: 'MT-2026-020', date: '2026-10-18', result: 'Accepted' }] });
     rules.run('mass-inspection-request', { type: 'NDT PRE', weldIds: ['weld-22', 'weld-24'], processIds: ['ndt-3'], locationId: 'ndt-field', date: '2026-10-22', note: 'Magnetic particle test of the root and hot pass before capping.' });
     rules.run('mass-inspection-request', { type: 'NDT', weldIds: ['weld-22', 'weld-23', 'weld-24'], processIds: ['ndt-0', 'ndt-1'], locationId: 'ndt-field', date: '2026-10-23', note: 'Radiography of the field closing welds; UT where film access is limited.' });
     // Pre-HT and PWHT: W002 preheated and treated; W020 waits for its PWHT request.

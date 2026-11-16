@@ -1,12 +1,14 @@
-import { useMemo, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, ClipboardCheck, FileText, Loader2, Pencil, Printer, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows, isTracer,
-  locationField, managerColumns, managerRequests, managerWelds, processField, requestNumberError, resultLabel, roundErrors, roundLabel, tracerError, tracerSummary,
+  KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
+  locationField, managerColumns, managerRequests, managerWelds, processField, roundErrors, roundLabel,
   weldResults, type InspectionKind, type ManagerTab, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
   vtEligibleWelds, vtGenerateError, vtMarks, vtMissingMessage, vtOpenReports, vtResultRows, vtSeq, vtUploadReports, vtWeldIds,
+  TRACER_DETAIL_TEXTS, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_NO_CANDIDATES, TRACER_PANEL_NOTE, TRACER_REMOVABLE_HINT, TRACER_SELECT_TEXT, autoReweld, naBlockErrors,
+  roundLockedError, roundOpen, roundsHaveNa, tracerDetail, weldWelderIds, type TracerDetail, type TracerDetailWeld, type TracerProposal, type TracerProposalWeld,
 } from '../shared/inspections.ts';
 import { api, apiBlob, post, ApiError, apiUrl, formatDate } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
@@ -84,64 +86,165 @@ function NoAccess({ onClose, what }: { onClose: () => void; what: string }) {
 
 // ----- NDT per weld --------------------------------------------------------------------------------------------
 
-type RoundDraft = Required<Pick<RoundInput, 'round'>> & { processId: string; filmNo: string; reportNo: string; date: string; result: string; naLength: string; defectType: string; reweld: boolean };
-/** "NDT <project> / <iso> / <weld>": NDT location, request number and the five rounds of one weld (NDT or NDT Pre). */
+type RoundDraft = Required<Pick<RoundInput, 'round'>> & { processId: string; filmNo: string; reportNo: string; date: string; result: string };
+type NaDraft = { naLength: string; defectType: string; welderForErrorId: string; reweld: boolean };
+/** "Welder ML396, Aleksandar Djuric  Welder 2 ML670, Dimitrije Tunic": the weld's welders as text (reference showNDO). */
+const welderLine = (rows: Rows, weld: Row) => [1, 2, 3, 4].map(side => ({ side, welder: rows.welders?.find(row => row.id === weld[`welder${side}Id`]) })).filter(item => item.welder).map(item => ({ label: item.side === 1 ? 'Welder' : `Welder ${item.side}`, value: [item.welder!.welderCode || item.welder!.number, item.welder!.name].filter(Boolean).map(String).join(', ') }));
+/**
+ * NDT / NDT Pre of one weld (reference showNDO / showNDOPre): project / iso / weld, the welders (NDT: as text; NDT Pre:
+ * a required Welder select), NDT location (locked once requested), Request number (given by the request), five
+ * columns of NDT process, Film Nr., NDT Rp/Nr., NDT date, NDT res. (a column without a process stays locked), the NA
+ * block while a result is NA (NDT only), the tracer panel, NDT documents, Save / Cancel.
+ */
 export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' | 'NDT PRE'; onClose: () => void }) {
   const { rows, allRows, canRun, canRecord } = useWorkspace();
   const pre = type === 'NDT PRE', context = weldContext(rows, weld);
   const editable = canRun('ndt-weld', { type });
   const request = currentRequest(rows.inspection_requests, weld.id, type);
   const results = (rows.inspection_results || []).filter(row => !row._archived && row.requestId === request?.id && row.type === type);
+  const naResult = results.find(row => row.result === 'Rejected');
+  // Processes of the request (mass request names them) preselect empty columns.
+  const requested = String(request?.processes || '').split(',').map(name => name.trim()).filter(Boolean).map(name => activeRows(rows, 'ndt_processes').find(row => row.name === name)?.id).filter((id): id is string => Boolean(id));
   const [location, setLocation] = useState(String(weld[locationField(pre)] || request?.locationId || ''));
-  const [requestNo, setRequestNo] = useState(String(request?.number || ''));
-  const [rounds, setRounds] = useState<RoundDraft[]>(() => NDT_ROUNDS.map(round => { const row = results.find(item => item.round === round.key); return { round: round.key, processId: String(weld[processField(pre, round.index)] || row?.processId || ''), filmNo: String(row?.filmNo || ''), reportNo: String(row?.reportNo || ''), date: String(row?.date || ''), result: String(row?.result || ''), naLength: row?.naLength === null || row?.naLength === undefined ? '' : String(row.naLength), defectType: String(row?.defectType || ''), reweld: row?.reweld === true }; }));
+  const [welderId, setWelderId] = useState(String(request?.welderId || ''));
+  const [rounds, setRounds] = useState<RoundDraft[]>(() => NDT_ROUNDS.map((round, i) => { const row = results.find(item => item.round === round.key); return { round: round.key, processId: String(weld[processField(pre, round.index)] || row?.processId || requested[i] || ''), filmNo: String(row?.filmNo || ''), reportNo: String(row?.reportNo || ''), date: String(row?.date || ''), result: String(row?.result || '') }; }));
+  const [na, setNa] = useState<NaDraft>(() => ({ naLength: naResult?.naLength === null || naResult?.naLength === undefined ? '' : String(naResult.naLength), defectType: String(naResult?.defectType || ''), welderForErrorId: String(naResult?.welderForErrorId || ''), reweld: results.some(row => row.reweld === true) }));
   const [files, setFiles] = useState<File[]>([]);
+  const [tracerIds, setTracerIds] = useState<string[] | null>(null);
   const { busy, error, setError, run } = useSubmit(onClose);
-  const set = (index: number, patch: Partial<RoundDraft>) => setRounds(current => current.map((round, i) => i === index ? { ...round, ...patch } : round));
+  const hasNa = !pre && roundsHaveNa(rounds);
+  const small = autoReweld(weld, rows.diameters);
+  /** Reference __ndoShowNAUpdate: without NA the block is cleared and ReWeld? unticked; with NA on a weld ≤ 3" ReWeld? is ticked. */
+  const set = (index: number, patch: Partial<RoundDraft>) => {
+    const next = rounds.map((round, i) => i === index ? { ...round, ...patch } : round);
+    setRounds(next);
+    if (patch.result !== undefined) { if (!roundsHaveNa(next)) setNa(current => ({ ...current, naLength: '', defectType: '', reweld: false })); else if (small) setNa(current => ({ ...current, reweld: true })); }
+  };
   const documents = (rows.attachments || []).filter(file => !file._archived && file.entityType === 'inspection_requests' && file.entityId === request?.id);
   // Defect codes enabled on the weld's main project and matching its defect norm (weld catalogs); a stored value is kept.
   const site = rows.sites?.find(row => row.id === context.project?.siteId) ?? allRows.sites?.find(row => row.id === context.project?.siteId);
   const defects = selectableDefectCodes(rows, site, String(context.project?.siteId || '')).map(code => ({ value: String(code.code), label: [code.code, code.english].filter(Boolean).join(' — ') }));
-  if (rounds[0].defectType && !defects.some(option => option.value === rounds[0].defectType)) defects.unshift({ value: rounds[0].defectType, label: rounds[0].defectType });
+  if (na.defectType && !defects.some(option => option.value === na.defectType)) defects.unshift({ value: na.defectType, label: na.defectType });
+  const ownWelders = weldWelderIds(weld).map(id => rows.welders?.find(row => row.id === id)).filter((row): row is Row => Boolean(row)).map(row => ({ value: row.id, label: [row.welderCode || row.number, row.name].filter(Boolean).map(String).join(', ') }));
   if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing NDT results"/>;
+  const label = pre ? 'NDT Pre' : 'NDT';
   function submit(event: FormEvent) {
     event.preventDefault();
-    const numberError = requestNumberError(requestNo); if (numberError) { setError(numberError); return; }
-    for (const round of rounds) { const errors = roundErrors({ ...round, naLength: round.naLength === '' ? null : Number(round.naLength) }); const first = Object.values(errors)[0]; if (first) { setError(`${roundLabel(round.round)}: ${first}`); return; } }
+    if (pre && !welderId) { setError('Choose the welder.'); return; }
+    for (const round of rounds) { const first = roundLockedError(round) || Object.values(roundErrors(round))[0]; if (first) { setError(`${roundLabel(round.round)}: ${first}`); return; } }
+    const block = hasNa ? na : { naLength: '', defectType: '', welderForErrorId: '', reweld: false };
+    const blockError = Object.values(naBlockErrors(block, { pre, hasNa, welderIds: weldWelderIds(weld) }))[0]; if (blockError) { setError(blockError); return; }
     if (files.some(file => !/\.pdf$/i.test(file.name))) { setError('NDT documents must be PDF files.'); return; }
     void run(async () => {
-      await post('/actions/ndt-weld', { weldId: weld.id, type, locationId: location, requestNo: requestNo.trim(), rounds: rounds.map(round => ({ ...round, naLength: round.naLength === '' ? null : Number(round.naLength), reweld: round.round === 'Remaining' ? round.reweld : false })) });
+      await post('/actions/ndt-weld', { weldId: weld.id, type, locationId: location, rounds, ...(pre ? { welderId } : { naLength: block.naLength === '' ? null : block.naLength, defectType: block.defectType, welderForErrorId: block.welderForErrorId, reweld: block.reweld, ...(hasNa && tracerIds ? { tracerIds } : {}) }) });
       let failed = 0;
       if (files.length) {
         const next = await api<{ rows: Row[] }>('/records/inspection_requests');
         const saved = currentRequest(next.rows, weld.id, type);
         if (saved) failed = await uploadFiles('inspection_requests', saved.id, files, NDT_DOCUMENT); else failed = files.length;
       }
-      return failed ? `${type === 'NDT PRE' ? 'NDT Pre' : 'NDT'} saved; ${failed} document${failed === 1 ? '' : 's'} could not be uploaded.` : `${type === 'NDT PRE' ? 'NDT Pre' : 'NDT'} of weld ${weldName(weld)} saved.`;
+      return failed ? `${label} saved; ${failed} document${failed === 1 ? '' : 's'} could not be uploaded.` : `${label} of weld ${weldName(weld)} saved.`;
     });
   }
   const processOptions = options(enabledRows(rows, 'ndt_processes', context.project?.siteId, rounds.map(round => round.processId)));
-  return <Modal wide title={`${pre ? 'NDT Pre' : 'NDT'} ${context.projectName} / ${context.isoName} / ${weldName(weld)}`} subtitle={editable ? 'Create or update the request and its results. A result of NA creates the repair weld.' : 'Read only: your profile cannot change these results.'} onClose={onClose}>
+  const locked = (round: RoundDraft) => !editable || !roundOpen(round);
+  const naDisabled = !editable || !hasNa;
+  return <Modal wide title={label} subtitle={`${context.projectName} / ${context.isoName} / ${weldName(weld)}`} onClose={onClose}>
     <form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
+      {!editable && <p className="field-hint">Read only: your profile cannot change these results.</p>}
       <div className="form-grid">
-        <div className="field"><span className="field-label">Welder</span><p className="inspection-readonly" title={welderTitles(rows, weld) || undefined}>{welderNames(rows, weld) || '—'}</p></div>
-        <Select id="ndt-location" label="NDT location" value={location} onChange={setLocation} options={options(enabledRows(rows, 'ndt_locations', context.project?.siteId, location))} disabled={!editable} empty="Select NDT location"/>
-        <Text id="ndt-request" label="Request number" value={requestNo} onChange={setRequestNo} disabled={!editable} placeholder={`${REQUEST_PREFIX}-… (generated when empty)`}/>
+        {pre ? <Select id="ndt-welder" label="Welder *" value={welderId} onChange={setWelderId} options={options(activeRows(rows, 'welders'), row => [row.welderCode || row.number, row.name].filter(Boolean).map(String).join(', '))} disabled={!editable} empty="Select welder"/>
+          : <div className="field ndt-welders">{welderLine(rows, weld).length ? welderLine(rows, weld).map(item => <p key={item.label}><span className="field-label">{item.label}</span><span className="inspection-readonly">{item.value}</span></p>) : <p><span className="field-label">Welder</span><span className="inspection-readonly">—</span></p>}</div>}
+        <Select id="ndt-location" label="NDT location" value={location} onChange={setLocation} options={options(enabledRows(rows, 'ndt_locations', context.project?.siteId, location))} disabled={!editable || Boolean(request)} empty="Select NDT location"/>
+        <div className="field"><label htmlFor="ndt-request">Request number</label><input id="ndt-request" value={String(request?.number || '')} placeholder={REQUEST_PREFIX} disabled readOnly/><small className="field-hint">Given by the NDT request.</small></div>
       </div>
-      <TableScroll><table className="data-table inspection-rounds"><caption className="sr-only">Examination rounds</caption><thead><tr><th scope="col">Round</th>{NDT_ROUNDS.map((round, i) => <th scope="col" key={round.key}>{round.label}{rounds[i].processId && <span className="inspection-tick" aria-label="process set"> ✔</span>}</th>)}</tr></thead>
+      <TableScroll><table className="data-table ndt-rounds"><caption className="sr-only">Examination rounds</caption><thead><tr><th scope="col"><span className="sr-only">Field</span></th>{NDT_ROUNDS.map((round, i) => <th scope="col" key={round.key}>{round.label}{rounds[i].processId && <span className="inspection-tick" aria-label="process set"> ✔</span>}</th>)}</tr></thead>
         <tbody>
           <tr><th scope="row">NDT process</th>{rounds.map((round, i) => <td key={round.round}><select aria-label={`NDT process ${roundLabel(round.round)}`} value={round.processId} disabled={!editable} onChange={e => set(i, { processId: e.target.value })}><option value="">—</option>{processOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td>)}</tr>
-          <tr><th scope="row">Film Nr.</th>{rounds.map((round, i) => <td key={round.round}><input aria-label={`Film Nr. ${roundLabel(round.round)}`} value={round.filmNo} disabled={!editable} onChange={e => set(i, { filmNo: e.target.value })}/></td>)}</tr>
-          <tr><th scope="row">NDT Rp/Nr.</th>{rounds.map((round, i) => <td key={round.round}><input aria-label={`NDT Rp/Nr. ${roundLabel(round.round)}`} value={round.reportNo} disabled={!editable} onChange={e => set(i, { reportNo: e.target.value })}/></td>)}</tr>
-          <tr><th scope="row">NDT date</th>{rounds.map((round, i) => <td key={round.round}><input type="date" aria-label={`NDT date ${roundLabel(round.round)}`} value={round.date} disabled={!editable} onChange={e => set(i, { date: e.target.value })}/></td>)}</tr>
-          <tr><th scope="row">NDT res.</th>{rounds.map((round, i) => <td key={round.round}><select aria-label={`NDT result ${roundLabel(round.round)}`} value={round.result} disabled={!editable} onChange={e => set(i, { result: e.target.value, ...(e.target.value !== 'Rejected' ? { naLength: '', defectType: '' } : {}), ...(e.target.value && !round.date ? { date: today() } : {}) })}>{NDT_RESULT_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></td>)}</tr>
-          <tr><th scope="row">NA length (mm)</th><td><input type="number" min="0" step="any" aria-label="NA length (mm), Initial" value={rounds[0].naLength} disabled={!editable || rounds[0].result !== 'Rejected'} onChange={e => set(0, { naLength: e.target.value })}/></td><td colSpan={4} className="muted">Initial round only</td></tr>
-          <tr><th scope="row">Defect type</th><td><select aria-label="Defect type, Initial" value={rounds[0].defectType} disabled={!editable || rounds[0].result !== 'Rejected'} onChange={e => set(0, { defectType: e.target.value })}><option value="">—</option>{defects.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></td><td colSpan={4} className="muted">Initial round only</td></tr>
-          <tr><th scope="row">ReWeld?</th><td className="muted">—</td><td><input type="checkbox" aria-label="ReWeld?, Remaining" checked={rounds[1].reweld} disabled={!editable} onChange={e => set(1, { reweld: e.target.checked })}/></td><td colSpan={3} className="muted">Remaining round only</td></tr>
+          <tr><th scope="row">Film Nr.</th>{rounds.map((round, i) => <td key={round.round}><input aria-label={`Film Nr. ${roundLabel(round.round)}`} value={round.filmNo} readOnly={locked(round)} disabled={!editable} onChange={e => set(i, { filmNo: e.target.value })}/></td>)}</tr>
+          <tr><th scope="row">NDT Rp/Nr.</th>{rounds.map((round, i) => <td key={round.round}><input aria-label={`NDT Rp/Nr. ${roundLabel(round.round)}`} value={round.reportNo} readOnly={locked(round)} disabled={!editable} onChange={e => set(i, { reportNo: e.target.value })}/></td>)}</tr>
+          <tr><th scope="row">NDT date</th>{rounds.map((round, i) => <td key={round.round}><input type="date" aria-label={`NDT date ${roundLabel(round.round)}`} value={round.date} readOnly={locked(round)} disabled={!editable} onChange={e => set(i, { date: e.target.value })}/></td>)}</tr>
+          <tr><th scope="row">NDT res.</th>{rounds.map((round, i) => <td key={round.round}><select aria-label={`NDT result ${roundLabel(round.round)}`} value={round.result} disabled={locked(round)} onChange={e => set(i, { result: e.target.value, ...(e.target.value && !round.date ? { date: today() } : {}) })}>{NDT_RESULT_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></td>)}</tr>
         </tbody></table></TableScroll>
-      <section className="inspection-section"><h3>NDT documents</h3><FileLinks files={documents}/><WeldRequestPdfButtons weld={weld} types={[type]}/>{editable && canRecord('inspection_requests', 'import') && <FilePicker id="ndt-documents" label="Add NDT documents" files={files} onChange={setFiles} pdf/>}</section>
+      <small className="field-hint">A column takes a result once its NDT process is chosen.</small>
+      <div className="form-grid ndt-na-block">
+        <div className="field"><label htmlFor="ndt-na-length">NA length</label><input id="ndt-na-length" inputMode="numeric" placeholder="mm" value={pre ? '' : na.naLength} disabled={pre || naDisabled} onChange={e => setNa({ ...na, naLength: e.target.value.replace(/\D/g, '') })}/></div>
+        {!pre && <>
+          <Select id="ndt-defect" label="Defect type" value={na.defectType} onChange={value => setNa({ ...na, defectType: value })} options={defects} disabled={naDisabled}/>
+          <Select id="ndt-welder-error" label="Welder for error" value={na.welderForErrorId} onChange={value => setNa({ ...na, welderForErrorId: value })} options={ownWelders} disabled={naDisabled}/>
+          <div className="field checkbox-field"><label htmlFor="ndt-reweld"><input id="ndt-reweld" type="checkbox" checked={na.reweld} disabled={naDisabled} onChange={e => setNa({ ...na, reweld: e.target.checked })}/><span>ReWeld?</span></label></div>
+        </>}
+      </div>
+      {!pre && hasNa && editable && canRun('tracers') && <NdtTracerPanel weld={weld} welderId={na.welderForErrorId} onPendingChange={setTracerIds}/>}
+      <section className="inspection-section"><h3>NDT documents</h3><FileLinks files={documents}/><WeldRequestPdfButtons weld={weld} types={[type]}/>{editable && canRecord('inspection_requests', 'import') && <FilePicker id="ndt-documents" label="NDT documents (several files; only PDFs are allowed)" files={files} onChange={setFiles} pdf/>}</section>
     </div><Footer busy={busy} onClose={onClose} submit={editable ? 'Save' : undefined}/></form>
   </Modal>;
+}
+
+/**
+ * The NDT dialog's tracer panel (reference #ndtTracerPanel): shown while an NA is chosen; "Enable tracers" loads the
+ * server proposal for the weld's welder / WPS / ITP-KNR group. "Save tracers" saves the group's rejected welds at once;
+ * the tracers of this weld while its NA is still unsaved go with the dialog's Save (`onPendingChange`).
+ */
+function NdtTracerPanel({ weld, welderId, onPendingChange }: { weld: Row; welderId: string; onPendingChange: (ids: string[] | null) => void }) {
+  const { rows: scoped, allRows, refresh, notify } = useWorkspace();
+  // Tracers and candidates may lie on other isometrics and projects of the site: look them up in all rows of the pilot.
+  const rows = allRows.welds ? allRows : scoped;
+  const [enabled, setEnabled] = useState(() => activeRows(rows, 'welds').some(row => row.tracerOfId === weld.id));
+  const [state, setState] = useState<{ loading: boolean; error: string; proposal?: TracerProposal }>({ loading: false, error: '' });
+  const [selection, setSelection] = useState<Record<string, string[]>>({});
+  const [saving, setSaving] = useState(false), [message, setMessage] = useState('');
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!enabled) { setState({ loading: false, error: '' }); onPendingChange(null); return; }
+    let live = true; setState(current => ({ ...current, loading: true, error: '' }));
+    const query = new URLSearchParams({ weldId: weld.id, pending: '1', ...(welderId ? { welderId } : {}) });
+    api<{ proposal: TracerProposal }>(`/tracer-proposal?${query}`).then(({ proposal }) => {
+      if (!live) return;
+      setState({ loading: false, error: '', proposal });
+      const picked = Object.fromEntries(proposal.sources.map(entry => [entry.source.id, entry.currentTracers.map(row => row.id)]));
+      setSelection(picked);
+      const own = proposal.sources.find(entry => entry.source.id === weld.id && entry.pending);
+      onPendingChange(own ? picked[weld.id] : null);
+    }).catch((failure: ApiError) => { if (live) setState({ loading: false, error: failure.message || 'Tracer proposal could not be loaded.' }); });
+    return () => { live = false; };
+  }, [enabled, welderId, weld.id, reload]);
+  const proposal = state.proposal;
+  function toggle(sourceId: string, id: string, on: boolean) {
+    const current = selection[sourceId] || [];
+    if (on && current.length >= TRACERS_REQUIRED) { setMessage(TRACER_MAX_TEXT); return; }
+    if (on && Object.entries(selection).some(([other, ids]) => other !== sourceId && ids.includes(id))) { setMessage('A weld can be the tracer of one rejected weld only.'); return; }
+    setMessage('');
+    const next = { ...selection, [sourceId]: on ? [...current, id] : current.filter(item => item !== id) };
+    setSelection(next);
+    if (proposal?.sources.some(entry => entry.source.id === weld.id && entry.pending)) onPendingChange(next[weld.id] || []);
+  }
+  const saved = proposal?.sources.filter(entry => !entry.pending) || [];
+  async function save() {
+    setSaving(true); setMessage('');
+    try { await post('/actions/tracers', { assignments: Object.fromEntries(saved.map(entry => [entry.source.id, selection[entry.source.id] || []])) }); await refresh(); notify('Tracers saved.'); setReload(value => value + 1); }
+    catch (failure) { setMessage((failure as ApiError).message || 'Tracer(s) could not be saved.'); }
+    finally { setSaving(false); }
+  }
+  const describe = (item: TracerProposalWeld) => { const iso = rows.isometrics?.find(row => row.id === item.isoId); const project = rows.projects?.find(row => row.id === iso?.projectId); const weldType = rows.weld_types?.find(row => row.id === item.typeId); return { project: String(project?.internnumber || project?.description || '-'), iso: String(iso?.isoNo || '-'), type: String(weldType?.abbreviation || weldType?.name || ''), date: item.date ? formatDate(item.date) : '-' }; };
+  const candidate = (sourceId: string, item: TracerProposalWeld, current: boolean) => { const meta = describe(item); const checked = (selection[sourceId] || []).includes(item.id); return <label key={item.id} className="ndt-tracer-candidate"><input type="checkbox" checked={checked} disabled={current && item.locked} onChange={e => toggle(sourceId, item.id, e.target.checked)}/><span><strong>Weld {item.weldNo}</strong><small>Project: {meta.project} | ISO: {meta.iso}{meta.type ? ` | Type: ${meta.type}` : ''} | Date: {meta.date}</small><small>{item.statusLabel}</small>{current && <small className="field-hint">{item.locked ? TRACER_LOCKED_HINT : TRACER_REMOVABLE_HINT}</small>}</span></label>; };
+  return <section className="inspection-section ndt-tracer-panel">
+    <label className="ndt-tracer-toggle" htmlFor="ndt-enable-tracers"><input id="ndt-enable-tracers" type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}/><span>Enable tracers</span></label>
+    <p className="field-hint">{TRACER_PANEL_NOTE}</p>
+    {enabled && <div className="ndt-tracer-body" aria-live="polite">
+      {state.loading ? <p className="muted"><Loader2 size={14} className="spin"/> Loading…</p> : state.error ? <Alert message={state.error}/> : proposal && <>
+        <dl className="inspection-facts">{([['Rejected welds', proposal.status.rejectedWelds], ['Expected tracers', proposal.status.expectedTracers], ['Existing tracers', proposal.status.existingTracers], ['Missing tracers', proposal.status.missingTracers]] as const).map(([title, value]) => <div key={title}><dt>{title}</dt><dd>{value}</dd></div>)}</dl>
+        {message && <Alert message={message}/>}
+        {proposal.sources.length ? proposal.sources.map(entry => <div className="inspection-tracer" key={entry.source.id}>
+          <strong>Rejected weld {entry.source.weldNo}</strong>
+          <p className="field-hint">ISO {describe(entry.source).iso} | {entry.linked} linked of {entry.expected} required.{entry.pending ? ' Saved with Save, together with the NA result.' : ''}</p>
+          {entry.currentTracers.length > 0 && <div className="ndt-tracer-list">{entry.currentTracers.map(item => candidate(entry.source.id, item, true))}</div>}
+          {entry.candidates.length > 0 && <><p className="field-hint">{TRACER_SELECT_TEXT}</p><div className="ndt-tracer-list">{entry.candidates.map(item => candidate(entry.source.id, item, false))}</div></>}
+        </div>) : <p className="muted">{TRACER_NO_CANDIDATES}</p>}
+        <div className="logistics-actions"><button type="button" className="btn small primary" disabled={saving || !saved.length} onClick={() => void save()}>{saving && <Loader2 size={14} className="spin"/>}Save tracers</button></div>
+      </>}
+    </div>}
+  </section>;
 }
 
 // ----- Pre-HT / PWHT per weld --------------------------------------------------------------------------------
@@ -163,35 +266,31 @@ function UploadButton({ onClick }: { onClick: () => void }) { const { canRun } =
 
 // ----- tracers ------------------------------------------------------------------------------------------------
 
-/** "Tracer details": the source weld, "n linked of 2 required", and each tracer's NDT results; editors link tracers. */
+/** "Tracer details" (reference #weldTracerDetailModal): read only — the original rejected weld, the linked tracers and their NDT results. */
 export function TracerDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
-  const { rows, canRun, label } = useWorkspace();
-  const welds = activeRows(rows, 'welds');
-  const summary = tracerSummary(weld, welds, rows.inspection_results);
-  const [selected, setSelected] = useState<string[]>(summary.tracers.map(row => row.id));
-  const [query, setQuery] = useState('');
-  const { busy, error, setError, run } = useSubmit(onClose);
-  const source = summary.source;
-  const editable = Boolean(source) && canRun('tracers') && !isTracer(weld);
-  const candidates = source ? welds.filter(row => row.id !== source.id && !row.repairOfId && (!row.tracerOfId || row.tracerOfId === source.id) && (!query.trim() || `${row.weldNo} ${label('isometrics', row.isoId)}`.toLowerCase().includes(query.trim().toLowerCase()))) : [];
-  const sameWelder = (row: Row) => source && [1, 2, 3, 4].some(side => source[`welder${side}Id`] && [1, 2, 3, 4].some(other => row[`welder${other}Id`] === source[`welder${side}Id`]));
-  candidates.sort((a, b) => Number(Boolean(sameWelder(b))) - Number(Boolean(sameWelder(a))) || String(a.weldNo).localeCompare(String(b.weldNo), 'en', { numeric: true }));
-  function submit(event: FormEvent) {
-    event.preventDefault(); if (!source) return;
-    const problem = tracerError(source, selected, welds, rows.inspection_results); if (problem) { setError(problem); return; }
-    void run(async () => { await post('/actions/tracers', { weldId: source.id, tracerIds: selected }); return `Tracer welds of weld ${weldName(source)} saved.`; });
-  }
-  const describe = (row: Row) => { const context = weldContext(rows, row); return `${context.projectName} · ${context.isoName} · ${weldName(row)}`; };
-  return <Modal wide title="Tracer details" subtitle="A weld whose NDT result is not accepted needs tracer welds; tracers do not count toward inspection compliance." onClose={onClose}>
-    <form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
-      <section className="inspection-section"><h3>Original weld</h3>{source ? <p>{describe(source)}</p> : <p className="muted">No source weld link found.</p>}</section>
-      {source && <section className="inspection-section"><h3>Linked tracer welds <span className={`count-pill ${summary.needed ? 'warn' : ''}`}>{summary.text}</span></h3>
-        {summary.tracers.length ? summary.tracers.map(tracer => <div className="inspection-tracer" key={tracer.id}><strong>{describe(tracer)}</strong><ul>{weldResults(rows.inspection_results, tracer.id, ['NDT', 'NDT PRE']).map(result => <li key={result.id}>{result.type === 'NDT PRE' ? 'NDT Pre' : 'NDT'} · {roundLabel(result.round)} · {label('ndt_processes', result.processId)} · {String(result.reportNo || '—')} · <Badge>{resultLabel(result.result)}</Badge></li>)}{!weldResults(rows.inspection_results, tracer.id, ['NDT', 'NDT PRE']).length && <li className="muted">No NDT result yet.</li>}</ul></div>) : <p className="muted">No tracer welds linked yet.</p>}</section>}
-      {editable && <section className="inspection-section"><h3>Select tracer welds</h3><p className="field-hint">Choose up to {TRACERS_REQUIRED}. Welds of the same welder are listed first. Linking marks the weld as a tracer and sets NDT Req. on it.</p>
-        <div className="field"><label htmlFor="tracer-search">Search welds</label><input id="tracer-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Weld or isometric number"/></div>
-        <div className="inspection-candidates">{candidates.slice(0, 60).map(row => <label key={row.id}><input type="checkbox" checked={selected.includes(row.id)} disabled={!selected.includes(row.id) && selected.length >= TRACERS_REQUIRED} onChange={e => setSelected(e.target.checked ? [...selected, row.id] : selected.filter(id => id !== row.id))}/>{describe(row)}{sameWelder(row) && <small> · same welder</small>}</label>)}{!candidates.length && <p className="muted">No welds match.</p>}</div></section>}
-    </div><Footer busy={busy} onClose={onClose} submit={editable ? 'Save tracers' : undefined}/></form>
+  const { rows: scoped, allRows, label } = useWorkspace();
+  // The source and the tracers may lie on other isometrics and projects of the site.
+  const rows = allRows.welds ? allRows : scoped;
+  const detail = tracerDetail(weld, activeRows(rows, 'welds'), rows.inspection_results);
+  const place = (row: Row) => { const context = weldContext(rows, row); return { project: context.projectName, iso: context.isoName }; };
+  return <Modal wide title={TRACER_DETAIL_TEXTS.title} onClose={onClose}>
+    <div className="modal-body"><TracerDetailBody detail={detail} place={place} processName={id => id ? label('ndt_processes', id) : 'NDT'}/></div>
+    <Footer busy={false} onClose={onClose}/>
   </Modal>;
+}
+/** The read-only body of "Tracer details" (no selection: tracers are chosen in the NDT dialog). */
+export function TracerDetailBody({ detail, place, processName }: { detail: TracerDetail; place: (weld: Row) => { project: string; iso: string }; processName: (id: string) => string }) {
+  const results = (item: TracerDetailWeld) => item.results.length ? <ul className="ndt-tracer-results">{item.results.map(result => <li key={result.id}>{processName(result.processId)} <Badge>{result.label}</Badge></li>)}</ul> : <p className="muted">{TRACER_DETAIL_TEXTS.noNdt}</p>;
+  const line = (item: TracerDetailWeld) => { const where = place(item.weld); return <p>Project: {where.project} | Isometric: {where.iso}</p>; };
+  return <>
+    <section className="inspection-section"><h3>{TRACER_DETAIL_TEXTS.original}{detail.source && <> | Weld: {weldName(detail.source.weld)}</>}</h3>
+      {detail.source ? <>{line(detail.source)}<p className="field-label">{TRACER_DETAIL_TEXTS.ndtResults}</p>{results(detail.source)}</> : <p className="muted">{TRACER_DETAIL_TEXTS.noSource}</p>}</section>
+    <section className="inspection-section"><h3>{TRACER_DETAIL_TEXTS.linked} <span className={`count-pill ${detail.linked < detail.expected ? 'warn' : ''}`}>{detail.linked} linked of {detail.expected} required.</span></h3>
+      {detail.tracers.length ? detail.tracers.map(item => <div className="inspection-tracer" key={item.weld.id}>
+        <strong>{TRACER_DETAIL_TEXTS.tracer} | Weld: {weldName(item.weld)}</strong>{line(item)}{item.clicked && <Badge>{TRACER_DETAIL_TEXTS.clicked}</Badge>}
+        <p className="field-label">{TRACER_DETAIL_TEXTS.ndtResults}:</p>{results(item)}
+      </div>) : <p className="muted">{TRACER_DETAIL_TEXTS.noTracers}</p>}</section>
+  </>;
 }
 
 // ----- mass actions -------------------------------------------------------------------------------------------
@@ -254,7 +353,7 @@ export function UploadNdtDialog({ isoId, weldIds, onClose, type: initial = 'NDT'
       return failed ? `Results saved; ${failed} file${failed === 1 ? '' : 's'} could not be uploaded.` : `Results saved for ${ids.length} weld${ids.length === 1 ? '' : 's'}.`;
     });
   }
-  return <Modal wide title="Upload NDT on multiple welds" subtitle="The same report number and result per round are written to every selected weld. NA creates each weld's repair weld." onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
+  return <Modal wide title="Upload NDT on multiple welds" subtitle="The same report number and result per round are written to every selected weld." onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
     <div className="form-grid"><Select id="upload-type" label="Examination" value={type} onChange={value => { setType(value as 'NDT' | 'NDT PRE'); setSelected([]); }} options={[{ value: 'NDT', label: 'NDT' }, { value: 'NDT PRE', label: 'NDT Pre' }]} empty={null}/><Text id="upload-date" label="NDT date" type="date" value={date} onChange={setDate} required/></div>
     <TableScroll><table className="data-table inspection-rounds"><thead><tr><th scope="col">Round</th><th scope="col">Report number</th><th scope="col">Result</th></tr></thead><tbody>{rounds.map((round, i) => <tr key={round.round}><th scope="row">{roundLabel(round.round)}</th><td><input aria-label={`Report number ${roundLabel(round.round)}`} value={round.reportNo} onChange={e => setRounds(list => list.map((item, index) => index === i ? { ...item, reportNo: e.target.value } : item))}/></td><td><select aria-label={`Result ${roundLabel(round.round)}`} value={round.result} onChange={e => setRounds(list => list.map((item, index) => index === i ? { ...item, result: e.target.value } : item))}>{NDT_RESULT_CHOICES.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></td></tr>)}</tbody></table></TableScroll>
     <WeldPicker welds={pool} value={selected} onChange={setSelected}/>

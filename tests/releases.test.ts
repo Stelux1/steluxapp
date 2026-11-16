@@ -342,12 +342,13 @@ test('a rejected weld blocks until its repair has an accepted result', t => {
   assert.equal(runAction(store, 'release', releaseData([id]), actor).records!.length, 1);
 });
 
-test('hosted repair model: a rejected weld with its repair weld R1 blocks the release until R1 is welded and accepted', t => {
+test('hosted repair model: a rejected weld with its repair weld R1 (added by hand) blocks the release until R1 is welded and accepted', t => {
   const store = fixture(t); const { id, shop } = readyIso(store); const hosted = { inspectionRules: true };
   const request = runAction(store, 'inspection-request', { weldIds: [shop.id], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-23' }, SYSTEM, hosted).records![0];
   runAction(store, 'inspection-result', { requestId: request.id, reportNo: 'RT-901', result: 'Rejected', date: '2026-10-24' }, SYSTEM, hosted);
-  const repair = store.list('welds').find(weld => weld.repairOfId === shop.id)!;
-  assert.equal(repair.weldNo, 'W901R1');
+  // The NA records the result only; the user adds the repair weld W901R1 by hand (linked by its number).
+  assert.equal(store.list('welds').some(weld => weld.repairOfId === shop.id), false);
+  const repair = store.create('welds', { weldNo: 'W901R1', isoId: shop.isoId, typeId: shop.typeId, wpsId: shop.wpsId, diameterId: shop.diameterId, lengthMode: shop.lengthMode, chargeNo1: shop.chargeNo1, chargeNo2: shop.chargeNo2, ndoReq: true, repair: true }, SYSTEM);
   assert.equal(refusal(() => runAction(store, 'release', releaseData([id]), actor)).status, 422);
   const check = () => releaseCheck('Prefab', { iso: store.get('isometrics', id), welds: store.list('welds'), weldTypes: store.list('weld_types'), results: store.list('inspection_results'), releases: store.list('releases'), punch: store.list('punchlists') });
   assert.ok(check().reasons.some(reason => reason.group === 'repair' && /Weld W901 was rejected; repair weld W901R1 has no accepted result yet/.test(reason.message)), 'the repair chain of the inspections flow blocks');
