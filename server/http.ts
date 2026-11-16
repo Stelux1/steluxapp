@@ -22,6 +22,7 @@ import { assertSignatureImage } from './signatures.ts';
 import { ISO_LIST_COLUMNS, flagText, isoFlags, isoListContext } from '../shared/iso-list.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { reportWorkbook } from './report-export.ts';
+import { inspectionFileError } from '../shared/inspections.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -167,7 +168,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const action = ACTIONS[String(req.params.key)]; if (!action || (availability && !availability.actions[action.key])) throw new AppError(404, 'This action does not exist.');
     access.input(action.key, req.body, true);
     const permissionData={...req.body};if(action.key==='inspection-result')permissionData.type=access.record('inspection_requests',req.body.requestId).type;checkActionPermission(req,action.key,permissionData);
-    res.status(201).json(access.result(runAction(store, action.key, req.body, actorOf(req))));
+    res.status(201).json(access.result(runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')) })));
   });
   app.post('/api/bulk/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit');
@@ -265,6 +266,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       if (!req.file) throw new AppError(422, 'Choose a file.');
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
+      const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);
       // A new signature image replaces the current one; earlier images stay as attachments (history).
       const signature = pilots && key === 'signatures';
       if (signature) assertSignatureImage(req.file);

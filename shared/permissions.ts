@@ -1,6 +1,7 @@
 import observed from '../reference/permissions-observed.json' with {type:'json'};
 import type {Module,PermissionRules,PermissionVerb,Row,User} from './types.ts';
 import { actionAvailable, resourceAvailable, rowAvailable, type PilotKey } from './release.ts';
+import { inspectionActionScope, TYPED_INSPECTION_ACTIONS } from './inspections.ts';
 
 export const PERMISSION_VERBS:PermissionVerb[]=['show','insert','edit','delete','export','import','print'];
 export const VERB_LABELS:Record<PermissionVerb,string>={show:'View',insert:'Add',edit:'Edit',delete:'Archive',export:'Export',import:'Import',print:'Print'};
@@ -98,6 +99,7 @@ export function actionScope(key:string,data:Record<string,unknown>={}):[string,P
  const direct:Record<string,[string,PermissionVerb]>={
   'add-iso-material':['70','insert'],order:['13','print'],'order-requirements':['13','print'],receive:['15','insert'],'issue-material':['20','insert'],'adjust-material':['16','insert'],'transfer-material':['16','insert'],rent:['61','insert'],return:['61','insert'],'adjust-tool':['61','insert'],'transfer-tool':['61','insert'],service:['23','insert'],'complete-service':['23','insert'],'move-spools':['1','edit'],'move-materials':['local-material-logistics','edit'],'service-materials':['80','insert'],'complete-material-service':['80','insert'],repair:['63','edit'],phases:['64','edit'],'copy-isometrics':['64','insert'],revision:['64','edit'],'remove-material-quantity':['70','edit'],'inspection-request':[data.type==='PWHT'||data.type==='PRE-HT'?'65':'50','print'],release:[data.type==='Field'?'89':data.type==='Hydrotest'?'74':'86','insert']
  };
+ const inspection=inspectionActionScope(key,data);if(inspection)return inspection;
  if(key==='inspection-result')return [data.type==='PWHT'?'97':data.type==='NDT PRE'?'94':data.type==='VI'||data.type==='PRE-HT'?'local-visual-results':'76','insert'];
  return direct[key]||['','insert'];
 }
@@ -105,7 +107,7 @@ export function actionScope(key:string,data:Record<string,unknown>={}):[string,P
 const COPY_SCOPES:[string,string][]=[['copyWelds','63'],['copyMaterials','70'],['copyCalculations','71']];
 export function canAction(user:User,key:string,data:Record<string,unknown>={}):boolean{
  if(!actionAvailable(user.availability,key,data.type))return false;
- if(user.capabilities&&data.type===undefined){const types=key==='release'?['Prefab','Field','Hydrotest']:key==='inspection-request'||key==='inspection-result'?['NDT','NDT PRE','VI','PWHT','PRE-HT']:[];if(types.length)return types.some(type=>canAction(user,key,{...data,type}));}
+ if(user.capabilities&&data.type===undefined){const types=key==='release'?['Prefab','Field','Hydrotest']:key==='inspection-request'||key==='inspection-result'?['NDT','NDT PRE','VI','PWHT','PRE-HT']:TYPED_INSPECTION_ACTIONS.includes(key)?['NDT','NDT PRE','PWHT','PRE-HT']:[];if(types.length)return types.some(type=>canAction(user,key,{...data,type}));}
  if(key==='copy-isometrics'&&!COPY_SCOPES.every(([flag,area])=>data[flag]!==true||canScope(user,area,'insert')))return false;
  const [scope,verb]=actionScope(key,data);if(!user.capabilities){const area=areas.get(scope);return Boolean(area)&&user.permissions[area!.module]>=2;}return canScope(user,scope,scopeOperation(scope,verb));
 }

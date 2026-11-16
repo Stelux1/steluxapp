@@ -2,6 +2,7 @@ import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
+import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELDS, INSPECTION_WELD_FIELDS } from './inspections.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
@@ -136,6 +137,9 @@ extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
   r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),
 ])]);
 extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
+// NDT / visual inspection / PWHT flow (shared/inspections.ts): hidden fields its dialogs write; "Not applicable" for visual inspection.
+extend('welds', INSPECTION_WELD_FIELDS); extend('inspection_results', INSPECTION_RESULT_FIELDS); extend('inspection_requests', INSPECTION_REQUEST_FIELDS);
+for (const [key, name] of [['inspection_results', 'result'], ['inspection_requests', 'status']]) resources.find(resource => resource.key === key)!.fields.find(field => field.name === name)!.options!.push(EXTRA_RESULT_OPTION);
 // Pilots profile only (hidden elsewhere, see projectResource): descriptive account fields and access per application.
 // A missing / true "enabled" flag and an empty pilot profile mean "use the permission profile", so existing accounts keep working.
 const APPLICATIONS = 'Applications';

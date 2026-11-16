@@ -18,7 +18,7 @@ import { resourcePath } from '../client/records.tsx';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
-const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports'];
+const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports'];
 const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.map(item => ({ pilot, group, item }))));
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
@@ -45,8 +45,9 @@ test('every menu item resolves to a real page and resource items use resourcePat
   for (const pilot of PILOTS) { const paths = pilot.groups.flatMap(group => group.items).map(pilotItemPath).filter(Boolean); assert.equal(new Set(paths).size, paths.length, pilot.key); }
   // Every page the hosted profile delivers today stays reachable from at least one menu.
   const listed = new Set(items.map(({ item }) => pilotItemPath(item)?.split('?')[0]));
-  // Calculation lines and cut list open inside "MTO & calculations"; project sites open as the main-project picker.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'sites'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // Calculation lines and cut list open inside "MTO & calculations"; project sites open as the main-project picker;
+  // inspection requests open as the request archives of the NDT/PWHT Manager.
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'sites', 'inspection_requests'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   assert.ok(listed.has('/workspace/main-projects')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
 

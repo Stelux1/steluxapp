@@ -1,5 +1,6 @@
 import type { Row } from './types.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
+import { repairState } from './inspections.ts';
 
 /**
  * Status of one isometric: what blocks it, the quality of its NDT results and its weighted progress.
@@ -147,8 +148,15 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
   add('ndt', welds.flatMap(weld => [['ndoReqPre', 'NDT PRE'], ['ndoReq', 'NDT']].flatMap(([flag, type]) => weld[flag] === true && !resultsOf(input.results, weld.id, [type]).length ? [{ weldId: weld.id, message: `${type} on weld ${weld.weldNo} has no result yet.` }] : [])));
   // Repair: the latest NDT result is Rejected, so the repair is not closed (a later accepted result closes it).
   // The existing repair model is the weld's `repair` flag set by the repair action, nothing more.
-  add('repair', welds.flatMap(weld => resultsOf(input.results, weld.id, NDT_TYPES)[0]?.result === 'Rejected'
-    ? [{ weldId: weld.id, message: weld.repair ? `Weld ${weld.weldNo} was rejected; the repair is recorded and waits for an accepted re-examination.` : `Weld ${weld.weldNo} was rejected; no repair is recorded yet.` }] : []));
+  // A repair weld (`010R1`, linked by `repairOfId`, see shared/inspections.ts) keeps the original's repair open until a
+  // repair in its chain has an accepted result; the item names the original and its latest repair weld.
+  add('repair', welds.flatMap(weld => {
+    if (resultsOf(input.results, weld.id, NDT_TYPES)[0]?.result !== 'Rejected') return [];
+    const state = repairState(weld, live(input.welds), input.results);
+    if (!state) return [];
+    if (state.repair) return state.open ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} was rejected; repair weld ${state.repair.weldNo} has no accepted result yet.` }] : [];
+    return [{ weldId: weld.id, message: weld.repair ? `Weld ${weld.weldNo} was rejected; the repair is recorded and waits for an accepted re-examination.` : `Weld ${weld.weldNo} was rejected; no repair is recorded yet.` }];
+  }));
   if (input.punch) {
     const open = live(input.punch).filter(row => row.isoId === input.iso.id && row.status !== 'Completed').length;
     if (open) add('punch', [{ message: `${open} open punch item${open === 1 ? '' : 's'}.` }], open);

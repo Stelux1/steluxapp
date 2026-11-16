@@ -5,6 +5,8 @@ import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { Store, AppError, positive, qty, validDate, today, type Actor } from './store.ts';
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
+import { INSPECTION_ACTION_KEYS } from '../shared/inspections.ts';
+import { inspectionRules } from './inspections.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -16,9 +18,11 @@ export function weldLength(store: Store, weld: Row) {
   if (weld.lengthMode === 'Length in mm') return Number(weld.dialen) || 0;
   return weld.diameterId ? Number(store.get('diameters', weld.diameterId, true).outline) || 0 : 0;
 }
-export function runAction(store: Store, key: string, data: Input, actor: Actor) {
+/** `inspectionRules`: the profile delivers the inspections flow (hosted), so a not-accepted NDT result also creates its repair weld. */
+export function runAction(store: Store, key: string, data: Input, actor: Actor, options: { inspectionRules?: boolean } = {}) {
   if (!ACTIONS[key]) throw new AppError(404, 'This action does not exist.');
   return store.transaction(() => {
+    if (INSPECTION_ACTION_KEYS.includes(key)) return inspectionRules(store, actor).run(key, data);
     const date = data.date ? validDate(data.date) : today();
     const note = str(data.note);
     const ensure = (resource: string, id: unknown) => store.get(resource, id);
@@ -225,11 +229,13 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor) 
       const record = add('inspection_results', { requestId: request.id, weldId: weld.id, reportNo, type: request.type, result, round: data.round || 'Initial', examinedLength: length, naLength: data.naLength ?? null, defectType: data.defectType || '', date, note });
       patch('inspection_requests', request, { status: result });
       store.audit('welds', weld.id, 'inspected', `${request.type} ${result.toLowerCase()} · ${reportNo}`, actor);
+      if (options.inspectionRules) inspectionRules(store, actor).ensureRepair(weld);
       return { resource: 'inspection_results', record };
     }
     if (key === 'repair') {
       const weld = ensure('welds', data.weldId); if (!note) throw new AppError(422, 'Enter repair notes.');
       const result = patch('welds', weld, { repair: true }); store.audit('welds', weld.id, 'repair', `Repair ${date} · ${note}`, actor);
+      if (options.inspectionRules) inspectionRules(store, actor).ensureRepair(result);
       return { resource: 'welds', record: result };
     }
     if (key === 'release') {

@@ -1,5 +1,6 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
+export { seedInspectionSamples } from './inspections-seed.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
