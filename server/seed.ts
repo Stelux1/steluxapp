@@ -1,5 +1,6 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
+import { seedWeldEntry } from './weld-entry.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
@@ -101,6 +102,7 @@ export function seed(store: Store) {
     ['Alex Taylor', 'Robin Lane', 'Casey Brooks', 'Jordan Reed'].forEach((name, i) => add('clients', `client-${i + 1}`, { barcode: `C-${1001 + i}`, name, companyId: 'company-stelux', warehouseId: 'warehouse-main' }));
     for (let i = 1; i <= 5; i++) action('rent', { articleId: `article-${i}`, warehouseId: 'warehouse-main', clientId: `client-${i % 4 + 1}`, quantity: i === 3 ? 1 : 2, date: '2026-10-18', dueDate: i === 2 ? '2026-10-20' : '2026-10-28' });
     action('rent', { articleId: 'article-6', warehouseId: 'warehouse-main', clientId: 'client-1', quantity: 3, date: '2026-10-19' });
+    seedWeldEntry(store);
     store.db.prepare('DELETE FROM audit').run();
     store.audit('projects', 'project-cooling', 'created', 'Cooling water expansion added to the workspace', SYSTEM);
     store.audit('orders', '', 'received', 'Partial delivery recorded from Atlas Steel Supply', SYSTEM);

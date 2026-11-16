@@ -7,6 +7,7 @@ import type { Availability, AuditEvent, Module, Row, User } from '../shared/type
 import { Store, AppError } from './store.ts';
 import { effectiveProfileId, publicUser } from './auth.ts';
 import { availableWps } from '../shared/welding.ts';
+import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
@@ -63,6 +64,10 @@ export function releaseAccess(store: Store, availability?: Availability) {
       }
     }
   }
+  /** Weld entry rules and the lock of completed phases for the plain record routes of the hosted profile. */
+  function weldRecord(key: string, value: Record<string, unknown>, existing?: Row) { if (pilots && key === 'welds') assertWeldEntry(store, value, existing); }
+  /** Deleting or bringing back a weld of a completed phase is refused too. */
+  function archive(key: string, row: Row) { if (pilots && key === 'welds') assertWeldUnlocked(store, row); }
   function audit(account: User, event: AuditEvent): AuditEvent | null {
     try {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
@@ -128,7 +133,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (!existing && !SIGNATURE_KINDS.some(item => item.kind === value.kind)) throw new AppError(422, 'Choose a full or short signature.', { kind: 'Choose a signature type.' });
     if (!existing && store.list('signatures').some(row => row.userId === account.id && row.kind === value.kind)) throw new AppError(409, 'This signature already exists. Save a new image to replace it.');
   }
-  return { user, resource, visible, record, input, audit, project, present, pilotAccount, mainProjects, administrators, owner,
+  return { user, resource, visible, record, input, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

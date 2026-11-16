@@ -5,6 +5,8 @@ import { PLANNING_RESOURCES } from '../shared/planning.ts';
 const references = [
   ['material1Id', 'materials'], ['material2Id', 'materials'],
   ['certificate1Id', 'certifications'], ['certificate2Id', 'certifications'],
+  // Weld entry on the isometric: weld process and the coating of the weld itself.
+  ['processId', 'weld_processes'], ['coatingWeldId', 'coatings'],
 ] as const;
 
 /** Accounts with access per pilot and their own signatures: nullable references added to existing tables. */
