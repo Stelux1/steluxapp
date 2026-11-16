@@ -10,6 +10,7 @@ import { effectiveProfileId, publicUser } from './auth.ts';
 import { availableWps } from '../shared/welding.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
 import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
+import { allowedSites, inSiteScope } from './site-scope.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
@@ -34,6 +35,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
   }
   function visible(account: User, key: string, row: Row): boolean {
     if (!rowAvailable(availability, key, row)) return false;
+    // Access per project site: a limited request sees only records of its main projects and records of none.
+    if (!inSiteScope(key, row)) return false;
     if (key !== 'attachments') return canResource(account, key, 'show', row);
     try {
       const target = String(row.entityType);
@@ -118,7 +121,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (typeof value !== 'string' || !(PILOT_KEYS as readonly string[]).includes(value)) throw pilotRefused();
     const account = inPilot(id, value as PilotKey);
     if (!account) throw pilotRefused();
-    return { ...account, pilots: enterable(id) };
+    const limited = allowedSites(store, store.get('users', id), value as PilotKey) !== 'all';
+    return { ...account, pilots: enterable(id), ...(limited ? { siteLimited: true } : {}) };
   }
   /** The account as sign-in, status, the selector, password and sign-out see it. With pilots: identity and the pilots it may enter, no permissions. */
   function present(id: string): User {
@@ -132,7 +136,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
     for (const pilot of PILOT_KEYS) {
       const account = inPilot(id, pilot);
       if (!account || !canResource(account, 'sites')) continue;
-      for (const site of store.list('sites')) if (canResource(account, 'sites', 'show', site)) {
+      const allowed = allowedSites(store, store.get('users', id), pilot);
+      for (const site of store.list('sites')) if (canResource(account, 'sites', 'show', site) && (allowed === 'all' || allowed.has(site.id))) {
         const entry = output.get(site.id) || { id: site.id, name: String(site.name), pilots: [] };
         entry.pilots.push(pilot); output.set(site.id, entry);
       }

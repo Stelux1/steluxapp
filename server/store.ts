@@ -4,7 +4,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { MATERIAL_FIELDS } from '../shared/materials.ts';
-import { RELATIONS } from '../shared/welding.ts';
+import { RELATIONS, relationMatches } from '../shared/welding.ts';
+import { SITE_REFUSED } from '../shared/site-scope.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
@@ -46,6 +47,9 @@ export class Store {
   hostedRules = false;
   /** The pilots profile requires a material group on every catalog material it saves; other profiles and system code do not. */
   requireMaterialGroup = false;
+  /** Access per project site (server/site-scope.ts): called with every record read through `get`, so a record of a main project the request may not reach is refused (written records are read back, so writes are covered too). */
+  recordGuard?: (key: string, row: Row) => void;
+  private guardAllows(key: string, row: Row) { try { this.recordGuard?.(key, row); return true; } catch { return false; } }
   constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = database || new DatabaseSync(filename);
@@ -108,7 +112,8 @@ export class Store {
     if (typeof id !== 'string' || !id) throw new AppError(422, `${this.resource(key).singular} is required.`);
     const raw = this.db.prepare(`SELECT * FROM ${table(key)} WHERE id=? ${allowArchived ? '' : 'AND archived=0'}`).get(id) as Record<string, unknown> | undefined;
     if (!raw) throw new AppError(404, `The ${this.resource(key).singular} could not be found.`);
-    return unpack(raw);
+    const row = unpack(raw); this.recordGuard?.(key, row);
+    return row;
   }
   /** Depth of `keepingReferences` calls: while above zero, the "Enabled on this site" rule does not refuse references. */
   private keptReferences = 0;
@@ -147,7 +152,7 @@ export class Store {
         if (field.type === 'date' && text) { try { validDate(text, field.label); } catch (e) { errors[field.name] = (e as Error).message; } }
         if (field.options && text && !field.options.includes(text) && !(field.legacy && Object.hasOwn(field.legacy, text))) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
         if(field.ref&&text&&field.creatable){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);value=(found||this.create(field.ref,{name:text,category:field.refCategory},actor)).id;}}
-        if (field.ref && value) { try { this.get(field.ref, value); } catch { errors[field.name] = `Choose an active ${field.label.toLowerCase()}.`; } }
+        if (field.ref && value) { try { this.get(field.ref, value); } catch (error) { if (error instanceof AppError && error.code === SITE_REFUSED) throw error; errors[field.name] = `Choose an active ${field.label.toLowerCase()}.`; } }
       }
       data[field.name] = value as Value;
     }
@@ -267,14 +272,16 @@ export class Store {
   }
   syncRelations(key:string,id:string,input:Record<string,unknown>,actor:Actor=SYSTEM){
     for(const relation of RELATIONS[key]||[]){
+      if(relation.pilotsOnly&&!this.hostedRules)continue;
       let requested=input[relation.field];if(key==='wps'&&relation.field==='pqrIds'&&requested===undefined&&input.pqrId)requested=[input.pqrId];
       if(key==='wps'&&relation.field==='projectIds'&&this.get(key,id).allProjects&&(input.allProjects!==undefined||input.projectIds!==undefined))requested=[];
       if(requested===undefined)continue;
       if(!Array.isArray(requested)||requested.length>500||requested.some(v=>typeof v!=='string'||!v))throw new AppError(422,`Choose valid ${relation.label.toLowerCase()}.`,{[relation.field]:'Select active linked records.'});
       const desired=[...new Set(requested)] as string[];for(const target of desired)this.get(relation.target,target);
-      const current=this.list(relation.resource).filter(l=>l[relation.ownerKey]===id);
+      // Links the request may not see (access per project site) are kept as they are.
+      const current=this.list(relation.resource).filter(l=>l[relation.ownerKey]===id&&relationMatches(relation,l)&&this.guardAllows(relation.resource,l));
       for(const link of current)if(!desired.includes(String(link[relation.targetKey])))this.archive(relation.resource,link.id,link._version,actor);
-      for(const target of desired)if(!current.some(l=>l[relation.targetKey]===target))this.create(relation.resource,{[relation.ownerKey]:id,[relation.targetKey]:target},actor);
+      for(const target of desired)if(!current.some(l=>l[relation.targetKey]===target))this.create(relation.resource,{...relation.match,[relation.ownerKey]:id,[relation.targetKey]:target},actor);
     }
   }
   next(prefix: string) {

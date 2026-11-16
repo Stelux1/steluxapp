@@ -25,13 +25,15 @@ import { pagePilots } from '../shared/pilots.ts';
 import type { Row } from '../shared/types.ts';
 
 export function MainProjects() {
-  const { allRows, canRecord, selectSite } = useWorkspace();
-  const navigate = useNavigate();
+  const { allRows, canRecord, selectSite, user } = useWorkspace();
+  const navigate = useNavigate(); const pilot = usePilot();
+  // Access per project site: a limited account cannot add a main project (it would be outside its scope).
+  const limited = Boolean(user.siteLimited);
   const [query, setQuery] = useState(''), [editor, setEditor] = useState<Row | 'new' | null>(null);
   const [archived, setArchived] = useState(false), [archiving, setArchiving] = useState<Row | null>(null);
   const sites = (allRows.sites || []).filter(site => site._archived === archived).filter(site => [site.name, site.residence, site.address].some(value => String(value || '').toLowerCase().includes(query.toLowerCase())));
   return <div className="page workflow-page main-projects-page">
-    <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>Open a project to work with its subprojects, isometrics, and weld records.</p></div>{canRecord('sites', 'insert') && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div>
+    <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>Open a project to work with its subprojects, isometrics, and weld records.</p></div>{canRecord('sites', 'insert') && !limited && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div>
     <div className="table-tabs" role="group" aria-label="Main project visibility"><button className={!archived ? "selected" : ""} aria-pressed={!archived} onClick={() => setArchived(false)}>Active projects</button><button className={archived ? "selected" : ""} aria-pressed={archived} onClick={() => setArchived(true)}>Archived projects</button></div>
     <div className="project-picker-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search main projects…"/><span>{sites.length} main projects</span></div>
     <div className="main-project-grid">{sites.map(site => {
@@ -47,10 +49,17 @@ export function MainProjects() {
         {!site._archived && <button className="btn primary" onClick={() => { selectSite(site.id); navigate('/dashboard'); }}>Open project<ArrowRight size={16}/></button>}
       </section>;
     })}</div>
-    {!sites.length && <EmptyState title={query ? 'No matching main projects' : archived ? 'No archived main projects' : 'Create your first main project'} description={query ? 'Try another project name or location.' : 'Add a main project, then create its numbered subprojects and isometrics.'}/>}
+    {!sites.length && (limited && !query && !archived && !(allRows.sites || []).length
+      ? <SiteScopeEmpty pilotTitle={pilot?.pilot.title}/>
+      : <EmptyState title={query ? 'No matching main projects' : archived ? 'No archived main projects' : limited ? 'No other main projects' : 'Create your first main project'} description={query ? 'Try another project name or location.' : limited ? 'Your account works only on the main projects an administrator assigned to it.' : 'Add a main project, then create its numbered subprojects and isometrics.'}/>)}
     {archiving && <ArchiveRecordDialog resourceKey="sites" record={archiving} onClose={() => setArchiving(null)}/>}
     {editor && <RecordEditor resourceKey="sites" record={editor === 'new' ? undefined : editor} onClose={() => setEditor(null)}/>}
   </div>;
+}
+
+/** An account limited to specific project sites with none assigned in this pilot (see shared/site-scope.ts). */
+function SiteScopeEmpty({ pilotTitle }: { pilotTitle?: string }) {
+  return <section className="panel" role="status"><EmptyState title="No main project is assigned to your account" description={`Your account works only on chosen main projects${pilotTitle ? ` in ${pilotTitle}` : ''}, and none is assigned yet. Ask an administrator to add a main project to your access under User accounts → Applications.`}/></section>;
 }
 
 export function ProjectOverview() {

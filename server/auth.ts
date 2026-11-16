@@ -22,7 +22,8 @@ export function passwordMatches(password: unknown, stored: string) {
 /**
  * The profile that applies to an account in a pilot, or null when the account is not enabled there. Without a
  * pilot (or for accounts saved before access per pilot) it is the account's permission profile.
- * `_siteId` is the seam for access per project site (next task); it is not evaluated yet.
+ * Which main projects an account reaches is decided in server/site-scope.ts; `_siteId` stays the seam for a
+ * profile per project site, which is deferred (one profile per pilot), so it is not evaluated.
  */
 export function effectiveProfileId(row: Row, pilot?: 'weld' | 'mto', _siteId?: string): string | null {
   if (!pilot) return String(row.profileId);

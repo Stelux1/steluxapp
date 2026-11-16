@@ -1,6 +1,7 @@
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { CATALOG_SITES, ENABLEMENT_INPUT, enablementKey, enabledOnSite } from '../shared/weld-catalogs.ts';
 import type { Row } from '../shared/types.ts';
+import { SITE_REFUSED } from '../shared/site-scope.ts';
 import type { Actor, Store } from './store.ts';
 
 /**
@@ -30,7 +31,7 @@ export function enablementInput(store: Store, key: string, input: Record<string,
   if (typeof input.enabledOnSite !== 'boolean') return { field: 'enabledOnSite', error: 'Choose whether the record is enabled on this site.' };
   const siteId = input.enabledSiteId;
   if (typeof siteId !== 'string' || !siteId) return { field: 'enabledSiteId', error: 'Choose the main project to enable the record on.' };
-  try { store.get('sites', siteId); } catch { return { field: 'enabledSiteId', error: 'Choose an active main project.' }; }
+  try { store.get('sites', siteId); } catch (error) { if ((error as { code?: unknown }).code === SITE_REFUSED) throw error; return { field: 'enabledSiteId', error: 'Choose an active main project.' }; }
   return { enabled: input.enabledOnSite, siteId };
 }
 

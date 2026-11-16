@@ -30,6 +30,7 @@ import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
+import { assertCopyInScope, assertSiteAccessEdit, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteScopeFor, type SiteScope } from './site-scope.ts';
 
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
@@ -39,6 +40,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const pilots = Boolean(availability?.features.includes('pilots'));
   store.hostedRules = pilots;
   store.requireMaterialGroup = pilots;
+  // Access per project site: records outside a limited request's main projects are refused on every read and write.
+  if (pilots) guardStore(store);
   const presentUser = (id: string) => access.present(id);
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
@@ -94,6 +97,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   /** Requests that never need a pilot: sign-out and password change work from the selector and from any pilot. */
   const ACCOUNT_ROUTES = new Set(['POST /auth/logout', 'POST /auth/password']);
   app.use('/api', (req, _res, next) => {
+    let scope: SiteScope | undefined;
     if (pilots) {
       // The current pilot comes from the X-Stelux-Pilot header; plain download links (GET) may carry ?pilot= instead.
       // It decides which profile applies; a pilot the account may not enter, or a mismatch, is refused.
@@ -106,7 +110,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
           // Selector requests see identity, the pilots and the main projects (bootstrap only); everything else needs a pilot.
           if (route !== 'GET /bootstrap') throw pilotRefused('Open Weld Pilot or MTO Pilot to continue.');
           (req as AuthRequest).user = access.present(id);
-        } else (req as AuthRequest).user = access.pilotAccount(id, header ?? query);
+        } else { (req as AuthRequest).user = access.pilotAccount(id, header ?? query); scope = siteScopeFor(store, store.get('users', id), (req as AuthRequest).user.pilot!); }
       } catch (error) { return next(error); }
     } else (req as AuthRequest).user = access.user((req as AuthRequest).user);
     const projectBulk = availability?.features.includes('project-bulk-edit') && /^\/bulk\/(?:projects|isometrics)$/.test(req.path);
@@ -115,7 +119,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     // Mass edit of the Material database (MTO Pilot catalogs); other hosted bulk routes stay closed.
     const materialBulk = pilots && req.path === '/bulk/materials';
     if (availability && (/^\/import(?:\/|$)/.test(req.path) || /^\/bulk(?:\/|$)/.test(req.path) && !projectBulk && !catalogBulk && !materialBulk || req.path === '/revisions')) return next(new AppError(404, 'This resource could not be found.'));
-    next();
+    // The rest of the request runs inside the account's project site scope (derived once, see server/site-scope.ts).
+    runInSiteScope(scope, next);
   });
   app.param('resource', (_req, _res, next, key) => { try { access.resource(key); next(); } catch (error) { next(error); } });
   app.post('/api/auth/logout', (req, res) => { store.db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashToken(sessionCookie(req, cookieName))); res.clearCookie(cookieName, { path: '/' }); res.json({ ok: true }); });
@@ -161,6 +166,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
+    if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     const row = store.transaction(() => { const row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); return row; });
@@ -172,6 +178,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
+    if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id)));
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
       if (resource.key === 'users' && req.body.password) { store.db.prepare('INSERT INTO credentials VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash').run(row.id, passwordHash(req.body.password)); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.id); }
@@ -194,6 +201,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const copyAcross=pilots&&action.key==='copy-isometrics';
     if(copyAcross)for(const part of ['copyWelds','copyMaterials','copyCalculations'] as const)delete permissionData[part];
     checkActionPermission(req,action.key,permissionData);
+    if(copyAcross)assertCopyInScope(store,store.get('users',(req as unknown as AuthRequest).user.id),req.body);
     if(copyAcross){const parts=access.copyParts((req as unknown as AuthRequest).user.id);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}
     res.status(201).json(access.result(runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')) })));
   });
@@ -222,8 +230,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     // The isometrics list of the hosted profile also exports its flag columns as Yes / No / n/a (n/a: not applicable).
     const flagExport = resource.key === 'isometrics' && availability?.features.includes('pilots') ? isoFlagExport(rows) : undefined;
     if (flagExport) fields.push(...flagExport.columns);
-    const visibleLabel=(target:string,id:unknown)=>{try{const record=store.get(target,id,true);if(!access.visible((req as AuthRequest).user,target,record))return 'Unavailable record';return store.display(target,record);}catch{return 'Archived record';}};
-    const output = rows.map(row => Object.fromEntries(fields.map(f => {const flagValue=flagExport?.value(row,f.name);if(flagValue!==undefined)return [f.label,flagValue];const relation=(RELATIONS[resource.key]||[]).find(r=>r.field===f.name);if(relation)return [f.label,JSON.stringify(store.list(relation.resource).filter(l=>l[relation.ownerKey]===row.id).map(l=>visibleLabel(relation.target,l[relation.targetKey])))];let value = row[f.name]; if (f.ref && value)value=visibleLabel(f.ref,value);if (typeof value === 'boolean') value = value ? 'Yes' : 'No'; return [f.label, value ?? '']; })));
+    const visibleLabel=(target:string,id:unknown)=>{try{const record=store.get(target,id,true);if(!access.visible((req as AuthRequest).user,target,record))return 'Unavailable record';return store.display(target,record);}catch(error){return isSiteRefusal(error)?'Unavailable record':'Archived record';}};
+    const output = rows.map(row => Object.fromEntries(fields.map(f => {const flagValue=flagExport?.value(row,f.name);if(flagValue!==undefined)return [f.label,flagValue];const relation=(RELATIONS[resource.key]||[]).find(r=>r.field===f.name);if(relation)return [f.label,JSON.stringify(store.list(relation.resource).filter(l=>l[relation.ownerKey]===row.id&&inSiteScope(relation.resource,l)).map(l=>visibleLabel(relation.target,l[relation.targetKey])))];let value = row[f.name]; if (f.ref && value)value=visibleLabel(f.ref,value);if (typeof value === 'boolean') value = value ? 'Yes' : 'No'; return [f.label, value ?? '']; })));
     return { resource, output, fields };
   };
   app.get('/api/export/:resource', async (req, res) => {
@@ -268,7 +276,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const records = store.transaction(() => req.body.rows.map((row: Record<string, unknown>) => store.create(resource.key, row, actorOf(req)))); res.status(201).json({ count: records.length });
   });
   app.get('/api/import/:resource/template', (req, res) => { const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'import'); res.attachment(`blitzkrieg-${resource.key}-template.csv`); res.type('text/csv').send(stringify([], { header: true, columns: [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].map(f => f.label) })); });
-  const disk = documents.upload;
+  const disk = keepSiteScope(documents.upload);
   app.post('/api/revisions',disk.single('file'),(req,res)=>{
     try{
       checkActionPermission(req,'revision',req.body);if(req.file)checkResourcePermission(req,'revisions','import');
