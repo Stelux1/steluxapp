@@ -21,6 +21,8 @@
 .expire-item:hover, .expire-item:focus-visible { background: var(--surface-blue); }
 .expire-item strong { display: block; font-size: 13px; font-weight: 600; }
 .expire-item > span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.expire-item .expire-line { display: block; font-size: 13px; color: var(--ink); margin: 0; overflow-wrap: anywhere; }
+.expire-item.expired .expire-line { color: #b3261e; }
 .expire-item small { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 12px; }
 .expire-status { font-weight: 600; }
 .expire-status.expired { color: #b3261e; }

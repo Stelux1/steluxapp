@@ -18,6 +18,7 @@ import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
 import { ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
+import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 import { HOSTED_OPTIONAL, hostedFreeValue } from '../shared/welder-data.ts';
 
@@ -289,6 +290,7 @@ export class Store {
       const row = this.get(key, id, true);
       if (row._version !== version) throw new AppError(409, 'This record changed. Refresh and try again.');
       this.guardTestSystem(key, row);
+      if (this.hostedRules && key === 'roles' && isWelderRole(row) && !row._archived) throw new AppError(422, 'The Welder role cannot be deleted.');
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       this.guardStandardCode(key, row, actor, true);
       if (!row._archived) {

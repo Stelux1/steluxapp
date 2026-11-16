@@ -1,34 +1,26 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { ShieldAlert } from 'lucide-react';
-import { DEFAULT_EXPIRE_WINDOW_DAYS, EXPIRE_WINDOWS, expiringQualifications, todayIso } from '../shared/welder-data.ts';
+import { expiringQualifications, todayIso } from '../shared/welder-data.ts';
 import { useWorkspace } from './context.tsx';
 import { Dropdown } from './components.tsx';
-import { formatDate } from './api.ts';
 import { usePilot } from './pilot.tsx';
-
-const STORAGE_KEY = 'blitzkrieg-expire-window';
-function storedWindow() {
-  try { const value = Number(window.localStorage.getItem(STORAGE_KEY)); return EXPIRE_WINDOWS.includes(value) ? value : DEFAULT_EXPIRE_WINDOW_DAYS; } catch { return DEFAULT_EXPIRE_WINDOW_DAYS; }
-}
+import { resourcePath } from './records.tsx';
 
 /**
- * Weld Pilot top bar: counter of expired and soon-expiring welder qualifications with a dropdown that lists
- * them (welder, qualification, date, status) and opens the welder. The warning window is chosen in the list.
+ * Weld Pilot top bar: counter of the expired and soon-expiring qualifications and documents of welders with a
+ * dropdown that lists them, one line each (`W01 Custom - 141|FM1-FM2|ISO9606-1 · 04.04.2024 Expired`). An entry is listed
+ * when it is expired or inside its own "Notify (days)" and its notifications are on; every line opens the Welders page.
  */
 export function ExpireWarnings() {
-  const { rows, canRecord, openRecord } = useWorkspace(); const pilot = usePilot();
-  const [windowDays, setWindowDays] = useState(storedWindow);
-  const warnings = useMemo(() => expiringQualifications(rows, todayIso(), windowDays), [rows, windowDays]);
+  const { rows, canRecord } = useWorkspace(); const pilot = usePilot();
+  const warnings = useMemo(() => expiringQualifications(rows, todayIso()), [rows]);
   if (pilot?.pilot.key !== 'weld' || !canRecord('welders') || !canRecord('welder_certificates')) return null;
   const expired = warnings.filter(warning => warning.status === 'expired').length;
-  const choose = (days: number) => { setWindowDays(days); try { window.localStorage.setItem(STORAGE_KEY, String(days)); } catch { /* the choice just is not remembered */ } };
   return <Dropdown className="notification-menu expire-menu" label={`Expire warnings: ${warnings.length}`} trigger={<span className="icon-btn expire-trigger"><ShieldAlert size={19}/>{warnings.length > 0 && <span className={`expire-count ${expired ? 'expired' : ''}`}>{warnings.length}</span>}</span>} menuClassName="activity-dropdown expire-dropdown">
-    <h3>Expire warnings</h3>
-    <fieldset className="expire-window"><legend>Warn when a qualification expires within</legend>{EXPIRE_WINDOWS.map(days => <label key={days}><input type="radio" name="expire-window" checked={windowDays === days} onChange={() => choose(days)}/>{days} days</label>)}</fieldset>
-    {warnings.length === 0 && <p className="expire-empty" role="status">No qualifications are expired or expire within {windowDays} days.</p>}
-    {warnings.map(warning => <button key={warning.id} type="button" className="expire-item" onClick={() => openRecord('welders', warning.welderId)}>
-      <strong>{warning.welder}</strong><span>{warning.qualification}</span>
-      <small><span className="tabular">{formatDate(warning.expiresAt)}</span> <span className={`expire-status ${warning.status}`}>{warning.message}</span></small>
+    <h3>Expire warnings{warnings.length > 0 && ` ${warnings.length}`}</h3>
+    {warnings.length === 0 && <p className="expire-empty" role="status">No qualifications or documents are expired or about to expire.</p>}
+    {warnings.map(warning => <button key={warning.id} type="button" className={`expire-item ${warning.status}`} onClick={() => pilot?.openPilot('weld', resourcePath('welders'))}>
+      <span className="expire-line">{warning.text}</span>
     </button>)}
   </Dropdown>;
 }

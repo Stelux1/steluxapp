@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { ArrowUpDown, ChevronLeft, ChevronRight, ChevronDown, Download, FileText, MoreHorizontal, Paperclip, Pencil, Plus, Printer, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowUpDown, Bell, BellOff, Pause, Play, ChevronLeft, ChevronRight, ChevronDown, Download, FileText, MoreHorizontal, Paperclip, Pencil, Plus, Printer, RotateCcw, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
-import { NO_WELDER_FILTER, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS, expireMessage, expiringQualifications, filterWelders, qualificationLabel, todayIso, welderFilterCount, welderTab, welderTabCounts, type WelderQualificationFilter, type WelderTab } from '../shared/welder-data.ts';
+import { DEFAULT_WELDER_PAGE_SIZE, NO_WELDER_FILTER, STANDARD_SYSTEMS, WELDER_PAGE_SIZES, WELD_KINDS, WELD_POSITIONS, activeText, defaultWelderSite, expireMessage, notificationsOn, notifyDays, roleText, welderOnSite, expiringQualifications, filterWelders, qualificationLabel, todayIso, welderFilterCount, welderTab, welderTabCounts, type WelderQualificationFilter, type WelderTab } from '../shared/welder-data.ts';
 import { RELATIONS, relationIds } from './catalog.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import { api, apiUrl, formatDate, formatNumber } from './api.ts';
@@ -15,20 +15,23 @@ type Column = typeof COLUMNS[number][0];
 
 /** Welders (Weld Pilot): Active / Inactive / Deleted tabs, reference columns, qualification filter, certificates and files. */
 export function WeldersPage() {
-  const { rows, canRecord, label, openRecord } = useWorkspace();
-  const [tab, setTab] = useState<WelderTab>('active'); const [q, setQ] = useState(''); const [project, setProject] = useState('');
+  const { rows, allRows, siteId, canRecord, label, openRecord, refresh, notify } = useWorkspace();
+  const [tab, setTab] = useState<WelderTab>('active'); const [q, setQ] = useState(''); const [project, setProject] = useState(() => defaultWelderSite(siteId));
+  // The list opens on the active main project; switching the main project in the top bar moves it along.
+  useEffect(() => { setProject(defaultWelderSite(siteId)); setPage(0); }, [siteId]);
   const [filter, setFilter] = useState<WelderQualificationFilter>(NO_WELDER_FILTER); const [filterOpen, setFilterOpen] = useState(false);
   const [sort, setSort] = useState<{ column: Column; direction: 1 | -1 }>({ column: 'number', direction: 1 });
-  const [page, setPage] = useState(0); const [size, setSize] = useState(20);
+  const [page, setPage] = useState(0); const [size, setSize] = useState(DEFAULT_WELDER_PAGE_SIZE);
   const [editor, setEditor] = useState<Row | 'new' | null>(null); const [filesFor, setFilesFor] = useState<Row | null>(null); const [archiving, setArchiving] = useState<Row | null>(null);
   const sites = RELATIONS.welders?.find(relation => relation.field === 'siteIds'), customs = RELATIONS.welders?.find(relation => relation.field === 'customIds');
   const customNames = (id: string) => (customs ? relationIds(rows, customs, id) : []).map(customId => label('welder_customs_catalog', customId));
-  const projectNames = (welder: Row) => (sites ? relationIds(rows, sites, welder.id) : []).map(siteId => label('sites', siteId));
-  const textOf = (welder: Row, column: Column): string => column === 'company' ? String(welder.companyId ? label('companies', welder.companyId) : '') : column === 'role' ? String(welder.roleId ? label('roles', welder.roleId) : '') : column === 'customs' ? customNames(welder.id).join(', ') : column === 'projects' ? projectNames(welder).join(', ') : String(welder[column] ?? '');
+  const linkedSites = (welder: Row) => sites ? relationIds(allRows, sites, welder.id) : [];
+  const projectNames = (welder: Row) => linkedSites(welder).map(siteId => label('sites', siteId));
+  const textOf = (welder: Row, column: Column): string => column === 'company' ? String(welder.companyId ? label('companies', welder.companyId) : '') : column === 'role' ? roleText((rows.roles || []).find(role => role.id === welder.roleId)) : column === 'customs' ? customNames(welder.id).join(', ') : column === 'projects' ? projectNames(welder).join(', ') : String(welder[column] ?? '');
   const welders = rows.welders || [];
   const scoped = useMemo(() => {
     const query = q.toLowerCase().trim();
-    const onProject = (welder: Row) => !project || welder.globallyDeployable === true || (sites ? relationIds(rows, sites, welder.id) : []).includes(project);
+    const onProject = (welder: Row) => welderOnSite(welder, linkedSites(welder), project);
     return filterWelders(welders.filter(welder => onProject(welder) && (!query || [...COLUMNS.map(([column]) => textOf(welder, column)), String(welder.welderCode || '')].some(value => value.toLowerCase().includes(query)))), rows, filter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, q, project, filter]);
@@ -37,11 +40,16 @@ export function WeldersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scoped, tab, sort, rows]);
   const pages = Math.max(1, Math.ceil(shownRows.length / size)), current = Math.min(page, pages - 1), shown = shownRows.slice(current * size, (current + 1) * size);
-  const expiring = useMemo(() => new Set(expiringQualifications(rows, todayIso(), 30).map(warning => warning.welderId)), [rows]);
+  const expiring = useMemo(() => new Set(expiringQualifications(rows, todayIso()).map(warning => warning.welderId)), [rows]);
   const filterCount = welderFilterCount(filter) + (project ? 1 : 0);
   const creatable = canRecord('welders', 'insert');
   const csvUrl = (format: string) => apiUrl(`/export/welders?format=${format}&archived=true&ids=${shownRows.map(row => row.id).join(',') || '__none__'}`);
   if (!canRecord('welders')) return <EmptyState title="This area is restricted" description="Your profile does not include welders."/>;
+  /** Deactivate / Activate: one request, no confirmation (the welder moves to the other tab). */
+  async function setActive(welder: Row, active: boolean) {
+    try { await api(`/records/welders/${welder.id}`, { method: 'PUT', body: JSON.stringify({ status: active ? 'Active' : 'Inactive', _version: welder._version }) }); await refresh(); notify(active ? 'Welder activated.' : 'Welder deactivated.'); }
+    catch (error) { notify((error as Error).message); }
+  }
   const toggle = (column: Column) => setSort(old => ({ column, direction: old.column === column && old.direction === 1 ? -1 : 1 }));
   const reset = () => { setQ(''); setProject(''); setFilter(NO_WELDER_FILTER); setPage(0); };
   return <div className="page records-page welders-page">
@@ -51,22 +59,23 @@ export function WeldersPage() {
       <div className="table-card-top"><div className="table-tabs" role="tablist" aria-label="Welder status">{TABS.map(item => <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? 'selected' : ''} onClick={() => { setTab(item.key); setPage(0); }}>{item.label}<span aria-label={`${counts[item.key]} welders`}>{counts[item.key]}</span></button>)}</div>
         <div className="table-utilities">{(canRecord('welders', 'export') || canRecord('welders', 'print')) && <Dropdown trigger={<span className="btn subtle small"><Download size={15}/>Export<ChevronDown size={12}/></span>}>{canRecord('welders', 'export') && <><a href={csvUrl('csv')}>Download CSV</a><a href={csvUrl('xlsx')}>Download Excel</a></>}{canRecord('welders', 'print') && <button onClick={() => window.print()}><Printer size={14}/>Print / Save as PDF</button>}</Dropdown>}</div></div>
       <div className="table-toolbar"><SearchInput value={q} onChange={value => { setQ(value); setPage(0); }} placeholder="Search welders…"/>
-        <div className="toolbar-right"><div className="field welder-project-filter"><label htmlFor="welder-project">Main project</label><div className="select-wrap"><select id="welder-project" value={project} onChange={event => { setProject(event.target.value); setPage(0); }}><option value="">All main projects</option>{activeRows(rows, 'sites').map(site => <option key={site.id} value={site.id}>{String(site.name)}</option>)}</select></div></div>
+        <div className="toolbar-right"><div className="field welder-project-filter"><label htmlFor="welder-project">Main project</label><div className="select-wrap"><select id="welder-project" value={project} onChange={event => { setProject(event.target.value); setPage(0); }}><option value="">All</option>{activeRows(allRows, 'sites').map(site => <option key={site.id} value={site.id}>{String(site.name)}</option>)}</select></div></div>
           <button className={`btn small ${filterCount ? 'active-filter' : ''}`} aria-haspopup="dialog" onClick={() => setFilterOpen(true)}><SlidersHorizontal size={15}/>Filter welders{filterCount > 0 && <span className="count-pill">{filterCount}</span>}</button>
+          {project && <span className="muted welder-home-location">Home location: {label('sites', project)}</span>}
           {filterCount > 0 && <button className="text-link" onClick={reset}>Reset filters</button>}</div></div>
       <TableScroll><table className="data-table"><thead><tr>{COLUMNS.map(([column, title]) => <th key={column} aria-sort={sort.column === column ? sort.direction === 1 ? 'ascending' : 'descending' : 'none'}><button onClick={() => toggle(column)}>{title}<ArrowUpDown size={12} className={sort.column === column ? 'sort-active' : ''}/></button></th>)}<th className="actions-cell"><span className="sr-only">Options</span></th></tr></thead>
         <tbody>{shown.map(welder => <tr key={welder.id}>
           {COLUMNS.map(([column]) => <td key={column} className={column === 'description' ? 'description-cell' : ''}>{column === 'number' ? <button className="record-link" onClick={() => openRecord('welders', welder.id)}>{String(welder.number)}</button>
-            : column === 'status' ? <Badge>{welder._archived ? 'Deleted' : String(welder.status || 'Active')}</Badge>
+            : column === 'status' ? <>{activeText(welder)}</>
             : column === 'projects' ? <>{textOf(welder, column) || (welder.globallyDeployable ? <span className="muted">All (globally deployable)</span> : <span className="muted">—</span>)}</>
             : textOf(welder, column) || <span className="muted">—</span>}{column === 'name' && expiring.has(welder.id) && <span className="welder-expiry-flag" title="A qualification is expired or expires soon">Qualification</span>}</td>)}
-          <td className="actions-cell"><Dropdown className="row-menu" label={`Options for welder ${label('welders', welder.id)}`} trigger={<span className="icon-btn"><MoreHorizontal size={18}/></span>}>
+          <td className="actions-cell">{canRecord('welders', 'edit', welder) && !welder._archived && <button className="icon-btn" title={welder.status === 'Inactive' ? 'Activate' : 'Deactivate'} aria-label={`${welder.status === 'Inactive' ? 'Activate' : 'Deactivate'} welder ${label('welders', welder.id)}`} onClick={() => void setActive(welder, welder.status === 'Inactive')}>{welder.status === 'Inactive' ? <Play size={15}/> : <Pause size={15}/>}</button>}<Dropdown className="row-menu" label={`Options for welder ${label('welders', welder.id)}`} trigger={<span className="icon-btn"><MoreHorizontal size={18}/></span>}>
             <button onClick={() => openRecord('welders', welder.id)}><FileText size={14}/>Welder card</button>
             {canRecord('welders', 'edit', welder) && !welder._archived && <button onClick={() => setEditor(welder)}><Pencil size={14}/>Edit welder</button>}
             <button onClick={() => setFilesFor(welder)}><Paperclip size={14}/>Certificates and files</button>
             {canRecord('welders', 'delete', welder) && <button onClick={() => setArchiving(welder)}>{welder._archived ? <><RotateCcw size={14}/>Restore welder</> : <><Trash2 size={14}/>Delete welder</>}</button>}</Dropdown></td></tr>)}</tbody></table></TableScroll>
       {!shownRows.length && <EmptyState title={q || filterCount ? 'No matching welders' : tab === 'deleted' ? 'No deleted welders' : tab === 'inactive' ? 'No inactive welders' : 'No welders yet'} description={q || filterCount ? 'Try another search or reset the filters.' : tab === 'active' ? 'Add your first welder to get started.' : 'Welders appear here when their status or deletion changes.'} action={q || filterCount ? <button className="btn" onClick={reset}>Reset filters</button> : creatable && tab === 'active' ? <button className="btn primary" onClick={() => setEditor('new')}><Plus size={16}/>Add welder</button> : undefined}/>}
-      <div className="table-footer"><span role="status" aria-live="polite">{shownRows.length ? `${current * size + 1}–${Math.min((current + 1) * size, shownRows.length)}` : '0'} of {formatNumber(shownRows.length, 0)} welders</span><div><span>Rows per page</span><select aria-label="Rows per page" value={size} onChange={event => { setSize(Number(event.target.value)); setPage(0); }}>{[20, 50, 100].map(value => <option key={value}>{value}</option>)}</select><button className="icon-btn" disabled={current === 0} aria-label="Previous page" onClick={() => setPage(current - 1)}><ChevronLeft size={17}/></button><span>{current + 1} / {pages}</span><button className="icon-btn" disabled={current >= pages - 1} aria-label="Next page" onClick={() => setPage(current + 1)}><ChevronRight size={17}/></button></div></div>
+      <div className="table-footer"><span role="status" aria-live="polite">{shownRows.length ? `${current * size + 1}–${Math.min((current + 1) * size, shownRows.length)}` : '0'} of {formatNumber(shownRows.length, 0)} welders</span><div><span>Rows per page</span><select aria-label="Rows per page" value={size} onChange={event => { setSize(Number(event.target.value)); setPage(0); }}>{WELDER_PAGE_SIZES.map(value => <option key={value}>{value}</option>)}</select><button className="icon-btn" disabled={current === 0} aria-label="Previous page" onClick={() => setPage(current - 1)}><ChevronLeft size={17}/></button><span>{current + 1} / {pages}</span><button className="icon-btn" disabled={current >= pages - 1} aria-label="Next page" onClick={() => setPage(current + 1)}><ChevronRight size={17}/></button></div></div>
     </div>
     {editor && <RecordEditor resourceKey="welders" record={editor === 'new' ? undefined : editor} onClose={() => setEditor(null)}/>}
     {archiving && <ArchiveRecordDialog resourceKey="welders" record={archiving} onClose={() => setArchiving(null)}/>}
@@ -101,28 +110,35 @@ function AttachFile({ entityType, entityId, label }: { entityType: string; entit
   return <div className="attach-file"><label className="btn small"><Upload size={14}/>{busy ? 'Uploading…' : label}<input type="file" className="sr-only" disabled={busy} accept=".pdf,.png,.jpg,.jpeg,.webp,.csv,.xlsx,.docx,.txt" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(file); }}/></label>{error && <span className="field-error" role="alert">{error}</span>}</div>;
 }
 
-/** Qualifications (welder certificates) and documents of one welder. */
+/** Qualifications (welder certificates) and documents of one welder: both carry an expiry date, "Notify (days)" and a notification switch. */
 export function WelderFilesDialog({ welderId, onClose }: { welderId: string; onClose: () => void }) {
-  const { rows, label, canRecord } = useWorkspace(); const [editor, setEditor] = useState<Row | 'new' | null>(null); const [archiving, setArchiving] = useState<Row | null>(null);
+  const { rows, label, canRecord, refresh, notify } = useWorkspace(); const [editor, setEditor] = useState<{ record?: Row; defaults?: Record<string, unknown> } | null>(null); const [archiving, setArchiving] = useState<Row | null>(null);
   const welder = (rows.welders || []).find(row => row.id === welderId);
   if (!welder) return null;
   const find = (key: string, id: unknown) => (rows[key] || []).find(row => row.id === id);
-  const certificates = activeRows(rows, 'welder_certificates').filter(row => row.welderId === welderId).sort((a, b) => String(a.expiresAt || '9999').localeCompare(String(b.expiresAt || '9999')));
+  const owned = activeRows(rows, 'welder_certificates').filter(row => row.welderId === welderId).sort((a, b) => String(a.expiresAt || '9999').localeCompare(String(b.expiresAt || '9999')));
+  const certificates = owned.filter(row => row.isDocument !== true), documents = owned.filter(row => row.isDocument === true);
   const files = (type: string, id: string) => activeRows(rows, 'attachments').filter(file => file.entityType === type && file.entityId === id);
   const today = todayIso();
   const fileList = (type: string, id: string) => files(type, id).map(file => <a key={file.id} className="attachment-row" href={apiUrl(`/files/${file.id}`)}><FileText size={18}/><div><strong>{String(file.name)}</strong><small>{formatNumber(Number(file.size) / 1024)} KB · {formatDate(file._createdAt)}</small></div><Download size={16}/></a>);
   const writable = canRecord('welder_certificates', 'insert') && !welder._archived;
-  if (editor) return <RecordEditor resourceKey="welder_certificates" record={editor === 'new' ? undefined : editor} defaults={{ welderId }} onClose={() => setEditor(null)}/>;
+  const switchNotifications = async (item: Row) => { try { await api(`/records/welder_certificates/${item.id}`, { method: 'PUT', body: JSON.stringify({ notify: !notificationsOn(item), _version: item._version }) }); await refresh(); notify(notificationsOn(item) ? 'Notifications switched off.' : 'Notifications switched on.'); } catch (error) { notify((error as Error).message); } };
+  if (editor) return <RecordEditor resourceKey="welder_certificates" record={editor.record} defaults={{ welderId, ...editor.defaults }} onClose={() => setEditor(null)}/>;
   if (archiving) return <ArchiveRecordDialog resourceKey="welder_certificates" record={archiving} onClose={() => setArchiving(null)}/>;
+  const table = (list: Row[], kind: 'qualification' | 'document') => <TableScroll><table className="data-table"><thead><tr><th>{kind === 'document' ? 'Document' : 'Certificate'}</th>{kind === 'qualification' && <th>Qualification</th>}<th>Valid until</th><th>Notify (days)</th><th><span className="sr-only">Options</span></th></tr></thead><tbody>{list.map(item => {
+    const expires = String(item.expiresAt || ''); const days = expires ? Math.floor((Date.parse(`${expires}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null; const on = notificationsOn(item);
+    return <tr key={item.id}><td>{String(item.name)}{files('welder_certificates', item.id).length > 0 && <div className="welder-certificate-files">{fileList('welder_certificates', item.id)}</div>}</td>
+      {kind === 'qualification' && <td>{qualificationLabel(item, { custom: find('welder_customs_catalog', item.customId), type: find('certificate_types', item.certificateTypeId), process: find('weld_processes', item.processId) })}</td>}
+      <td>{expires ? <><span className="tabular">{formatDate(expires)}</span> {on && days !== null && days <= notifyDays(item) && <Badge color={days < 0 ? 'red' : 'amber'}>{expireMessage(days)}</Badge>}</> : <span className="muted">No expiry date</span>}</td>
+      <td>{on ? <span className="tabular">{notifyDays(item)} days</span> : <span className="muted">Off</span>}</td>
+      <td className="actions-cell">{canRecord('welder_certificates', 'edit', item) && !welder._archived && <button className="icon-btn" aria-pressed={on} title={on ? 'Switch notifications off' : 'Switch notifications on'} aria-label={`${on ? 'Switch off' : 'Switch on'} notifications for ${item.name}`} onClick={() => void switchNotifications(item)}>{on ? <Bell size={15}/> : <BellOff size={15}/>}</button>}{canRecord('welder_certificates', 'edit', item) && !welder._archived && <button className="icon-btn" aria-label={`Edit ${kind === 'document' ? 'document' : 'certificate'} ${item.name}`} onClick={() => setEditor({ record: item })}><Pencil size={15}/></button>}{canRecord('welder_certificates', 'delete', item) && !welder._archived && <button className="icon-btn" aria-label={`Delete ${kind === 'document' ? 'document' : 'certificate'} ${item.name}`} onClick={() => setArchiving(item)}><Trash2 size={15}/></button>}<AttachFile entityType="welder_certificates" entityId={item.id} label="Attach"/></td></tr>; })}</tbody></table></TableScroll>;
   return <Modal title="Certificates and files" subtitle={`${welder.number} · ${label('welders', welder.id)}`} onClose={onClose} wide>
     <div className="modal-body">
-      <section className="welder-files-section"><div className="panel-heading"><h3>Qualifications<span className="count-pill">{certificates.length}</span></h3>{writable && <button className="btn small primary" onClick={() => setEditor('new')}><Plus size={14}/>Add certificate</button>}</div>
-        {certificates.length === 0 ? <p className="muted">No qualifications recorded for this welder.</p> : <TableScroll><table className="data-table"><thead><tr><th>Certificate</th><th>Qualification</th><th>Valid until</th><th><span className="sr-only">Options</span></th></tr></thead><tbody>{certificates.map(certificate => {
-          const expires = String(certificate.expiresAt || ''); const days = expires ? Math.floor((Date.parse(`${expires}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null;
-          return <tr key={certificate.id}><td>{String(certificate.name)}{files('welder_certificates', certificate.id).length > 0 && <div className="welder-certificate-files">{fileList('welder_certificates', certificate.id)}</div>}</td>
-            <td>{qualificationLabel(certificate, { custom: find('welder_customs_catalog', certificate.customId), type: find('certificate_types', certificate.certificateTypeId), process: find('weld_processes', certificate.processId) })}</td>
-            <td>{expires ? <><span className="tabular">{formatDate(expires)}</span> {days !== null && days <= 30 && <Badge color={days < 0 ? 'red' : 'amber'}>{expireMessage(days)}</Badge>}</> : <span className="muted">No expiry date</span>}</td>
-            <td className="actions-cell">{canRecord('welder_certificates', 'edit', certificate) && !welder._archived && <button className="icon-btn" aria-label={`Edit certificate ${certificate.name}`} onClick={() => setEditor(certificate)}><Pencil size={15}/></button>}{canRecord('welder_certificates', 'delete', certificate) && !welder._archived && <button className="icon-btn" aria-label={`Delete certificate ${certificate.name}`} onClick={() => setArchiving(certificate)}><Trash2 size={15}/></button>}<AttachFile entityType="welder_certificates" entityId={certificate.id} label="Attach"/></td></tr>; })}</tbody></table></TableScroll>}
+      <section className="welder-files-section"><div className="panel-heading"><h3>Qualifications<span className="count-pill">{certificates.length}</span></h3>{writable && <button className="btn small primary" onClick={() => setEditor({})}><Plus size={14}/>Add certificate</button>}</div>
+        {certificates.length === 0 ? <p className="muted">No qualifications recorded for this welder.</p> : table(certificates, 'qualification')}
+      </section>
+      <section className="welder-files-section"><div className="panel-heading"><h3>Documents<span className="count-pill">{documents.length}</span></h3>{writable && <button className="btn small" onClick={() => setEditor({ defaults: { isDocument: true } })}><Plus size={14}/>Add document</button>}</div>
+        {documents.length === 0 ? <p className="muted">No documents with an expiry date. Add a summary list or an ID document and give it an expiry date to be warned in time.</p> : table(documents, 'document')}
       </section>
       <section className="welder-files-section"><div className="panel-heading"><h3>Files<span className="count-pill">{files('welders', welder.id).length}</span></h3><AttachFile entityType="welders" entityId={welder.id} label="Attach a file"/></div>
         {files('welders', welder.id).length ? fileList('welders', welder.id) : <p className="muted">No files attached. Photos, ID copies and test reports can be attached here.</p>}</section>

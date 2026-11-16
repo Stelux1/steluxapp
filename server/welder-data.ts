@@ -4,7 +4,7 @@
  * certificate fields of a main project, and the cascade from a welder to its qualifications.
  */
 import type { Row } from '../shared/types.ts';
-import { CUSTOM_RANGES, FLAG_BULK_FIELDS, FREE_VALUE_MAX, HOSTED_FREE_VALUES, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
+import { CUSTOM_RANGES, FLAG_BULK_FIELDS, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
 import type { Actor, Store } from './store.ts';
 
 export interface Prepared { input: Record<string, unknown>; errors: Record<string, string>; }
@@ -47,6 +47,11 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
   if (key === 'certifications' && !(existing && Object.keys(next).length && Object.keys(next).every(name => FLAG_BULK_FIELDS.includes(name)))) {
     const projectIds = Array.isArray(next.projectIds) ? next.projectIds.map(String) : existing ? store.list('certificate_projects').filter(link => link.certificateId === existing.id).map(link => String(link.projectId)) : [];
     for (const [name, message] of Object.entries(certificateMandatoryErrors(merged, projectIds, store.list('projects'), store.list('sites')))) errors[name] ??= message;
+  }
+  if (key === 'welders') {
+    // Every welder has the Welder role (the form has no Role field); Welder 1 / Welder 2 only exist for a combination.
+    if (!existing && blank(merged.roleId)) { const role = store.list('roles').find(isWelderRole); if (role) next.roleId = role.id; }
+    if (merged.combination !== true && ['combination', 'welder1Id', 'welder2Id'].some(name => name in input)) { next.welder1Id = ''; next.welder2Id = ''; }
   }
   if (key === 'material_types') next.isoAsme = isoAsmeLabel(merged);
   // Selects that also take a typed value (group, P-Number, certificate type): any short text.
