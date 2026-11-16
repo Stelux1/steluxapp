@@ -64,7 +64,7 @@ const stamp = { _version: 1, _archived: false, _updatedAt: '', _createdAt: '2026
 
 test('the four documents are in the registry and the Reports menu with the same access rule as the LISL report', () => {
   for (const form of FORMS) {
-    assert.equal(PDF_DOCUMENTS.find(document => document.key === form.key)?.report, 'lisl', form.key);
+    assert.equal((PDF_DOCUMENTS.find(document => document.key === form.key) as { report?: string } | undefined)?.report, 'lisl', form.key);
     assert.equal(PDF_DOCUMENTS.find(document => document.key === form.key)?.title, form.label);
     assert.deepEqual(PDF_MENU.filter(item => item.key === form.key).map(item => [item.label, item.report]), [[form.label, 'lisl']]);
   }
