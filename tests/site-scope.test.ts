@@ -668,3 +668,29 @@ test('the Request archive of an account that reaches every main project follows 
   assert.equal((await all.as.request(`/history/service_requests/${river.id}`, { pilot: 'mto' })).status, 200);
   assert.equal(f.store.get('service_requests', north.id).note, north.note, 'nothing changed');
 });
+
+// ----- wave 3 integration (E5): catalogs whose new records start switched off ----------------------------------------------
+test('E5: an account limited to North adds a coating (switched off elsewhere by the server), but cannot switch it on for Riverside', async t => {
+  const f = await fixture(t);
+  const writer = f.profile('North catalog writer', { generalPermission: RW, materialsPermission: NONE, weldingPermission: RW });
+  const north = f.account('North catalog writer', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC, mtoEnabled: false }, { weld: [NORTH] });
+  await north.login();
+  const created = await north.as.request('/records/coatings', { method: 'POST', pilot: 'weld', data: { name: 'E5 coating', abbreviation: 'E5', enabledOnSite: true, enabledSiteId: NORTH } });
+  assert.equal(created.status, 201, await created.clone().text());
+  const coating = (await json<{ record: Row }>(created)).record;
+  const links = () => f.store.list('catalog_sites').filter(link => link.resourceKey === 'coatings' && link.recordId === coating.id);
+  const off = links().filter(link => link.enabled === false);
+  assert.deepEqual(off.map(link => link.siteId).sort(), f.store.list('sites', true).map(site => site.id).filter(id => id !== NORTH).sort(), 'switched off on every other main project');
+  assert.ok(!links().some(link => link.siteId === NORTH && link.enabled === false), 'on for North');
+  const audit = f.store.db.prepare("SELECT actor_id FROM audit WHERE entity_type='catalog_sites' AND entity_id=?").get(off[0].id) as { actor_id?: string } | undefined;
+  assert.equal(audit?.actor_id, SYSTEM.id, 'the server writes the rows of the main projects the account does not reach');
+  // Switching it on for Riverside, or adding one there, is still refused and stores nothing.
+  const before = links().map(link => [link.siteId, link.enabled]);
+  const on = await north.as.request(`/records/coatings/${coating.id}`, { method: 'PUT', pilot: 'weld', data: { enabledOnSite: true, enabledSiteId: RIVER, _version: f.store.get('coatings', coating.id)._version } });
+  assert.equal(on.status, 403); assert.deepEqual(links().map(link => [link.siteId, link.enabled]), before);
+  const riverLink = links().find(link => link.siteId === RIVER)!;
+  assert.equal((await north.as.request(`/records/catalog_sites/${riverLink.id}`, { method: 'PUT', pilot: 'weld', data: { enabled: true, _version: riverLink._version } })).status, 403);
+  const count = f.store.list('coatings').length;
+  assert.equal((await north.as.request('/records/coatings', { method: 'POST', pilot: 'weld', data: { name: 'E5 river coating', abbreviation: 'E5R', enabledOnSite: true, enabledSiteId: RIVER } })).status, 403);
+  assert.equal(f.store.list('coatings').length, count, 'nothing created');
+});

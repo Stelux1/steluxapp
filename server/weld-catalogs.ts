@@ -4,6 +4,7 @@ import { DEFECT_NORMS } from '../shared/site-settings.ts';
 import type { Row } from '../shared/types.ts';
 import { SITE_REFUSED } from '../shared/site-scope.ts';
 import { SYSTEM, type Actor, type Store } from './store.ts';
+import { withEveryMainProject } from './site-scope.ts';
 
 /**
  * Server side of "Enabled on this site" (shared/weld-catalogs.ts): writing the availability of a catalog record
@@ -67,12 +68,15 @@ export function setAvailability(store: Store, key: string, id: string, siteId: s
  * that a user creates in the hosted profile (NEW_RECORDS_OFF) starts switched off on every main project; the instruction
  * of the Add form (the box ticked for the current main project) switches it on for that one. Records written by the
  * system (sample data, the demo copy) keep "no link = enabled everywhere".
+ * The "off" rows of the other main projects are the server's own (system actor, every main project): an account limited to
+ * some main projects may add the record, and still switches it on or off only on the main projects it reaches — the
+ * instruction's main project must be one it can read (`enablementInput`), and later changes go through the guarded routes.
  */
 export function applyEnablement(store: Store, key: string, id: string, input: Record<string, unknown>, actor: Actor, created = false) {
   const instruction = enablementInput(store, key, input);
   const chosen = instruction && !('error' in instruction) ? instruction : null;
   if (created && store.hostedRules && actor.id !== SYSTEM.id && NEW_RECORDS_OFF.includes(key)) {
-    for (const site of store.list('sites', true)) setAvailability(store, key, id, site.id, Boolean(chosen && chosen.enabled && chosen.siteId === site.id), actor);
+    withEveryMainProject(store, () => { for (const site of store.list('sites', true)) setAvailability(store, key, id, site.id, Boolean(chosen && chosen.enabled && chosen.siteId === site.id), SYSTEM); });
     return;
   }
   if (chosen) setAvailability(store, key, id, chosen.siteId, chosen.enabled, actor);

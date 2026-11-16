@@ -18,7 +18,7 @@ import { lineRequirementIds, requirementOrderLines } from '../shared/materials.t
 import { AppError, qty, type Actor, type Store } from './store.ts';
 import { actorOf, type AuthRequest } from './auth.ts';
 import type { releaseAccess } from './release-access.ts';
-import { SiteScope, currentSiteScope, keepSiteScope, siteRefused, withSiteScope } from './site-scope.ts';
+import { SiteScope, currentSiteScope, keepSiteScope, siteRefused, withEveryMainProject, withSiteScope } from './site-scope.ts';
 
 type Input = Record<string, unknown>;
 const str = (value: unknown) => typeof value === 'string' ? value.trim() : '';
@@ -191,10 +191,7 @@ export function deleteMaterial(store: Store, id: string, version: unknown, actor
  * themselves derive (a new material switched off on the other main projects, the other main projects keeping their state when
  * one is ticked or unticked), never for a change the user asked for on a main project outside the account's access.
  */
-function unscoped<T>(store: Store, fn: () => T): T {
-  const scope = currentSiteScope();
-  return scope && scope.allowed !== 'all' ? withSiteScope(new SiteScope(store, scope.pilot, 'all', scope.off), fn) : fn();
-}
+const unscoped = <T>(store: Store, fn: () => T): T => withEveryMainProject(store, fn);
 const limitedScope = () => { const scope = currentSiteScope(); return scope && scope.allowed !== 'all' ? { scope, allowed: scope.allowed } : undefined; };
 const referenced = new WeakMap<SiteScope, Set<string>>();
 /** Materials the records of a limited request point at (its isometric lines, orders, stock, certificates, welds …): they keep resolving. */

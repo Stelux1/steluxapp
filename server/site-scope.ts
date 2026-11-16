@@ -201,6 +201,15 @@ export function activeSite(store: Store, req: Request, account: Row, pilot: Scop
 /** The scope of one of an account's main projects (the main-project choice, notifications of another account). */
 export const singleSiteScope = (store: Store, pilot: ScopePilot, siteId: string) => new SiteScope(store, pilot, new Set([siteId]), offProjects(store, pilot));
 /** Continue the request inside its scope (a plain call without one). */
+/**
+ * Run `fn` with the record guard of the request widened to every main project. Only for rows the server derives itself
+ * (a new catalog record switched off on the other main projects, the other main projects of a material keeping their
+ * state), never for a change the user asked for on a main project outside the account's access.
+ */
+export function withEveryMainProject<T>(store: Store, fn: () => T): T {
+  const scope = currentSiteScope();
+  return scope && scope.allowed !== 'all' ? withSiteScope(new SiteScope(store, scope.pilot, 'all', scope.off), fn) : fn();
+}
 export const runInSiteScope = (scope: SiteScope | undefined, next: () => void) => scope ? context.run(scope, next) : next();
 /** Run `fn` inside a scope of its own and return its result. */
 export const withSiteScope = <T>(scope: SiteScope, fn: () => T): T => context.run(scope, fn);
