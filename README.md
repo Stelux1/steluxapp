@@ -103,7 +103,7 @@ docker run -d --name blitzkrieg-welding --env-file .env.cloud -p 3000:3000 blitz
 
 The hosted release uses `welding-workspace` for the same connected LISL workflow as the local Access prototype, with the existing hosted database and accounts. It contains no schema diagram and never imports the local example data automatically. The isolated local `access-prototype` and restricted `welding-demo` profiles remain available.
 
-Before deploying this release to an existing, already prepared hosted database, set its existing private connection variables and exact `STELUX_PUBLIC_URL`, then run `STELUX_CLOUD_DATABASE=workspace npm run db:prepare:welding`. This creates a private PostgreSQL backup, adds four nullable generated material/certificate references, and checks that all records, credentials, audit history, counters, and documents are unchanged. The command is repeatable. Cloud request handling refuses an unprepared traceability schema and never runs migrations. Fresh evaluation preparation includes these references through `db:prepare:cloud`.
+Before deploying a release to an existing hosted database, follow [Updating the hosted database](#updating-the-hosted-database): back up, dry run, prepare, then deploy. `STELUX_CLOUD_DATABASE=workspace npm run db:prepare:welding` (alias `db:prepare:hosted`) creates a private PostgreSQL backup and brings the schema to this release, checking that all records, credentials, audit history, counters, and documents are unchanged. The command is repeatable. Cloud request handling refuses an unprepared schema and never runs migrations. Fresh evaluation preparation includes the complete schema through `db:prepare:cloud`.
 
 The default `npm run build` now produces a **Next.js SSR application**, with output `.next`, rather than a static Vite directory. It builds the existing browser interface and exposes the authenticated Express domain API through a Next.js Node API route. No separate Express server, Express compute pilot or `shipvela.compute.json` is needed. Next.js is pinned in `package-lock.json`. The Vite/local and Docker workflows remain available through `build:local`, `build:demo` and `build:cloud`.
 
@@ -127,6 +127,41 @@ npm start
 ```
 
 Verify `/api/health`, sign-in, a weld edit, authenticated document upload/download, and persistence after replacing the runtime. `scripts/verify-shipvela.mjs` performs this check against an explicitly selected disposable local PostgreSQL database. Hosting request/response size limits still apply to attachments; the generic Docker API supports up to 20 MB.
+
+### Updating the hosted database
+
+The hosted server never changes its schema; it refuses to start until the database matches the release. The preparation step derives everything from `shared/resources.ts` (no hand-maintained list) and, in **one transaction** under the schema advisory lock, creates for every resource exactly what local initialization creates: missing record tables, generated reference columns with their deferrable foreign keys (also to tables created in the same run), unique indexes, row-level security and `REVOKE ALL … FROM PUBLIC`. The fixed tables (`credentials`, `sessions`, `audit`, `metadata`, `counters`, upload tables) are never changed. It never seeds, rewrites, nulls or drops anything:
+
+- every pre-existing table is digested row by row before and after; any difference rolls everything back;
+- a new reference whose existing JSON values point at missing records fails, naming table, field, record ids and values; a new unique rule that active records already violate fails, naming table, fields and the record ids. Correct those records in the application, then run the step again;
+- an existing column or index that differs from the release (for example a unique rule inserted before an existing one instead of appended) is reported and left alone.
+
+Run every command from a checkout of the release, with the hosted database's private variables set in the shell (`STELUX_CLOUD_DATABASE=workspace`, `DATABASE_URL`, `STELUX_DATABASE_PASSWORD`, optional `STELUX_DATABASE_CA`, `STELUX_PUBLIC_URL`):
+
+```sh
+# 0. Rehearse first on a disposable local copy (below), with the latest backup.
+# 1. Dry run: performs the whole step inside the transaction and rolls it back. Lists the tables,
+#    reference columns, foreign keys, indexes and row-level security it would add and the row
+#    counts of the existing tables. Writes no backup and changes nothing.
+STELUX_CLOUD_DATABASE=workspace npm run db:prepare:welding -- --dry-run   # or STELUX_PREPARE_DRY_RUN=1
+# 2. Prepare: writes backups/before-welding-live-*/stelux-postgres.sql first, then applies the step.
+#    A second run reports "Nothing to do" and writes nothing.
+STELUX_CLOUD_DATABASE=workspace npm run db:prepare:welding
+# 3. Read-only check (the same catalog check the server performs at startup).
+STELUX_CLOUD_DATABASE=workspace npm run db:verify:hosted
+# 4. Deploy the release.
+```
+
+If any step fails, nothing was changed; the message names what to correct. The backup restores only into an empty schema created by the app (`Store`, then `initializeDocumentStorage`); tables the source database did not have yet are listed in its header and skipped.
+
+**Rehearsal.** `npm run rehearse:hosted` runs the whole update against a disposable **local** PostgreSQL database whose name starts with `stelux_rehearsal` (it resets that database's `stelux` schema and refuses any other host or name). It exports `--old-ref` (default `origin/main`) with `git archive` into `.rehearsal/` (git-ignored, removed afterwards unless `--keep`), builds the old schema with that code's own scripts (sample data → `db:migrate` → `db:prepare:cloud` → `db:prepare:welding`, or, with `--backup`, an empty old schema loaded with a `backupPostgres` SQL file), creates a rehearsal administrator with a generated password, then runs this release's dry run, preparation, idempotency check and startup verification, boots the hosted server (`--compiled` uses `dist-server/`), and checks health, auth status, sign-in, bootstrap in both pilots and creating and reading a record in a newly created table. `--simulate-missing a,b` drops those empty tables first to imitate an older hosted database. It prints PASS/FAIL per step and exits non-zero on failure; it never prints passwords or backup rows. Build the client first (`STELUX_RELEASE_PROFILE=welding-workspace npx vite build`, and `npm run build:server` for `--compiled`).
+
+```sh
+STELUX_REHEARSAL_DATABASE_URL=postgresql://postgres@127.0.0.1:55432/stelux_rehearsal \
+STELUX_REHEARSAL_DATABASE_PASSWORD=… npm run rehearse:hosted -- --backup backups/<dir>/stelux-postgres.sql
+```
+
+The rehearsal ignores the shell's `DATABASE_URL` and does not load `.env`; its children receive only the rehearsal database. With `--backup`, the rehearsal database then holds a copy of that data: drop it afterwards.
 
 ## Current implementation
 
@@ -186,7 +221,7 @@ The bundled public CA in `server/certs/supabase-ca.crt` comes from [Supabase's c
 
 `GET /api/health` checks the active database and reports `database: "postgres"` or `"sqlite"`. If a configured PostgreSQL connection fails, startup fails rather than switching to an unrelated SQLite workspace.
 
-The optional integration test requires a disposable local PostgreSQL database named `stelux_test`; it resets that database's `stelux` schema:
+The optional integration tests require a disposable local PostgreSQL database named `stelux_test`; they reset that database's `stelux` schema. `tests/hosted-schema.test.ts` uses (and creates) `stelux_hosted_test` on the same server, or `STELUX_TEST_HOSTED_DATABASE_URL`; `tests/cloud.test.ts` uses `STELUX_TEST_CLOUD_DATABASE_URL` (`stelux_cloud_test`):
 
 ```sh
 STELUX_TEST_DATABASE_URL=postgresql://postgres:password@127.0.0.1:55432/stelux_test node --import tsx --test tests/postgres.test.ts
