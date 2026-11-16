@@ -35,7 +35,7 @@ export interface Resource {
   description: string; fields: Field[]; columns: string[]; display: string;
   unique?: string[][]; readonly?: boolean; source?: string; actions?: string[]; createAction?: string;
   /** Headings of the Add / Edit / Delete dialogs and the add button where the hosted profile words them its own way. */
-  wording?: { add: string; edit: string; remove: string };
+  wording?: { add: string; edit: string; remove: string; /** Label of the Edit dialog's cancel button where the reference does not say Cancel (Welders: Close). */ cancelEdit?: string };
   /** List headers that differ from the field labels (the form keeps the field label). */
   columnLabels?: Record<string, string>;
 }

@@ -64,9 +64,9 @@ const ALWAYS_SCOPED = new Set(['sites', 'warehouses', 'stock', 'movements', 'rec
 /** Records whose catalog material carries quantities (see the comment above). */
 const QUANTITY_RESOURCES = ['iso_materials', 'stock', 'order_lines', 'receipts', 'movements', 'picklists', 'reservations'];
 /** Matching key of global resources without a unique rule. */
-const NATURAL_KEYS: Record<string, string[]> = { certifications: ['name', 'chargeNo'], welder_certificates: ['welderId', 'name'], qa_engineers: ['name'] };
+const NATURAL_KEYS: Record<string, string[]> = { certifications: ['name', 'chargeNo'], welder_certificates: ['welderId', 'name'], welder_card_lines: ['welderId', 'wireId', 'processId', 'diameterId', 'thicknessId', 'bwId', 'posId', 'asmeId'], qa_engineers: ['name'] };
 /** Children of a catalog record: skipped when their owner is an existing record and the target lacks them. */
-const OWNER_FIELD: Record<string, string> = { welder_certificates: 'welderId' };
+const OWNER_FIELD: Record<string, string> = { welder_certificates: 'welderId', welder_card_lines: 'welderId' };
 for (const [owner, relations] of Object.entries(RELATIONS)) if (owner !== 'users') for (const relation of relations) OWNER_FIELD[relation.resource] = relation.ownerKey;
 /** Text fields that hold a record id (not declared as references). */
 const HIDDEN_REFS: Record<string, { field: string; target: (row: Row) => string }[]> = {
@@ -288,7 +288,7 @@ function plan(target: Store, source: Store, dryRun: boolean): DemoCopyResult {
 
   // Sites first, then the link records (an isometric's ITP must already be linked to its project), then the rest
   // in registry order; references are always copied before the record that uses them.
-  const links = new Set(Object.keys(OWNER_FIELD).filter(key => key !== 'welder_certificates'));
+  const links = new Set(Object.keys(OWNER_FIELD).filter(key => key !== 'welder_certificates' && key !== 'welder_card_lines'));
   const sequence = ['sites', ...RESOURCES.map(r => r.key).filter(key => links.has(key)), ...RESOURCES.map(r => r.key).filter(key => key !== 'sites' && !links.has(key) && !LAST.includes(key)), ...LAST];
   for (const key of sequence) for (const id of order.get(key) || []) {
     if (SKIPPED.has(key)) { count(key, 'skipped'); result.rows.push({ key, sourceId: id, targetId: null, action: 'skipped' }); continue; }

@@ -24,6 +24,32 @@ export const CERT_TYPES = ['2.1', '2.2', '3.1', '3.2'];
 export const WELD_POSITIONS = ['PA', 'PB', 'PC', 'PD', 'PE', 'PF', 'PG', 'H-L045', 'J-L045', '1G', '2G', '3G', '4G', '5G', '6G', '1F', '2F', '3F', '4F'];
 export const WELD_KINDS = ['BW', 'FW'];
 export const STANDARD_SYSTEMS = ['ASME', 'EN'];
+/**
+ * The seven lists of "Weldercard settings" in the reference's order (type=wire, process, dia, pos, bw, dikte, asme): `key` is the
+ * list a value belongs to, `field` the card line field that holds it and `filter` its name in the "Filter" dialog.
+ */
+export const WELDERCARD_LISTS = [
+  { key: 'wire', label: 'Welding wire', field: 'wireId', filter: 'wire' },
+  { key: 'process', label: 'Weld process', field: 'processId', filter: 'process' },
+  { key: 'dia', label: 'Diameter', field: 'diameterId', filter: 'diameter' },
+  { key: 'pos', label: 'Pos', field: 'posId', filter: 'pos' },
+  { key: 'bw', label: 'BW/FW', field: 'bwId', filter: 'bw' },
+  { key: 'dikte', label: 'Thickness', field: 'thicknessId', filter: 'thickness' },
+  { key: 'asme', label: 'ASME/EN', field: 'asmeId', filter: 'asme' },
+] as const;
+export type WelderCardListKey = typeof WELDERCARD_LISTS[number]['key'];
+export const WELDERCARD_LIST_KEYS: string[] = WELDERCARD_LISTS.map(list => list.key);
+/** The page of the seven lists (gear button on Welders). */
+export const WELDERCARD_PATH = '/welding/weldercard-settings';
+/** The welder card's add row and table: list, add-row label and column header, in the reference's order (it differs from the settings order). */
+export const WELDERCARD_LINE_COLUMNS: { list: WelderCardListKey; label: string; header: string }[] = [
+  { list: 'wire', label: 'Welding wire', header: 'Welding wire' }, { list: 'process', label: 'Weld process', header: 'Weld process' }, { list: 'dia', label: 'Diameter', header: 'Diameter' },
+  { list: 'dikte', label: 'Thickness', header: 'Thickness' }, { list: 'bw', label: 'BW/FW', header: 'BW/FW' }, { list: 'pos', label: 'Pos', header: 'POS' }, { list: 'asme', label: 'ASME/EN', header: 'ASME/EN' },
+];
+/** The selects of "Filter" in the reference's order (the weld card list names). */
+export const WELDER_FILTER_ORDER: WelderCardListKey[] = ['wire', 'process', 'dia', 'dikte', 'pos', 'bw', 'asme'];
+export const SUMMARY_LIST = 'Summary list';
+export const CUSTOM_PREFIX = 'Custom - ', CERTIFICATE_PREFIX = 'Certificate - ';
 /** Notify days of a qualification or document that has none of its own. */
 export const DEFAULT_NOTIFY_DAYS = 30;
 
@@ -35,7 +61,7 @@ export const WELDER_DATA_RELATIONS: Record<string, Relation[]> = {
   certifications: [{ field: 'projectIds', label: 'Linked projects', resource: 'certificate_projects', ownerKey: 'certificateId', target: 'projects', targetKey: 'projectId', showIf: ['allProjects', false] }],
   welding_wires: [{ field: 'projectIds', label: 'Linked projects', resource: 'wire_projects', ownerKey: 'wireId', target: 'projects', targetKey: 'projectId', showIf: ['allProjects', false] }],
 };
-export const WELDER_DATA_SCOPES: Record<string, string[]> = { certificate_projects: ['18'], wire_projects: ['99'] };
+export const WELDER_DATA_SCOPES: Record<string, string[]> = { certificate_projects: ['18'], wire_projects: ['99'], weldercard_options: ['68'], welder_card_lines: ['68'] };
 
 const names = (value: string) => value.split(' ');
 /** Menu pages delivered to the hosted profile: resource -> delivered fields. */
@@ -53,7 +79,9 @@ export const WELDER_DATA_PAGES: Record<string, string[]> = {
 };
 /** Resources delivered without a menu page of their own. */
 export const WELDER_DATA_RECORDS: Record<string, string[]> = {
-  welder_certificates: names('name welderId certificateTypeId processId standard issuedAt expiresAt description customId wireId position weldKind system diameterFrom diameterTo thicknessFrom thicknessTo notifyDays notify isDocument'),
+  welder_certificates: names('name welderId certificateTypeId processId standard issuedAt expiresAt description customId wireId position weldKind system diameterFrom diameterTo thicknessFrom thicknessTo notifyDays notify isDocument wqNo wpsIds note'),
+  weldercard_options: names('list name description'),
+  welder_card_lines: names('welderId wireId processId diameterId thicknessId bwId posId asmeId wqNos ownerArchived'),
   welder_sites: names('welderId siteId ownerArchived'),
   welder_customs: names('welderId customId ownerArchived'),
   certificate_projects: names('certificateId projectId ownerArchived'),
@@ -126,9 +154,11 @@ const FLAT_FORMS = ['welders'];
  * Form fields (or relation fields) of the hosted profile in the reference order of a resource; fields it does not
  * name keep their order after those it does (the sort is stable).
  */
-export function hostedFieldOrder<T extends { name: string; section?: string }>(resource: string, fields: T[]): T[] {
+export function hostedFieldOrder<T extends { name: string; section?: string }>(resource: string, fields: T[], record?: Record<string, unknown>): T[] {
   const order = HOSTED_FIELD_ORDER[resource];
   if (!order) return fields;
+  // Edit personnel info (capture weld__welder__welders__edit.txt) has no Combination box; Welder 1 / Welder 2 stay for a welder that is one.
+  if (resource === 'welders' && record) fields = fields.filter(field => field.name !== 'combination' && (record.combination === true || !['welder1Id', 'welder2Id'].includes(field.name)));
   const rank = (name: string) => { const index = order.indexOf(name); return index < 0 ? order.length : index; };
   const sorted = [...fields].sort((a, b) => rank(a.name) - rank(b.name));
   return FLAT_FORMS.includes(resource) ? sorted.map(field => { const { section: _section, ...flat } = field; return flat as T; }) : sorted;
@@ -186,6 +216,8 @@ export const HOSTED_FIELD_OVERRIDES: Record<string, Record<string, Partial<Field
   // Add welder: no Role (every welder gets the Welder role), Welder 1 / Welder 2 only while Combination is ticked.
   welders: {
     roleId: { hidden: true }, companyId: { blank: '---- Without company ----' },
+    // The reference lists Inactive before Active in Add and Edit (Active is the default).
+    status: { options: ['Inactive', 'Active'], default: 'Active' },
     welder1Id: { showIf: ['combination', true], blank: '--------', refDisplay: 'numberName' }, welder2Id: { showIf: ['combination', true], blank: '--------', refDisplay: 'numberName' },
   },
   // Add welder custom: the four range inputs open with 0.00 (0.00 to 0.00 means "no range", see `pick` in `effectiveRange`).
@@ -348,45 +380,83 @@ export function expiringQualifications(rows: { welders?: Row[]; welder_certifica
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Filter welders by qualification
+// Weldercard settings, welder card lines and Filter welders
 // ---------------------------------------------------------------------------------------------------------
-export interface WelderQualificationFilter { wireId: string; processId: string; diameterId: string; thickness: string; position: string; weldKind: string; system: string; }
-export const NO_WELDER_FILTER: WelderQualificationFilter = { wireId: '', processId: '', diameterId: '', thickness: '', position: '', weldKind: '', system: '' };
-export const welderFilterCount = (filter: WelderQualificationFilter) => Object.values(filter).filter(value => text(value)).length;
-
-/** Effective range of a qualification: its own bounds, else those of its custom; null when neither states one (0.00 to 0.00, the form's default, states none). */
-function effectiveRange(certificate: Row, custom: Row | undefined, own: [string, string], inherited: [string, string]): [number | null, number | null] | null {
-  const pick = (row: Row | undefined, [from, to]: [string, string]): [number | null, number | null] | null => { const pair: [number | null, number | null] = [number(row?.[from]), number(row?.[to])]; return pair[0] === null && pair[1] === null || pair[0] === 0 && pair[1] === 0 ? null : pair; };
-  return pick(certificate, own) ?? pick(custom, inherited);
+const byCreated = (a: Row, b: Row) => String(a._createdAt).localeCompare(String(b._createdAt)) || a.id.localeCompare(b.id);
+/** Values of one weldercard list, in creation order (the order of the selects of the card and of Filter). Archived values are left out. */
+export const cardOptions = (options: Row[] | undefined, list: string): Row[] => (options || []).filter(row => !row._archived && row.list === list).sort(byCreated);
+/** The "Weldercard settings" table: by description, then name (the reference's default order). */
+export const cardOptionsListed = (options: Row[] | undefined, list: string): Row[] => cardOptions(options, list).sort((a, b) => text(a.description).localeCompare(text(b.description), 'en', { numeric: true }) || text(a.name).localeCompare(text(b.name), 'en', { numeric: true }));
+/** What is stored in `welder_card_lines.wqNos` and read back: one WQ number per line, no empty or repeated ones. */
+export const splitWqNos = (value: unknown): string[] => [...new Set(text(value).split('\n').map(part => part.trim()).filter(Boolean))];
+export const joinWqNos = (values: unknown[]): string => splitWqNos(values.map(text).join('\n')).join('\n');
+/** The cells of a card line in the order of the card's columns: the seven names (an archived value still shows), then the WQ numbers. */
+export function cardLineCells(line: Row, options: Row[] | undefined): string[] {
+  const named = (field: string) => text((options || []).find(row => row.id === line[field])?.name);
+  return [...WELDERCARD_LINE_COLUMNS.map(column => named(WELDERCARD_LISTS.find(list => list.key === column.list)!.field)), splitWqNos(line.wqNos).join(', ')];
 }
-const inRange = (range: [number | null, number | null] | null, value: number) => range !== null && (range[0] === null || value >= range[0]) && (range[1] === null || value <= range[1]);
+/** Card lines of one welder, oldest first. */
+export const welderCardLines = (lines: Row[] | undefined, welderId: string): Row[] => (lines || []).filter(line => !line._archived && line.welderId === welderId).sort(byCreated);
+/** What the card's add row needs before it can save: every list has a value (the selects have no empty entry). */
+export const cardLineMissing = (input: Record<string, unknown>): string[] => WELDERCARD_LISTS.filter(list => !text(input[list.field])).map(list => list.label);
 
+/** The selects of "Filter" (names of weldercard values); an empty one does not filter. */
+export type WelderCardFilter = Record<'wire' | 'process' | 'diameter' | 'thickness' | 'pos' | 'bw' | 'asme', string>;
+export const NO_WELDER_FILTER: WelderCardFilter = { wire: '', process: '', diameter: '', thickness: '', pos: '', bw: '', asme: '' };
+export const welderFilterCount = (filter: WelderCardFilter) => Object.values(filter).filter(value => text(value)).length;
 /**
- * Welders with at least one valid (not archived, not expired) qualification that satisfies every chosen criterion.
- * Diameter and thickness match the qualification's range (its own, else its custom's); a qualification that
- * states no range does not match a diameter or thickness criterion.
+ * Welders with a card line that carries every chosen value (exact name of the weldercard value, all chosen values on one
+ * line). Archived lines do not count.
  */
-export function filterWelders(welders: Row[], rows: { welder_certificates?: Row[]; welder_customs_catalog?: Row[]; diameters?: Row[] }, filter: WelderQualificationFilter, today = todayIso()): Row[] {
+export function filterWelders(welders: Row[], rows: { welder_card_lines?: Row[]; weldercard_options?: Row[] }, filter: WelderCardFilter): Row[] {
   if (!welderFilterCount(filter)) return welders;
-  const diameter = filter.diameterId ? number((rows.diameters || []).find(row => row.id === filter.diameterId)?.size) : null;
-  if (filter.diameterId && diameter === null) return [];
-  const thickness = number(filter.thickness);
-  if (text(filter.thickness) && thickness === null) return [];
-  const qualified = new Set<string>();
-  for (const certificate of rows.welder_certificates || []) {
-    if (certificate._archived) continue;
-    const expiresAt = text(certificate.expiresAt); if (expiresAt && expiresAt < today) continue;
-    const custom = (rows.welder_customs_catalog || []).find(row => row.id === certificate.customId);
-    if (filter.wireId && certificate.wireId !== filter.wireId) continue;
-    if (filter.processId && certificate.processId !== filter.processId) continue;
-    if (filter.position && certificate.position !== filter.position) continue;
-    if (filter.weldKind && certificate.weldKind !== filter.weldKind) continue;
-    if (filter.system && certificate.system !== filter.system) continue;
-    if (diameter !== null && !inRange(effectiveRange(certificate, custom, ['diameterFrom', 'diameterTo'], ['diameterFrom', 'diameterTo']), diameter)) continue;
-    if (thickness !== null && !inRange(effectiveRange(certificate, custom, ['thicknessFrom', 'thicknessTo'], ['wtFrom', 'wtTo']), thickness)) continue;
-    qualified.add(String(certificate.welderId));
+  const options = new Map((rows.weldercard_options || []).map(row => [row.id, text(row.name)]));
+  const chosen = (name: string) => text(filter[name as keyof WelderCardFilter]);
+  const matches = (line: Row) => WELDERCARD_LISTS.every(list => !chosen(list.filter) || options.get(String(line[list.field])) === chosen(list.filter));
+  const carded = new Set((rows.welder_card_lines || []).filter(line => !line._archived && matches(line)).map(line => String(line.welderId)));
+  return welders.filter(welder => carded.has(welder.id));
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Certificates and files (documents of a welder), Personnel data, Customs column
+// ---------------------------------------------------------------------------------------------------------
+/** Options of the Name select, in the reference's order: 'Summary list', 'Custom - <name>' of every custom, 'Certificate - <name>' of every certificate (each in creation order). */
+export const documentNameOptions = (customs: Row[] | undefined, certificates: Row[] | undefined): string[] => [
+  SUMMARY_LIST,
+  ...(customs || []).filter(row => !row._archived).sort(byCreated).map(row => `${CUSTOM_PREFIX}${text(row.name)}`),
+  ...(certificates || []).filter(row => !row._archived).sort(byCreated).map(row => `${CERTIFICATE_PREFIX}${text(row.name)}`),
+];
+/** WPS ids of a document are stored as one text, comma between ids. */
+export const splitIds = (value: unknown): string[] => [...new Set((Array.isArray(value) ? value.map(text) : text(value).split(',')).map(part => part.trim()).filter(Boolean))];
+export const joinIds = (values: unknown[]): string => splitIds(values).join(',');
+/** The note of a document: its own, else the description older records carry. */
+export const documentNote = (document: Row) => text(document.note) || text(document.description);
+/** The WPS numbers of a document, sorted as text (the caller words "none": 'Nothing selected' in the dialog, 'Not selected' in Personnel data). */
+export const documentWps = (document: Row, wps: Row[] | undefined): string[] => splitIds(document.wpsIds).map(id => text((wps || []).find(row => row.id === id)?.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'en'));
+/** WPS offered by the document form: every active WPS, sorted by number as text. */
+export const wpsChoices = (wps: Row[] | undefined): Row[] => (wps || []).filter(row => !row._archived).sort((a, b) => text(a.name).localeCompare(text(b.name), 'en'));
+/** Documents of a welder (qualifications and others, one list), by expire date ascending; those without a date last. */
+export const welderDocuments = (certificates: Row[] | undefined, welderId: string): Row[] => (certificates || []).filter(row => !row._archived && row.welderId === welderId)
+  .sort((a, b) => (text(a.expiresAt) || '9999-12-31').localeCompare(text(b.expiresAt) || '9999-12-31') || byCreated(a, b));
+/** The Summary list document of a welder (the first by expire date), the one "Personnel data" links under the photo. */
+export const summaryListOf = (documents: Row[]): Row | undefined => documents.find(row => text(row.name) === SUMMARY_LIST);
+/** The WQ number of a document: its own, else (a qualification saved before documents had one) its certificate number. */
+export const wqNoOf = (document: Row) => text(document.wqNo) || (document.isDocument === true || [SUMMARY_LIST, CUSTOM_PREFIX, CERTIFICATE_PREFIX].some(prefix => text(document.name).startsWith(prefix)) ? '' : text(document.name));
+/** The WQ numbers on a welder's documents, sorted, each once (the card's WQ No select). */
+export const welderWqNumbers = (certificates: Row[] | undefined, welderId: string): string[] => [...new Set(welderDocuments(certificates, welderId).map(wqNoOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+/**
+ * The "Customs" column of a welder: the customs named on his documents ('Custom - <name>' gives <name>), each once, in the
+ * order of the documents. A qualification saved before documents carried the custom in their name (a Custom link and no
+ * 'Custom - ...' name) names its custom the same way; nothing is stored.
+ */
+export function customsOfWelder(certificates: Row[] | undefined, welderId: string, customs: Row[] | undefined = []): string[] {
+  const names: string[] = [];
+  for (const document of welderDocuments(certificates, welderId)) {
+    const name = text(document.name);
+    const custom = name.startsWith(CUSTOM_PREFIX) ? name.slice(CUSTOM_PREFIX.length).trim() : text((customs || []).find(row => row.id === document.customId)?.name);
+    if (custom && !names.includes(custom)) names.push(custom);
   }
-  return welders.filter(welder => qualified.has(welder.id));
+  return names;
 }
 
 /** Welders list tabs: Active, Inactive (status) and Deleted (archived). */
@@ -514,4 +584,19 @@ export function certificateUses(certificateId: string, rows: { welds?: Row[]; is
     const iso = isos.get(String(weld.isoId)), project = iso ? projects.get(String(iso.projectId)) : undefined;
     return { weldId: weld.id, project: text(project?.internnumber), isometric: text(iso?.isoNo), weld: text(weld.weldNo) };
   }).sort((a, b) => a.project.localeCompare(b.project, 'en', { numeric: true }) || a.isometric.localeCompare(b.isometric, 'en', { numeric: true }) || a.weld.localeCompare(b.weld, 'en', { numeric: true }));
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Welder card (dialog and PDF)
+// ---------------------------------------------------------------------------------------------------------
+/** The strip over the welder card: `Welder ID Nr.: W01 Name: Alex Taylor` (a missing name prints as nothing). */
+export const welderCardHeading = (welder: Row) => `Welder ID Nr.: ${text(welder.welderCode) || text(welder.number)} Name: ${text(welder.name)}`.trimEnd();
+/** What the card (dialog table and PDF) lists: the heading, the column headers (# first, WQ No last) and one row of cells per line, oldest first. */
+export function welderCardModel(rows: { welders?: Row[]; welder_card_lines?: Row[]; weldercard_options?: Row[] }, welderId: string): { welder: Row; heading: string; columns: string[]; lines: { id: string; cells: string[] }[] } | null {
+  const welder = (rows.welders || []).find(row => row.id === welderId && !row._archived);
+  if (!welder) return null;
+  return {
+    welder, heading: welderCardHeading(welder), columns: ['#', ...WELDERCARD_LINE_COLUMNS.map(column => column.header), 'WQ No'],
+    lines: welderCardLines(rows.welder_card_lines, welderId).map((line, index) => ({ id: line.id, cells: [String(index + 1), ...cardLineCells(line, rows.weldercard_options)] })),
+  };
 }

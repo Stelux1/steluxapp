@@ -129,7 +129,7 @@ export const SITE_RULES: Record<string, SiteRule> = {
   transfer_order_items: via(['orderId', 'transfer_orders']),
   // Welding catalogs and welder data (global); their links to projects and sites follow the linked record.
   // A welder follows its main projects (SITE_LINKED); its qualifications and custom links follow the welder.
-  roles: 'global', welder_customs_catalog: 'global', certificate_types: 'global', welders: 'global', welder_certificates: shared(['welderId', 'welders']),
+  roles: 'global', welder_customs_catalog: 'global', certificate_types: 'global', welders: 'global', welder_certificates: shared(['welderId', 'welders']), weldercard_options: 'global', welder_card_lines: shared(['welderId', 'welders']),
   weld_processes: 'global', weld_types: 'global', coatings: 'global', diameters: 'global', qualification_options: 'global',
   pqr: 'global', wps: 'global', ndt_groups: 'global', ndt_processes: 'global', ndt_defect_codes: 'global',
   ndt_locations: 'global', pwht_processes: 'global', pwht_locations: 'global', qa_engineers: 'global', attachment_names: 'global', itps: 'global',

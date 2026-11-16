@@ -19,6 +19,7 @@ import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type Lis
 import type { Row, User } from '../../shared/types.ts';
 import { canReport, canResource } from '../../shared/permissions.ts';
 import { weldersSummaryDocument } from './welders-summary.ts';
+import { welderCardDocument } from './welder-card.ts';
 
 /**
  * Everything a document definition may use. `rows` are the records the account may read (already checked
@@ -160,6 +161,7 @@ export const PDF_DOCUMENTS: AnyPdfDefinition[] = [
   lislWq('lisl-wq', 'LISL Report [WQ]', 'v1', 'WQ'),
   lislWq('lisl-wq2', 'LISL Report [WQ ver 2]', 'v2', 'WQ-ver2'),
   weldCardsDocument, weldLabelsDocument, mtoReportDocument, certificationIndexDocument,
+  welderCardDocument,
   ...OPERATIONAL_DOCUMENTS,
   weldersSummaryDocument,
 ];

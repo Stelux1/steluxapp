@@ -4,7 +4,7 @@
  * certificate fields of a main project, and the cascade from a welder to its qualifications.
  */
 import type { Row } from '../shared/types.ts';
-import { CUSTOM_RANGES, FLAG_BULK_FIELDS, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
+import { CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
 import type { Actor, Store } from './store.ts';
 import { qaEngineerCompany } from '../shared/weld-catalogs.ts';
 
@@ -69,6 +69,25 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
   if (key === 'welder_certificates') {
     Object.assign(errors, rangeErrors(merged, QUALIFICATION_RANGES));
     if (!blank(merged.issuedAt) && !blank(merged.expiresAt) && String(merged.expiresAt) < String(merged.issuedAt)) errors.expiresAt = 'The expiry date cannot be before the issue date.';
+    // A document links to several WPS (stored as one text of ids): each must be a WPS of the workspace.
+    if (next.wpsIds !== undefined) {
+      const ids = splitIds(next.wpsIds);
+      if (ids.some(id => { try { store.get('wps', id); return false; } catch { return true; } })) errors.wpsIds = 'Choose WPS of this workspace.';
+      next.wpsIds = joinIds(ids);
+    }
+  }
+  // One line of a welder's card: every list has a value of its own list; the WQ numbers are ones on the welder's documents.
+  if (key === 'welder_card_lines') {
+    for (const list of WELDERCARD_LISTS) {
+      if (blank(merged[list.field])) continue;
+      let option: Row | undefined; try { option = store.get('weldercard_options', merged[list.field], true); } catch { option = undefined; }
+      if (!option || option.list !== list.key) errors[list.field] = `Choose a value of the ${list.label} list.`;
+    }
+    if (next.wqNos !== undefined) {
+      next.wqNos = joinWqNos(Array.isArray(next.wqNos) ? next.wqNos : [next.wqNos]);
+      const own = new Set(welderWqNumbers(store.list('welder_certificates'), String(merged.welderId ?? '')));
+      if (splitWqNos(next.wqNos).some(number => !own.has(number))) errors.wqNos = 'Choose WQ numbers of this welder.';
+    }
   }
   return { input: next, errors };
 }

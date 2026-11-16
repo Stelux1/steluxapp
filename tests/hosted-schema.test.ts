@@ -266,3 +266,30 @@ test('the record types of wave 2 (VT reports, spool history, hydrotest results) 
     assert.deepEqual(RESOURCE_SCOPES[key], areas, `${key}: its permission area`);
   }
 });
+
+test('the welder card record types (Weldercard settings values and welder card lines) each have a table with its references, a site rule and a permission area', async () => {
+  const { planHostedSchema } = await import('../server/hosted-schema.ts');
+  const { SITE_RULES } = await import('../shared/site-scope.ts');
+  const { RESOURCE_SCOPES } = await import('../shared/permissions.ts');
+  const plan = planHostedSchema({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() });
+  for (const key of ['weldercard_options', 'welder_card_lines']) {
+    const resource = RESOURCE_MAP[key];
+    assert.ok(resource, key); assert.ok(plan.tables.includes(key), `${key}: the preparation creates its table`);
+    for (const field of resource.fields.filter(item => item.type === 'ref')) assert.ok(plan.columns.some(column => column.table === key && column.field === field.name && column.target === field.ref), `${key}.${field.name} → ${field.ref}`);
+    assert.ok(SITE_RULES[key], `${key}: a site-scope rule`); assert.deepEqual(RESOURCE_SCOPES[key], ['68'], `${key}: the welders permission area`);
+  }
+  assert.deepEqual(RESOURCE_MAP.weldercard_options.unique, [['list', 'name']], 'a value is unique within its list');
+});
+
+test('an older hosted database gets the weldercard tables from the preparation step, once, without touching records', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  workspace();
+  db.exec('DROP TABLE stelux."welder_card_lines" CASCADE'); db.exec('DROP TABLE stelux."weldercard_options" CASCADE');
+  const records = rows();
+  assert.throws(() => verifyHostedSchema(db), /weldercard_options|welder_card_lines/);
+  const result = prepareHostedSchema(db);
+  assert.ok(result.created.tables.includes('weldercard_options') && result.created.tables.includes('welder_card_lines'));
+  verifyHostedSchema(db);
+  assert.deepEqual(rows(Object.keys(records)), records);
+  assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
+});
