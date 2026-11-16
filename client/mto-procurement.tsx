@@ -3,6 +3,7 @@ import { AlertCircle, Download, History, Loader2, PackageCheck, Printer, Shoppin
 import { materialName } from '../shared/materials.ts';
 import { PROCUREMENT_PAGES, archivedOrders, dateRangeError, orderDetail, orderPlanning, pendingLines, receiptLog, receiptQuantityErrors, receiptRemaining, toCsv } from '../shared/mto-procurement.ts';
 import { useWorkspace, activeRows } from './context.tsx';
+import { enabledOptions } from '../shared/weld-catalogs.ts';
 import { ApiError, formatDate, formatNumber, post } from './api.ts';
 import { Badge, EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
@@ -114,7 +115,7 @@ export function MaterialTakeIn() {
 
 /** Receive materials: choose the order and supplier, then the quantity per line. Over-receipt is refused. */
 export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onClose: () => void }) {
-  const { rows, refresh, notify, canRecord } = useWorkspace();
+  const { rows, refresh, notify, canRecord, siteId } = useWorkspace();
   const orders = activeRows(rows, 'orders').filter(order => ['Pending', 'Partially received'].includes(String(order.status))).sort((a, b) => String(b.number).localeCompare(String(a.number)));
   const warehouses = activeRows(rows, 'warehouses').filter(row => row.use !== 'Tools');
   const [order, setOrder] = useState(orderId); const [supplierId, setSupplier] = useState(() => String(rows.orders?.find(o => o.id === orderId)?.supplierId || ''));
@@ -124,7 +125,8 @@ export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onC
   const lines = activeRows(rows, 'order_lines').filter(line => line.orderId === order && Number(line.received) < Number(line.quantity));
   const errors = receiptQuantityErrors(lines.map(line => ({ lineId: line.id, outstanding: Math.round((Number(line.quantity) - Number(line.received)) * 1e6) / 1e6, quantity: quantities[line.id] })));
   const items = lines.filter(line => Number(quantities[line.id]) > 0).map(line => ({ lineId: line.id, quantity: Number(quantities[line.id]), chargeNo: charges[line.id] || '' }));
-  const suppliers = activeRows(rows, 'suppliers');
+  // Suppliers switched off on the active main project are not offered ("Enabled on this site"); the order's supplier stays.
+  const suppliers = enabledOptions('suppliers', activeRows(rows, 'suppliers'), siteId, rows, supplierId);
   function choose(id: string) { setOrder(id); setQuantities({}); setCharges({}); setSupplier(String(rows.orders?.find(o => o.id === id)?.supplierId || '')); setError(''); setFields({}); }
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setFields({});

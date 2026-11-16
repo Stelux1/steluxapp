@@ -298,3 +298,36 @@ test('the NDT sample records only defect codes the weld\'s main project may sele
   }
   store.close();
 });
+
+test('hosted: suppliers, service companies and laydowns (delivered by the MTO flows) get "Enabled on this site" end to end', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  f.usePilot('mto');
+  // Form checkbox: a new service company switched off on the north site at creation.
+  let response = await f.request('/api/records/service_companies', 'POST', { name: 'Harbour Coating BV', address: '7 Quay Road', enabledOnSite: false, enabledSiteId: 'site-north' });
+  assert.equal(response.status, 201); const company = (await body(response)).record!;
+  // Options menu: Deactivate on this site for checked suppliers and laydowns.
+  const north = f.store.list('spools').find(spool => f.store.get('isometrics', String(spool.isoId)).projectId === 'project-cooling')!;
+  const river = f.store.list('spools').find(spool => f.store.get('isometrics', String(spool.isoId)).projectId === 'project-steam')!;
+  // A laydown neither sample spool already lies on (an unchanged reference is never judged).
+  const supplier = (await f.rows('suppliers'))[0], laydown = (await f.rows('laydowns')).find(row => row.id !== north.laydownId && row.id !== river.laydownId)!;
+  assert.ok(supplier && laydown, 'sample suppliers and laydowns exist');
+  for (const [key, row] of [['suppliers', supplier], ['laydowns', laydown]] as const) {
+    response = await f.request(`/api/bulk/${key}`, 'POST', { ids: [row.id], versions: { [row.id]: row._version }, changes: { enabledOnSite: false, enabledSiteId: 'site-north' } });
+    assert.equal(response.status, 200, key);
+  }
+  const links = await f.rows('catalog_sites');
+  for (const [key, id] of [['service_companies', company.id], ['suppliers', supplier.id], ['laydowns', laydown.id]]) {
+    assert.equal(enabledOnSite(key, { id }, 'site-north', { catalog_sites: links }), false, key);
+    assert.equal(enabledOnSite(key, { id }, 'site-river', { catalog_sites: links }), true, `${key} stays enabled on the other site`);
+  }
+  // Ref selects (FieldInput and the take-in dialog) offer only enabled records, plus the stored value.
+  const rows = { catalog_sites: links };
+  assert.ok(!enabledOptions('suppliers', [supplier], 'site-north', rows).length);
+  assert.equal(enabledOptions('suppliers', [supplier], 'site-north', rows, supplier.id).length, 1);
+  // Server refusal: a new reference from a record of the north site is refused; the river site still accepts it.
+  for (const [field, id] of [['serviceCompanyId', company.id], ['laydownId', laydown.id]]) {
+    assert.throws(() => f.store.update('spools', north.id, { [field]: id }, f.store.get('spools', north.id)._version), (error: { fields?: Record<string, string> }) => /not enabled/.test(error.fields?.[field] || ''), field);
+    assert.equal(f.store.update('spools', river.id, { [field]: id }, f.store.get('spools', river.id)._version)[field], id, field);
+  }
+  assert.throws(() => f.store.create('orders', { number: 'PO-TEST-1', projectId: 'project-cooling', supplierId: supplier.id, date: '2026-11-02' }), (error: { fields?: Record<string, string> }) => /not enabled/.test(error.fields?.supplierId || ''));
+});

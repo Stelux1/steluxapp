@@ -8,7 +8,7 @@ import {
 } from '../shared/inspections.ts';
 import { api, post, ApiError, apiUrl, formatDate } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
-import { selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { enabledOptions, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { Badge, EmptyState, Modal, TableScroll } from './components.tsx';
 import './inspections.css';
 
@@ -34,6 +34,8 @@ function Select({ id, label, value, onChange, options, disabled, empty = '—' }
 function Text({ id, label, value, onChange, disabled, type = 'text', required, list, placeholder }: { id: string; label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; type?: string; required?: boolean; list?: string; placeholder?: string }) {
   return <div className="field"><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label><input id={id} type={type} value={value} disabled={disabled} required={required} list={list} placeholder={placeholder} min={type === 'number' ? 0 : undefined} step={type === 'number' ? 'any' : undefined} onChange={e => onChange(e.target.value)}/></div>;
 }
+/** Catalog rows offered on a main project ("Enabled on this site", shared/weld-catalogs.ts); stored values stay selectable. */
+const enabledRows = (rows: Record<string, Row[]>, key: string, siteId: unknown, keep?: unknown) => enabledOptions(key, activeRows(rows, key), String(siteId || '') || null, rows, keep);
 const options = (rows: Row[] | undefined, label = (row: Row) => String(row.name)) => (rows || []).filter(row => !row._archived).map(row => ({ value: row.id, label: label(row) }));
 
 /** Uploads files to a record (one request each); returns how many failed. */
@@ -113,12 +115,12 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
       return failed ? `${type === 'NDT PRE' ? 'NDT Pre' : 'NDT'} saved; ${failed} document${failed === 1 ? '' : 's'} could not be uploaded.` : `${type === 'NDT PRE' ? 'NDT Pre' : 'NDT'} of weld ${weldName(weld)} saved.`;
     });
   }
-  const processOptions = options(rows.ndt_processes);
+  const processOptions = options(enabledRows(rows, 'ndt_processes', context.project?.siteId, rounds.map(round => round.processId)));
   return <Modal wide title={`${pre ? 'NDT Pre' : 'NDT'} ${context.projectName} / ${context.isoName} / ${weldName(weld)}`} subtitle={editable ? 'Create or update the request and its results. A result of NA creates the repair weld.' : 'Read only: your profile cannot change these results.'} onClose={onClose}>
     <form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
       <div className="form-grid">
         <div className="field"><span className="field-label">Welder</span><p className="inspection-readonly">{welderNames(rows, weld) || '—'}</p></div>
-        <Select id="ndt-location" label="NDT location" value={location} onChange={setLocation} options={options(rows.ndt_locations)} disabled={!editable} empty="Select NDT location"/>
+        <Select id="ndt-location" label="NDT location" value={location} onChange={setLocation} options={options(enabledRows(rows, 'ndt_locations', context.project?.siteId, location))} disabled={!editable} empty="Select NDT location"/>
         <Text id="ndt-request" label="Request number" value={requestNo} onChange={setRequestNo} disabled={!editable} placeholder={`${REQUEST_PREFIX}-… (generated when empty)`}/>
       </div>
       <TableScroll><table className="data-table inspection-rounds"><caption className="sr-only">Examination rounds</caption><thead><tr><th scope="col">Round</th>{NDT_ROUNDS.map((round, i) => <th scope="col" key={round.key}>{round.label}{rounds[i].processId && <span className="inspection-tick" aria-label="process set"> ✔</span>}</th>)}</tr></thead>
@@ -195,7 +197,7 @@ const scopeWelds = (rows: Rows, isoId?: string, weldIds?: string[]) => activeRow
 
 /** Generate mass NDT-Pre / NDT / Pre-HT/PWHT request: one request number, processes to include, note. */
 export function MassRequestDialog({ kind, isoId, weldIds, onClose }: MassProps & { kind: 'NDT PRE' | 'NDT' | 'PWHT' }) {
-  const { rows, canRun } = useWorkspace();
+  const { rows, canRun, siteId } = useWorkspace();
   const [type, setType] = useState<string>(kind === 'PWHT' ? 'PWHT' : kind);
   const pool = scopeWelds(rows, isoId, weldIds).filter(weld => weld[requestFlag[type]] === true && !(rows.inspection_requests || []).some(row => !row._archived && row.weldId === weld.id && row.type === type && row.status === 'Open'));
   const [selected, setSelected] = useState<string[]>(() => pool.map(weld => weld.id));
@@ -214,9 +216,9 @@ export function MassRequestDialog({ kind, isoId, weldIds, onClose }: MassProps &
   return <Modal wide title={title} subtitle="One request number for the chosen welds. The printable request follows in a later release." onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
     <div className="form-grid">
       {kind === 'PWHT' && <Select id="mass-type" label="Treatment" value={type} onChange={value => { setType(value); setSelected([]); }} options={[{ value: 'PRE-HT', label: 'Pre-HT' }, { value: 'PWHT', label: 'PWHT' }]} empty={null}/>}
-      {ndt ? <><Select id="mass-location" label="NDT location" value={location} onChange={setLocation} options={options(rows.ndt_locations)} empty="Select NDT location"/>
-        <fieldset className="field full-width inspection-processes"><legend>NDT processes to include <span className="required">*</span></legend>{options(rows.ndt_processes).map(option => <label key={option.value}><input type="checkbox" checked={processIds.includes(option.value)} onChange={e => setProcessIds(e.target.checked ? [...processIds, option.value] : processIds.filter(id => id !== option.value))}/>{option.label}</label>)}</fieldset></>
-        : <><Select id="mass-pwht-process" label="PWHT process" value={pwhtProcess} onChange={setPwhtProcess} options={options(rows.pwht_processes)} empty="Select PWHT process"/><Select id="mass-pwht-location" label="PWHT location" value={pwhtLocation} onChange={setPwhtLocation} options={options(rows.pwht_locations)} empty="Select PWHT location"/></>}
+      {ndt ? <><Select id="mass-location" label="NDT location" value={location} onChange={setLocation} options={options(enabledRows(rows, 'ndt_locations', siteId))} empty="Select NDT location"/>
+        <fieldset className="field full-width inspection-processes"><legend>NDT processes to include <span className="required">*</span></legend>{options(enabledRows(rows, 'ndt_processes', siteId, processIds)).map(option => <label key={option.value}><input type="checkbox" checked={processIds.includes(option.value)} onChange={e => setProcessIds(e.target.checked ? [...processIds, option.value] : processIds.filter(id => id !== option.value))}/>{option.label}</label>)}</fieldset></>
+        : <><Select id="mass-pwht-process" label="PWHT process" value={pwhtProcess} onChange={setPwhtProcess} options={options(enabledRows(rows, 'pwht_processes', siteId))} empty="Select PWHT process"/><Select id="mass-pwht-location" label="PWHT location" value={pwhtLocation} onChange={setPwhtLocation} options={options(enabledRows(rows, 'pwht_locations', siteId))} empty="Select PWHT location"/></>}
       <Text id="mass-date" label="Request date" type="date" value={date} onChange={setDate} required/>
       <div className="field full-width"><label htmlFor="mass-note">Note</label><textarea id="mass-note" rows={3} value={note} onChange={e => setNote(e.target.value)}/></div>
     </div>
@@ -287,7 +289,7 @@ export function UploadPwhtDialog({ isoId, weldIds, onClose }: MassProps) {
 
 /** Options → Visual inspection: New upload (one VI report to several welds) and the Visual reports archive. */
 export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
-  const { rows, canRun, canRecord, label } = useWorkspace();
+  const { rows, canRun, canRecord, label, siteId } = useWorkspace();
   const pool = scopeWelds(rows, isoId).filter(weld => weld.welder1Id || weld.welder2Id || weld.welder3Id || weld.welder4Id || weldIds?.includes(weld.id));
   const [tab, setTab] = useState<'new' | 'archive'>('new');
   const [filter, setFilter] = useState(weldIds?.length ? 'select' : 'all');
@@ -319,7 +321,7 @@ export function VisualInspectionHub({ isoId, weldIds, onClose }: MassProps) {
         <Select id="vi-filter" label="Welds" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All welds' }, { value: 'select', label: 'Select specific welds' }]} empty={null}/>
         <Select id="vi-itp" label="ITP" value={itp} onChange={setItp} options={[{ value: 'ITP 1', label: 'ITP 1' }, { value: 'ITP 2', label: 'ITP 2' }]} empty="Select ITP"/>
         <Text id="vi-activity" label="Activity No." value={activityNo} onChange={setActivity}/>
-        <Select id="vi-engineer" label="QA/QC engineer" value={engineerId} onChange={setEngineer} options={options(rows.qa_engineers)} empty="Select QA/QC engineer"/>
+        <Select id="vi-engineer" label="QA/QC engineer" value={engineerId} onChange={setEngineer} options={options(enabledRows(rows, 'qa_engineers', siteId, engineerId))} empty="Select QA/QC engineer"/>
         <Text id="vi-custom" label="Custom No." value={customNo} onChange={setCustom}/>
         <Text id="vi-report" label="Report No." value={reportNo} onChange={setReport} required list="vi-reports"/><datalist id="vi-reports">{knownReports.map(value => <option key={value} value={value}/>)}</datalist>
         <Text id="vi-date" label="Inspection date" type="date" value={date} onChange={setDate} required/>
