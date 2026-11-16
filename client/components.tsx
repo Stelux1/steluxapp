@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type InvalidEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { X, ChevronDown, Check, Search, FileText, ArrowUpRight } from 'lucide-react';
+import { X, ChevronDown, Check, Search, FileText, ArrowUpRight, AlertCircle } from 'lucide-react';
 import type { ActionField, Field, Row } from '../shared/types.ts';
 import { RESOURCE_MAP } from './catalog.ts';
 import { availableWps } from './catalog.ts';
@@ -125,6 +125,18 @@ export function Dropdown({ trigger, label, children, className = '', menuClassNa
       }}>{children}</div>, document.body)}
   </div>;
 }
+/** An error banner for dialog forms: like the weld forms (ced4d72), a new error focuses the first invalid field, else scrolls the banner into view. */
+export function FormError({ message, fields }: { message: string; fields?: Record<string, string> }) {
+  const banner = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!message || !banner.current) return;
+    const invalid = banner.current.closest('form')?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (invalid) invalid.focus(); else banner.current.scrollIntoView({ block: 'nearest' });
+  }, [message, fields]);
+  return message ? <div ref={banner} className="alert error" role="alert"><AlertCircle size={18}/><span>{message}</span></div> : null;
+}
+/** The empty option of a select: "Select …" in lower case, keeping acronyms (UOM, QA/QC) and the pilot names. */
+export const selectPrompt = (label: string) => `Select ${label.replace(/\b(?:Weld|MTO) Pilot\b|\S+/g, word => /Pilot$/.test(word) || /[A-Z].*[A-Z]/.test(word) ? word : word.toLowerCase())}`;
 export function FieldInput({ field, value, onChange, error, values = {}, allowedIds }: { field: Field | ActionField; value: unknown; onChange: (value: unknown) => void; error?: string; values?: Record<string, unknown>;allowedIds?:string[] }) {
   const { rows, allRows, user, label, projectScopeEnabled, siteId } = useWorkspace();
   if (projectScopeEnabled && field.ref === 'projects' && /^(Project|Project scope)$/.test(field.label)) field = { ...field, label: 'Subproject' };
@@ -147,6 +159,8 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
   if (field.ref === 'isometrics' && values.projectId) options = options.filter(r => r.projectId === values.projectId);
   if (user.availability && field.ref === 'wps' && values.isoId) { const project=rows.isometrics?.find(row=>row.id===values.isoId)?.projectId; if(project) options=options.filter(wps=>availableWps(rows,wps,String(project))); options=options.filter(wps=>wps.active!==false || wps.id===value); }
   if (field.ref === 'rentals') options = options.filter(r => ['Rented', 'Partially returned'].includes(String(r.status)));
+  // Isometric selects (e.g. punch Add item → ISO) list the isometrics by number in natural order.
+  if (field.ref === 'isometrics') options = [...options].sort((a, b) => String(a.isoNo ?? '').localeCompare(String(b.isoNo ?? ''), 'en', { numeric: true }));
   if (field.name === 'orderId') options = options.filter(r => ['Pending', 'Partially received'].includes(String(r.status)));
   const refLabel = (r: Row) => { let name = label(field.ref!, r.id); if (field.ref === 'calculation_norms') name += ` · ${r.uom} · ${r.hoursPerUnit} h/unit`; if (field.ref === 'welds'||field.ref==='iso_materials') name += ` · ${label('isometrics', r.isoId)}`; if (field.ref === 'iso_materials') name += ` · ${r.quantity} ${r.materialId ? rows.materials?.find(material => material.id === r.materialId)?.uom || '' : r.uom || ''}${r.chargeNo ? ` · ${r.chargeNo}` : ''}`; if (field.ref === 'inspection_requests') name += ` · ${label('welds', r.weldId)} · ${r.status}`; if (field.ref === 'rentals') name += ` · ${label('articles', r.articleId)} · ${Number(r.quantity) - Number(r.returned)} outstanding`; return name; };
   if (field.showIf && values[field.showIf[0]] !== field.showIf[1]) return null;
@@ -159,7 +173,7 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
   return <div className={`field ${field.type === 'textarea' || multiple ? 'full-width' : ''}`}><label htmlFor={id}>{field.label}{field.required && <span className="required"> *</span>}</label>
     {field.creatable?<><input {...common} type="text" list={`${id}-options`} value={String(options.find(r=>r.id===value)?.name??value??'')} onChange={e=>onChange(e.target.value)}/><datalist id={`${id}-options`}>{options.map(r=><option key={r.id} value={String(r.name)}/>)}</datalist></>:multiple ? <div className="multi-options" id={id}>{options.length ? options.map(r => <label key={r.id}><input type="checkbox" checked={Array.isArray(value) && value.includes(r.id)} onChange={e => { const list = Array.isArray(value) ? value : []; onChange(e.target.checked ? [...list, r.id] : list.filter(x => x !== r.id)); }}/><span>{refLabel(r)}</span></label>) : <p>No records available. Add {RESOURCE_MAP[field.ref!]?.title.toLowerCase()} first.</p>}</div>
     : field.type === 'textarea' ? <textarea {...common} value={String(value ?? '')} rows={3} onChange={e => onChange(e.target.value)}/>
-    : field.type === 'ref' || field.type === 'select' ? <div className="select-wrap"><select {...common} value={legacyBlank !== undefined && String(value ?? '') === legacyBlank ? '' : String(value ?? '')} onChange={e => onChange(e.target.value)}><option value="">{legacyBlank ?? `Select ${field.label.toLowerCase()}`}</option>{field.ref ? options.map(r => <option key={r.id} value={r.id}>{refLabel(r)}</option>) : field.options?.filter(o => o !== legacyBlank).map(o => <option key={o} value={Object.entries(field.legacy || {}).find(([stored, mapped]) => stored && mapped === o && stored === String(value ?? ''))?.[0] ?? o}>{o}</option>)}</select><ChevronDown size={14}/></div>
+    : field.type === 'ref' || field.type === 'select' ? <div className="select-wrap"><select {...common} value={legacyBlank !== undefined && String(value ?? '') === legacyBlank ? '' : String(value ?? '')} onChange={e => onChange(e.target.value)}><option value="">{legacyBlank ?? field.blank ?? selectPrompt(field.label)}</option>{field.ref ? options.map(r => <option key={r.id} value={r.id}>{refLabel(r)}</option>) : field.options?.filter(o => o !== legacyBlank).map(o => <option key={o} value={Object.entries(field.legacy || {}).find(([stored, mapped]) => stored && mapped === o && stored === String(value ?? ''))?.[0] ?? o}>{o}</option>)}</select><ChevronDown size={14}/></div>
     : <input {...common} type={field.type} value={typeof value === 'number' ? value : String(value ?? '')} min={field.min} max={field.max} step={field.type === 'number' ? field.step??'any' : undefined} autoComplete={field.type === 'password' ? 'new-password' : 'off'} onChange={e => onChange(field.type === 'number' ? e.target.value === '' ? '' : Number(e.target.value) : e.target.value)}/>}
     {field.hint && <small className="field-hint">{field.hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}
   </div>;

@@ -51,7 +51,7 @@ function SystemList({ onOpen, setDialog }: { onOpen: (id: string) => void; setDi
   const count = (id: string) => activeRows(rows, 'isometrics').filter(iso => iso.testSystemId === id).length;
   return <>
     <div className="table-toolbar"><SearchInput value={q} onChange={setQ} placeholder="Search test systems…"/></div>
-    {list.length ? <TableScroll><table className="data-table"><caption className="sr-only">Test systems</caption><thead><tr><th scope="col">Name</th><th scope="col">TS accepted by client</th><th scope="col">Options</th></tr></thead><tbody>
+    {list.length ? <TableScroll><table className="data-table"><caption className="sr-only">Test systems</caption><thead><tr><th scope="col">Test system</th><th scope="col">TS accepted by client</th><th scope="col">Options</th></tr></thead><tbody>
       {list.map(system => <tr key={system.id}><td><button className="record-link" onClick={() => onOpen(system.id)}>{String(system.name)}</button><small className="muted hydrotest-sub">{system.projectId ? label('projects', system.projectId) : 'All projects'} · {count(system.id)} isometric{count(system.id) === 1 ? '' : 's'}</small></td>
         <td><AcceptedBadge system={system}/></td>
         <td><div className="hydrotest-options"><button className="btn small" onClick={() => onOpen(system.id)} aria-label={`Open test system ${system.name}`}><ListChecks size={14}/>Open</button>{canRecord('test_systems', 'edit', system) && <button className="btn small" onClick={() => setDialog({ kind: 'editor', resource: 'test_systems', record: system })} aria-label={`Edit test system ${system.name}`}><Pencil size={14}/>Edit</button>}</div></td></tr>)}

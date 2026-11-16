@@ -23,7 +23,10 @@ function weldContext(rows: Rows, weld: Row) {
   const project = rows.projects?.find(row => row.id === iso?.projectId);
   return { iso, project, projectName: String(project?.internnumber || project?.description || '—'), isoName: String(iso?.isoNo || '—') };
 }
-const welderNames = (rows: Rows, weld: Row) => [1, 2, 3, 4].map(side => rows.welders?.find(row => row.id === weld[`welder${side}Id`])).filter(Boolean).map(row => String(row!.number || row!.name)).join(', ');
+const weldersOf = (rows: Rows, weld: Row) => [1, 2, 3, 4].map(side => rows.welders?.find(row => row.id === weld[`welder${side}Id`])).filter((row): row is Row => Boolean(row));
+/** The welder stamps as the weld table's Wdr column shows them (welder ID nr., else ID nr.), and the names for the tooltip. */
+const welderNames = (rows: Rows, weld: Row) => weldersOf(rows, weld).map(row => String(row.welderCode || row.number || '')).filter(Boolean).join(', ');
+const welderTitles = (rows: Rows, weld: Row) => weldersOf(rows, weld).map(row => String(row.name || row.number || '')).filter(Boolean).join(', ');
 
 function Alert({ message }: { message: string }) { return message ? <div className="alert error" role="alert"><AlertCircle size={18}/><span>{message}</span></div> : null; }
 function Footer({ busy, onClose, submit, disabled = false }: { busy: boolean; onClose: () => void; submit?: string; disabled?: boolean }) {
@@ -120,7 +123,7 @@ export function NdtWeldDialog({ weld, type, onClose }: { weld: Row; type: 'NDT' 
   return <Modal wide title={`${pre ? 'NDT Pre' : 'NDT'} ${context.projectName} / ${context.isoName} / ${weldName(weld)}`} subtitle={editable ? 'Create or update the request and its results. A result of NA creates the repair weld.' : 'Read only: your profile cannot change these results.'} onClose={onClose}>
     <form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
       <div className="form-grid">
-        <div className="field"><span className="field-label">Welder</span><p className="inspection-readonly">{welderNames(rows, weld) || '—'}</p></div>
+        <div className="field"><span className="field-label">Welder</span><p className="inspection-readonly" title={welderTitles(rows, weld) || undefined}>{welderNames(rows, weld) || '—'}</p></div>
         <Select id="ndt-location" label="NDT location" value={location} onChange={setLocation} options={options(enabledRows(rows, 'ndt_locations', context.project?.siteId, location))} disabled={!editable} empty="Select NDT location"/>
         <Text id="ndt-request" label="Request number" value={requestNo} onChange={setRequestNo} disabled={!editable} placeholder={`${REQUEST_PREFIX}-… (generated when empty)`}/>
       </div>

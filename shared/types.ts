@@ -8,6 +8,8 @@ export interface Field {
   options?: string[]; min?: number; max?: number; step?:number; default?: Value; section?: string;
   hint?: string; hidden?: boolean; readonly?: boolean; showIf?: [string, Value];
   creatable?:boolean;refCategory?:string;
+  /** Text of a select's empty option (default "Select <label>"). */
+  blank?: string;
   /** Earlier CSV column headings (labels) that still import into this field. */
   aliases?: string[];
   /** Earlier stored values mapped to the option they now stand for (see shared/priority.ts). Never rewritten in bulk. */

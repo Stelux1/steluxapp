@@ -60,7 +60,7 @@ export function OrderMaterials() {
       {!planning.length && <EmptyState title="Nothing waiting to be ordered" description={projectId || isoId || query ? 'No material matches these filters. Clear them to see everything.' : 'Every material requirement is already on an order.'}/>}
       <div className="table-footer"><span>{planning.length} material{planning.length === 1 ? '' : 's'}{checked.length ? ` · ${checked.length} checked` : ''}</span><span>Only the quantity not yet ordered is ordered. The supplier is assigned when the delivery is taken in.</span></div>
     </section>
-    {ordering && <WorkflowDialog actionKey="order-requirements" defaults={{ requirementIds }} onClose={() => { setOrdering(false); setSelected([]); }}/>}
+    {ordering && <WorkflowDialog actionKey="order-requirements" defaults={{ requirementIds }} copy={{ title: 'Order checked materials', description: 'Create one order for the quantities of the checked materials that are not ordered yet.', submit: 'Create order' }} onClose={() => { setOrdering(false); setSelected([]); }}/>}
   </div>;
 }
 

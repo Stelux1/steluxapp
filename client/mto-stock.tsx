@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useState, type FormEvent, type 
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, ArrowRightLeft, ChevronDown, Download, History, Loader2, MoreHorizontal, PackagePlus, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Truck, X } from 'lucide-react';
 import { api, apiUrl, ApiError, formatDate, formatNumber, post } from './api.ts';
-import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
+import { Badge, Dropdown, EmptyState, FieldInput, FormError, Modal, SearchInput, TableScroll } from './components.tsx';
 import { activeRows, useWorkspace } from './context.tsx';
 import { TablePage } from './records.tsx';
 import { CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, TRANSFER_PRIORITIES, TRANSFER_TYPES, inventoryLog, inventoryRows, projectHoldings, stockDetails, transferRoute, validQuantity } from '../shared/mto-stock.ts';
@@ -38,7 +38,7 @@ function ActionDialog({ title, subtitle, submit, onSubmit, onClose, children, wi
     catch (failure) { setError((failure as Error).message); setErrors((failure as ApiError).fields || {}); }
     finally { setBusy(false); }
   }
-  return <Modal title={title} subtitle={subtitle} onClose={onClose} wide={wide}><form onSubmit={event => void send(event)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}<div className="form-grid">{children(errors)}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>;
+  return <Modal title={title} subtitle={subtitle} onClose={onClose} wide={wide}><form onSubmit={event => void send(event)}><div className="modal-body"><FormError message={error} fields={errors}/><div className="form-grid">{children(errors)}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>;
 }
 
 const sitesOf = (allRows: Record<string, Row[]>) => activeRows(allRows, 'sites').map(site => ({ value: site.id, label: String(site.name) }));

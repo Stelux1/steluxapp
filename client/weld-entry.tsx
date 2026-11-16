@@ -251,7 +251,7 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
     const body = { ...changes, ...(clear.datefit ? { clearDatefit: true } : {}), ...(clear.date ? { clearDate: true } : {}) };
     if (!Object.keys(body).length) { setError('Change at least one field.'); return; }
     setBusy(true);
-    try { await post('/actions/mass-edit-welds', { weldIds: selected.map(row => row.id), versions: Object.fromEntries(selected.map(row => [row.id, row._version])), changes: body }); await refresh(); notify(`${selected.length} welds updated.`); onDone(); onClose(); }
+    try { await post('/actions/mass-edit-welds', { weldIds: selected.map(row => row.id), versions: Object.fromEntries(selected.map(row => [row.id, row._version])), changes: body }); await refresh(); notify(`${selected.length} ${selected.length === 1 ? 'weld' : 'welds'} updated.`); onDone(); onClose(); }
     catch (failure) { setError(errorMessage(failure)); setFields((failure as ApiError).fields || {}); } finally { setBusy(false); }
   }
   const e = fields;

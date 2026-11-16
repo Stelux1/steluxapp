@@ -82,7 +82,7 @@ test('every catalog carries the capture\'s labels, columns and options and is de
   assert.deepEqual(labels('coatings'), ['Coating', 'Abbreviation']);
   assert.deepEqual(labels('ndt_groups'), ['NDT process group', 'Description']);
   assert.deepEqual(labels('ndt_processes'), ['NDT process', 'Description', 'Group', 'WPR']);
-  assert.deepEqual(labels('ndt_defect_codes'), ['Code', 'English', 'Dutch', 'Group', 'Norm', 'ISO 6520-1 reference']);
+  assert.deepEqual(labels('ndt_defect_codes'), ['Code', 'English', 'Dutch', 'Group', 'Norm', 'ISO 6520-1']);
   assert.deepEqual(labels('ndt_locations'), ['Location']);
   assert.deepEqual(labels('pwht_processes'), ['PWHT process Nr.', 'Description']);
   assert.deepEqual(labels('pwht_locations'), ['Location']);

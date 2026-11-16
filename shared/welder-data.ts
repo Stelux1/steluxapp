@@ -77,6 +77,9 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   laydowns: { name: 'Laydown' },
   warehouses: { name: 'Storehouse name' },
   material_laydowns: { name: 'Laydown' },
+  // Hydrotest release (capture weld-catalogs / hydrotest): the test system's name is "Test system"; Defect codes column "ISO 6520-1".
+  test_systems: { name: 'Test system' },
+  ndt_defect_codes: { isoRef: 'ISO 6520-1' },
 };
 /** List columns of the reference (labels come from the fields above). */
 export const HOSTED_COLUMNS: Record<string, string[]> = {

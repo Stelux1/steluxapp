@@ -10,6 +10,7 @@ import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
 import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
+import { hostedField } from '../shared/welder-data.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { HYDROTEST_DOCUMENT_TYPES, hydrotestState, TS_NOT_APPLICABLE } from '../shared/hydrotest.ts';
@@ -192,7 +193,9 @@ test('the hosted profile delivers the hydrotest release and the other profiles d
 
 test('the reference labels are used for the test system and request fields', () => {
   assert.equal(RESOURCE_MAP.test_systems.fields.find(field => field.name === 'accepted')!.label, 'Test system accepted by client');
-  assert.deepEqual(RESOURCE_MAP.hydrotest_requests.fields.filter(field => !field.hidden).map(field => field.label), ['Test system', 'Test record no.', 'QA/QC engineer', 'Date', 'Pump type', 'Hose type', 'Manifold', 'Pressure gauge no.', 'Recorder No', 'Calibration cert', 'Piping class', 'Design code', 'Test medium', 'Required test pressure', 'Actual test pressure', 'Test start', 'Test end', 'Area temp', 'Test duration', 'Required leak test pressure', 'Leak test duration', 'Include isometrics', 'Note']);
+  assert.equal(RESOURCE_MAP.test_systems.fields.find(field => field.name === 'accepted')!.blank, '-- Not set --', 'the acceptance select starts at "-- Not set --"');
+  assert.equal(hostedField('test_systems', RESOURCE_MAP.test_systems.fields.find(field => field.name === 'name')!).label, 'Test system', 'hosted label of the name');
+  assert.deepEqual(RESOURCE_MAP.hydrotest_requests.fields.filter(field => !field.hidden).map(field => field.label), ['Test system', 'Test record no.', 'QA/QC engineer', 'Date', 'Pump type', 'Hose type', 'Manifold', 'Pressure gauge no.', 'Recorder No', 'Calibration cert', 'Piping class', 'Design code', 'Test medium', 'Required test pressure', 'Actual test pressure', 'Test start', 'Test end', 'Area temp', 'Test duration', 'Required leak test pressure', 'Leak test duration', 'Include isometric(s)', 'Note']);
 });
 
 // ----- through the HTTP layer ---------------------------------------------------------------------------------

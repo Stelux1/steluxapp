@@ -6,7 +6,7 @@ import { PROGRESS_CLASSES, isoMaterialInputErrors, materialLineStatuses, materia
 import { RESOURCE_MAP } from './catalog.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import { ApiError, apiUrl, formatNumber, post } from './api.ts';
-import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
+import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScroll, FormError, selectPrompt } from './components.tsx';
 import { BulkEditor, RecordEditor } from './dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
 import { MaterialQuantityLogDialog } from './material-quantity-log.tsx';
@@ -129,7 +129,7 @@ export function IsoMaterialsPanel({ iso, onAttachments, onAudit, onPhase }: Pane
 /** A labelled select used by the dialogs below. */
 function Choice({ label, value, onChange, options, error, required, hint, empty }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; error?: string; required?: boolean; hint?: string; empty?: string }) {
   const id = useId();
-  return <div className="field"><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label><div className="select-wrap"><select id={id} value={value} required={required} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{empty ?? `Select ${label.toLowerCase()}`}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div>{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;
+  return <div className="field"><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label><div className="select-wrap"><select id={id} value={value} required={required} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{empty ?? selectPrompt(label)}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div>{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;
 }
 
 function useAddMaterial(iso: Row, onClose: () => void) {
@@ -145,8 +145,8 @@ function useAddMaterial(iso: Row, onClose: () => void) {
   }
   return { error, fields, busy, submit };
 }
-const Form = ({ title, subtitle, onClose, onSubmit, busy, error, submit, children }: { title: string; subtitle: string; onClose: () => void; onSubmit: (event: FormEvent) => void; busy: boolean; error: string; submit: string; children: ReactNode }) =>
-  <Modal title={title} subtitle={subtitle} onClose={onClose} wide><form noValidate onSubmit={onSubmit}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}<div className="form-grid">{children}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>;
+const Form = ({ title, subtitle, onClose, onSubmit, busy, error, fields, submit, children }: { title: string; subtitle: string; onClose: () => void; onSubmit: (event: FormEvent) => void; busy: boolean; error: string; fields?: Record<string, string>; submit: string; children: ReactNode }) =>
+  <Modal title={title} subtitle={subtitle} onClose={onClose} wide><form noValidate onSubmit={onSubmit}><div className="modal-body"><FormError message={error} fields={fields}/><div className="form-grid">{children}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>;
 
 const quantityOf = (value: unknown) => value === '' || value === undefined ? '' : Number(value);
 const revisionOptions = (rows: Record<string, Row[]>, iso: Row) => activeRows(rows, 'revisions').filter(row => row.type === 'ISO' && row.isoId === iso.id).sort((a, b) => text(b._createdAt).localeCompare(text(a._createdAt))).map(row => ({ value: row.id, label: `Revision ${text(row.revNo)}${row.date ? ` · ${text(row.date)}` : ''}` }));
@@ -158,8 +158,8 @@ function AddCatalogMaterial({ iso, onClose }: { iso: Row; onClose: () => void })
   const [group, setGroup] = useState(''), [materialId, setMaterialId] = useState(''), [quantity, setQuantity] = useState<number | ''>(''), [revisionId, setRevision] = useState(''), [phaseId, setPhase] = useState('');
   const materials = activeRows(rows, 'materials'), groups = [...new Set(materials.map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
   const inGroup = materials.filter(row => text(row.materialGroup) === group).sort((a, b) => byText(a.materialNo, b.materialNo));
-  return <Form title="Add material from DB" subtitle={`Take a material from the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} submit="Add material" onSubmit={event => { event.preventDefault(); void submit({ source: 'Catalog', materialGroup: group, materialId, quantity: quantityOf(quantity), revisionId, phaseId }, { requireGroup: false }); }}>
-    <Choice label="Material group" value={group} onChange={value => { setGroup(value); setMaterialId(''); }} options={groups.map(value => ({ value, label: value }))} empty="Choose group" required hint={groups.length ? undefined : 'The database has no material groups yet.'}/>
+  return <Form title="Add material from DB" subtitle={`Take a material from the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit="Add material" onSubmit={event => { event.preventDefault(); void submit({ source: 'Catalog', materialGroup: group, materialId, quantity: quantityOf(quantity), revisionId, phaseId }, { requireGroup: false }); }}>
+    <Choice label="Material group" value={group} onChange={value => { setGroup(value); setMaterialId(''); }} options={groups.map(value => ({ value, label: value }))} empty="Choose group" required error={fields.materialGroup} hint={groups.length ? undefined : 'The database has no material groups yet.'}/>
     <Choice label="Material" value={materialId} onChange={setMaterialId} options={inGroup.map(row => ({ value: row.id, label: `${text(row.materialNo)} · ${text(row.description)}${row.dia ? ` · ${text(row.dia)}` : ''}${row.lbs ? ` · ${text(row.lbs)}` : ''}` }))} empty={group ? 'Choose material' : 'Choose a group first'} required error={fields.materialId}/>
     <FieldInput field={{ name: 'quantity', label: 'Quantity', type: 'number', required: true, min: 0 }} value={quantity} onChange={value => setQuantity(value as number | '')} error={fields.quantity}/>
     <Choice label="Revision" value={revisionId} onChange={setRevision} options={revisionOptions(rows, iso)} empty="No revision" error={fields.revisionId}/>
@@ -176,7 +176,7 @@ function AddCustomMaterial({ iso, onClose }: { iso: Row; onClose: () => void }) 
   const uoms = activeRows(rows, 'uoms').map(row => text(row.name)).sort(byText), groups = [...new Set(activeRows(rows, 'materials').map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
   const charges = [...new Set(activeRows(rows, 'certifications').map(row => text(row.chargeNo)).filter(Boolean))].sort(byText);
   const input = (name: string, label: string, extra: Partial<{ required: boolean; type: 'text' | 'number'; hint: string }> = {}) => <FieldInput field={{ name, label, type: extra.type || 'text', required: extra.required, hint: extra.hint, min: extra.type === 'number' ? 0 : undefined }} value={values[name]} onChange={set(name)} error={fields[name]}/>;
-  return <Form title="Add custom material" subtitle={`Enter a material that is not in the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} submit="Add material"
+  return <Form title="Add custom material" subtitle={`Enter a material that is not in the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit="Add material"
     onSubmit={event => { event.preventDefault(); void submit({ source: 'Custom', ...values, quantity: quantityOf(values.quantity), price: quantityOf(values.price), addToDB: Boolean(values.addToDB) }, { requireGroup: true }); }}>
     <div className="field"><label htmlFor="custom-group">Material group<span className="required"> *</span></label><input id="custom-group" list="custom-group-options" required autoComplete="off" value={str('materialGroup')} aria-invalid={Boolean(fields.materialGroup)} onChange={event => set('materialGroup')(event.target.value)}/><datalist id="custom-group-options">{groups.map(group => <option key={group} value={group}/>)}</datalist>{fields.materialGroup && <small className="field-error">{fields.materialGroup}</small>}</div>
     {input('articleNo', 'Article No')}{input('legacyNo', 'Legacy No')}{input('materialNo', 'Material No', { required: true })}{input('dia', 'DIA')}{input('lbs', 'LBS/SCH')}

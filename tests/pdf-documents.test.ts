@@ -279,7 +279,7 @@ test('Hydrotest request: every field of the request and the isometrics of the te
   const f = await fixture(t);
   const text = await get(f, 'hydrotest-request?requestId=hydrotest-cw-1');
   for (const label of ['Hydrotest request', 'Record HTR-CW-01', 'Test system', 'Test record no.', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Date', 'Pump type', 'Hose type', 'Manifold', 'Pressure gauge no.', 'Recorder No', 'Calibration cert', 'Piping class', 'Design code', 'Test medium',
-    'Required test pressure', 'Actual test pressure', 'Test start', 'Test end', 'Area temp', 'Test duration', 'Required leak test pressure', 'Leak test duration', 'Include isometrics', 'Result', 'Notes', 'Execution Plan', 'HEP-NFY-001 rev 2', '15.2 bar', 'PG-1187', 'CAL-2026-0312', 'ASME B31.3', 'Passed', 'No visible leaks, pressure held for the full duration.', 'Client representative', 'ISO number', 'Test pressure']) assert.ok(text.includes(label), label);
+    'Required test pressure', 'Actual test pressure', 'Test start', 'Test end', 'Area temp', 'Test duration', 'Required leak test pressure', 'Leak test duration', 'Include isometric(s)', 'Result', 'Notes', 'Execution Plan', 'HEP-NFY-001 rev 2', '15.2 bar', 'PG-1187', 'CAL-2026-0312', 'ASME B31.3', 'Passed', 'No visible leaks, pressure held for the full duration.', 'Client representative', 'ISO number', 'Test pressure']) assert.ok(text.includes(label), label);
   const isos = f.store.list('isometrics').filter(row => row.testSystemId === 'test-cw');
   assert.ok(isos.length >= 1);
   for (const iso of isos) assert.ok(text.includes(String(iso.isoNo)), String(iso.isoNo));

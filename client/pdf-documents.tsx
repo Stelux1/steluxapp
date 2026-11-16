@@ -122,7 +122,7 @@ export function RequestPdfButton({ request }: { request: Row }) {
   const options: PdfOption[] = [
     ...(ndt && processes.length ? [{ name: 'processes', label: 'NDT processes to include', kind: 'choices' as const, choices: processes }] : []),
     { name: 'note', label: 'Note', kind: 'textarea', maxLength: 2000, hint: 'Leave empty to print the note saved with the request.' },
-    { name: 'isometrics', label: 'Include isometrics', kind: 'checkbox', defaultValue: false, hint: 'Adds the list of the isometrics this request covers.' },
+    { name: 'isometrics', label: 'Include isometric(s)', kind: 'checkbox', defaultValue: false, hint: 'Adds the list of the isometrics this request covers.' },
   ];
   return <PdfDocumentButton document={kind.document} report="pdf-ndt-request" params={{ requestNo: number }} label="Request PDF" title={kind.label} subtitle={`Request ${number}`} fileName={`${kind.label}-${safe(number)}`} options={options} attach allowed={canRecord('inspection_requests', 'export', request)} hint="Create the printable request"/>;
 }
@@ -145,7 +145,7 @@ export function ReleasePdfButton({ release }: { release: Row }) {
 /** Hydrotest request document. */
 export function HydrotestPdfButton({ request }: { request: Row }) {
   return <PdfDocumentButton document="hydrotest-request" report="pdf-hydrotest" params={{ requestId: request.id }} label="Request PDF" title="Hydrotest request" subtitle={text(request.recordNo)} fileName={`Hydrotest-request-${safe(request.recordNo)}`}
-    options={[{ name: 'isometrics', label: 'Include isometrics', kind: 'checkbox', defaultValue: request.includeIsometrics !== false, hint: 'Lists the isometrics of the test system.' }]}/>;
+    options={[{ name: 'isometrics', label: 'Include isometric(s)', kind: 'checkbox', defaultValue: request.includeIsometrics !== false, hint: 'Lists the isometrics of the test system.' }]}/>;
 }
 export interface PunchPdfFilters { projectId: string; punchType: string; category: string; kpi: string; q: string }
 /** Punch list of the page: the filters currently chosen on the page are printed. */

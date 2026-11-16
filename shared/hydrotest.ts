@@ -30,7 +30,7 @@ const TIME_HINT = 'Time as HH:MM, for example 09:30.';
 
 /** Added to the existing `test_systems` catalog (see `extend()` in shared/resources.ts). */
 export const TEST_SYSTEM_FIELDS: Field[] = [
-  t('accepted', 'Test system accepted by client', { type: 'select', options: TS_ACCEPTED_OPTIONS, default: '', hint: 'Leave unset until the client decides. "Testing not applicable" takes the isometrics out of the hydrotest.' }),
+  t('accepted', 'Test system accepted by client', { type: 'select', options: TS_ACCEPTED_OPTIONS, default: '', blank: '-- Not set --', hint: 'Leave unset until the client decides. "Testing not applicable" takes the isometrics out of the hydrotest.' }),
 ];
 
 const requestFields: Field[] = [
@@ -45,7 +45,7 @@ const requestFields: Field[] = [
   t('testStart', 'Test start', { section: CONDITIONS, hint: TIME_HINT }), t('testEnd', 'Test end', { section: CONDITIONS, hint: TIME_HINT }),
   t('areaTemp', 'Area temp', { section: CONDITIONS }), t('testDuration', 'Test duration', { section: CONDITIONS }),
   t('requiredLeakPressure', 'Required leak test pressure', { section: CONDITIONS }), t('leakDuration', 'Leak test duration', { section: CONDITIONS }),
-  t('includeIsometrics', 'Include isometrics', { type: 'checkbox', default: true, section: CONDITIONS, hint: 'List the isometrics of the test system on the test document.' }),
+  t('includeIsometrics', 'Include isometric(s)', { type: 'checkbox', default: true, section: CONDITIONS, hint: 'List the isometrics of the test system on the test document.' }),
   // Set by "Record hydrotest result"; hidden in the generic form so the result is recorded in one place.
   t('result', 'Result', { type: 'select', options: HYDROTEST_RESULTS, default: '', section: RESULT, hidden: true }),
   t('note', 'Note', { type: 'textarea', section: 'Notes' }),
