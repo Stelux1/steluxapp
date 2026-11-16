@@ -13,6 +13,7 @@ import { DEFAULT_NDT_PERCENT, ITP_SLOTS, itpNdtPercent, itpUsage } from '../shar
 import { TRACERS_REQUIRED, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_REMOVABLE_HINT } from '../shared/inspections.ts';
 import { allowedScopes, itpActive, itpLatest, itpPickerOptions, itpScope, type LinkSlot } from '../shared/itps.ts';
 import type { Row } from '../shared/types.ts';
+import { DashboardReports } from './dashboard-reports.tsx';
 
 const show = (value: unknown) => String(value ?? '').trim();
 const distinct = (rows: Row[], key: string) => [...new Set(rows.map(row => show(row[key])).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
@@ -132,7 +133,7 @@ export function WeldDashboard() {
         <Select label="NDT process" value={draft.ndtProcessId} onChange={set('ndtProcessId')} any={FILTER_PLACEHOLDERS.ndtProcess} options={labelled(activeRows(rows, 'ndt_processes'), ndtProcessLabel, (a, b) => show(a.name).localeCompare(show(b.name), 'en', { numeric: true }))}/>
         <MultiSelect label="WPS method" value={draft.wpsIds} onChange={set('wpsIds')} placeholder={FILTER_PLACEHOLDERS.wps} options={named(activeRows(rows, 'wps'))}/>
       </div>
-      <div className="wd-filter-actions"><button className="btn primary" type="submit">Filter</button><button className="btn" type="button" onClick={reset} disabled={!dashboardFilterCount(filters, defaults) && !dashboardFilterCount(draft, defaults)}>Reset</button>
+      <div className="wd-filter-actions"><button className="btn primary" type="submit">Filter</button><button className="btn" type="button" onClick={reset} disabled={!dashboardFilterCount(filters, defaults) && !dashboardFilterCount(draft, defaults)}>Reset</button><DashboardReports filters={filters} defaultTo={defaults.to}/>
         <span role="status" aria-live="polite">{result.scopeWelds} {result.scopeWelds === 1 ? 'weld' : 'welds'} selected</span></div>
     </form>
 

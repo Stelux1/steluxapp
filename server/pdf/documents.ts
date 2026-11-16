@@ -22,6 +22,7 @@ import { weldersSummaryDocument } from './welders-summary.ts';
 import { welderCardDocument } from './welder-card.ts';
 import { materialLabelsDocument } from './material-labels.ts';
 import { pickSheetDocument } from './pick-sheet.ts';
+import { DASHBOARD_REPORT_DOCUMENTS } from './dashboard-reports.ts';
 
 /**
  * Everything a document definition may use. `rows` are the records the account may read (already checked
@@ -168,4 +169,6 @@ export const PDF_DOCUMENTS: AnyPdfDefinition[] = [
   weldersSummaryDocument,
   materialLabelsDocument,
   pickSheetDocument,
+  // Reports ▾ of the Weld Pilot dashboard (server/pdf/dashboard-reports.ts).
+  ...DASHBOARD_REPORT_DOCUMENTS,
 ];
