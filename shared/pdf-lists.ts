@@ -130,7 +130,7 @@ export function pickListModel(rows: Rows, reportNo: string, isoIds: Set<string>)
   if (!iso) return null;
   const lines = report.lines.map(line => {
     const material = materialRecord(rows, line);
-    return [text(material?.materialGroup), text(material?.materialNo), text(material?.description), text(material?.dia), text(material?.lbs), number(line.quantity), text(material?.uom), text(find(rows, 'warehouses', line.warehouseId)?.name)];
+    return [text(material?.materialGroup), text(material?.materialNo), text(material?.description), text(material?.dia), text(material?.lbs), number(line.quantity), text(material?.uom), text(line.warehouseId ? find(rows, 'warehouses', line.warehouseId)?.name : find(rows, 'sites', line.siteId)?.name)]; // a line of a project site's inventory names the site
   });
   return { report, iso, context: projectContext(rows, [iso]), lines, taken: report.taken };
 }

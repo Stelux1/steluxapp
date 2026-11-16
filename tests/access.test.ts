@@ -417,7 +417,7 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   // Material status %, the MTO budgets, punch counts and the hydrotest state are the shared formulas over every record,
   // and reach Weld Pilot too although it reads no material line, order, stock or pick list.
   const all = (key: string) => f.store.list(key);
-  const rowsOf = { isometrics: all('isometrics'), iso_materials: all('iso_materials'), materials: all('materials'), custom_materials: all('custom_materials'), operation_phases: all('operation_phases'), orders: all('orders'), order_lines: all('order_lines'), stock: all('stock'), picklists: all('picklists') };
+  const rowsOf = { isometrics: all('isometrics'), projects: all('projects'), reservations: all('reservations'), iso_materials: all('iso_materials'), materials: all('materials'), custom_materials: all('custom_materials'), operation_phases: all('operation_phases'), orders: all('orders'), order_lines: all('order_lines'), stock: all('stock'), picklists: all('picklists') };
   for (const id of inMto) {
     const iso = f.store.get('isometrics', id);
     assert.equal(weld.isoSummaries![id].materialStatus.percent, materialStatus(iso, rowsOf).percent, `${id} material status`);

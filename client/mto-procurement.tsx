@@ -115,7 +115,7 @@ export function MaterialTakeIn() {
 
 /** Receive materials: choose the order and supplier, then the quantity per line. Over-receipt is refused. */
 export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onClose: () => void }) {
-  const { rows, refresh, notify, canRecord, siteId } = useWorkspace();
+  const { rows, refresh, notify, siteId } = useWorkspace();
   const orders = activeRows(rows, 'orders').filter(order => ['Pending', 'Partially received'].includes(String(order.status))).sort((a, b) => String(b.number).localeCompare(String(a.number)));
   const warehouses = activeRows(rows, 'warehouses').filter(row => row.use !== 'Tools');
   const [order, setOrder] = useState(orderId); const [supplierId, setSupplier] = useState(() => String(rows.orders?.find(o => o.id === orderId)?.supplierId || ''));
@@ -125,6 +125,9 @@ export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onC
   const lines = activeRows(rows, 'order_lines').filter(line => line.orderId === order && Number(line.received) < Number(line.quantity));
   const errors = receiptQuantityErrors(lines.map(line => ({ lineId: line.id, outstanding: Math.round((Number(line.quantity) - Number(line.received)) * 1e6) / 1e6, quantity: quantities[line.id] })));
   const items = lines.filter(line => Number(quantities[line.id]) > 0).map(line => ({ lineId: line.id, quantity: Number(quantities[line.id]), chargeNo: charges[line.id] || '' }));
+  // A take-in goes into the Material inventory of the order's project site; only an order of no project site needs a storehouse.
+  const siteOfProject = (projectId: unknown) => String(rows.projects?.find(project => project.id === projectId)?.siteId || '');
+  const needsStorehouse = Boolean(order) && lines.some(line => !siteOfProject(rows.isometrics?.find(iso => iso.id === line.isoId)?.projectId) && !siteOfProject(rows.orders?.find(o => o.id === order)?.projectId));
   // Suppliers switched off on the active main project are not offered ("Enabled on this site"); the order's supplier stays.
   const suppliers = enabledOptions('suppliers', activeRows(rows, 'suppliers'), siteId, rows, supplierId);
   function choose(id: string) { setOrder(id); setQuantities({}); setCharges({}); setSupplier(String(rows.orders?.find(o => o.id === id)?.supplierId || '')); setError(''); setFields({}); }
@@ -132,11 +135,11 @@ export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onC
     event.preventDefault(); setError(''); setFields({});
     if (!order) return setError('Choose the order that was delivered.');
     if (!supplierId) return setFields({ supplierId: 'Choose the delivery supplier.' });
-    if (warehouses.length > 1 && !warehouseId) return setFields({ warehouseId: 'Choose the receiving storehouse.' });
+    if (needsStorehouse && warehouses.length > 1 && !warehouseId) return setFields({ warehouseId: 'Choose the receiving storehouse.' });
     if (Object.keys(errors).length) return setError('Fix the quantities marked below.');
     if (!items.length) return setError('Enter a received quantity for at least one line.');
     setBusy(true);
-    try { await post('/actions/receive', { orderId: order, supplierId, warehouseId, date, note, items }); await refresh(); notify('Materials taken in.'); onClose(); }
+    try { await post('/actions/receive', { orderId: order, supplierId, ...(needsStorehouse ? { warehouseId } : {}), date, note, items }); await refresh(); notify('Materials taken in.'); onClose(); }
     catch (e) { setError((e as Error).message); setFields((e as ApiError).fields || {}); } finally { setBusy(false); }
   }
   return <Modal title="Receive materials" subtitle="Choose the order and supplier, then enter what arrived. The whole delivery is saved together or not at all." onClose={onClose} wide>
@@ -145,14 +148,14 @@ export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onC
       <div className="form-grid">
         <div className="field"><label htmlFor="receive-order">Order No.</label><select id="receive-order" required value={order} onChange={e => choose(e.target.value)}><option value="">Choose an order</option>{orders.map(o => <option key={o.id} value={o.id}>{String(o.number)} | {formatDate(o.date)}</option>)}</select>{!orders.length && <small>No open orders to take in.</small>}</div>
         <div className="field"><label htmlFor="receive-supplier">Supplier</label><select id="receive-supplier" required aria-invalid={Boolean(fields.supplierId)} value={supplierId} onChange={e => setSupplier(e.target.value)}><option value="">Choose a supplier</option>{suppliers.map(s => <option key={s.id} value={s.id}>{String(s.name)}</option>)}</select>{fields.supplierId && <small className="field-error" role="alert">{fields.supplierId}</small>}{!suppliers.length && <small>No suppliers are available to your account.</small>}</div>
-        {warehouses.length > 1 && <div className="field"><label htmlFor="receive-warehouse">Receiving storehouse</label><select id="receive-warehouse" required aria-invalid={Boolean(fields.warehouseId)} value={warehouseId} onChange={e => setWarehouse(e.target.value)}><option value="">Choose a storehouse</option>{warehouses.map(w => <option key={w.id} value={w.id}>{String(w.name)}</option>)}</select>{fields.warehouseId && <small className="field-error" role="alert">{fields.warehouseId}</small>}</div>}
+        {needsStorehouse && warehouses.length > 1 && <div className="field"><label htmlFor="receive-warehouse">Receiving storehouse</label><select id="receive-warehouse" required aria-invalid={Boolean(fields.warehouseId)} value={warehouseId} onChange={e => setWarehouse(e.target.value)}><option value="">Choose a storehouse</option>{warehouses.map(w => <option key={w.id} value={w.id}>{String(w.name)}</option>)}</select>{fields.warehouseId && <small className="field-error" role="alert">{fields.warehouseId}</small>}</div>}
         <div className="field"><label htmlFor="receive-date">Date</label><input id="receive-date" type="date" required value={date} onChange={e => setDate(e.target.value)}/></div>
         <div className="field wide-field"><label htmlFor="receive-note">Notes</label><textarea id="receive-note" value={note} maxLength={500} onChange={e => setNote(e.target.value)}/></div>
       </div>
       {order && <section className="line-items"><h3>Outstanding materials <span className="count-pill">{lines.length}</span></h3>{lines.length ? lines.map(line => { const outstanding = Math.round((Number(line.quantity) - Number(line.received)) * 1e6) / 1e6; const name = materialName(rows, line); return <div className="receipt-line" key={line.id}><div><strong>{name}</strong><small>{text(line.description, '')}</small><small>{formatNumber(outstanding, 3)} outstanding of {formatNumber(line.quantity, 3)} {text(line.uom, '')}</small></div>
         <label>Receive now<input type="number" inputMode="decimal" min="0" max={outstanding} step="any" aria-label={`Receive ${name}`} aria-invalid={Boolean(errors[line.id])} value={quantities[line.id] ?? ''} placeholder="0" onChange={e => setQuantities(old => ({ ...old, [line.id]: e.target.value }))}/>{errors[line.id] && <small className="field-error" role="alert">{errors[line.id]}</small>}</label>
         <label>Charge / heat number<input aria-label={`Charge number ${name}`} maxLength={100} value={charges[line.id] ?? ''} onChange={e => setCharges(old => ({ ...old, [line.id]: e.target.value }))}/></label></div>; }) : <p className="muted">Everything on this order has been received.</p>}</section>}
-      {!canRecord('warehouses') && <p className="muted">The receiving storehouse is chosen automatically when there is only one.</p>}
+      {order && !needsStorehouse && <p className="muted">The materials go into the Material inventory of the order’s project site.</p>}
     </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !order}>{busy && <Loader2 size={15} className="spin"/>}Record receipt</button></div></form></Modal>;
 }
 

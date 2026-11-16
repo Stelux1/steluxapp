@@ -11,6 +11,7 @@ import { Store } from './store.ts';
 import { upgradeWeldCatalogs } from './catalog-upgrade.ts';
 import { loadDiameterCatalog, missingDiameterCatalog } from './diameter-catalog.ts';
 import { runHostedPreparation } from './hosted-preparation.ts';
+import { migrateProjectHoldings } from './mto-stock.ts';
 
 // Hosted update, one sequence (server/hosted-preparation.ts): decide what is pending, take ONE backup before the first
 // change, bring the schema to this release in one transaction (server/hosted-schema.ts), then run the data steps.
@@ -31,6 +32,8 @@ try {
       { name: 'catalogData', run: options => upgradeWeldCatalogs(store(), options) },
       // The reference diameter catalog: adds the diameters the workspace does not hold and never changes one that exists.
       { name: 'diameterCatalog', run: ({ dryRun: counting }) => ({ added: counting ? missingDiameterCatalog(store()).length : loadDiameterCatalog(store()) }) },
+      // MTO stock: what the first version kept as an invisible project holding goes into that project site's Material inventory (server/mto-stock.ts).
+      { name: 'projectHoldings', run: options => migrateProjectHoldings(store(), options) },
     ],
     backup: () => {
       const destination = resolve('backups', `before-welding-live-${new Date().toISOString().replaceAll(':', '-')}`);

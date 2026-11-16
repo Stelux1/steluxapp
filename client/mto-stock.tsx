@@ -5,8 +5,7 @@ import { api, apiUrl, ApiError, formatDate, formatNumber, post } from './api.ts'
 import { Badge, Dropdown, EmptyState, FieldInput, FormError, Modal, SearchInput, TableScroll } from './components.tsx';
 import { activeRows, useWorkspace } from './context.tsx';
 import { TablePage } from './records.tsx';
-import { CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, TRANSFER_PRIORITIES, TRANSFER_TYPES, inventoryLog, inventoryRows, projectHoldings, stockDetails, transferRoute, validQuantity } from '../shared/mto-stock.ts';
-import { materialIdentity } from '../shared/materials.ts';
+import { CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, TRANSFER_PRIORITIES, defaultTransferType, inventoryLog, inventoryRows, lineCertificates, siteInventoryLog, stockDetails, storehouseRows, transferOrderFields, transferRoute, transferTypesFor, validQuantity, type InventoryRow, type TransferContext } from '../shared/mto-stock.ts';
 import type { Row } from '../shared/types.ts';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -44,47 +43,64 @@ function ActionDialog({ title, subtitle, submit, onSubmit, onClose, children, wi
 const sitesOf = (allRows: Record<string, Row[]>) => activeRows(allRows, 'sites').map(site => ({ value: site.id, label: String(site.name) }));
 const warehousesOf = (rows: Record<string, Row[]>) => activeRows(rows, 'warehouses').filter(row => row.use !== 'Tools');
 const describeLine = (rows: Record<string, Row[]>, line: Row) => { const details = stockDetails(rows, line); return `${details.materialNo}${line.chargeNo ? ` · ${line.chargeNo}` : ''}`; };
+const storehouseName = (rows: Record<string, Row[]>, line: Row) => String(rows.warehouses?.find(w => w.id === line.warehouseId)?.name || '');
 
-function TransferToProject({ lines, onClose }: { lines: Row[]; onClose: () => void }) {
+/**
+ * The project site whose Material inventory the page works on: the active project site, or (when the workspace shows
+ * every site) the one chosen here.
+ */
+function useInventorySite() {
+  const { siteId, allRows } = useWorkspace();
+  const [params, setParams] = useSearchParams();
+  const sites = sitesOf(allRows);
+  const requested = params.get('site') || '';
+  const chosen = siteId || (sites.some(site => site.value === requested) ? requested : sites[0]?.value || '');
+  return { siteId: chosen, fixed: Boolean(siteId), sites, choose: (value: string) => setParams({ site: value }) };
+}
+
+/** "Transfer material from storehouse to project" (one line) / "Bulk transfer materials to project" (checked lines). */
+function TransferToProject({ lines, defaultSite, onClose }: { lines: Row[]; defaultSite: string; onClose: () => void }) {
   const { rows, allRows } = useWorkspace();
-  const [siteId, setSite] = useState(''), [date, setDate] = useState(today()), [note, setNote] = useState('');
-  const [amounts, setAmounts] = useState<Record<string, string>>(() => Object.fromEntries(lines.map(line => [line.id, lines.length === 1 ? '' : String(Math.min(Number(line.quantity), 1))])));
-  return <ActionDialog title="Transfer to project" subtitle="The storehouse balance decreases by exactly what the project receives." submit="Transfer" onClose={onClose} wide
+  const [siteId, setSite] = useState(defaultSite), [date, setDate] = useState(today()), [note, setNote] = useState('');
+  const [amounts, setAmounts] = useState<Record<string, string>>(() => Object.fromEntries(lines.map(line => [line.id, lines.length === 1 ? '' : String(Number(line.quantity))])));
+  const certificates = useMemo(() => Object.fromEntries(lines.map(line => [line.id, lineCertificates(rows, line)])), [rows, lines]);
+  const [ticked, setTicked] = useState<Record<string, string[]>>(() => Object.fromEntries(lines.map(line => [line.id, lineCertificates(rows, line).map(cert => cert.id)])));
+  const single = lines.length === 1;
+  return <ActionDialog title={single ? 'Transfer material from storehouse to project' : 'Bulk transfer materials to project'} subtitle="The material moves into the Material inventory of the destination project site." submit={single ? 'Transfer' : 'Transfer all'} onClose={onClose} wide
     onSubmit={async () => {
-      const items = lines.map(line => ({ stockId: line.id, quantity: amounts[line.id] === '' ? NaN : Number(amounts[line.id]) }));
-      if (!siteId) throw new Error('Choose the project to transfer to.');
-      const bad = items.findIndex(item => !validQuantity(item.quantity)); if (bad >= 0) throw new Error(`Quantity of ${describeLine(rows, lines[bad])} must be at least 0.01, in steps of 0.01.`);
-      await post('/actions/stock-to-project', { siteId, items, date, note }); return `Transferred ${lines.length} line${lines.length === 1 ? '' : 's'} to the project.`;
+      const items = lines.map(line => ({ stockId: line.id, quantity: amounts[line.id] === '' ? NaN : Number(amounts[line.id]), certIds: ticked[line.id] || [] }));
+      if (!siteId) throw new Error('Choose the destination project site.');
+      const bad = items.findIndex(item => !validQuantity(item.quantity) || item.quantity > Number(lines[items.indexOf(item)].quantity)); if (bad >= 0) throw new Error(`Quantity of ${describeLine(rows, lines[bad])} must be at least 0.01, in steps of 0.01, and at most what is available.`);
+      await post('/actions/stock-to-project', { siteId, items, date, note }); return `Transferred ${lines.length} line${single ? '' : 's'} to ${String(allRows.sites?.find(site => site.id === siteId)?.name || 'the project site')}.`;
     }}>{errors => <>
-    <Choice label="To project site" required value={siteId} onChange={setSite} options={sitesOf(allRows)} error={errors.siteId}/>
+    <Choice label="Destination project site" required value={siteId} onChange={setSite} options={sitesOf(allRows)} error={errors.siteId}/>
     <Control label="Date" required error={errors.date}>{(_, props) => <input {...props} type="date" value={date} onChange={event => setDate(event.target.value)}/>}</Control>
-    <div className="field full-width"><span className="field-title">Quantities</span><ul className="stock-lines">{lines.map(line => { const details = stockDetails(rows, line); return <li key={line.id}><span><strong>{details.materialNo}</strong><small>{details.description}{line.chargeNo ? ` · ${line.chargeNo}` : ''} · {formatNumber(line.quantity, 3)} {details.uom} available</small></span><QuantityInput label={`Quantity of ${details.materialNo}`} value={amounts[line.id]} max={Number(line.quantity)} onChange={value => setAmounts(current => ({ ...current, [line.id]: value }))}/></li>; })}</ul></div>
+    <div className="field full-width"><span className="field-title">{single ? 'Material' : 'Selected materials:'}</span><ul className="stock-lines">{lines.map(line => { const details = stockDetails(rows, line); const certs = certificates[line.id] || []; return <li key={line.id}><span><strong>{details.materialNo}</strong><small>{details.description}{line.chargeNo ? ` · ${line.chargeNo}` : ''} · {storehouseName(rows, line)} · Available: {formatNumber(line.quantity, 3)} {details.uom}</small></span><QuantityInput label={`Quantity of ${details.materialNo}`} value={amounts[line.id]} max={Number(line.quantity)} onChange={value => setAmounts(current => ({ ...current, [line.id]: value }))}/>
+      <fieldset className="field full-width"><legend className="field-title">Certificates to transfer (will be copied to destination project)</legend>{certs.length ? certs.map(cert => <label key={cert.id} className="checkbox-field"><input type="checkbox" checked={(ticked[line.id] || []).includes(cert.id)} onChange={event => setTicked(current => ({ ...current, [line.id]: event.target.checked ? [...(current[line.id] || []), cert.id] : (current[line.id] || []).filter(id => id !== cert.id) }))}/><span>{String(cert.name)}{cert.indexNo ? ` · index ${cert.indexNo}` : ''}</span></label>) : <small className="muted">No certificates for this material and charge.</small>}</fieldset></li>; })}</ul></div>
     <Text label="Notes" area value={note} onChange={setNote} max={2000}/></>}</ActionDialog>;
 }
 
 function MoveDialog({ line, onClose }: { line: Row; onClose: () => void }) {
   const { rows } = useWorkspace(); const details = stockDetails(rows, line);
   const [to, setTo] = useState(''), [amount, setAmount] = useState(''), [all, setAll] = useState(false), [date, setDate] = useState(today()), [note, setNote] = useState('');
-  return <ActionDialog title="Move to storehouse" subtitle={`${details.materialNo} · ${formatNumber(line.quantity, 3)} ${details.uom} in ${String(rows.warehouses?.find(w => w.id === line.warehouseId)?.name || '')}`} submit="Move" onClose={onClose}
+  return <ActionDialog title="Move to other storehouse" subtitle={`${details.materialNo} · From: ${storehouseName(rows, line)} · Available: ${formatNumber(line.quantity, 3)} ${details.uom}`} submit="Move" onClose={onClose}
     onSubmit={async () => { if (!all && !validQuantity(Number(amount))) throw new Error('Enter a quantity of at least 0.01, in steps of 0.01.'); await post('/actions/stock-move', { stockId: line.id, toWarehouseId: to, ...(all ? { all: true } : { quantity: Number(amount) }), date, note }); return 'Material moved.'; }}>{errors => <>
-    <Choice label="To storehouse" required value={to} onChange={setTo} options={warehousesOf(rows).filter(w => w.id !== line.warehouseId).map(w => ({ value: w.id, label: String(w.name) }))} error={errors.toWarehouseId}/>
     <QuantityInput value={amount} onChange={setAmount} max={Number(line.quantity)} disabled={all} error={errors.quantity}/>
-    <div className="field checkbox-field"><label><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)}/><span>All ({formatNumber(line.quantity, 3)} {details.uom})</span></label></div>
+    <div className="field checkbox-field"><label><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)}/><span>Move all ({formatNumber(line.quantity, 3)} {details.uom})</span></label></div>
+    <Choice label="Destination storehouse" required value={to} onChange={setTo} options={warehousesOf(rows).filter(w => w.id !== line.warehouseId).map(w => ({ value: w.id, label: String(w.name) }))} error={errors.toWarehouseId}/>
     <Control label="Date" required>{(_, props) => <input {...props} type="date" value={date} onChange={event => setDate(event.target.value)}/>}</Control>
     <Text label="Notes" area value={note} onChange={setNote} max={2000}/></>}</ActionDialog>;
 }
 
-function ReturnDialog({ line, onClose }: { line: Row; onClose: () => void }) {
+/** Return to inventory: from a storehouse line into the Material inventory of the project site (the dialog names no destination). */
+function ReturnDialog({ line, siteId, onClose }: { line: Row; siteId: string; onClose: () => void }) {
   const { rows, allRows } = useWorkspace(); const details = stockDetails(rows, line);
-  const holders = projectHoldings({ movements: rows.movements || [] }).filter(entry => entry.identity === materialIdentity(line) && entry.chargeNo === String(line.chargeNo || ''));
-  const [siteId, setSite] = useState(holders.length === 1 ? holders[0].siteId : ''), [amount, setAmount] = useState(''), [all, setAll] = useState(false), [date, setDate] = useState(today()), [note, setNote] = useState('');
-  const held = holders.find(entry => entry.siteId === siteId)?.quantity ?? 0;
-  return <ActionDialog title="Return to inventory" subtitle={`${details.materialNo}${line.chargeNo ? ` · ${line.chargeNo}` : ''}: bring material back from a project into this inventory line.`} submit="Return" onClose={onClose}
-    onSubmit={async () => { if (!holders.length) throw new Error('No project holds this material from this charge.'); if (!all && !validQuantity(Number(amount))) throw new Error('Enter a quantity of at least 0.01, in steps of 0.01.'); await post('/actions/stock-return', { stockId: line.id, siteId, ...(all ? { all: true } : { quantity: Number(amount) }), date, note }); return 'Material returned to the inventory.'; }}>{errors => <>
-    {!holders.length && <p className="field full-width muted" role="status">No project holds this material from this charge, so there is nothing to return.</p>}
-    <Choice label="From project site" required value={siteId} onChange={setSite} options={holders.map(entry => ({ value: entry.siteId, label: `${String(allRows.sites?.find(site => site.id === entry.siteId)?.name || 'Project')} · holds ${formatNumber(entry.quantity, 3)} ${details.uom}` }))} error={errors.siteId}/>
-    <QuantityInput value={amount} onChange={setAmount} max={held || undefined} disabled={all} error={errors.quantity}/>
-    <div className="field checkbox-field"><label><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)}/><span>All{held ? ` (${formatNumber(held, 3)} ${details.uom})` : ''}</span></label></div>
+  const [target, setTarget] = useState(siteId), [amount, setAmount] = useState(''), [all, setAll] = useState(false), [date, setDate] = useState(today()), [note, setNote] = useState('');
+  return <ActionDialog title="Return to inventory" subtitle={`${details.materialNo}${line.chargeNo ? ` · ${line.chargeNo}` : ''} · Storehouse: ${storehouseName(rows, line)} · Available: ${formatNumber(line.quantity, 3)} ${details.uom}`} submit="Return" onClose={onClose}
+    onSubmit={async () => { if (!target) throw new Error('Choose the project site whose inventory receives the material.'); if (!all && !validQuantity(Number(amount))) throw new Error('Enter a quantity of at least 0.01, in steps of 0.01.'); await post('/actions/stock-return', { stockId: line.id, siteId: target, ...(all ? { all: true } : { quantity: Number(amount) }), date, note }); return 'Material returned to the inventory.'; }}>{errors => <>
+    {!siteId && <Choice label="Project site" required value={target} onChange={setTarget} options={sitesOf(allRows)} error={errors.siteId} hint="The workspace shows every project site: choose whose inventory receives the material."/>}
+    <QuantityInput label="Quantity to return" value={amount} onChange={setAmount} max={Number(line.quantity)} disabled={all} error={errors.quantity}/>
+    <div className="field checkbox-field"><label><input type="checkbox" checked={all} onChange={event => setAll(event.target.checked)}/><span>Return all ({formatNumber(line.quantity, 3)} {details.uom})</span></label></div>
     <Control label="Date" required>{(_, props) => <input {...props} type="date" value={date} onChange={event => setDate(event.target.value)}/>}</Control>
     <Text label="Notes" area value={note} onChange={setNote} max={2000}/></>}</ActionDialog>;
 }
@@ -96,7 +112,7 @@ function CorrectDialog({ line, onClose }: { line: Row; onClose: () => void }) {
   const uoms = [...new Set([...activeRows(rows, 'uoms').map(row => String(row.name)), details.uom].filter(Boolean))];
   const charges = [...new Set(activeRows(rows, 'certifications').filter(row => !row.materialId || row.materialId === line.materialId).map(row => String(row.chargeNo || '')).filter(Boolean))];
   const listId = useId().replaceAll(':', '');
-  return <ActionDialog title="Correct entry" subtitle={`${details.materialNo}: fix the wording of this inventory line. The change is logged with your reason.`} submit="Save correction" onClose={onClose} wide
+  return <ActionDialog title="Correct entry" subtitle={`${details.materialNo}: fix the wording of this storehouse line. The change is logged with your reason.`} submit="Save correction" onClose={onClose} wide
     onSubmit={async () => { await post('/actions/stock-correct', { stockId: line.id, ...values, date: today() }); return 'Entry corrected.'; }}>{errors => <>
     <Text label="Material group" required max={100} value={values.materialGroup} onChange={set('materialGroup')} error={errors.materialGroup}/>
     <Text label="Article no" max={100} value={values.articleNo} onChange={set('articleNo')} error={errors.articleNo}/>
@@ -122,133 +138,183 @@ function AdjustDialog({ line, onClose }: { line: Row; onClose: () => void }) {
 function RemoveDialog({ line, onClose }: { line: Row; onClose: () => void }) {
   const { rows } = useWorkspace(); const details = stockDetails(rows, line);
   const [reason, setReason] = useState(''), [note, setNote] = useState('');
-  return <ActionDialog title="Remove from inventory" subtitle={`${details.materialNo}${Number(line.quantity) > 0 ? `: the remaining ${formatNumber(line.quantity, 3)} ${details.uom} is written off.` : ''}`} submit="Remove" onClose={onClose}
-    onSubmit={async () => { await post('/actions/stock-remove', { stockId: line.id, reasonText: reason, note, date: today() }); return 'Removed from the inventory.'; }}>{errors => <>
+  return <ActionDialog title="Remove from storehouse" subtitle={`${details.materialNo} · ${storehouseName(rows, line)}${Number(line.quantity) > 0 ? `: the remaining ${formatNumber(line.quantity, 3)} ${details.uom} is written off.` : ''}`} submit="Remove" onClose={onClose}
+    onSubmit={async () => { await post('/actions/stock-remove', { stockId: line.id, reasonText: reason, note, date: today() }); return 'Removed from the storehouse.'; }}>{errors => <>
     <Text label="Reason" required max={500} value={reason} onChange={setReason} error={errors.reasonText} hint="For example: imported by mistake."/>
     <Text label="Notes" area max={2000} value={note} onChange={setNote}/></>}</ActionDialog>;
 }
 
-function AddFromDatabase({ warehouseId, onClose }: { warehouseId: string; onClose: () => void }) {
-  const { rows } = useWorkspace();
+/** Remove material from inventory (reference #removeMaterialFromInventory): Quantity and Comment. */
+function InventoryRemoveDialog({ row, onClose }: { row: InventoryRow; onClose: () => void }) {
+  const [amount, setAmount] = useState(''), [comment, setComment] = useState('');
+  return <ActionDialog title="Remove material from inventory" subtitle={`${row.details.materialNo} · ${formatNumber(row.quantity, 3)} ${row.details.uom} in the inventory`} submit="Remove" onClose={onClose}
+    onSubmit={async () => { if (!validQuantity(Number(amount)) || Number(amount) > row.quantity) throw new Error(`Enter a quantity from 0.01 to ${formatNumber(row.quantity, 3)}, in steps of 0.01.`); await post('/actions/inventory-remove', { siteId: row.siteId, ...(row.materialId ? { materialId: row.materialId } : { customMaterialId: row.customMaterialId }), quantity: Number(amount), comment, date: today() }); return 'Removed from the inventory.'; }}>{errors => <>
+    <QuantityInput value={amount} onChange={setAmount} max={row.quantity} error={errors.quantity}/>
+    <Text label="Comment" required max={500} value={comment} onChange={setComment} error={errors.comment}/></>}</ActionDialog>;
+}
+
+function AddFromDatabase({ siteId, onClose }: { siteId: string; onClose: () => void }) {
+  const { rows, label } = useWorkspace();
   const [materialId, setMaterial] = useState(''), [charge, setCharge] = useState(''), [amount, setAmount] = useState('');
-  return <ActionDialog title="Add material from DB" subtitle="Put a catalog material into this storehouse." submit="Add to inventory" onClose={onClose}
-    onSubmit={async () => { if (!validQuantity(Number(amount))) throw new Error('Enter a quantity of at least 0.01, in steps of 0.01.'); await post('/actions/stock-add', { warehouseId, materialId, chargeNo: charge, quantity: Number(amount), date: today() }); return 'Material added to the inventory.'; }}>{errors => <>
+  return <ActionDialog title="Add material from DB" subtitle={`Put a catalog material into the inventory of ${label('sites', siteId)}.`} submit="Add to inventory" onClose={onClose}
+    onSubmit={async () => { if (!validQuantity(Number(amount))) throw new Error('Enter a quantity of at least 0.01, in steps of 0.01.'); await post('/actions/stock-add', { siteId, materialId, chargeNo: charge, quantity: Number(amount), date: today() }); return 'Material added to the inventory.'; }}>{errors => <>
     <Choice label="Material" required value={materialId} onChange={setMaterial} options={activeRows(rows, 'materials').map(row => ({ value: row.id, label: `${row.materialNo} · ${row.description}${row.dia ? ` · ${row.dia}` : ''}` }))} error={errors.materialId}/>
     <Text label="Charge / heat number" max={100} value={charge} onChange={setCharge} error={errors.chargeNo}/>
     <QuantityInput value={amount} onChange={setAmount} error={errors.quantity}/></>}</ActionDialog>;
 }
 
-function LogDialog({ line, onClose }: { line: Row; onClose: () => void }) {
-  const { rows, label } = useWorkspace(); const details = stockDetails(rows, line);
-  const log = inventoryLog(rows, line);
-  return <Modal title="Inventory log" subtitle={`${details.materialNo}${line.chargeNo ? ` · ${line.chargeNo}` : ''} in ${label('warehouses', line.warehouseId)}`} onClose={onClose} wide><div className="modal-body">
-    {!log.length ? <EmptyState title="No movements yet" description="Receipts, transfers, corrections and adjustments of this line are listed here."/> : <TableScroll><table className="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Movement</th><th className="numeric">Quantity</th><th>Notes</th></tr></thead><tbody>{log.map(move => <tr key={move.id}><td>{formatDate(move.date)}</td><td>{String(move.number || '—')}</td><td>{String(move.type)}{move.reason ? ` · ${move.reason}` : ''}</td><td className="numeric">{formatNumber(move.quantity, 3)}</td><td>{String(move.reasonText || move.note || '—')}</td></tr>)}</tbody></table></TableScroll>}
+/** Material log: the movements of a storehouse line, or of one Material No in a project site's inventory. */
+function LogDialog({ line, row, onClose }: { line?: Row; row?: InventoryRow; onClose: () => void }) {
+  const { rows, label } = useWorkspace();
+  const log = row ? siteInventoryLog(rows, row.siteId, row.identity) : inventoryLog(rows, line!);
+  const subtitle = row ? `Material No: ${row.details.materialNo} · Quantity: ${formatNumber(row.quantity, 3)} · ${label('sites', row.siteId)}` : `${describeLine(rows, line!)} in ${label('warehouses', line!.warehouseId)}`;
+  return <Modal title="Material log" subtitle={subtitle} onClose={onClose} wide><div className="modal-body">
+    {!log.length ? <EmptyState title="No movements yet" description="Receipts, transfers, picks, corrections and removals are listed here."/> : <TableScroll><table className="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Movement</th><th>Charge</th><th className="numeric">Quantity</th><th>Notes</th></tr></thead><tbody>{log.map(move => <tr key={move.id}><td>{formatDate(move.date)}</td><td>{String(move.number || '—')}</td><td>{String(move.type)}{move.reason ? ` · ${move.reason}` : ''}</td><td>{String(move.chargeNo || '—')}</td><td className="numeric">{formatNumber(move.quantity, 3)}</td><td>{String(move.reasonText || move.note || '—')}</td></tr>)}</tbody></table></TableScroll>}
   </div><div className="modal-footer"><button className="btn primary" onClick={onClose}>Close</button></div></Modal>;
 }
 
-interface ItemDraft { materialNo: string; description: string; quantity: string; uom: string; stockId: string }
-function OrderDialog({ lines, defaultFrom, onClose }: { lines: Row[]; defaultFrom: string; onClose: () => void }) {
-  const { rows, allRows } = useWorkspace();
-  const [type, setType] = useState(lines.length ? TRANSFER_TYPES[0] : ''), [priority, setPriority] = useState('Normal');
-  const [from, setFrom] = useState(defaultFrom), [siteId, setSite] = useState(''), [to, setTo] = useState(''), [notes, setNotes] = useState('');
-  const [items, setItems] = useState<ItemDraft[]>(() => lines.length ? lines.map(line => { const details = stockDetails(rows, line); return { materialNo: details.materialNo, description: details.description, quantity: String(Math.min(Number(line.quantity), 1) || ''), uom: details.uom, stockId: line.id }; }) : [{ materialNo: '', description: '', quantity: '', uom: '', stockId: '' }]);
+interface ItemDraft { materialNo: string; description: string; quantity: string; uom: string; stockId: string; locked: boolean }
+const blankItem = (): ItemDraft => ({ materialNo: '', description: '', quantity: '', uom: '', stockId: '', locked: false });
+/**
+ * New Transfer Order. Opened from inventory rows (context inventory: items prefilled with the full balance, the source is
+ * the project site's inventory), from storehouse lines (context store: each item carries its own line) or on the
+ * Transfer orders page. The location fields follow the type exactly as the reference handler (transferOrderFields).
+ */
+function OrderDialog({ context, inventory = [], lines = [], siteId, onClose }: { context: TransferContext; inventory?: InventoryRow[]; lines?: Row[]; siteId: string; onClose: () => void }) {
+  const { rows, allRows, label } = useWorkspace();
+  const [type, setType] = useState<string>(defaultTransferType(context)), [priority, setPriority] = useState('Normal');
+  const [from, setFrom] = useState(''), [toSite, setToSite] = useState(''), [to, setTo] = useState(''), [notes, setNotes] = useState(''), [site, setSite] = useState(siteId);
+  const [items, setItems] = useState<ItemDraft[]>(() => context === 'inventory' && inventory.length ? inventory.map(row => ({ materialNo: row.details.materialNo, description: row.details.description, quantity: String(row.quantity), uom: row.details.uom, stockId: '', locked: true }))
+    : context === 'store' && lines.length ? lines.map(line => { const details = stockDetails(rows, line); return { materialNo: details.materialNo, description: details.description, quantity: String(Number(line.quantity)), uom: details.uom, stockId: line.id, locked: true }; }) : [blankItem()]);
   const route = transferRoute(type);
+  const carried = items.every(item => item.stockId);
+  const show = transferOrderFields(type, context, carried);
+  const needsSite = route?.from === 'inventory' || route?.to === 'inventory';
   const update = (index: number, patch: Partial<ItemDraft>) => setItems(current => current.map((item, i) => i === index ? { ...item, ...patch } : item));
   const warehouses = warehousesOf(rows).map(w => ({ value: w.id, label: String(w.name) }));
-  return <ActionDialog title="New transfer order" subtitle="Plan the move now; nothing moves until the order is completed." submit="Create transfer order" onClose={onClose} wide
+  return <ActionDialog title="New Transfer Order" subtitle="Plan the move now; nothing moves until the order is completed." submit="New Transfer Order" onClose={onClose} wide
     onSubmit={async () => {
       if (!route) throw new Error('Choose the type of transfer order.');
+      if (needsSite && !site) throw new Error('Choose the project site whose inventory the order uses.');
       const bad = items.findIndex(item => !item.materialNo.trim() || !validQuantity(Number(item.quantity)));
       if (bad >= 0) throw new Error(`Item ${bad + 1} needs a material number and a quantity of at least 0.01, in steps of 0.01.`);
-      await post('/actions/transfer-order-create', { type, priority, fromWarehouseId: route.from === 'storehouse' ? from : '', siteId: route.from === 'project' || route.to === 'project' ? siteId : '', toWarehouseId: route.to === 'storehouse' ? to : '', notes, date: today(), items: items.map(item => ({ ...item, quantity: Number(item.quantity) })) });
+      await post('/actions/transfer-order-create', { type, priority, fromWarehouseId: show.fromStorehouse ? from : '', fromSiteId: route.from === 'inventory' ? site : '', siteId: show.toSite ? toSite : route.to === 'inventory' ? site : '', toWarehouseId: show.toStorehouse ? to : '', notes, date: today(),
+        items: items.map(item => ({ materialNo: item.materialNo, description: item.description, quantity: Number(item.quantity), uom: item.uom, ...(item.stockId && route.from === 'storehouse' ? { stockId: item.stockId } : {}) })) });
       return 'Transfer order created.';
     }}>{errors => <>
-    <Choice label="Type" required value={type} onChange={setType} options={TRANSFER_TYPES.map(value => ({ value, label: value }))} error={errors.type}/>
+    <Choice label="Type" required value={type} onChange={value => setType(value || defaultTransferType(context))} options={transferTypesFor(context).map(value => ({ value, label: value }))} error={errors.type}/>
     <Choice label="Priority" value={priority} onChange={setPriority} blank="Normal" options={TRANSFER_PRIORITIES.map(value => ({ value, label: value }))} error={errors.priority}/>
-    {route?.from === 'storehouse' && <Choice label="From storehouse" required value={from} onChange={setFrom} options={warehouses} error={errors.fromWarehouseId}/>}
-    {route && (route.from === 'project' || route.to === 'project') && <Choice label={route.from === 'project' ? 'From project site' : 'To project site'} required value={siteId} onChange={setSite} options={sitesOf(allRows)} error={errors.siteId}/>}
-    {route?.to === 'storehouse' && <Choice label="To storehouse" required value={to} onChange={setTo} options={warehouses.filter(w => w.value !== from)} error={errors.toWarehouseId}/>}
-    <Text label="Notes" area value={notes} onChange={setNotes} max={2000}/>
-    <div className="field full-width"><span className="field-title">Items</span><ul className="order-items">{items.map((item, index) => <li key={index}>
-      <Text label={`Material no. (item ${index + 1})`} required max={100} value={item.materialNo} onChange={value => update(index, { materialNo: value })}/>
+    {needsSite && !siteId && <Choice label={route?.from === 'inventory' ? 'From project site' : 'Project site'} required value={site} onChange={setSite} options={sitesOf(allRows)} error={errors.fromSiteId || errors.siteId} hint="The workspace shows every project site: choose whose inventory the order uses."/>}
+    {needsSite && siteId && <p className="field full-width muted">{route?.from === 'inventory' ? 'From' : 'Into'} the inventory of {label('sites', siteId)}.</p>}
+    {show.fromStorehouse && <Choice label="From storehouse" required value={from} onChange={setFrom} options={warehouses} error={errors.fromWarehouseId}/>}
+    {show.toSite && <Choice label="To project site" required value={toSite} onChange={setToSite} options={sitesOf(allRows).filter(option => route?.from !== 'inventory' || option.value !== site)} error={errors.siteId}/>}
+    {show.toStorehouse && <Choice label="To storehouse" required value={to} onChange={setTo} options={warehouses.filter(w => w.value !== from)} error={errors.toWarehouseId}/>}
+    <Text label="Notes (optional)" area value={notes} onChange={setNotes} max={2000}/>
+    <div className="field full-width"><span className="field-title">Order items</span><ul className="order-items">{items.map((item, index) => <li key={index}>
+      <Control label={`Material No (item ${index + 1})`} required>{(_, props) => <input {...props} type="text" maxLength={100} autoComplete="off" readOnly={item.locked} value={item.materialNo} onChange={event => update(index, { materialNo: event.target.value })}/>}</Control>
       <Text label={`Description (item ${index + 1})`} max={2000} value={item.description} onChange={value => update(index, { description: value })}/>
-      <QuantityInput label={`Quantity (item ${index + 1})`} value={item.quantity} onChange={value => update(index, { quantity: value })}/>
+      <QuantityInput label={`Qty (item ${index + 1})`} value={item.quantity} onChange={value => update(index, { quantity: value })}/>
       <Text label={`UOM (item ${index + 1})`} max={20} value={item.uom} onChange={value => update(index, { uom: value })}/>
       <button type="button" className="icon-btn" aria-label={`Remove item ${index + 1}`} disabled={items.length === 1} onClick={() => setItems(current => current.filter((_, i) => i !== index))}><Trash2 size={16}/></button></li>)}</ul>
-      <button type="button" className="btn subtle small" onClick={() => setItems(current => [...current, { materialNo: '', description: '', quantity: '', uom: '', stockId: '' }])}><Plus size={15}/>Add item</button></div></>}</ActionDialog>;
+      <button type="button" className="btn subtle small" onClick={() => setItems(current => [...current, blankItem()])}><Plus size={15}/>Add item</button></div></>}</ActionDialog>;
 }
 
-type Dialog = { kind: 'log' | 'move' | 'return' | 'correct' | 'adjust' | 'remove'; line: Row } | { kind: 'project' | 'order'; lines: Row[] } | { kind: 'add' } | null;
+type InventoryDialog = { kind: 'log' | 'remove'; row: InventoryRow } | { kind: 'order'; rows: InventoryRow[] } | { kind: 'add' } | null;
 
-/** Material inventory: the stock of one storehouse with its operations. */
+/** Material inventory: the project site's own inventory, one row per Material No (reference "Materials in inventory"). */
 export function MaterialInventory() {
   const { rows, canRecord, canRun, label } = useWorkspace();
-  const [params, setParams] = useSearchParams();
-  const warehouses = warehousesOf(rows);
-  const requested = params.get('storehouse') || '';
-  const warehouseId = warehouses.some(w => w.id === requested) ? requested : warehouses[0]?.id || '';
-  const [onlyWithQuantity, setOnly] = useState(true), [query, setQuery] = useState(''), [checked, setChecked] = useState<string[]>([]), [dialog, setDialog] = useState<Dialog>(null);
-  const list = useMemo(() => inventoryRows(rows, { warehouseId, onlyWithQuantity, query }), [rows, warehouseId, onlyWithQuantity, query]);
+  const place = useInventorySite();
+  const [onlyWithQuantity, setOnly] = useState(true), [query, setQuery] = useState(''), [checked, setChecked] = useState<string[]>([]), [dialog, setDialog] = useState<InventoryDialog>(null);
+  const list = useMemo(() => place.siteId ? inventoryRows(rows, { siteId: place.siteId, onlyWithQuantity, query }) : [], [rows, place.siteId, onlyWithQuantity, query]);
   if (!canRecord('stock')) return <EmptyState title="No access to the material inventory" description="Your permission profile does not include the material inventory."/>;
-  const selected = list.filter(entry => checked.includes(entry.stock.id)).map(entry => entry.stock);
-  const allowed = (key: string) => canRun(key);
+  const selected = list.filter(entry => checked.includes(entry.key));
   const close = () => { setDialog(null); setChecked([]); };
-  const lineAction = (kind: 'log' | 'move' | 'return' | 'correct' | 'adjust' | 'remove', line: Row) => setDialog({ kind, line });
-  return <div className="page mto-stock-page"><div className="page-heading"><div><div className="eyebrow">MATERIALS · ORDER / TAKE IN</div><h1>Material inventory</h1><p>What every storehouse holds, with its transfers, corrections and log.</p></div>
+  return <div className="page mto-stock-page"><div className="page-heading"><div><div className="eyebrow">MATERIALS · ORDER / TAKE IN</div><h1>Material inventory</h1><p>{place.siteId ? `What ${label('sites', place.siteId)} holds: take-ins and transfers in, picks and transfers out.` : 'Choose a project site.'}</p></div>
     <div className="heading-actions">
-      {allowed('stock-add') && warehouseId && <Dropdown label="Add" className="add-menu" trigger={<span className="btn">Add<ChevronDown size={14}/></span>}><button type="button" onClick={() => setDialog({ kind: 'add' })}><PackagePlus size={15}/>Add material from DB</button></Dropdown>}
-      {allowed('stock-to-project') && <button className="btn" disabled={!selected.length} onClick={() => setDialog({ kind: 'project', lines: selected })}><Truck size={16}/>Transfer to project ({selected.length})</button>}
-      {allowed('transfer-order-create') && <button className="btn primary" disabled={!selected.length} onClick={() => setDialog({ kind: 'order', lines: selected })}>New Transfer Order ({selected.length})</button>}
+      {canRun('transfer-order-create') && <button className="btn primary" disabled={!place.siteId} onClick={() => setDialog({ kind: 'order', rows: selected })}><ArrowRightLeft size={16}/>New Transfer Order ({selected.length})</button>}
+      {canRun('stock-add') && place.siteId && <Dropdown label="Add" className="add-menu" trigger={<span className="btn">Add<ChevronDown size={14}/></span>}><button type="button" onClick={() => setDialog({ kind: 'add' })}><PackagePlus size={15}/>Add material from DB</button></Dropdown>}
     </div></div>
-    {!warehouses.length ? <EmptyState title="No storehouses yet" description="Add a storehouse first, then put material into it." action={canRecord('warehouses') ? <Link className="btn primary" to="/workspace/warehouses">Open Storehouses</Link> : undefined}/> : <section className="panel">
-      <div className="inventory-filters"><Choice label="Storehouse" value={warehouseId} onChange={value => { setParams({ storehouse: value }); setChecked([]); }} options={warehouses.map(w => ({ value: w.id, label: String(w.name) }))} blank="Choose a storehouse"/>
+    {!place.sites.length ? <EmptyState title="No project sites yet" description="Add a project site first; each site keeps its own Material inventory."/> : <section className="panel">
+      <div className="panel-title-row"><h2>Materials in inventory</h2></div>
+      <div className="inventory-filters">{!place.fixed && <Choice label="Project site" value={place.siteId} onChange={value => { place.choose(value); setChecked([]); }} options={place.sites} blank="Choose a project site"/>}
         <Control label="Show">{(_, props) => <div className="select-wrap"><select {...props} value={onlyWithQuantity ? 'qty' : 'all'} onChange={event => { setOnly(event.target.value === 'qty'); setChecked([]); }}><option value="qty">Only with quantity</option><option value="all">All materials</option></select><ChevronDown size={14}/></div>}</Control>
-        <SearchInput value={query} onChange={value => { setQuery(value); setChecked([]); }} placeholder="Search material, description or charge…"/></div>
+        <SearchInput value={query} onChange={value => { setQuery(value); setChecked([]); }} placeholder="Search material or description…"/></div>
       {selected.length > 0 && <div className="selection-bar"><strong>{selected.length} selected</strong><button className="clear-selection" onClick={() => setChecked([])}><X size={14}/>Clear selection</button></div>}
-      {list.length ? <TableScroll><table className="data-table inventory-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Check all inventory lines" checked={list.every(entry => checked.includes(entry.stock.id))} onChange={event => setChecked(event.target.checked ? list.map(entry => entry.stock.id) : [])}/></th><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="numeric">Quantity</th><th>UOM</th><th>Options</th></tr></thead>
-        <tbody>{list.map(({ stock, details }) => <tr key={stock.id}><td className="select-cell"><input type="checkbox" aria-label={`Check ${details.materialNo}`} checked={checked.includes(stock.id)} onChange={event => setChecked(current => event.target.checked ? [...current, stock.id] : current.filter(id => id !== stock.id))}/></td>
-          <td>{details.group || '—'}</td><td>{details.articleNo || '—'}</td><td><strong>{details.materialNo}</strong>{stock.chargeNo ? <small className="execution-subvalue">{String(stock.chargeNo)}</small> : null}{stock.corrected === true && <Badge color="amber">Corrected</Badge>}</td><td>{details.dia || '—'}</td><td>{details.lbs || '—'}</td><td>{details.description || '—'}</td><td className="numeric">{formatNumber(stock.quantity, 3)}</td><td>{details.uom || '—'}</td>
-          <td><Dropdown label={`Options for ${details.materialNo}`} trigger={<span className="icon-btn"><MoreHorizontal size={17}/></span>}>
-            <button type="button" onClick={() => lineAction('log', stock)}><History size={15}/>Inventory log</button>
-            {allowed('stock-to-project') && <button type="button" disabled={Number(stock.quantity) <= 0} onClick={() => setDialog({ kind: 'project', lines: [stock] })}><Truck size={15}/>Transfer to project</button>}
-            {allowed('stock-move') && <button type="button" disabled={Number(stock.quantity) <= 0 || warehouses.length < 2} onClick={() => lineAction('move', stock)}><ArrowRightLeft size={15}/>Move to storehouse</button>}
-            {allowed('stock-return') && <button type="button" onClick={() => lineAction('return', stock)}><RotateCcw size={15}/>Return to inventory</button>}
-            {allowed('stock-correct') && <button type="button" onClick={() => lineAction('correct', stock)}><Pencil size={15}/>Correct entry</button>}
-            {allowed('stock-adjust') && <button type="button" onClick={() => lineAction('adjust', stock)}><RefreshCw size={15}/>Adjust quantity</button>}
-            {allowed('stock-remove') && <button type="button" onClick={() => lineAction('remove', stock)}><Trash2 size={15}/>Remove from inventory</button>}
-          </Dropdown></td></tr>)}</tbody></table></TableScroll> : <EmptyState title={onlyWithQuantity ? 'No material in stock' : 'No materials in this storehouse'} description={query ? 'No inventory line matches your search.' : onlyWithQuantity ? 'Choose All materials to include lines without quantity, or add material from the database.' : 'Add material from the database or receive an order.'}/>}
-      <div className="table-footer"><span>{list.length} inventory line{list.length === 1 ? '' : 's'} · {label('warehouses', warehouseId)}</span></div></section>}
-    {dialog?.kind === 'log' && <LogDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'move' && <MoveDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'return' && <ReturnDialog line={dialog.line} onClose={close}/>}
-    {dialog?.kind === 'correct' && <CorrectDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'adjust' && <AdjustDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'remove' && <RemoveDialog line={dialog.line} onClose={close}/>}
-    {dialog?.kind === 'project' && <TransferToProject lines={dialog.lines} onClose={close}/>}{dialog?.kind === 'order' && <OrderDialog lines={dialog.lines} defaultFrom={warehouseId} onClose={close}/>}{dialog?.kind === 'add' && <AddFromDatabase warehouseId={warehouseId} onClose={close}/>}
+      {list.length ? <TableScroll><table className="data-table inventory-table"><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="numeric">Quantity</th><th>UOM</th><th>Options</th><th className="select-cell"><input type="checkbox" aria-label="Check all materials" checked={list.every(entry => checked.includes(entry.key))} onChange={event => setChecked(event.target.checked ? list.map(entry => entry.key) : [])}/></th></tr></thead>
+        <tbody>{list.map(entry => <tr key={entry.key}>
+          <td>{entry.details.group || '—'}</td><td>{entry.details.articleNo || '—'}</td><td><strong>{entry.details.materialNo}</strong></td><td>{entry.details.dia || '—'}</td><td>{entry.details.lbs || '—'}</td><td>{entry.details.description || '—'}</td><td className="numeric">{formatNumber(entry.quantity, 3)}</td><td>{entry.details.uom || '—'}</td>
+          <td><span className="row-buttons"><button type="button" className="icon-btn" aria-label={`Material log of ${entry.details.materialNo}`} title="Material log" onClick={() => setDialog({ kind: 'log', row: entry })}><History size={16}/></button>
+            {canRun('transfer-order-create') && <button type="button" className="icon-btn" aria-label={`Request transfer of ${entry.details.materialNo} (Transfer Order)`} title="Request transfer to storehouse (Transfer Order)" disabled={entry.quantity <= 0} onClick={() => setDialog({ kind: 'order', rows: [entry] })}><ArrowRightLeft size={16}/></button>}
+            {canRun('inventory-remove') && <button type="button" className="icon-btn" aria-label={`Remove ${entry.details.materialNo} from inventory`} title="Remove material from inventory" disabled={entry.quantity <= 0} onClick={() => setDialog({ kind: 'remove', row: entry })}><Trash2 size={16}/></button>}</span></td>
+          <td className="select-cell"><input type="checkbox" aria-label={`Check ${entry.details.materialNo}`} checked={checked.includes(entry.key)} onChange={event => setChecked(current => event.target.checked ? [...current, entry.key] : current.filter(id => id !== entry.key))}/></td></tr>)}</tbody></table></TableScroll>
+        : <EmptyState title={onlyWithQuantity ? 'No material in the inventory' : 'No materials in this inventory'} description={query ? 'No material matches your search.' : 'Take in an order, add material from the database or transfer material from a storehouse to this project site.'}/>}
+      <div className="table-footer"><span>{list.length} material{list.length === 1 ? '' : 's'}{place.siteId ? ` · ${label('sites', place.siteId)}` : ''}</span></div></section>}
+    {dialog?.kind === 'log' && <LogDialog row={dialog.row} onClose={close}/>}{dialog?.kind === 'remove' && <InventoryRemoveDialog row={dialog.row} onClose={close}/>}
+    {dialog?.kind === 'order' && <OrderDialog context="inventory" inventory={dialog.rows} siteId={place.siteId} onClose={close}/>}{dialog?.kind === 'add' && <AddFromDatabase siteId={place.siteId} onClose={close}/>}
   </div>;
 }
 
-/** Storehouses: the generic record page, plus a shortcut to each storehouse's inventory. */
+type StoreDialog = { kind: 'log' | 'move' | 'return' | 'correct' | 'adjust' | 'remove'; line: Row } | { kind: 'project' | 'order'; lines: Row[] } | null;
+/** Storehouses: the company's storehouses (shared by every project site) and their lines with the storehouse dialogs. */
 export function Storehouses() {
-  const { rows, canRecord } = useWorkspace();
+  const { rows, canRecord, canRun, siteId } = useWorkspace();
+  const [params, setParams] = useSearchParams();
   const warehouses = warehousesOf(rows);
-  return <><TablePage resourceKey="warehouses"/>{canRecord('stock') && warehouses.length > 0 && <section className="panel storehouse-shortcuts" aria-label="Storehouse inventories"><h2>Inventory per storehouse</h2><ul>{warehouses.map(w => { const lines = activeRows(rows, 'stock').filter(s => s.warehouseId === w.id && Number(s.quantity) > 0).length; return <li key={w.id}><span><strong>{String(w.name)}</strong><small>{lines} line{lines === 1 ? '' : 's'} with quantity</small></span><Link className="btn small" to={`/materials/stock?storehouse=${w.id}`}>Open inventory</Link></li>; })}</ul></section>}</>;
+  const requested = params.get('storehouse') || '';
+  const warehouseId = warehouses.some(w => w.id === requested) ? requested : '';
+  const [onlyWithQuantity, setOnly] = useState(true), [query, setQuery] = useState(''), [checked, setChecked] = useState<string[]>([]), [dialog, setDialog] = useState<StoreDialog>(null);
+  const list = useMemo(() => storehouseRows(rows, { warehouseId: warehouseId || undefined, onlyWithQuantity, query }), [rows, warehouseId, onlyWithQuantity, query]);
+  const selected = list.filter(entry => checked.includes(entry.stock.id)).map(entry => entry.stock);
+  const close = () => { setDialog(null); setChecked([]); };
+  const lineAction = (kind: 'log' | 'move' | 'return' | 'correct' | 'adjust' | 'remove', line: Row) => setDialog({ kind, line });
+  return <><TablePage resourceKey="warehouses"/>{canRecord('stock') && warehouses.length > 0 && <section className="panel storehouse-lines" aria-label="Storehouse lines">
+    <div className="page-heading"><div><h2>Storehouse lines</h2><p>Material held in the storehouses. Transfer it to a project site's inventory, move it, or correct a line.</p></div>
+      <div className="heading-actions">
+        {canRun('stock-to-project') && <button className="btn" disabled={!selected.length} onClick={() => setDialog({ kind: 'project', lines: selected })}><Truck size={16}/>Transfer to project ({selected.length})</button>}
+        {canRun('transfer-order-create') && <button className="btn primary" disabled={!selected.length} onClick={() => setDialog({ kind: 'order', lines: selected })}>New Transfer Order ({selected.length})</button>}
+      </div></div>
+    <div className="inventory-filters"><Choice label="Storehouse" value={warehouseId} onChange={value => { setParams(value ? { storehouse: value } : {}); setChecked([]); }} options={warehouses.map(w => ({ value: w.id, label: String(w.name) }))} blank="All storehouses"/>
+      <Control label="Show">{(_, props) => <div className="select-wrap"><select {...props} value={onlyWithQuantity ? 'qty' : 'all'} onChange={event => { setOnly(event.target.value === 'qty'); setChecked([]); }}><option value="qty">Only with quantity</option><option value="all">All lines</option></select><ChevronDown size={14}/></div>}</Control>
+      <SearchInput value={query} onChange={value => { setQuery(value); setChecked([]); }} placeholder="Search material, description or charge…"/></div>
+    {selected.length > 0 && <div className="selection-bar"><strong>{selected.length} selected</strong><button className="clear-selection" onClick={() => setChecked([])}><X size={14}/>Clear selection</button></div>}
+    {list.length ? <TableScroll><table className="data-table inventory-table"><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Check all storehouse lines" checked={list.every(entry => checked.includes(entry.stock.id))} onChange={event => setChecked(event.target.checked ? list.map(entry => entry.stock.id) : [])}/></th><th>Storehouse</th><th>Material group</th><th>Material No</th><th>Charge No</th><th>Description</th><th className="numeric">Quantity</th><th>UOM</th><th>Options</th></tr></thead>
+      <tbody>{list.map(({ stock, details }) => <tr key={stock.id}><td className="select-cell"><input type="checkbox" aria-label={`Check ${describeLine(rows, stock)}`} checked={checked.includes(stock.id)} onChange={event => setChecked(current => event.target.checked ? [...current, stock.id] : current.filter(id => id !== stock.id))}/></td>
+        <td>{storehouseName(rows, stock)}</td><td>{details.group || '—'}</td><td><strong>{details.materialNo}</strong>{stock.corrected === true && <Badge color="amber">Corrected</Badge>}</td><td>{String(stock.chargeNo || '—')}</td><td>{details.description || '—'}</td><td className="numeric">{formatNumber(stock.quantity, 3)}</td><td>{details.uom || '—'}</td>
+        <td><Dropdown label={`Options for ${details.materialNo}`} trigger={<span className="icon-btn"><MoreHorizontal size={17}/></span>}>
+          <button type="button" onClick={() => lineAction('log', stock)}><History size={15}/>Material log</button>
+          {canRun('stock-to-project') && <button type="button" disabled={Number(stock.quantity) <= 0} onClick={() => setDialog({ kind: 'project', lines: [stock] })}><Truck size={15}/>Transfer to project</button>}
+          {canRun('stock-move') && <button type="button" disabled={Number(stock.quantity) <= 0 || warehouses.length < 2} onClick={() => lineAction('move', stock)}><ArrowRightLeft size={15}/>Move to other storehouse</button>}
+          {canRun('stock-return') && <button type="button" disabled={Number(stock.quantity) <= 0} onClick={() => lineAction('return', stock)}><RotateCcw size={15}/>Return to inventory</button>}
+          {canRun('stock-correct') && <button type="button" onClick={() => lineAction('correct', stock)}><Pencil size={15}/>Correct entry</button>}
+          {canRun('stock-adjust') && <button type="button" onClick={() => lineAction('adjust', stock)}><RefreshCw size={15}/>Adjust quantity</button>}
+          {canRun('stock-remove') && <button type="button" onClick={() => lineAction('remove', stock)}><Trash2 size={15}/>Remove from storehouse</button>}
+        </Dropdown></td></tr>)}</tbody></table></TableScroll> : <EmptyState title={onlyWithQuantity ? 'No material in the storehouses' : 'No storehouse lines'} description={query ? 'No storehouse line matches your search.' : 'Storehouse lines arrive through transfer orders from a project site’s inventory.'}/>}
+    <div className="table-footer"><span>{list.length} storehouse line{list.length === 1 ? '' : 's'}</span></div></section>}
+    {dialog?.kind === 'log' && <LogDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'move' && <MoveDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'return' && <ReturnDialog line={dialog.line} siteId={siteId} onClose={close}/>}
+    {dialog?.kind === 'correct' && <CorrectDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'adjust' && <AdjustDialog line={dialog.line} onClose={close}/>}{dialog?.kind === 'remove' && <RemoveDialog line={dialog.line} onClose={close}/>}
+    {dialog?.kind === 'project' && <TransferToProject lines={dialog.lines} defaultSite={siteId} onClose={close}/>}{dialog?.kind === 'order' && <OrderDialog context="store" lines={dialog.lines} siteId={siteId} onClose={close}/>}
+  </>;
 }
 
 /** Transfer orders: planned moves, completed or cancelled here. */
 export function TransferOrders() {
-  const { rows, label, canRecord, canRun } = useWorkspace();
+  const { rows, label, canRecord, canRun, siteId } = useWorkspace();
   const [status, setStatus] = useState('Open'), [dialog, setDialog] = useState<{ kind: 'new' } | { kind: 'items' | 'complete' | 'cancel'; order: Row } | null>(null);
   if (!canRecord('transfer_orders')) return <EmptyState title="No access to transfer orders" description="Your permission profile does not include the material inventory."/>;
   const orders = activeRows(rows, 'transfer_orders').filter(order => !status || order.status === status).sort((a, b) => String(b.number).localeCompare(String(a.number)));
   const items = (order: Row) => activeRows(rows, 'transfer_order_items').filter(item => item.orderId === order.id);
-  const destination = (order: Row) => { const route = transferRoute(String(order.type)); return route?.to === 'project' ? label('sites', order.siteId) : label('warehouses', order.toWarehouseId); };
-  const origin = (order: Row) => { const route = transferRoute(String(order.type)); return route?.from === 'project' ? label('sites', order.siteId) : label('warehouses', order.fromWarehouseId); };
-  return <div className="page mto-stock-page"><div className="page-heading"><div><div className="eyebrow">MATERIALS · ORDER / TAKE IN</div><h1>Transfer orders</h1><p>Plan moves between storehouses and projects, then complete them to apply the movements.</p></div>
+  const destination = (order: Row) => { const route = transferRoute(String(order.type)); return route?.to === 'storehouse' ? label('warehouses', order.toWarehouseId) : order.siteId ? `Inventory · ${label('sites', order.siteId)}` : '—'; };
+  const origin = (order: Row) => { const route = transferRoute(String(order.type)); return route?.from === 'inventory' ? (order.fromSiteId ? `Inventory · ${label('sites', order.fromSiteId)}` : '—') : order.fromWarehouseId ? label('warehouses', order.fromWarehouseId) : 'Storehouse of each item'; };
+  return <div className="page mto-stock-page"><div className="page-heading"><div><div className="eyebrow">MATERIALS · ORDER / TAKE IN</div><h1>Transfer orders</h1><p>Plan moves between project site inventories and storehouses, then complete them to apply the movements.</p></div>
     <div className="heading-actions">{canRun('transfer-order-create') && <button className="btn primary" onClick={() => setDialog({ kind: 'new' })}><Plus size={16}/>New transfer order</button>}</div></div>
     <section className="panel"><div className="inventory-filters"><Choice label="Status" value={status} onChange={setStatus} blank="All statuses" options={['Open', 'Completed', 'Cancelled'].map(value => ({ value, label: value }))}/></div>
       {orders.length ? <TableScroll><table className="data-table"><thead><tr><th>Transfer order</th><th>Type</th><th>Priority</th><th>Status</th><th>From</th><th>To</th><th>Date</th><th className="numeric">Items</th><th>Options</th></tr></thead><tbody>{orders.map(order => <tr key={order.id}>
         <td><button className="record-link" onClick={() => setDialog({ kind: 'items', order })}>{String(order.number)}</button></td><td>{String(order.type)}</td><td><Badge color={order.priority === 'Urgent' ? 'red' : undefined}>{String(order.priority)}</Badge></td><td><Badge>{String(order.status)}</Badge></td><td>{origin(order)}</td><td>{destination(order)}</td><td>{formatDate(order.date)}</td><td className="numeric">{items(order).length}</td>
         <td>{order.status === 'Open' ? <span className="row-buttons">{canRun('transfer-order-complete') && <button className="btn small primary" onClick={() => setDialog({ kind: 'complete', order })}>Complete</button>}{canRun('transfer-order-cancel') && <button className="btn small" onClick={() => setDialog({ kind: 'cancel', order })}>Cancel</button>}</span> : <span className="muted">—</span>}</td></tr>)}</tbody></table></TableScroll>
-        : <EmptyState title={status ? `No ${status.toLowerCase()} transfer orders` : 'No transfer orders yet'} description="Check lines in the Material inventory and choose New Transfer Order, or create an order here."/>}
+        : <EmptyState title={status ? `No ${status.toLowerCase()} transfer orders` : 'No transfer orders yet'} description="Check materials in the Material inventory or lines on the Storehouses page and choose New Transfer Order, or create an order here."/>}
       <div className="table-footer"><span>{orders.length} transfer order{orders.length === 1 ? '' : 's'}</span></div></section>
-    {dialog?.kind === 'new' && <OrderDialog lines={[]} defaultFrom={warehousesOf(rows)[0]?.id || ''} onClose={() => setDialog(null)}/>}
+    {dialog?.kind === 'new' && <OrderDialog context="page" siteId={siteId} onClose={() => setDialog(null)}/>}
     {dialog?.kind === 'items' && <Modal title={`Transfer order ${dialog.order.number}`} subtitle={`${dialog.order.type} · ${dialog.order.priority}${dialog.order.notes ? ` · ${dialog.order.notes}` : ''}`} onClose={() => setDialog(null)} wide><div className="modal-body"><TableScroll><table className="data-table"><thead><tr><th>Material no.</th><th>Description</th><th className="numeric">Quantity</th><th>UOM</th></tr></thead><tbody>{items(dialog.order).map(item => <tr key={item.id}><td>{String(item.materialNo)}</td><td>{String(item.description || '—')}</td><td className="numeric">{formatNumber(item.quantity, 2)}</td><td>{String(item.uom || '—')}</td></tr>)}</tbody></table></TableScroll></div><div className="modal-footer"><button className="btn primary" onClick={() => setDialog(null)}>Close</button></div></Modal>}
     {dialog?.kind === 'complete' && <OrderStatusDialog order={dialog.order} complete onClose={() => setDialog(null)}/>}{dialog?.kind === 'cancel' && <OrderStatusDialog order={dialog.order} onClose={() => setDialog(null)}/>}
   </div>;
@@ -283,5 +349,5 @@ export function MaterialsList() {
         : loading && !data ? <p role="status" className="muted loading-note"><Loader2 size={15} className="spin"/> Loading the materials list…</p>
         : shown.length ? <TableScroll><table className="data-table materials-list-table" aria-busy={loading}><thead><tr>{MATERIALS_LIST_COLUMNS.map(column => <th key={column.key} className={column.type === 'number' ? 'numeric' : undefined}>{column.label}</th>)}</tr></thead><tbody>{shown.map(row => <tr key={row.id}>{MATERIALS_LIST_COLUMNS.map(column => <td key={column.key} className={column.type === 'number' ? 'numeric' : undefined}>{column.type === 'number' ? formatNumber(row.values[column.key], 3) : column.key === 'ordered' ? <Badge>{String(row.values.ordered)}</Badge> : String(row.values[column.key] || '—')}</td>)}</tr>)}</tbody></table></TableScroll>
         : <EmptyState title="No materials to list" description={query || projectId || isoId ? 'No material matches your filters.' : 'Add materials to an isometric of this main project to see them here.'}/>}
-      <div className="table-footer"><span>{shown.length} line{shown.length === 1 ? '' : 's'}{data ? ` · computed ${new Date(data.generatedAt).toLocaleTimeString('en-GB')}` : ''}</span><span>Inv. counts every storehouse.</span></div></section></div>;
+      <div className="table-footer"><span>{shown.length} line{shown.length === 1 ? '' : 's'}{data ? ` · computed ${new Date(data.generatedAt).toLocaleTimeString('en-GB')}` : ''}</span><span>Inv. counts the project site’s Material inventory, less what pick lists claim.</span></div></section></div>;
 }

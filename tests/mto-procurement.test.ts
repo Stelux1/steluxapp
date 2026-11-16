@@ -23,6 +23,8 @@ const rows = (s: Store) => Object.fromEntries(RESOURCES.map(r => [r.key, s.list(
 const snapshot = (s: Store) => JSON.stringify({ rows: rows(s), audit: s.activity(10000), counters: s.db.prepare('SELECT * FROM counters ORDER BY key').all() });
 const orderRequirements = (s: Store, requirementIds: string[], extra: Record<string, unknown> = {}) => { const result = runAction(s, 'order-requirements', { requirementIds, date: '2026-10-25', ...extra }, actor); assert.ok('record' in result && result.record); return result.record!; };
 const stockOf = (s: Store, materialId: string, warehouseId: string, chargeNo: string) => Number(s.list('stock').find(r => r.materialId === materialId && r.warehouseId === warehouseId && (r.chargeNo || '') === chargeNo)?.quantity ?? 0);
+/** A take-in books into the Material inventory of the order's project site (shared/mto-stock.ts). */
+const siteStockOf = (s: Store, materialId: string, siteId: string, chargeNo: string) => Number(s.list('stock').find(r => r.locationKind === 'site' && r.materialId === materialId && r.siteId === siteId && (r.chargeNo || '') === chargeNo)?.quantity ?? 0);
 
 test('Order materials adds one row per material over the isometrics that still need it and drops what is ordered', t => {
   const s = fixture(t);
@@ -77,9 +79,11 @@ test('take-in assigns the supplier, logs every line and refuses over-receipt wit
   const log = receiptLog(rows(s)).filter(e => e.order?.id === order.id);
   assert.equal(log.length, 2); assert.ok(log.every(e => e.supplierId === 'supplier-pipe' && Number(e.receipt.quantity) > 0 && e.receipt.correction === false));
   assert.equal(s.get('orders', order.id).supplierId, 'supplier-pipe'); assert.equal(s.get('orders', order.id).status, 'Partially received');
-  assert.equal(stockOf(s, String(lines[0].materialId), 'warehouse-main', 'TI-100'), 4);
-  // A single receiving storehouse is optional only when the choice is unambiguous.
-  assert.throws(() => runAction(s, 'receive', { orderId: order.id, items: [{ lineId: lines[1].id, quantity: 1 }] }, actor), /storehouse/);
+  assert.equal(siteStockOf(s, String(lines[0].materialId), 'site-north', 'TI-100'), 4, 'into the project site inventory, not the named storehouse');
+  assert.equal(stockOf(s, String(lines[0].materialId), 'warehouse-main', 'TI-100'), 0);
+  // No receiving storehouse is chosen: the order's project site decides.
+  runAction(s, 'receive', { orderId: order.id, date: '2026-10-26', items: [{ lineId: lines[1].id, quantity: 1, chargeNo: 'TI-101' }] }, actor);
+  assert.equal(siteStockOf(s, String(lines[1].materialId), 'site-north', 'TI-101'), 2);
   assert.equal(receiptLog(rows(s), { from: '2026-10-27' }).filter(e => e.order?.id === order.id).length, 0);
 });
 
@@ -94,14 +98,15 @@ test('a correction needs a reason, is bounded by the delivery and cannot take st
   assert.throws(() => runAction(s, 'correct-receipt', { receiptId: receipt.id, quantity: 4.5, note: 'Typed too much' }, actor), /Only 4 of this delivery/);
   assert.throws(() => runAction(s, 'correct-receipt', { receiptId: receipt.id, quantity: -1, note: 'Negative input' }, actor), /greater than zero/);
   assert.equal(snapshot(s), before);
-  // Stock that was already issued cannot be taken back: 3 of 4 leave the storehouse, so only 1 can be corrected.
-  runAction(s, 'issue-material', { isoId: 'iso-2', requirementId: 'requirement-2', materialId: material, warehouseId: 'warehouse-main', chargeNo: 'CORR-1', quantity: 3 }, actor);
+  // Stock that already left cannot be taken back: 3 of 4 leave the project site's inventory (charge CORR-1 first), so only 1 can be corrected.
+  runAction(s, 'inventory-remove', { siteId: 'site-north', materialId: material, quantity: 3, comment: 'Used for a field repair' }, actor);
+  assert.equal(siteStockOf(s, material, 'site-north', 'CORR-1'), 1);
   const issued = snapshot(s);
   assert.throws(() => runAction(s, 'correct-receipt', { receiptId: receipt.id, quantity: 2, note: 'Counted twice' }, actor), /Insufficient stock/);
   assert.equal(snapshot(s), issued, 'a refused correction rolls back completely');
   const result = runAction(s, 'correct-receipt', { receiptId: receipt.id, quantity: 1, date: '2026-10-28', note: 'Counted twice' }, actor);
   assert.ok('record' in result && result.record); assert.equal(result.record!.quantity, -1); assert.equal(result.record!.correction, true); assert.equal(result.record!.correctsId, receipt.id);
-  assert.equal(stockOf(s, material, 'warehouse-main', 'CORR-1'), 0); assert.equal(Number(s.get('order_lines', line.id).received), 3);
+  assert.equal(siteStockOf(s, material, 'site-north', 'CORR-1'), 0); assert.equal(Number(s.get('order_lines', line.id).received), 3);
   assert.equal(s.get('orders', order.id).status, 'Partially received'); assert.equal(receiptRemaining(rows(s), s.get('receipts', receipt.id)), 3);
   assert.ok(s.list('movements').some(m => m.type === 'Adjustment' && Number(m.quantity) === -1 && String(m.note).includes('Counted twice')));
   // The log keeps the negative entry; a correction cannot itself be corrected.

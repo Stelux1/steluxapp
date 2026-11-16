@@ -26,16 +26,17 @@ test('checked requirements order exact outstanding quantities and pick totals st
   assert.throws(()=>runAction(s,'receive',{orderId:o.id,warehouseId:'warehouse-field',items:[{lineId:line.id,quantity:2}]},actor),/supplier/);
   runAction(s,'receive',{orderId:o.id,supplierId:'supplier-steel',warehouseId:'warehouse-field',items:[{lineId:line.id,quantity:2,chargeNo:'EXEC-HEAT'}]},actor);
   assert.equal(s.get('orders',o.id).supplierId,'supplier-steel');assert.equal(s.get('orders',o.id).status,'Partially received');
-  runAction(s,'issue-material',{isoId:a.isoId,requirementId:a.id,materialId:m.id,warehouseId:'warehouse-field',quantity:1.25,chargeNo:'EXEC-HEAT'},actor);
+  // The take-in went into the project site's inventory (North fabrication yard), so the issue takes from there.
+  runAction(s,'issue-material',{isoId:a.isoId,requirementId:a.id,materialId:m.id,quantity:1.25,chargeNo:'EXEC-HEAT'},actor);
   data=requirementExecution(rows(s));assert.equal(data.find(e=>e.requirement.id===a.id)!.picked,1.25);assert.equal(data.find(e=>e.requirement.id===b.id)!.picked,0);assert.equal(data.find(e=>e.requirement.id===a.id)!.inventory,.75);
-  const wrong=snapshot(s);assert.throws(()=>runAction(s,'issue-material',{isoId:b.isoId,requirementId:a.id,materialId:m.id,warehouseId:'warehouse-field',quantity:.25,chargeNo:'EXEC-HEAT'},actor),/must match/);assert.equal(snapshot(s),wrong);
+  const wrong=snapshot(s);assert.throws(()=>runAction(s,'issue-material',{isoId:b.isoId,requirementId:a.id,materialId:m.id,quantity:.25,chargeNo:'EXEC-HEAT'},actor),/must match/);assert.equal(snapshot(s),wrong);
 });
 test('custom materials can be ordered, received, transferred and picked without entering the reusable catalog',t=>{
   const s=fixture(t);const count=s.list('materials').length;const result=runAction(s,'add-iso-material',{isoId:'iso-1',source:'Custom',materialNo:'CUSTOM-FLOW',description:'Custom mounting bracket',uom:'EA',quantity:4},actor);assert.ok('record' in result&&result.record);const req=result.record!;assert.ok(req.customMaterialId);
   const o=order(s,[req.id]);const line=s.list('order_lines').find(l=>l.orderId===o.id)!;assert.equal(line.materialId,'');assert.equal(line.customMaterialId,req.customMaterialId);
   runAction(s,'receive',{orderId:o.id,supplierId:'supplier-steel',warehouseId:'warehouse-main',items:[{lineId:line.id,quantity:4,chargeNo:'CUSTOM-HEAT'}]},actor);
-  runAction(s,'transfer-material',{customMaterialId:req.customMaterialId,fromId:'warehouse-main',toId:'warehouse-field',quantity:2,chargeNo:'CUSTOM-HEAT'},actor);
-  runAction(s,'issue-material',{customMaterialId:req.customMaterialId,requirementId:req.id,isoId:req.isoId,warehouseId:'warehouse-field',quantity:1,chargeNo:'CUSTOM-HEAT'},actor);
+  // The take-in went into the project site's inventory; the issue takes from there.
+  runAction(s,'issue-material',{customMaterialId:req.customMaterialId,requirementId:req.id,isoId:req.isoId,quantity:1,chargeNo:'CUSTOM-HEAT'},actor);
   const balances=s.list('stock').filter(r=>r.customMaterialId===req.customMaterialId);assert.equal(balances.reduce((n,r)=>n+Number(r.quantity),0),3);assert.equal(s.list('materials').length,count);
   const execution=requirementExecution(rows(s)).find(e=>e.requirement.id===req.id)!;assert.equal(execution.ordered,4);assert.equal(execution.picked,1);assert.equal(execution.inventory,3);
   assert.equal(buildReport('order-status',rows(s)).rows.find(r=>r.id===line.id)!.values.material,'CUSTOM-FLOW');assert.ok(buildReport('picklists',rows(s)).rows.some(r=>r.values.material==='CUSTOM-FLOW'));

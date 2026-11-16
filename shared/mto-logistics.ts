@@ -1,6 +1,7 @@
 import type { ActionDefinition, ActionField, Availability, PermissionVerb, Row } from './types.ts';
 import { materialIdentity, materialRecord, requirementExecution } from './materials.ts';
 import { materialStatusPercent, type CoverageLine } from './mto-materials.ts';
+import { claimSiteId, isoSiteId, picksFromSite, siteStock } from './mto-stock.ts';
 
 /**
  * Isometric execution, pick lists and logistics (MTO Pilot).
@@ -53,7 +54,7 @@ export function deliverMtoLogistics(availability: Availability, deliver: (availa
   // `availabilityFor()` (shared/release.ts).
   deliver(availability, 'service_requests', names('number name spoolId requirementId companyId laydownId materialLaydownId date completedAt status note includeDrawings'));
   // Records without a page of their own.
-  merge(availability, 'reservations', names('isoId requirementId materialId customMaterialId quantity date status note'));
+  merge(availability, 'reservations', names('isoId requirementId materialId customMaterialId quantity date status note siteId'));
   merge(availability, 'material_locations', names('requirementId laydownId companyId date'));
   merge(availability, 'material_location_events', names('number requirementId type laydownId companyId requestId date note'));
   merge(availability, 'spools', names('paintSpec chemicalClean pwht laydownId serviceCompanyId'));
@@ -93,53 +94,61 @@ export function percentBand(percent: number | null): (typeof PERCENT_BANDS)[numb
 // ---- Free stock, reservations and pick-list claims -----------------------------------------------------------------
 
 export interface Pool { stock: number; reserved: number; claimed: number; free: number }
+/** The key of a pool: one material in one project site's Material inventory. */
+export const poolKey = (siteId: string, identity: string) => `${siteId}|${identity}`;
 const stockPools = (rows: Record<string, Row[]>) => {
   const pools = new Map<string, Pool>();
-  const pool = (identity: string) => { let value = pools.get(identity); if (!value) pools.set(identity, value = { stock: 0, reserved: 0, claimed: 0, free: 0 }); return value; };
-  for (const row of active(rows, 'stock')) pool(materialIdentity(row)).stock = round(pool(materialIdentity(row)).stock + Number(row.quantity));
-  for (const row of active(rows, 'reservations').filter(row => row.status === 'Reserved')) pool(materialIdentity(row)).reserved = round(pool(materialIdentity(row)).reserved + Number(row.quantity));
-  for (const row of active(rows, 'picklists').filter(row => !isTaken(row))) pool(materialIdentity(row)).claimed = round(pool(materialIdentity(row)).claimed + Number(row.quantity));
+  const pool = (key: string) => { let value = pools.get(key); if (!value) pools.set(key, value = { stock: 0, reserved: 0, claimed: 0, free: 0 }); return value; };
+  // Only a project site's own Material inventory counts; storehouse lines are not reachable for an isometric.
+  for (const row of active(rows, 'stock').filter(row => row.locationKind === 'site' && row.siteId)) { const value = pool(poolKey(String(row.siteId), materialIdentity(row))); value.stock = round(value.stock + Number(row.quantity)); }
+  for (const row of active(rows, 'reservations').filter(row => row.status === 'Reserved')) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.reserved = round(value.reserved + Number(row.quantity)); }
+  // Pick lists written before the site inventory existed take from a storehouse and claim nothing here.
+  for (const row of active(rows, 'picklists').filter(row => !isTaken(row) && picksFromSite(row))) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.claimed = round(value.claimed + Number(row.quantity)); }
   for (const value of pools.values()) value.free = round(value.stock - value.reserved - value.claimed);
   return pools;
 };
 /**
- * UNVERIFIED. Free stock per material = stock on hand − quantities reserved for isometrics − quantities on pick lists
- * that have not been taken yet. Another isometric can only draw on this pool; a reservation protects its owner.
+ * Free stock per material and project site = the site's Material inventory − quantities reserved for isometrics −
+ * quantities on pick lists that have not been taken yet. Another isometric can only draw on this pool; a reservation
+ * protects its owner.
  */
 export const freePool = stockPools;
 
 export interface StatusLine {
-  requirement: Row; material: Row; identity: string; phase: string;
+  requirement: Row; material: Row; identity: string; /** Pool of this line: its material in its isometric's site. */ pool: string; phase: string;
   required: number; picked: number; claimed: number; reserved: number; available: number; covered: number; shortage: number;
 }
 export interface IsoStatus { iso: Row; lines: StatusLine[]; percent: number | null }
 /**
- * Material status of every isometric: what is picked (taken pick lists, as the material execution counts it), what is
- * claimed by pick lists not yet taken, what is reserved, and what the free stock can still cover for this isometric
- * (its own reservations count as available to it; other isometrics' reservations and all claims do not).
+ * Material status of every isometric (THE one formula of MTO Pilot: the isometric header, its Materials panel and the
+ * Isometric execution page all read it). Per requirement line:
+ *   covered = min(Qty., picked + own untaken pick list + own reservations + free stock)
+ * where free stock = the site's Material inventory − every untaken pick-list quantity − other isometrics' reservations,
+ * handed to the isometric's lines of one material in creation order; percent = floor(Σ covered ÷ Σ Qty. × 100).
+ * Open client questions (mto-iso-execution-R1): rounding, own pick-list credit, stock beyond the order, sharing.
  */
-export function isoStatuses(rows: Record<string, Row[]>, options: { group?: string } = {}): Map<string, IsoStatus> {
+export function isoStatuses(rows: Record<string, Row[]>, options: { group?: string; isoId?: string } = {}): Map<string, IsoStatus> {
   const taken = { ...rows, picklists: active(rows, 'picklists').filter(isTaken) };
   const pools = stockPools(rows);
   const phases = new Map(active(rows, 'operation_phases').map(row => [row.id, String(row.name)]));
   const reservations = active(rows, 'reservations').filter(row => row.status === 'Reserved');
   const claims = active(rows, 'picklists').filter(row => !isTaken(row));
   const result = new Map<string, IsoStatus>();
-  const entries = requirementExecution(taken);
+  const entries = requirementExecution(taken, options.isoId ? { isoId: options.isoId } : {});
   for (const entry of entries) {
     const phase = phases.get(String(entry.requirement.phaseId)) || '';
     if (options.group && operationPhaseGroup(phase) !== options.group) continue;
     const status = result.get(entry.iso.id) || { iso: entry.iso, lines: [], percent: null };
     const own = (key: Row[]) => key.filter(row => row.isoId === entry.iso.id && materialIdentity(row) === entry.identity).reduce((sum, row) => sum + Number(row.quantity), 0);
-    const pool = pools.get(entry.identity);
+    const key = poolKey(isoSiteId(rows, entry.iso), entry.identity), pool = pools.get(key);
     // Reserved by others and every claim are out of reach; this isometric's own reservations stay available to it.
     const ownReserved = round(own(reservations));
     const reachable = pool ? round(pool.stock - (pool.reserved - ownReserved) - pool.claimed) : 0;
-    const used = status.lines.filter(line => line.identity === entry.identity).reduce((sum, line) => sum + line.available, 0);
+    const used = status.lines.filter(line => line.pool === key).reduce((sum, line) => sum + line.available, 0);
     const claimed = round(claims.filter(row => row.requirementId === entry.requirement.id).reduce((sum, row) => sum + Number(row.quantity), 0));
     const remaining = Math.max(0, round(entry.required - entry.picked - claimed));
     const available = round(Math.min(remaining, Math.max(0, reachable - used)));
-    const line: StatusLine = { requirement: entry.requirement, material: entry.material, identity: entry.identity, phase, required: entry.required, picked: entry.picked, claimed, reserved: round(reservations.filter(row => row.requirementId === entry.requirement.id).reduce((sum, row) => sum + Number(row.quantity), 0)), available,
+    const line: StatusLine = { requirement: entry.requirement, material: entry.material, identity: entry.identity, pool: key, phase, required: entry.required, picked: entry.picked, claimed, reserved: round(reservations.filter(row => row.requirementId === entry.requirement.id).reduce((sum, row) => sum + Number(row.quantity), 0)), available,
       covered: round(Math.min(entry.required, entry.picked + claimed + available)), shortage: round(Math.max(0, remaining - available)) };
     status.lines.push(line); result.set(entry.iso.id, status);
   }
@@ -150,11 +159,11 @@ export function isoStatuses(rows: Record<string, Row[]>, options: { group?: stri
 /** UNVERIFIED. Reserve: per requirement, the still-uncovered quantity (not picked, not on a pick list, not yet reserved) up to the free pool. */
 export function planReserve(rows: Record<string, Row[]>, isoId: string) {
   const pools = stockPools(rows);
-  const status = isoStatuses(rows).get(isoId);
+  const status = isoStatuses(rows, { isoId }).get(isoId);
   const plan: { requirement: Row; quantity: number }[] = [];
   for (const line of status?.lines || []) {
     const uncovered = Math.max(0, round(line.required - line.picked - line.claimed - line.reserved));
-    const pool = pools.get(line.identity);
+    const pool = pools.get(line.pool);
     const quantity = round(Math.min(uncovered, Math.max(0, pool?.free ?? 0)));
     if (quantity > 0) { plan.push({ requirement: line.requirement, quantity }); pool!.free = round(pool!.free - quantity); }
   }
@@ -162,24 +171,19 @@ export function planReserve(rows: Record<string, Row[]>, isoId: string) {
 }
 /** UNVERIFIED. Start: per requirement, the quantity available now (own reservations plus free stock), up to what is still needed. */
 export function planStart(rows: Record<string, Row[]>, isoId: string) {
-  return (isoStatuses(rows).get(isoId)?.lines || []).filter(line => line.available > 0).map(line => ({ requirement: line.requirement, identity: line.identity, quantity: line.available, reserved: line.reserved }));
+  return (isoStatuses(rows, { isoId }).get(isoId)?.lines || []).filter(line => line.available > 0).map(line => ({ requirement: line.requirement, identity: line.identity, quantity: line.available, reserved: line.reserved }));
 }
 /**
- * Where a pick list takes its quantity from: stock rows of the material, by charge number then warehouse, each row
- * limited to what is not already on another pick list. Returns what could be allocated per row and the shortfall.
+ * Whether a pick list can take a quantity of one material from a project site's Material inventory: the site's stock
+ * of that Material No (every charge) less what other untaken pick lists of the site claim. A pick list has one line per
+ * requirement (the inventory is kept per Material No); the charges are drawn in charge order when it is taken.
  */
-export function allocateStock(rows: Record<string, Row[]>, identity: string, quantity: number) {
-  const claims = active(rows, 'picklists').filter(line => !isTaken(line) && materialIdentity(line) === identity);
-  const candidates = active(rows, 'stock').filter(row => materialIdentity(row) === identity && Number(row.quantity) > 0)
-    .sort((a, b) => String(a.chargeNo || '').localeCompare(String(b.chargeNo || '')) || String(a.warehouseId).localeCompare(String(b.warehouseId)) || a.id.localeCompare(b.id));
-  let left = round(quantity); const parts: { stock: Row; quantity: number }[] = [];
-  for (const stock of candidates) {
-    if (left <= 0) break;
-    const claimed = claims.filter(line => line.warehouseId === stock.warehouseId && String(line.chargeNo || '') === String(stock.chargeNo || '')).reduce((sum, line) => sum + Number(line.quantity), 0);
-    const room = round(Number(stock.quantity) - claimed); if (room <= 0) continue;
-    const take = round(Math.min(room, left)); parts.push({ stock, quantity: take }); left = round(left - take);
-  }
-  return { parts, shortfall: left };
+export function allocateStock(rows: Record<string, Row[]>, siteId: string, identity: string, quantity: number) {
+  const onHand = siteStock(rows, siteId, identity).reduce((sum, row) => sum + Number(row.quantity), 0);
+  const claimed = active(rows, 'picklists').filter(line => !isTaken(line) && picksFromSite(line) && materialIdentity(line) === identity && claimSiteId(rows, line) === siteId).reduce((sum, line) => sum + Number(line.quantity), 0);
+  const room = Math.max(0, round(onHand - claimed));
+  const take = round(Math.min(room, quantity));
+  return { quantity: take, shortfall: round(quantity - take) };
 }
 
 // ---- Pick list archive ---------------------------------------------------------------------------------------------

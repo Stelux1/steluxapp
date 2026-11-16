@@ -27,7 +27,7 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),
     releases: load('releases'), punch: load('punchlists'), testSystems: load('test_systems'), hydrotestRequests: load('hydrotest_requests'), requirements: load('iso_materials'),
     materials: load('materials'), customMaterials: load('custom_materials'), operationPhases: load('operation_phases'),
-    orders: load('orders'), orderLines: load('order_lines'), stock: load('stock'), picklists: load('picklists'),
+    orders: load('orders'), orderLines: load('order_lines'), stock: load('stock'), picklists: load('picklists'), reservations: load('reservations'), allIsometrics: load('isometrics'),
     planning: Boolean(availability?.features.includes('project-planning')),
   });
 }

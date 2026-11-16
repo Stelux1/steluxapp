@@ -23,7 +23,9 @@ const stockOf = (store: Store, materialId: string) => store.list('stock').filter
 function sample(t: { after: (fn: () => void) => void }) { const store = new Store(':memory:'); seed(store); pinFlanges(store); seedMtoLogistics(store, SYSTEM); t.after(() => store.close()); return store; }
 /** The base sample receives twelve units of one of two materials by chance of row order: pin the class 150 flanges (material-3) to the three in stock. */
 function pinFlanges(store: Store) { for (const row of store.list('stock').filter(row => row.materialId === 'material-3' && row.chargeNo !== 'H-1042')) store.update('stock', row.id, { quantity: 0 }, row._version, actor); }
-const bare = (t: { after: (fn: () => void) => void }) => { const store = new Store(':memory:'); seed(store); pinFlanges(store); t.after(() => store.close()); return store; };
+/** The three flanges lie in the Main warehouse: hand them to the North fabrication yard, whose isometrics count and pick from its Material inventory. */
+function flangesToNorth(store: Store) { const line = store.list('stock').find(row => row.locationKind !== 'site' && row.materialId === 'material-3' && row.warehouseId === 'warehouse-main')!; runAction(store, 'stock-to-project', { siteId: 'site-north', items: [{ stockId: line.id, quantity: 3 }], date: '2026-10-19' }, actor); }
+const bare = (t: { after: (fn: () => void) => void }) => { const store = new Store(':memory:'); seed(store); pinFlanges(store); flangesToNorth(store); t.after(() => store.close()); return store; };
 const PAYLOADS: Record<string, Record<string, unknown>> = {
   'reserve-iso': { isoId: 'iso-3', date: '2026-10-27' }, 'start-iso': { isoId: 'iso-3', date: '2026-10-27' }, 'take-picklist': { reportNo: 'PL-2026-0002', date: '2026-10-27' },
   service: { spoolIds: ['spool-1'], companyId: 'service-pwht', date: '2026-10-27' }, 'move-spools': { spoolIds: ['spool-1'], laydownId: 'laydown-a', date: '2026-10-27' },
@@ -86,7 +88,7 @@ test('start creates one pick list for the available quantities, claims stock and
   const result = runAction(store, 'start-iso', { isoId: 'iso-3', date: '2026-10-24' }, actor);
   assert.equal(result.records!.length, 1);
   const [line] = result.records!;
-  assert.equal(line.quantity, 3); assert.equal(line.taken, false); assert.equal(line.warehouseId, 'warehouse-main'); assert.equal(line.chargeNo, 'H-1042'); assert.match(String(line.reportNo), /^PL-/);
+  assert.equal(line.quantity, 3); assert.equal(line.taken, false); assert.equal(line.warehouseId, '', 'taken from the project site inventory'); assert.equal(line.siteId, 'site-north'); assert.match(String(line.reportNo), /^\d{5}$/, 'five-digit Pick List No.');
   assert.equal(stockOf(store, 'material-3'), flange, 'starting does not issue stock yet');
   assert.deepEqual(startedReports(rowsOf(store), 'iso-3'), [line.reportNo]);
   const status = isoStatuses(rowsOf(store)).get('iso-3')!;
@@ -128,8 +130,8 @@ test('marking a pick list as taken issues stock once and never below zero', t =>
   assert.equal(isoStatuses(rowsOf(store)).get('iso-2')!.lines[0].picked, 4);
   // Stock that disappears between Start and taking stops the whole pick list and changes nothing.
   const second = runAction(store, 'start-iso', { isoId: 'iso-5', date: '2026-10-24' }, actor);
-  const tee = store.list('stock').find(row => row.materialId === 'material-5')!;
-  runAction(store, 'adjust-material', { materialId: 'material-5', warehouseId: String(tee.warehouseId), chargeNo: String(tee.chargeNo), quantity: -Number(tee.quantity) + 1, note: 'Stock count correction' }, actor);
+  const tees = store.list('stock').filter(row => row.locationKind === 'site' && row.siteId === 'site-river' && row.materialId === 'material-5').reduce((sum, row) => sum + Number(row.quantity), 0);
+  runAction(store, 'inventory-remove', { siteId: 'site-river', materialId: 'material-5', quantity: tees - 1, comment: 'Stock count correction' }, actor);
   const snapshot = JSON.stringify([store.list('stock'), store.list('picklists'), store.list('movements')]);
   assert.throws(() => runAction(store, 'take-picklist', { reportNo: String(second.records![0].reportNo), date: '2026-10-25' }, actor), /Insufficient stock/);
   assert.equal(JSON.stringify([store.list('stock'), store.list('picklists'), store.list('movements')]), snapshot);
@@ -139,7 +141,7 @@ test('pick lists issued directly count as taken and the archive groups lines per
   const store = sample(t); const rows = rowsOf(store);
   const reports = pickListReports(rows);
   assert.ok(reports.some(report => report.reportNo.startsWith('PICK-') && report.taken), 'a line issued directly stands alone and is taken');
-  assert.equal(reports.filter(report => report.reportNo.startsWith('PL-')).length, 2);
+  assert.equal(reports.filter(report => /^\d{5}$/.test(report.reportNo)).length, 2);
   assert.deepEqual(reports.map(report => report.date), [...reports.map(report => report.date)].sort().reverse());
   const open = reports.find(report => !report.taken)!; assert.equal(open.lines.length, 2); assert.ok(open.lines.every(line => line.taken === false));
   assert.ok(pickListReports(rows, { from: '2026-10-25' }).every(report => report.date >= '2026-10-25'));
@@ -233,7 +235,7 @@ test('Reserve, Start and taking a pick list work through the API for MTO account
   // Reads: only what the pages need.
   for (const key of ['picklists', 'reservations', 'stock', 'service_requests', 'service_companies', 'laydowns', 'material_laydowns', 'material_locations', 'spools']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   const stock = await (await f.request('/api/records/stock')).json() as { rows?: Row[] } | Row[];
-  const first = (Array.isArray(stock) ? stock : stock.rows || [])[0]; assert.ok(first); assert.ok(first.warehouseId, 'the storehouse of a stock line is delivered with the Storehouses page');
+  const first = (Array.isArray(stock) ? stock : stock.rows || [])[0]; assert.ok(first); assert.ok(first.warehouseId || first.siteId, 'the storehouse of a line, or the project site of an inventory row, is delivered');
   // Weld Pilot: the pilot boundary refuses every record and action of this flow.
   f.usePilot('weld');
   for (const key of ['picklists', 'reservations', 'stock', 'service_requests', 'service_companies', 'laydowns']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);

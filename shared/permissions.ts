@@ -135,6 +135,8 @@ export function canAction(user:User,key:string,data:Record<string,unknown>={}):b
  if(!actionAvailable(user.availability,key,data.type))return false;
  if(user.capabilities&&data.type===undefined){const types=key==='release'||key==='reopen-release'?['Prefab','Field','Hydrotest']:key==='inspection-request'||key==='inspection-result'?['NDT','NDT PRE','VI','PWHT','PRE-HT']:TYPED_INSPECTION_ACTIONS.includes(key)?['NDT','NDT PRE','PWHT','PRE-HT']:[];if(types.length)return types.some(type=>canAction(user,key,{...data,type}));}
  if(key==='hydrotest-move'&&!canScope(user,'64','edit'))return false;
+ // Storehouse lines (area 75, a Workspace area) are operated from MTO Pilot's Storehouses page only, never from Weld Pilot.
+ if(user.pilot==='weld'&&MTO_STOCK_ACTION_SCOPES[key])return false;
  if(!(EXTRA_ACTION_SCOPES[key]||[]).every(([area,verb])=>canScope(user,area,scopeOperation(area,verb))))return false;
  if(key==='copy-isometrics'&&!COPY_SCOPES.every(([flag,area])=>data[flag]!==true||canScope(user,area,'insert')))return false;
  const [scope,verb]=actionScope(key,data);if(!user.capabilities){const area=areas.get(scope);return Boolean(area)&&user.permissions[area!.module]>=2;}return canScope(user,scope,scopeOperation(scope,verb));

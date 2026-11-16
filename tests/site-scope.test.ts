@@ -290,8 +290,10 @@ test('MTO Pilot limited to the other main project: materials list, inventory and
   const requirements = new Map(f.store.list('iso_materials').map(row => [row.id, row]));
   assert.ok(list.rows.length > 0 && list.rows.every(row => RIVER_ISOS.includes(String(requirements.get(row.id)?.isoId))));
   const data = await json<Bootstrap>(await river.as.request('/bootstrap', { pilot: 'mto' }));
-  assert.deepEqual(data.rows.warehouses.map(row => row.id), ['warehouse-field']);
-  assert.ok(data.rows.stock.every(row => row.warehouseId === 'warehouse-field'));
+  // Storehouses are company records shared by every project site; a project site's inventory stays with its site.
+  assert.deepEqual(data.rows.warehouses.map(row => row.id).sort(), ['warehouse-field', 'warehouse-main', 'warehouse-yard']);
+  assert.ok(data.rows.stock.some(row => row.locationKind === 'site' && row.siteId === RIVER));
+  assert.ok(data.rows.stock.every(row => row.locationKind === 'site' ? row.siteId === RIVER : Boolean(row.warehouseId)), 'no row of the North inventory');
   assert.ok(data.rows.laydowns.length && data.rows.laydowns.every(row => row.siteId !== NORTH));
   const open = f.store.create('iso_materials', { isoId: 'iso-1', materialId: 'material-1', quantity: 5000, phaseId: 'phase-0' }, SYSTEM);
   const before = snapshot(f.store);
@@ -444,8 +446,8 @@ test('documents, the ISO Book and the MTO dashboard inputs follow project site a
   const files = f.store.list('attachments').length;
   assert.equal(await status(north.as, '/pdf/ndt-request?requestNo=R-2026-0004', 'weld', { method: 'POST' }), 404, 'attach to a request of the other main project');
   assert.equal(f.store.list('attachments').length, files, 'nothing was attached');
-  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=PL-2026-0009', 'mto'), 404, 'pick list of North');
-  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=PL-2026-0010', 'mto'), 200, 'pick list of Riverside');
+  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00009', 'mto'), 404, 'pick list of North');
+  assert.equal(await status(river.as, '/pdf/pick-list?reportNo=00010', 'mto'), 200, 'pick list of Riverside');
   assert.equal(await status(river.as, '/pdf/mto-report?isoId=iso-1', 'mto'), 404);
 
   // ISO Book: the isometrics of the other main project are unknown, also next to an allowed one.

@@ -18,6 +18,8 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
   const next = { ...input };
   let merged: Record<string, unknown> = { ...existing, ...next };
   const errors: Record<string, string> = { ...hostedRequiredErrors(key, merged) };
+  // Add storehouse (MTO Pilot, reference #addLager type=1): a new storehouse holds materials; the form does not show Used for.
+  if (key === 'warehouses' && !existing && next.use === undefined) next.use = 'Materials';
   if (key === 'certifications' || key === 'welding_wires') {
     const owned = SITE_OWNED[key], siteId = String(merged.siteId ?? '').trim();
     const ownership = () => ({ links: store.list(owned.links, true), projects: store.list('projects', true) });

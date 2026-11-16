@@ -1,11 +1,13 @@
 import { orderStatus, receiptRemaining } from '../shared/mto-procurement.ts';
 import type { Row } from '../shared/types.ts';
-import { AppError, positive, qty, type Store } from './store.ts';
+import { AppError, positive, qty, type Actor, type Store } from './store.ts';
+import { changeSiteStock, receivingSiteId } from './mto-stock.ts';
 
 type Input = Record<string, unknown>;
 /** What `runAction` hands to the procurement rules: its own transaction helpers, so a failure rolls everything back. */
 export interface ProcurementContext {
   store: Store;
+  actor: Actor;
   date: string;
   note: string;
   ensure: (resource: string, id: unknown) => Row;
@@ -57,9 +59,18 @@ export function correctReceipt(ctx: ProcurementContext, data: Input) {
   const itemId = String(custom ? line.customMaterialId : line.materialId);
   const chargeNo = String(original.chargeNo || '');
   // Fails with "Insufficient stock" (409) and rolls the whole correction back when the stock was already used.
-  ctx.balance(false, itemId, String(original.warehouseId), chargeNo, -amount, custom);
+  // A delivery into a project site's inventory (no storehouse on the receipt) is taken back from that inventory.
+  const siteId = original.warehouseId ? '' : receivingSiteId(ctx.store, order, line);
+  if (!original.warehouseId && !siteId) throw new AppError(409, 'The project site that received this delivery can no longer be found.');
+  const extra = { chargeNo, isoId: line.isoId || '', requirementId: line.requirementId || '', note: `Correction of ${order.number} · ${ctx.note}` };
+  if (siteId) {
+    changeSiteStock(ctx.store, ctx.actor, siteId, { materialId: String(line.materialId || ''), customMaterialId: String(line.customMaterialId || '') }, chargeNo, -amount);
+    ctx.add('movements', { number: ctx.store.next('MM'), materialId: String(line.materialId || ''), customMaterialId: String(line.customMaterialId || ''), warehouseId: '', siteId, quantity: -amount, type: 'Adjustment', date: ctx.date, ...extra });
+  } else {
+    ctx.balance(false, itemId, String(original.warehouseId), chargeNo, -amount, custom);
+    ctx.movement(false, 'Adjustment', itemId, String(original.warehouseId), -amount, extra, custom);
+  }
   ctx.patch('order_lines', line, { received: qty(Number(line.received) - amount) });
-  ctx.movement(false, 'Adjustment', itemId, String(original.warehouseId), -amount, { chargeNo, isoId: line.isoId || '', requirementId: line.requirementId || '', note: `Correction of ${order.number} · ${ctx.note}` }, custom);
   const receipt = recordReceipt(ctx, { order, line, warehouseId: String(original.warehouseId), supplierId: String(original.supplierId || order.supplierId || ''), chargeNo, quantity: -amount, correctsId: original.id, note: ctx.note });
   refreshOrderStatus(ctx, order);
   return { resource: 'receipts', record: receipt };
