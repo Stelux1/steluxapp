@@ -385,8 +385,9 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   const bootstrap = async (as: ReturnType<typeof f.client>, pilot: string) => json<BootstrapBody>(await as.request('/bootstrap', { pilot }));
   const a = f.client(); await a.login(both.email);
   const weld = await bootstrap(a, 'weld'), mto = await bootstrap(a, 'mto');
-  // project-skid (iso-7 … iso-10) is switched off for MTO Pilot: its isometrics have a summary in Weld Pilot only.
-  const inMto = mto.rows.isometrics.filter(iso => iso.projectId !== 'project-skid').map(iso => iso.id).sort();
+  // Every sample project is on in both pilots, so every isometric of MTO Pilot has the same summary in Weld Pilot.
+  const inMto = mto.rows.isometrics.map(iso => iso.id).sort();
+  assert.ok(inMto.includes('iso-7'));
   assert.deepEqual(Object.keys(mto.isoSummaries!).sort(), inMto);
   assert.deepEqual(Object.keys(weld.isoSummaries!).sort(), weld.rows.isometrics.map(iso => iso.id).sort());
   for (const id of inMto) assert.deepEqual(mto.isoSummaries![id], weld.isoSummaries![id], id);
@@ -457,8 +458,6 @@ test('copy isometrics across the boundary: each part follows the account in the 
   const writer = f.profile('Writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
   const viewer = f.profile('Copy viewer', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO });
   const norm = f.store.create('calculation_norms', { name: 'Fit-up per metre', uom: 'M', hoursPerUnit: 1.5 });
-  // The target STX-2403 is switched off for MTO Pilot in the sample data, and MTO Pilot changes nothing of it (scn-SC-N9): switch it on here.
-  const skid = f.store.get('projects', 'project-skid'); f.store.update('projects', skid.id, { mtoPilot: true }, skid._version);
   /** A drawing in STX-2401 with two welds, one material requirement (pipe, metres) and one calculation line. */
   const source = (isoNo: string) => {
     const iso = f.store.create('isometrics', { isoNo, projectId: 'project-cooling' });

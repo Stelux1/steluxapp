@@ -124,6 +124,8 @@ test('the isometric summary names the test system for an MTO-only account, only 
   // A test system on a Riverside isometric, so the other main project has a name that must not leak.
   const river = f.store.create('test_systems', { name: 'RIVER-TS-07', projectId: String(f.store.get('isometrics', 'iso-4').projectId), medium: 'Water', pressure: '10 bar' }, SYSTEM);
   const iso4 = f.store.get('isometrics', 'iso-4'); f.store.update('isometrics', 'iso-4', { testSystemId: river.id }, iso4._version, SYSTEM);
+  // A North isometric without a test system (the sample puts every isometric in one).
+  const iso7 = f.store.get('isometrics', 'iso-7'); f.store.update('isometrics', 'iso-7', { testSystemId: '' }, iso7._version, SYSTEM);
   const reader = f.profile('MTO reader', { generalPermission: RW, materialsPermission: RW, weldingPermission: NONE });
   const mtoOnly = f.account('North MTO only', { profileId: reader, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
   await mtoOnly.login();
@@ -571,7 +573,8 @@ test('welders, their qualifications and certificates follow the main project for
 test('a project switched off for a pilot is not delivered or changed there (scn-SC-N9); the Request archive follows the open main project (scn-SC-D6)', async t => {
   const f = await fixture(t);
   seedMtoLogistics(f.store, SYSTEM);
-  // STX-2403 (iso-7 … iso-10) is switched off for MTO Pilot in the sample data.
+  // Switch STX-2403 (iso-7 … iso-10) off for MTO Pilot (the sample data has it on in both pilots).
+  const skidProject = f.store.get('projects', 'project-skid'); f.store.update('projects', skidProject.id, { mtoPilot: false }, skidProject._version, SYSTEM);
   const skid = ['iso-7', 'iso-8', 'iso-9', 'iso-10'];
   const mto = await json<Bootstrap>(await f.admin.request('/bootstrap', { pilot: 'mto' }));
   assert.ok(!mto.rows.projects.some(row => row.id === 'project-skid'), 'MTO bootstrap: no switched-off project');
@@ -602,8 +605,9 @@ test('a project switched off for a pilot is not delivered or changed there (scn-
   assert.ok(own.length > 0 && own.every(row => siteOfRequest(row) === RIVER));
   const northOpen = rows.service_requests.find(row => siteOfRequest(row) === NORTH && row.status !== 'Completed');
   assert.ok(northOpen, 'an open request of North');
-  const refused = await river.as.request('/actions/complete-service', { method: 'POST', pilot: 'mto', data: { requestIds: [northOpen!.id], date: '2026-12-01' } });
-  assert.equal(refused.status, 403);
+  // The Complete step is gone (w2-mto-spool-logistics); the North request is refused on its record routes.
+  assert.equal((await river.as.request(`/history/service_requests/${northOpen!.id}`, { pilot: 'mto' })).status, 403);
+  assert.equal((await river.as.request(`/records/service_requests/${northOpen!.id}`, { method: 'PUT', pilot: 'mto', data: { note: 'River edit', _version: northOpen!._version } })).status, 403);
 });
 
 test('an out-of-scope isometric gets the same answer on its PDF as on its record routes (scn-SC-D9)', async t => {

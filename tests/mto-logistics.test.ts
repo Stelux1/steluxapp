@@ -346,8 +346,6 @@ test('the hosted profile delivers the pages, resources and actions of this flow 
 
 test('Reserve, Start and taking a pick list work through the API for MTO accounts and are refused elsewhere', async t => {
   const f = await hostedFixture(t); await f.setup();
-  // The sample STX-2403 (iso-7 … iso-10) is switched off for MTO Pilot, which then delivers and changes nothing of it (scn-SC-N9); this flow works on it, so switch it on.
-  const skid = f.store.get('projects', 'project-skid'); f.store.update('projects', skid.id, { mtoPilot: true }, skid._version);
   await f.signIn('Work preparator', FULL);
   // Reads: only what the pages need.
   for (const key of ['picklists', 'reservations', 'stock', 'service_requests', 'service_companies', 'laydowns', 'material_laydowns', 'material_locations', 'spools']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);

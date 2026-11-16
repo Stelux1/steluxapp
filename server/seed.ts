@@ -46,7 +46,7 @@ export function seed(store: Store) {
     const projects = [
       { id: 'project-cooling', internnumber: 'STX-2401', externnumber: 'NLP-CW-04', description: 'Cooling water expansion', siteId: 'site-north', companyId: 'company-north', contact: 'Alex Morgan', authority: 'Project manager', startdate: '2026-09-01', enddate: '2026-11-28', status: 'Active' },
       { id: 'project-steam', internnumber: 'STX-2402', externnumber: 'RIV-ST-02', description: 'Riverside steam network', siteId: 'site-river', companyId: 'company-stelux', contact: 'Sam Rivers', startdate: '2026-09-14', enddate: '2026-12-18', status: 'Active' },
-      { id: 'project-skid', internnumber: 'STX-2403', externnumber: 'NLP-SK-01', description: 'Process skid fabrication', siteId: 'site-north', companyId: 'company-north', contact: 'Jamie Ellis', mtoPilot: false, startdate: '2026-08-10', enddate: '2026-10-30', status: 'Active' }
+      { id: 'project-skid', internnumber: 'STX-2403', externnumber: 'NLP-SK-01', description: 'Process skid fabrication', siteId: 'site-north', companyId: 'company-north', contact: 'Jamie Ellis', mtoPilot: true, startdate: '2026-08-10', enddate: '2026-10-30', status: 'Active' }
     ];
     projects.forEach(p => { const { id, ...data } = p; add('projects', id, { ...data, amounthours: 8, workingdays: 60 }); });
     add('test_systems', 'test-cw', { name: 'CW-01', projectId: 'project-cooling', medium: 'Water', pressure: '15 bar' });
