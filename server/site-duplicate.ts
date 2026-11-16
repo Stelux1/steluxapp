@@ -2,6 +2,7 @@ import { CATALOG_SITES } from '../shared/weld-catalogs.ts';
 import { copyName, duplicateFields, duplicateParts } from '../shared/site-duplicate.ts';
 import type { Row } from '../shared/types.ts';
 import { AppError, type Actor, type Store } from './store.ts';
+import { copyMemoTemplates } from './memo-templates.ts';
 
 /**
  * Duplicate Project site: a new main project named "<name> (Copy)" with the ticked settings and the ticked lists'
@@ -16,6 +17,7 @@ export function duplicateSite(store: Store, data: Record<string, unknown>, actor
   const site = store.create('sites', { name: copyName(String(source.name), store.list('sites').map(row => String(row.name))), ...copied }, actor);
   for (const part of parts) {
     if (part.catalog) for (const link of store.list(CATALOG_SITES).filter(row => row.resourceKey === part.catalog && row.siteId === source.id)) store.create(CATALOG_SITES, { resourceKey: part.catalog, recordId: link.recordId, siteId: site.id, enabled: link.enabled !== false }, actor);
+    if (part.records === 'memo-templates') copyMemoTemplates(store, source.id, site.id, actor);
     if (part.links) for (const link of store.list(part.links.resource).filter(row => row.siteId === source.id)) store.create(part.links.resource, { [part.links.ownerKey]: link[part.links.ownerKey], siteId: site.id, ownerArchived: link.ownerArchived === true }, actor);
   }
   return { resource: 'sites', record: site };

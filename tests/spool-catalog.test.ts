@@ -51,9 +51,9 @@ test('weld-catalogs-welder-weld-034: Spools is a name catalog (Spool name*, Abbr
   assert.ok(RESOURCES.some(entry => entry.key === SPOOL_NAMES));
 });
 
-test('w1-left-13: Duplicate Project site offers Spools after Welders, copying the spool catalog\'s enablement', () => {
+test('w1-left-13: Duplicate Project site offers Spools after Welders and Memo templates (the reference order), copying the spool catalog\'s enablement', () => {
   const lists = DUPLICATE_PARTS.filter(part => part.group === 'Activated lists').map(part => part.label);
-  assert.deepEqual(lists, ['NDT process', 'Weld types', 'WPS methods', 'Welders', 'Spools', 'Material supplier', 'NDT locations', 'PWHT process', 'PWHT locations', 'QA/QC engineers']);
+  assert.deepEqual(lists, ['NDT process', 'Weld types', 'WPS methods', 'Welders', 'Memo templates', 'Spools', 'Material supplier', 'NDT locations', 'PWHT process', 'PWHT locations', 'QA/QC engineers']);
   assert.equal(DUPLICATE_PARTS.find(part => part.key === 'spools')!.catalog, SPOOL_NAMES);
 });
 

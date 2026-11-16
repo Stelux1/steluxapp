@@ -5,6 +5,7 @@ import { currentRevision } from '../../shared/revisions.ts';
 import { inspectionCellState, type InspectionKind } from '../../shared/inspections.ts';
 import { certificatesForProject } from '../../shared/welder-data.ts';
 import { projectCertificates } from '../../shared/site-settings.ts';
+import { ISO_BOOK_OFF_REASON, isoBookPartOff } from '../../shared/iso-book-settings.ts';
 import type { Row, User } from '../../shared/types.ts';
 
 /**
@@ -187,6 +188,8 @@ export function partFiles(plan: PartPlan, context: BookContext, iso: Row): Row[]
 
 /** What the part holds for the isometric and the account: permitted generators and downloadable files, or the reason it is disabled. */
 export function partState(plan: PartPlan, context: BookContext, iso: Row): PartState {
+  // Edit project site → ISO Book: a part the isometric's main project switches off is not offered (shared/iso-book-settings.ts).
+  if (isoBookPartOff(context.site((context.rows.projects || []).find(row => row.id === iso.projectId)?.siteId), plan.key)) return { available: false, reason: ISO_BOOK_OFF_REASON, generators: [], files: [] };
   if (plan.key === 'task-sheet') return { available: true, generators: [], files: [] };
   const permitted = plan.generators.filter(definition => [context.user, ...(context.alsoUsers || [])].some(account => canDocument(account, definition)));
   // A document of its own record contributes only when the isometric has such a record (a request, a release, a pick list).

@@ -15,6 +15,8 @@ import { applyMtoStock } from './mto-stock.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, OWNER_FORM_SETTINGS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS, ISS_NDT_STANDARDS } from './site-settings.ts';
 import { ITP_SCOPES } from './itps.ts';
 import { LOGO_PX } from './pdf-company.ts';
+import { ISO_BOOK_SECTION, ISO_BOOK_SWITCHES } from './iso-book-settings.ts';
+import { MEMO_TEMPLATE_RESOURCE } from './memo-templates.ts';
 import { WELDERCARD_LIST_KEYS, ASME_GROUP_NUMBERS, ASME_P_NUMBERS, CERT_TYPES, ISO_15608_GROUPS, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS } from './welder-data.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
@@ -65,6 +67,8 @@ const siteSettings: Field[] = [
   s('issNdtStandard', 'LISL [ISS] NDT standard', ISS_NDT_STANDARDS, { section: DOCUMENTS, hint: 'Ticks ASME or EN ISO; empty uses the isometric’s NDT norm.' }),
   ...PROGRESS_PHASES.map(phase => n(phase.field, `${phase.label} phase (%)`, { section: PROGRESS, max: 100, step: 1 })),
   ...PROGRESS_PHASES.flatMap(phase => phase.activities.map(activity => n(activity.field, `${phase.label} · ${activity.label} (%)`, { section: PROGRESS, max: 100, step: 1 }))),
+  // ISO Book (Edit project site only, hosted profile: shown by EDIT_FIELD_OVERRIDES in shared/weld-catalogs.ts); every switch is on by default.
+  ...ISO_BOOK_SWITCHES.map(item => b(item.name, item.label, { section: ISO_BOOK_SECTION, default: true, hidden: true })),
 ];
 add('sites', 'Project sites', 'project site', 'general', 'Workspace', 'The locations where your projects come together.', [t('name', 'Site name', { required: true }), ...contact, ...siteSettings], ['name', 'residence', 'phone', 'email'], { unique: [['name']] });
 add('companies', 'Companies', 'company', 'general', 'Workspace', 'Customers, contractors, and partner companies.', [t('name', 'Name', { required: true }), t('address', 'Address'), t('zip', 'Postcode'), t('residence', 'City'), t('phone', 'Phone'), t('email', 'Email address', { type: 'email' }), note()], ['name', 'residence', 'phone', 'email'], { unique: [['name']] });
@@ -271,6 +275,8 @@ resources.push(...HYDROTEST_RESOURCES);
 resources.push(...FLANGE_RECORD_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);
+// Memo templates of the project sites (shared/memo-templates.ts): written only by server/memo-templates.ts.
+resources.push(MEMO_TEMPLATE_RESOURCE);
 /** Fields above that only the pilots profile shows. */
 export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope', 'storehouseManager'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'], sites: ['archived'] };
 export const RESOURCES = resources;

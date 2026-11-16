@@ -1,3 +1,4 @@
+import { ISO_BOOK_SWITCH_NAMES } from './iso-book-settings.ts';
 import { DEFECT_NORMS } from './site-settings.ts';
 import { isStandardDefectCode } from './defect-codes.ts';
 import type { Field, Resource, Row } from './types.ts';
@@ -112,6 +113,8 @@ export const EDIT_FIELD_OVERRIDES: Record<string, Record<string, Partial<Field>>
   ndt_groups: { description: { required: true } },
   // Size in inches and Outline in mm are number inputs in the Edit dialog (Size in mm stays text with a decimal comma).
   diameters: { sizeinch: { required: true, decimal: false }, outline: { decimal: false } },
+  // Edit project site has the ISO Book tab; Add has not (capture weld__general__project-sites.txt:44-50 against __edit-zandbak.txt:17-26).
+  sites: Object.fromEntries(ISO_BOOK_SWITCH_NAMES.map(name => [name, { hidden: false }])),
 };
 /** [field, before]: the Edit dialog lists `field` ahead of `before` (welding wire: Accepted, then Controlled). */
 export const EDIT_FIELD_ORDER: Record<string, [string, string]> = { welding_wires: ['accepted', 'controlled'] };
