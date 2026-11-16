@@ -133,3 +133,15 @@ export function seedAccessSamples(store: Store) {
     store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_access_v1','1')").run();
   });
 }
+
+/**
+ * Sample company data for documents (local sample workspace of the hosted profile only; never called for a
+ * connected database): a fictional contractor, no logo. Runs once; an existing company record is left untouched.
+ */
+export function seedCompanySample(store: Store) {
+  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_company_v1'").get()) return;
+  store.transaction(() => {
+    if (!store.list('company_data', true).length) store.create('company_data', { name: 'Kestrel Pipe Fabrication B.V.', address: 'Havenstraat 112', address2: 'Unit 4, Prefab hall', zip: '3089 KB', residence: 'Rotterdam', phone: '+31 10 555 0100', logoHeight: 18 }, SYSTEM, 'company-data');
+    store.db.prepare("INSERT INTO metadata(key,value) VALUES ('seed_company_v1','1')").run();
+  });
+}
