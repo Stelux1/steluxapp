@@ -93,10 +93,12 @@ const head = (file: Express.Multer.File, length = 5) => {
   if (file.buffer) return file.buffer.subarray(0, length);
   const fd = openSync(file.path, 'r'); try { const bytes = Buffer.alloc(length); return bytes.subarray(0, readSync(fd, bytes, 0, length, 0)); } finally { closeSync(fd); }
 };
+/** A real PDF upload: its declared type, its name and its first bytes (`%PDF-`) agree. */
+export const isPdfUpload = (file: Express.Multer.File) => file.mimetype === 'application/pdf' && /\.pdf$/i.test(basename(file.originalname)) && Buffer.from(head(file)).toString('latin1') === '%PDF-';
 /** Upload signed doc: a PDF up to 20 MB whose type, name and first bytes agree. */
 export function assertSignedPdf(file: Express.Multer.File | undefined) {
   if (!file) throw new AppError(422, 'Choose the signed PDF.', { file: 'Choose the signed PDF.' });
-  if (file.mimetype !== 'application/pdf' || !/\.pdf$/i.test(basename(file.originalname)) || Buffer.from(head(file)).toString('latin1') !== '%PDF-') throw new AppError(422, 'Choose a PDF file for the signed document.', { file: 'Choose a PDF file.' });
+  if (!isPdfUpload(file)) throw new AppError(422, 'Choose a PDF file for the signed document.', { file: 'Choose a PDF file.' });
 }
 
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';

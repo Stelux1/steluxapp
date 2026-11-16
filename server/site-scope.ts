@@ -45,6 +45,8 @@ export class SiteScope {
   private linkLists = new Map<string, Row[]>();
   /** While the scope resolves a parent itself, its own `store.get` calls are not checked. */
   private resolving = 0;
+  /** Switched-off projects this request may read to switch a pilot flag on or off, and nothing else (`allowPilotSwitch`). */
+  readonly switching = new Set<string>();
   /**
    * `focus`: the main project an account that reaches every main project works in (its session's main project). Records
    * in FOCUSED_RESOURCES then follow it as well, as they do for a limited account.
@@ -122,13 +124,13 @@ export class SiteScope {
   allowsSite(siteId: string) { return this.allowed === 'all' || this.allowed.has(siteId); }
   /**
    * `store.recordGuard` of the request. A record of another main project is refused with 403 (`site`); one of a project
-   * switched off for the pilot with 404, as if it did not exist there. The switched-off project itself stays readable to
-   * the write that switches it off (lists leave it out through `allows`).
+   * switched off for the pilot with 404, as if it did not exist there. The switched-off project itself stays readable
+   * only to a write that changes nothing but its pilot flags (`allowPilotSwitch`, sec2-006); lists leave it out through `allows`.
    */
   check(key: string, row: Row) {
     if (this.resolving) return;
     const site = this.siteOf(key, row);
-    if (site === OFF) { if (key === 'projects') return; throw new AppError(404, 'This record could not be found.'); }
+    if (site === OFF) { if (key === 'projects' && this.switching.has(String(row.id))) return; throw new AppError(404, 'This record could not be found.'); }
     if (this.allows(key, row)) return;
     throw siteRefused();
   }
@@ -144,6 +146,17 @@ export const isSiteRefusal = (error: unknown) => error instanceof AppError && er
 const context = new AsyncLocalStorage<SiteScope>();
 /** The scope of the current request, or undefined when the account reaches every main project. */
 export const currentSiteScope = () => context.getStore();
+/** The pilot flags of a project; a write changing only these may reach a project switched off for the request's pilot. */
+export const PILOT_SWITCH_FIELDS = ['weldPilot', 'mtoPilot'];
+/**
+ * A project record write whose input changes nothing but the pilot flags (`_version` aside) may read the project even
+ * where it is switched off for the request's pilot (SiteScope.check); every other write or read of it answers 404 there.
+ */
+export function allowPilotSwitch(id: string, input: Record<string, unknown>) {
+  const scope = context.getStore();
+  const names = Object.keys(input).filter(name => name !== '_version');
+  if (scope && names.length && names.every(name => PILOT_SWITCH_FIELDS.includes(name))) scope.switching.add(id);
+}
 /** Whether the current request may see a record (true outside a limited request). */
 export const inSiteScope = (key: string, row: Row) => context.getStore()?.allows(key, row) ?? true;
 /** The records of a list the current request may see. */
@@ -269,7 +282,7 @@ const text = (value: unknown) => value === undefined || value === null ? '' : St
 /**
  * The pilots in which a change of an existing account switches the pilot on or off or changes the profile it works
  * under there (`weldEnabled` / `mtoEnabled`, `weldProfileId` / `mtoProfileId`, and `profileId`, which applies in every
- * pilot the account is enabled in where no pilot profile is chosen). These widen or narrow access like the project site
+ * pilot the account is enabled in where no pilot profile is chosen), or ticks Storehouse manager (MTO Pilot). These widen or narrow access like the project site
  * access does (sec1-001, sec1-002). A new account's reach is judged as saved (`assertAccountReach`).
  */
 export function pilotAccessChanges(input: Record<string, unknown>, existing?: Row): ScopePilot[] {
@@ -280,6 +293,8 @@ export function pilotAccessChanges(input: Record<string, unknown>, existing?: Ro
     const wasEnabled = enabledIn(existing[`${pilot}Enabled`]), isEnabled = enabled === undefined ? wasEnabled : enabledIn(enabled);
     if (isEnabled !== wasEnabled) return true;
     if (profile !== undefined && text(profile) !== text(existing[`${pilot}ProfileId`])) return true;
+    // Storehouse manager (MTO Pilot) unlocks Adjust quantity: an access change there (sec2-004).
+    if (pilot === 'mto' && input.storehouseManager !== undefined && (input.storehouseManager === true) !== (existing.storehouseManager === true)) return true;
     return profileChanged && (wasEnabled || isEnabled);
   });
 }
@@ -333,9 +348,12 @@ export function assertCopyInScope(store: Store, account: Row, input: Record<stri
   const parts: [string, ScopePilot][] = [['copyWelds', 'weld'], ['copyMaterials', 'mto'], ['copyCalculations', 'mto']];
   for (const [part, pilot] of parts) {
     if (input[part] !== true) continue;
+    let project: Row; try { project = store.get('projects', input.projectId); } catch { continue; }
+    const title = pilot === 'weld' ? 'Weld Pilot' : 'MTO Pilot';
+    // A part of a pilot the target project is switched off for is never copied into it (sec2-007).
+    if (!projectInPilot(project, pilot)) throw new AppError(403, `This project is switched off for ${title}: its part of the isometrics cannot be copied into it.`);
     const scope = siteScopeFor(store, account, pilot);
     if (!scope) continue;
-    let project: Row; try { project = store.get('projects', input.projectId); } catch { continue; }
-    if (!scope.allows('projects', project)) throw siteRefused(`Your ${pilot === 'weld' ? 'Weld Pilot' : 'MTO Pilot'} access does not include this main project.`);
+    if (!scope.allows('projects', project)) throw siteRefused(`Your ${title} access does not include this main project.`);
   }
 }

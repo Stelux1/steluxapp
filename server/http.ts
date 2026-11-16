@@ -20,7 +20,7 @@ import { canResource,canReport,canScope,isAdministrator,REPORT_RESOURCES } from 
 import type { Row, Module } from '../shared/types.ts';
 import { pilotProfileErrors, withNewUserDefaults } from '../shared/access-ui.ts';
 import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, endSession, ensureAdministrator, hashToken, newSession, assertPasswordStrength, passwordHash, passwordMatches, sessionCookie, signInLimiter, sessionSite, setSessionSite, setTokenSite, type AuthRequest } from './auth.ts';
-import { assertRightsWrite, assertUserInput, siteArchiveInput, assertSiteArchive } from './user-admin.ts';
+import { assertProfileUsersInReach, assertRightsWrite, assertUserInput, siteArchiveInput, assertSiteArchive } from './user-admin.ts';
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
@@ -60,7 +60,7 @@ import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope,
 import { registerProjectImportRoutes } from './project-import.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
-import { activeSite, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
+import { activeSite, allowPilotSwitch, assertAccountReach, assertCopyInScope, assertOwnAccessUnchanged, assertSiteAccessEdit, ownAccessChange, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
 /** User accounts of the hosted pilots: a new account has no application ticked, and a ticked application needs a profile (access-users-profiles-004). Runs after the access checks. */
 function checkUserApplications(body: Record<string, unknown>, existing?: Row) {
@@ -295,11 +295,12 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     // Add material (pilots): it belongs to the main project it is added on; an existing Material No is linked there or refused.
     if (pilots && resource.key === 'materials') { const added = addMaterialOnSite(store, req.body, actorOf(req)); res.status(added.linked ? 200 : 201).json({ record: access.project(resource.key, added.record), linked: added.linked }); return; }
-    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
+    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (pilots && resource.key === 'profiles') assertRightsWrite(store, (req as unknown as AuthRequest).user, 'profiles', undefined, row); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {
-    const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
+    const resource = access.resource(String(req.params.resource));
+    if (pilots && resource.key === 'projects') allowPilotSwitch(String(req.params.id), req.body ?? {}); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
     if (pilots && resource.key === 'materials') { assertMaterialsInScope(store, [String(req.params.id)]); if (ENABLEMENT_INPUT.some(name => req.body[name] !== undefined)) throw new AppError(422, 'Use Home location to change the project sites of a material.'); }
     dropCompletionInput(resource.key, req.body);
@@ -332,6 +333,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots) assertItpDeletable(store, resource.key, String(req.params.id));
     if (pilots) assertRequestFileKept(store, resource.key, String(req.params.id));
     if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id), true));
+    if (pilots && resource.key === 'profiles') assertProfileUsersInReach(store, (req as unknown as AuthRequest).user.id, String(req.params.id));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
   });

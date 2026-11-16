@@ -198,13 +198,22 @@ export type CopyParts=Record<CopyPart,{allowed:boolean;pilot?:PilotKey;reason?:s
 export const COPY_SCOPES:[CopyPart,string][]=[['copyWelds','63'],['copyMaterials','70'],['copyCalculations','71']];
 /** Actions that need one more right than their own area. A receipt correction changes stock, so it also needs the add right on material inventory (the reference has no edit right on receipts). */
 const EXTRA_ACTION_SCOPES:Record<string,[string,PermissionVerb][]>={'correct-receipt':[['16','insert']],'fill-irn':[['64','edit']]};
+/**
+ * Rights an action needs on top of its own scope that depend on its input. Undo on an NDT request (sec2-002) and Restart
+ * NDT process (sec2-008) archive request lines and the weld's results: they need Delete on the NDT area of the type (76
+ * NDT, 94 NDT Pre). The PWHT request dialog archives the documents ticked for deletion only with Delete on 97 (sec2-008).
+ */
+function extraActionScopes(key:string,data:Record<string,unknown>):[string,PermissionVerb][]{
+ const typed:[string,PermissionVerb][]=key==='inspection-request-undo'||key==='ndt-restart'?[[data.type==='NDT PRE'?'94':'76','delete']]:key==='pwht-weld'&&Array.isArray(data.deleteFileIds)&&data.deleteFileIds.length?[['97','delete']]:[];
+ return [...(EXTRA_ACTION_SCOPES[key]||[]),...typed];
+}
 export function canAction(user:User,key:string,data:Record<string,unknown>={}):boolean{
  if(!actionAvailable(user.availability,key,data.type))return false;
  if(user.capabilities&&data.type===undefined){const types=key==='release'||key==='reopen-release'||key==='complete-phase'?['Prefab','Field','Hydrotest']:key==='inspection-request'||key==='inspection-result'?['NDT','NDT PRE','VI','PWHT','PRE-HT']:TYPED_INSPECTION_ACTIONS.includes(key)?['NDT','NDT PRE','PWHT','PRE-HT']:[];if(types.length)return types.some(type=>canAction(user,key,{...data,type}));}
  if(key==='hydrotest-move'&&!canScope(user,'64','edit'))return false;
  // Storehouse lines (area 75, a Workspace area) are operated from MTO Pilot's Storehouses page only, never from Weld Pilot.
  if(user.pilot==='weld'&&MTO_STOCK_ACTION_SCOPES[key])return false;
- if(!(EXTRA_ACTION_SCOPES[key]||[]).every(([area,verb])=>canScope(user,area,scopeOperation(area,verb))))return false;
+ if(!extraActionScopes(key,data).every(([area,verb])=>canScope(user,area,scopeOperation(area,verb))))return false;
  if((key==='copy-isometrics'||key==='add-new-isometric')&&!COPY_SCOPES.every(([flag,area])=>data[flag]!==true||canScope(user,area,'insert')))return false;
  const [scope,verb]=actionScope(key,data);if(!user.capabilities){const area=areas.get(scope);return Boolean(area)&&user.permissions[area!.module]>=2;}return canScope(user,scope,scopeOperation(scope,verb));
 }

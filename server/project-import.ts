@@ -133,7 +133,8 @@ function addIsoParts(store: Store, isoId: string, iso: ImportPlan['isometrics'][
  */
 export function commitProjectImport(store: Store, input: SheetRow[], columns: ImportColumn[], options: CommitOptions): CommitResult {
   return store.transaction(() => {
-    const plan = planImport(input, columns, options.context(), options);
+    const context = options.context();
+    const plan = planImport(input, columns, context, options);
     options.allow?.(plan);
     const result: CommitResult = { projects: { created: 0, updated: 0 }, isometrics: { created: 0, updated: 0 }, welds: 0, materials: 0, skipped: plan.summary.errors };
     const projectIds = new Map<string, string>();
@@ -176,7 +177,8 @@ export function commitProjectImport(store: Store, input: SheetRow[], columns: Im
       const inFile = new Set(input.map(row => text(row.values['projects.internnumber'])).filter(Boolean));
       const used = new Set(store.list('isometrics').map(iso => String(iso.projectId)));
       const kept: string[] = []; let deleted = 0;
-      for (const project of store.list('projects').filter(row => row.siteId === options.siteId && !inFile.has(text(row.internnumber)))) {
+      // Only projects of the import's pilot (sec2-006): a project switched off for it does not exist there and is never cleaned.
+      for (const project of store.list('projects').filter(row => row.siteId === options.siteId && !context.hiddenProjects?.has(row.id) && !inFile.has(text(row.internnumber)))) {
         if (used.has(project.id)) { kept.push(text(project.internnumber)); continue; }
         store.archive('projects', project.id, project._version, options.actor); deleted++;
       }
@@ -228,6 +230,15 @@ export function registerProjectImportRoutes(app: Application, { store, access, a
   };
   const allow = (req: Request, siteId: string, mode: ImportMode) => (plan: ImportPlan) => {
     for (const [part, verbs] of neededRights(plan, mode)) { const refusal = partRefusal(req, siteId, part, verbs); if (refusal) throw new AppError(403, refusal); }
+    // Welds go only into projects switched on for Weld Pilot, material lines only into projects switched on for MTO Pilot,
+    // whichever pilot the import is started from (sec2-007). The pilot flags are never imported, so only existing projects can be off.
+    for (const iso of plan.isometrics) {
+      const project = plan.projects.find(item => item.internnumber === iso.internnumber)?.existing;
+      if (!project) continue;
+      for (const [part, owner, used] of [['welds', 'weld', iso.ranges.some(range => range.numbers.length)], ['iso_materials', 'mto', iso.materials.length > 0]] as const) {
+        if (used && !projectInPilot(project, owner)) throw new AppError(403, `Project ${iso.internnumber} is switched off for ${PILOT_MAP[owner].title}: its ${IMPORT_PART_NAMES[part]} cannot be imported.`);
+      }
+    }
   };
   const contextOf = (req: Request, siteId: string, columns: ImportColumn[]) => () => importContext(store, siteId, columns, {
     pilot: user(req).pilot, visible: (key, row) => access.visible(user(req), key, row), title: key => projectResource(availability, RESOURCE_MAP[key]).title,

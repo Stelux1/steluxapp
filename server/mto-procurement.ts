@@ -45,6 +45,8 @@ const str = (value: unknown) => typeof value === 'string' ? value.trim() : '';
  * `stamped`: the order is made now, so its time is kept for the archive ("06.11.2025. 07:42").
  */
 export function orderCheckedMaterials(ctx: ProcurementContext, requirementIds: string[], stamped: boolean) {
+  // Each requirement line is read through the record guard first (sec2-003): one of a main project outside the request's reach is refused before anything is written.
+  for (const id of requirementIds) ctx.ensure('iso_materials', id);
   const rows = Object.fromEntries(PLANNING_RESOURCES.map(key => [key, ctx.store.list(key)]));
   const { lines, error } = orderRequestLines(rows, requirementIds);
   if (error) throw new AppError(error.status, error.message);

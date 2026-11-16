@@ -45,9 +45,26 @@ export function registeredPdfState(store: Store, documents: Documents, flangeId:
   const bytes = documents.read(file.id);
   return { file, intact: Boolean(bytes) && recordPdfHashMatches(file.sha256, sha256(bytes!)) };
 }
-/** The release gate as the server decides it, with the hash check of the registered PDF. */
+/**
+ * The release gate as the server decides it, with the hash check of the registered PDF. Release judges what was signed
+ * (sec2-005): once the protocol PDF of the latest record is registered, only evidence that existed when it was generated
+ * counts, so a row written later (before the sign-off rule below existed) can neither open nor close the gate.
+ */
 export function serverGate(store: Store, documents: Documents, flangeId: string) {
-  return releaseGate(flangeRows(store, flangeId), flangeId, registeredPdfState(store, documents, flangeId).intact);
+  const rows = flangeRows(store, flangeId), state = registeredPdfState(store, documents, flangeId);
+  const cut = state.file ? String(state.file._createdAt) : '';
+  const signed = (list: Row[]) => cut ? list.filter(row => String(row._createdAt) <= cut) : list;
+  const judged = { ...rows, flange_passes: signed(rows.flange_passes), flange_bolts: signed(rows.flange_bolts), flange_leak_tests: signed(rows.flange_leak_tests), flange_labels: signed(rows.flange_labels), flange_deviations: signed(rows.flange_deviations) };
+  return releaseGate(judged, flangeId, state.intact);
+}
+/**
+ * The evidence of a flange record (passes, bolts, leak tests, labels, deviations) is closed once QA/QC has signed the
+ * latest record (sec2-005): new evidence needs a new record, which needs new signatures.
+ */
+export const SIGNED_RECORD_REFUSED = 'This record is signed by QA/QC. Its passes, bolts, leak tests, labels and deviations can no longer be added to.';
+export function assertRecordOpen(store: Store, flangeId: string) {
+  const rows = flangeRows(store, flangeId), latest = latestRecord(rows.flange_records, flangeId);
+  if (latest && recordSignatures(rows.flange_signatures, latest.id)['QA/QC']) throw new AppError(422, SIGNED_RECORD_REFUSED);
 }
 
 /** Save record: a new assembly record row from the form; refused once QA/QC has signed the latest record. */
@@ -62,6 +79,7 @@ export function saveRecord(store: Store, flange: Row, data: Input, actor: Actor)
 }
 /** Record pass: validated against the master targets (±5%) and kept with its result, also when it is out of tolerance. */
 export function recordPass(store: Store, flange: Row, data: Input, actor: Actor): Row {
+  assertRecordOpen(store, flange.id);
   refuse(passInputErrors(data, flange));
   const rows = flangeRows(store, flange.id), targets = flangeTargets(flange);
   const measurement = { torque_nm: flangeNumber(data.torque_nm), stress_value: flangeNumber(data.stress_value) };
@@ -73,6 +91,7 @@ export function recordPass(store: Store, flange: Row, data: Input, actor: Actor)
 }
 /** Record bolt: a measurement of a recorded pass; a failed one needs and opens (or links) its deviation. */
 export function recordBolt(store: Store, flange: Row, data: Input, actor: Actor): Row {
+  assertRecordOpen(store, flange.id);
   const rows = flangeRows(store, flange.id);
   refuse(boltInputErrors(data, flange, rows.flange_passes));
   const measurement = { torque_nm: flangeNumber(data.torque_nm), stress_value: flangeNumber(data.stress_value) };
@@ -82,11 +101,13 @@ export function recordBolt(store: Store, flange: Row, data: Input, actor: Actor)
   return bolt;
 }
 export function recordLeakTest(store: Store, flange: Row, data: Input, actor: Actor): Row {
+  assertRecordOpen(store, flange.id);
   const values = { test_type: str(data.test_type), pressure_value: str(data.pressure_value), pressure_unit: str(data.pressure_unit), result: str(data.result) || 'Passed', tested_at: str(data.tested_at) };
   refuse(leakTestInputErrors(values));
   return store.create('flange_leak_tests', { flangeId: flange.id, ...values }, actor);
 }
 export function registerLabel(store: Store, flange: Row, data: Input, actor: Actor): Row {
+  assertRecordOpen(store, flange.id);
   const values = { label_number: str(data.label_number), qr_token: str(data.qr_token), scan_reference: str(data.scan_reference) };
   refuse(labelInputErrors(values));
   if (store.list('flange_labels').some(row => row.qr_token === values.qr_token)) throw new AppError(409, 'This QR token is already registered.', { qr_token: 'This QR token is already registered.' });
@@ -94,6 +115,7 @@ export function registerLabel(store: Store, flange: Row, data: Input, actor: Act
 }
 /** Open deviation / Record restoration: a restoration needs an open deviation with the same reference. */
 export function recordDeviation(store: Store, flange: Row, data: Input, actor: Actor): Row {
+  assertRecordOpen(store, flange.id);
   const values = { reference: str(data.reference), reason: str(data.reason) };
   refuse(deviationInputErrors(values));
   const restore = data.event === 'Restored', open = openDeviations(flangeRows(store, flange.id).flange_deviations, flange.id).includes(values.reference);

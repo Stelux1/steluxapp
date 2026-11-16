@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Express } from 'express';
-import { currentSiteScope, scopeRows } from './site-scope.ts';
+import { currentSiteScope, scopeRows, siteRefused } from './site-scope.ts';
 import { AppError, SYSTEM, qty, today, validDate, type Actor, type Store } from './store.ts';
 import { materialIdentity } from '../shared/materials.ts';
 import { canResource, canScope } from '../shared/permissions.ts';
@@ -174,7 +174,8 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
   const copyCertificates = (row: Row, ids: unknown, siteId: string, strict = true) => {
     if (ids === undefined || ids === null) return [] as Row[];
     if (!Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string')) throw new AppError(422, 'Choose the certificates to transfer from the list.');
-    const offered = new Map(lineCertificates({ certifications: store.list('certifications') }, row).map(cert => [cert.id, cert]));
+    // Only certificates the request reaches (sec2-010): one of another main project is never copied, even when its id is sent.
+    const offered = new Map(lineCertificates({ certifications: scopeRows('certifications', store.list('certifications')) }, row).map(cert => [cert.id, cert]));
     const copies: Row[] = [];
     for (const id of new Set(ids as string[])) {
       const cert = offered.get(id);
@@ -327,16 +328,27 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     return { resource: 'stock', record: archived };
   }
 
+  /**
+   * A transfer order to act on (assign, pick, complete, cancel, reverse). An order out of a project site's inventory is
+   * readable wherever its storehouse is (storehouses are company-wide), but only accounts that reach the source main
+   * project act on it (sec2-011).
+   */
+  function sourceOrder(id: unknown): Row {
+    const order = store.get('transfer_orders', id);
+    const scope = currentSiteScope();
+    if (order.fromSiteId && scope && !scope.allowsSite(String(order.fromSiteId))) throw siteRefused('Only accounts of the main project the material comes from can act on this transfer order.');
+    return order;
+  }
   if (key === 'transfer-order-create') return createOrder();
   if (key === 'transfer-order-complete') return completeOrder(data.orderId);
   if (key === 'transfer-order-assign') {
-    const order = store.get('transfer_orders', data.orderId), status = must(canAssign(order, actor.id));
+    const order = sourceOrder(data.orderId), status = must(canAssign(order, actor.id));
     const updated = store.update('transfer_orders', order.id, { status, assignedTo: actor.id, assignedName: actor.name, assignedAt: now() }, order._version, actor);
     store.audit('transfer_orders', order.id, 'assigned', `Assigned transfer order ${order.number} to ${actor.name}`, actor);
     return { resource: 'transfer_orders', record: updated };
   }
   if (key === 'transfer-order-pick') {
-    const order = store.get('transfer_orders', data.orderId), status = must(nextStatus(order, 'pick'));
+    const order = sourceOrder(data.orderId), status = must(nextStatus(order, 'pick'));
     const items = orderItems(order.id), input = Array.isArray(data.items) ? data.items as Input[] : [];
     if (!input.length || input.length > 200 || input.some(entry => !entry || typeof entry !== 'object')) throw new AppError(422, 'Enter the pick results of the order lines.');
     const seen = new Set<string>();
@@ -353,7 +365,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     return { resource: 'transfer_orders', record: updated, records };
   }
   if (key === 'transfer-order-cancel') {
-    const order = store.get('transfer_orders', data.orderId), status = must(nextStatus(order, 'cancel'));
+    const order = sourceOrder(data.orderId), status = must(nextStatus(order, 'cancel'));
     const reason = limited(data.reason, 'Reason', MAX_LENGTHS.reasonText, true, 'reason');
     const updated = store.update('transfer_orders', order.id, { status, cancelReason: reason, notes: [order.notes, `Cancelled: ${reason}`].filter(Boolean).join('\n') }, order._version, actor);
     store.audit('transfer_orders', order.id, 'cancelled', `Cancelled transfer order ${order.number} (${reason})`, actor);
@@ -387,7 +399,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     const certificateIds = (value: unknown, materialNo: string, number: string) => {
       if (value === undefined || value === null) return '';
       if (!Array.isArray(value) || value.length > 200 || value.some(id => typeof id !== 'string')) throw new AppError(422, `${number}: Choose the certificates from the list.`);
-      const known = store.list('certifications');
+      const known = scopeRows('certifications', store.list('certifications'));
       for (const id of new Set(value as string[])) {
         const cert = known.find(row => row.id === id), material = cert?.materialId ? store.list('materials').find(row => row.id === cert.materialId) : undefined;
         if (!cert || !material || String(material.materialNo).trim().toLowerCase() !== materialNo.trim().toLowerCase()) throw new AppError(422, `${number}: A chosen certificate does not belong to this material.`);
@@ -424,7 +436,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
    * quantity above the source's balance or a destination that can no longer receive material refuses the whole completion.
    */
   function completeOrder(orderId: unknown): Result {
-    const order = store.get('transfer_orders', orderId);
+    const order = sourceOrder(orderId);
     must(nextStatus(order, 'complete'));
     const route = transferRoute(String(order.type))!;
     const items = orderItems(order.id);
@@ -497,7 +509,7 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
 
   /** Reverse order: compensating movements restore every balance the completion changed; the original movements stay. */
   function reverseOrder(): Result {
-    const order = store.get('transfer_orders', data.orderId);
+    const order = sourceOrder(data.orderId);
     must(nextStatus(order, 'reverse'));
     const entries = must(reversePlan(order, store.list('movements', true)));
     for (const entry of entries) {

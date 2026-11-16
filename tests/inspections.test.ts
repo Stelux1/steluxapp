@@ -741,7 +741,7 @@ test('HTTP: the request archive needs its area (NDT request archive 66) and rest
   const made = inspectionRules(f.store, SYSTEM).run('mass-inspection-request', { type: 'NDT', weldIds: ['weld-22', 'weld-23'], processIds: ['ndt-0', 'ndt-1'] }).records!;
   const body = { type: 'NDT', requestNo: made[0].number, weldId: 'weld-22' };
   const basics = { '63': ['show', 'insert', 'edit'], '50': ['show', 'print'], '76': ['show', 'insert'] };
-  const withArchive = f.client(); await withArchive.login(detailed('Archivist', { ...basics, '66': ['show'] }));
+  const withArchive = f.client(); await withArchive.login(detailed('Archivist', { ...basics, '66': ['show'], '76': ['show', 'insert', 'delete'] })); // Undo and restart archive NDT results: Delete on 76 (sec2-002, sec2-008).
   const without = f.client(); await without.login(detailed('Plain', basics));
   const noInsert = f.client(); await noInsert.login(detailed('Viewer', { '63': ['show'], '50': ['show'], '66': ['show'], '76': ['show'] }));
   assert.equal((await without.request('/actions/inspection-request-undo', 'POST', 'weld', body)).status, 403, 'without the NDT request archive area');
