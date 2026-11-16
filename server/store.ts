@@ -11,6 +11,7 @@ import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
+import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -132,6 +133,7 @@ export class Store {
       data[field.name] = value as Value;
     }
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
+    if (!Object.keys(errors).length) Object.assign(errors, enablementErrors(this, key, data, existing, input));
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);
@@ -188,6 +190,7 @@ export class Store {
       const result = this.get(key, id);
       this.audit(key, id, 'created', `Created ${this.resource(key).singular} ${this.display(key, result)}`, actor);
       this.syncRelations(key,id,input,actor);
+      applyEnablement(this, key, id, input, actor);
       return result;
     });
   }
@@ -203,6 +206,7 @@ export class Store {
       }
       this.audit(key, id, 'updated', `Updated ${this.resource(key).singular} ${this.display(key, existing)}`, actor);
       this.syncRelations(key,id,input,actor);
+      applyEnablement(this, key, id, input, actor);
       return this.get(key, id);
     });
   }
