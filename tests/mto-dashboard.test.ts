@@ -339,10 +339,11 @@ test('the local sample shows every readiness state, a blocking backorder and a n
   const rows = Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key)])) as Record<string, Row[]>;
   const model = mtoDashboard(rows, { today: '2026-11-16' }), board = byIsoNo(model);
   for (const state of ['STARTED', 'PARTIAL', 'BLOCKED'] as const) assert.ok(model.board.some(item => item.readiness === state), state);
-  // STX-CW-002 is startable when its own reservations cover every line. The sample seed reserves its 6 flanges only when
-  // the partial delivery of order 2026-10-16 (server/seed.ts) landed on material-3, which depends on creation order.
+  // STX-CW-002 is startable: its own reservations cover every line. The partial delivery of order 2026-10-16 (server/seed.ts)
+  // is the material-3 line on every run, so its 6 flanges are reserved.
   const cw2 = board['STX-CW-002'];
-  assert.equal(cw2.readiness, cw2.lines.every(line => line.reserved >= line.required) ? 'STARTABLE' : 'PARTIAL');
+  assert.ok(cw2.lines.every(line => line.reserved >= line.required), 'every line reserved');
+  assert.equal(cw2.readiness, 'STARTABLE');
   assert.deepEqual([board['STX-SK-010'].readiness, board['STX-SK-010'].required, board['STX-SK-010'].covered, board['STX-SK-010'].blockingBackorder, board['STX-SK-010'].notOrdered], ['BLOCKED', 10, 0, 8, 2]);
   assert.equal(rows.materials.filter(item => item.id === 'material-dash-1').length, 1, 'the sample runs once');
   assert.ok(new Set(model.board.map(item => item.signal)).size >= 2, 'logistics signals vary');
@@ -449,4 +450,14 @@ test('the "Open ordered" chip equals the Site backlog bar and the sum of the Ope
   }
   const all = mtoDashboard(rows, { today: '2026-11-16' });
   assert.ok(all.chips.openOrdered > 0, 'the sample has open ordered quantity');
+});
+
+test('E6: the sample order of 2026-10-16 receives its partial delivery on the material-3 line on every run', () => {
+  for (let run = 0; run < 5; run++) {
+    const store = new Store(':memory:'); seed(store);
+    const order = store.list('orders').find(item => item.date === '2026-10-16')!;
+    const received = store.list('order_lines').filter(line => line.orderId === order.id).map(line => [line.materialId, Number(line.received || 0)]).sort();
+    assert.deepEqual(received, [['material-1', 0], ['material-3', 10]], 'received 12, two corrected back');
+    store.close();
+  }
 });
