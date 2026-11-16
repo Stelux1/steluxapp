@@ -389,3 +389,33 @@ test('an older hosted database gets the spool_names table from the preparation s
   assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
   assert.equal(count('spool_names'), 0, 'the table starts empty; the data step fills it (server/spool-catalog.ts)');
 });
+
+// ----- wave 4 integration: the merged plan of wave 4 only adds -------------------------------------------------------------
+const WAVE4_TABLES = ['spool_names', 'iso_memo_templates'];
+test('wave 4 merge: the merged plan adds two tables (spool_names, iso_memo_templates) and one reference column on a new table (iso_memo_templates.siteId); no unique rule and no column of an existing record type changes', async () => {
+  const { planHostedSchema } = await import('../server/hosted-schema.ts');
+  const empty = () => ({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() });
+  const plan = planHostedSchema(empty()), before = planHostedSchema(empty(), RESOURCES.filter(resource => !WAVE4_TABLES.includes(resource.key)));
+  assert.deepEqual(plan.tables.filter(table => !before.tables.includes(table)).sort(), [...WAVE4_TABLES].sort(), 'the new tables');
+  assert.deepEqual(plan.columns.filter(column => !before.columns.some(other => other.table === column.table && other.field === column.field)).map(column => `${column.table}.${column.field} → ${column.target}`), ['iso_memo_templates.siteId → sites']);
+  assert.deepEqual(plan.indexes, before.indexes, 'no new unique rule (duplicate spool names are allowed; memo keys are checked by the server) and the existing ones are unchanged');
+  // New data on existing record types lives inside the record data: no column, no index, nothing written by the upgrade.
+  for (const [key, name] of [['transfer_orders', 'assignedTo'], ['transfer_orders', 'reversedAt'], ['transfer_orders', 'cancelReason'], ['transfer_order_items', 'qtyPicked'], ['transfer_order_items', 'lineStatus'], ['users', 'storehouseManager'], ['sites', 'lislVtSource']] as const) {
+    const field = RESOURCE_MAP[key].fields.find(item => item.name === name); assert.ok(field, `${key}.${name}`); assert.equal(field!.ref, undefined, `${key}.${name} is no reference column`);
+  }
+  assert.ok(RESOURCE_MAP.sites.fields.filter(field => field.name.startsWith('isoBook')).every(field => !field.ref && field.type === 'checkbox'), 'the ISO Book switches are plain check boxes of the site');
+});
+
+test('wave 4 merge: an older hosted database gets the iso_memo_templates table and its siteId reference from the preparation step, once, without touching records', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  workspace();
+  db.exec('DROP TABLE stelux."iso_memo_templates" CASCADE');
+  const records = rows();
+  assert.throws(() => verifyHostedSchema(db), /iso_memo_templates/);
+  const result = prepareHostedSchema(db);
+  assert.ok(result.created.tables.includes('iso_memo_templates')); assert.ok(result.created.rowLevelSecurity.includes('iso_memo_templates'));
+  verifyHostedSchema(db);
+  assert.deepEqual(rows(Object.keys(records)), records, 'existing records are unchanged');
+  assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
+  assert.equal(count('iso_memo_templates'), 0, 'the six global templates are built into the release, not stored');
+});

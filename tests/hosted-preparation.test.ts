@@ -186,3 +186,56 @@ test('E7: the data steps after wave 3 are the three insert-only steps; the stand
     assert.equal(JSON.stringify(store.list('ndt_defect_codes', true)), before);
   } finally { store.close(); }
 });
+
+test('wave 4 merge: on a workspace from before wave 4 the four data steps only add spool catalog names; every stored row stays, and old spools, transfer orders, users and sites read as before', async () => {
+  const { orderStatus, mayAdjustQuantity, lineStatus } = await import('../shared/mto-stock.ts');
+  const { ISO_BOOK_SWITCH_NAMES, isoBookSwitchOn } = await import('../shared/iso-book-settings.ts');
+  const { spoolOptionsForIso } = await import('../shared/spool-catalog.ts');
+  const { issVtSource } = await import('../shared/pdf-lisl-iss-wq.ts');
+  const store = new Store(':memory:'); seed(store);
+  try {
+    // A workspace from before wave 4: no spool catalog, no storehouse manager tick, transfer orders still "Open" without picks.
+    store.db.exec('DELETE FROM spool_names');
+    store.db.exec(`DELETE FROM catalog_sites WHERE json_extract(data, '$.resource') = 'spool_names'`);
+    const strip = (key: string, id: string, fields: string[]) => { const row = store.get(key, id, true) as Row; const { id: _id, _version, _archived, _createdAt, _updatedAt, ...data } = row; for (const field of fields) delete (data as Record<string, unknown>)[field]; store.db.prepare(`UPDATE "${key}" SET data=? WHERE id=?`).run(JSON.stringify(data), id); };
+    for (const user of store.list('users', true)) strip('users', user.id, ['storehouseManager']);
+    const order = store.list('transfer_orders', true)[0]!;
+    strip('transfer_orders', order.id, ['assignedTo', 'assignedName', 'assignedAt', 'createdByName', 'cancelReason', 'completedAt', 'reversedAt', 'reversedBy']);
+    store.db.prepare(`UPDATE transfer_orders SET data=json_set(data, '$.status', 'Open') WHERE id=?`).run(order.id);
+    for (const item of store.list('transfer_order_items', true).filter(row => row.orderId === order.id)) strip('transfer_order_items', item.id, ['qtyPicked', 'lineStatus']);
+    for (const site of store.list('sites', true)) strip('sites', site.id, [...ISO_BOOK_SWITCH_NAMES, 'lislVtSource']);
+
+    const snapshot = () => new Map(RESOURCES.map(resource => [resource.key, new Map((store.db.prepare(`SELECT id, data, version, archived, created_at, updated_at FROM "${resource.key}"`).all() as { id: string }[]).map(row => [row.id, { ...row }]))]));
+    const spoolReads = () => JSON.stringify({
+      spools: store.list('spools', true), welds: store.list('welds', true).map(weld => [weld.id, weld.spoolId ?? null]),
+      services: store.list('service_requests', true), moves: store.list('spool_moves', true), systems: store.list('test_systems', true).map(system => [system.id, spoolsOfSystem(system.id, { spools: store.list('spools'), isometrics: store.list('isometrics') }).map(entry => entry.spool.id)]),
+    });
+    const before = snapshot(), readsBefore = spoolReads();
+    const steps = hostedDataSteps(() => store);
+    assert.deepEqual(steps.map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings', 'spoolNames'], 'wave 4 adds one data step, spoolNames');
+    const distinct = [...new Set(store.list('spools').map(spool => String(spool.name ?? '').trim()).filter(Boolean))];
+    assert.ok(distinct.length > 0, 'the sample holds spools');
+    assert.deepEqual(steps[3].run({ dryRun: true }), { spoolNamesAdded: distinct.length }, 'the dry run counts');
+    assert.deepEqual(snapshot(), before, 'a dry run writes nothing');
+    for (const step of steps) step.run({ dryRun: false });
+    const after = snapshot();
+    for (const [key, rows] of before) for (const [id, stored] of rows) assert.deepEqual(after.get(key)!.get(id), stored, `${key} ${id} is unchanged`);
+    const added = Object.fromEntries([...after].map(([key, rows]) => [key, [...rows.keys()].filter(id => !before.get(key)!.has(id))]).filter(([, ids]) => ids.length));
+    assert.deepEqual(Object.keys(added), ['spool_names'], 'only spool catalog names are added');
+    assert.deepEqual(store.list('spool_names').map(row => [row.name, row.abbreviation]).sort(), distinct.map(name => [name, name]).sort());
+    assert.equal(spoolReads(), readsBefore, 'spools, welds, service requests, spool moves and the test systems\' Spools tab read the same spools');
+    for (const step of steps) assert.ok(Object.values(step.run({ dryRun: true })).every(value => typeof value !== 'number' || value === 0), `${step.name}: a second run adds nothing`);
+
+    // Derived on read, nothing converted: the old order is Requested, its lines Pending; nobody is a storehouse manager; every ISO Book part is on; ISS VT comes from the NDT column.
+    assert.equal(orderStatus(store.get('transfer_orders', order.id)), 'Requested');
+    for (const item of store.list('transfer_order_items').filter(row => row.orderId === order.id)) assert.equal(lineStatus(item), 'Pending');
+    assert.ok(store.list('users').every(user => !mayAdjustQuantity(false, user)));
+    for (const site of store.list('sites')) { assert.ok(ISO_BOOK_SWITCH_NAMES.every(name => isoBookSwitchOn(site, name))); assert.equal(issVtSource(site), 'ndt'); }
+    // Each isometric keeps offering its own spool names in the weld form; the seeded names count as enabled everywhere (no site link).
+    for (const iso of store.list('isometrics')) {
+      const project = store.list('isometrics').filter(row => row.projectId === iso.projectId).map(row => row.id);
+      const options = spoolOptionsForIso(store.list('spool_names'), () => true, store.list('spools').filter(spool => project.includes(String(spool.isoId))), iso.id).map(option => option.name);
+      for (const spool of store.list('spools').filter(row => row.isoId === iso.id)) assert.ok(options.includes(String(spool.name)), `${iso.id} offers ${spool.name}`);
+    }
+  } finally { store.close(); }
+});
