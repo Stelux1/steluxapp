@@ -33,6 +33,29 @@ export function effectiveProfileId(row: Row, pilot?: 'weld' | 'mto', siteId?: st
   const own = siteId && scopeLimited(row[siteScopeField(pilot)]) ? siteProfilesOf(row[siteProfilesField(pilot)])[siteId] : undefined;
   return String(own || row[`${pilot}ProfileId`] || row.profileId);
 }
+/**
+ * The sign-in attempt limit (sec1-010): failed attempts are counted per account (normalised email, from any address) and
+ * per address. Eight failures for one account hold that account for five minutes; an address is held after
+ * `ADDRESS_LIMIT` failures across accounts (spraying), which leaves room for everyone else behind a shared proxy. A
+ * successful sign-in clears only the count of its own account, never another's or the address's.
+ */
+export const SIGN_IN_LIMIT = 8, SIGN_IN_ADDRESS_LIMIT = 40, SIGN_IN_WINDOW_MS = 5 * 60_000;
+export function signInLimiter(now: () => number = Date.now) {
+  const counts = new Map<string, { count: number; until: number }>();
+  const live = (key: string) => { const state = counts.get(key); if (state && state.until < now()) { counts.delete(key); return undefined; } return state; };
+  const keys = (address: string, email: string) => [[`account:${email}`, SIGN_IN_LIMIT], [`address:${address}`, SIGN_IN_ADDRESS_LIMIT]] as const;
+  return {
+    /** Refused with 429 while the account or the address is held. */
+    check(address: string, email: string) {
+      if (keys(address, email).some(([key, limit]) => (live(key)?.count ?? 0) >= limit)) throw new AppError(429, 'Too many sign-in attempts. Try again in a few minutes.');
+    },
+    failed(address: string, email: string) {
+      if (counts.size > 10_000) for (const key of [...counts.keys()]) live(key);
+      for (const [key] of keys(address, email)) { const state = live(key); counts.set(key, { count: (state?.count ?? 0) + 1, until: state?.until ?? now() + SIGN_IN_WINDOW_MS }); }
+    },
+    succeeded(email: string) { counts.delete(`account:${email}`); },
+  };
+}
 /** The account's identity and permissions from its permission profile, or from `profileId` where given. */
 export function publicUser(store: Store, id: string, profileId?: string): User {
   const row = store.get('users', id);

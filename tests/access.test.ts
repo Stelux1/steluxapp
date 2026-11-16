@@ -258,13 +258,19 @@ test('only administrators manage users and profiles; an administrator creates a 
   const weld = f.store.get('welds', 'weld-1');
   assert.equal(await status(await reviewerClient.request(`/records/welds/${weld.id}`, { method: 'PUT', pilot: 'weld', data: { description: 'No', _version: weld._version } })), 403);
   for (const path of ['/bootstrap', '/records/iso_materials', '/records/isometrics', '/reports/mto', '/export/isometrics']) assert.equal(await status(await reviewerClient.request(path, { pilot: 'mto' })), 403, path);
-  // Last-administrator protection covers access per pilot.
+  // Nobody switches its own applications off or changes its own pilot profiles (sec1-002), so no administrator locks itself out that way.
   const self = f.store.list('users').find(row => row.email === 'access-admin@example.test')!;
-  const locked = await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot: 'weld', data: { weldEnabled: false, mtoEnabled: false, _version: self._version } });
-  assert.equal(locked.status, 409);
-  assert.equal(await status(await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot: 'weld', data: { weldProfileId: reviewer, _version: self._version } })), 200, 'still an administrator in MTO Pilot');
-  const again = f.store.get('users', self.id);
-  assert.equal(await status(await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot: 'mto', data: { mtoProfileId: reviewer, _version: again._version } })), 409);
+  for (const [pilot, data] of [['weld', { weldEnabled: false, mtoEnabled: false }], ['weld', { weldProfileId: reviewer }], ['mto', { mtoProfileId: reviewer }]] as const) {
+    assert.equal(await status(await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot, data: { ...data, _version: self._version } })), 403, JSON.stringify(data));
+  }
+  assert.equal(f.store.get('users', self.id)._version, self._version, 'nothing stored');
+  // Last-administrator protection covers access per pilot: with Only review in Weld Pilot the account is still an
+  // administrator in MTO Pilot, and taking the administrator rights off its MTO profile is refused.
+  f.store.update('users', self.id, { weldProfileId: reviewer }, self._version, { id: 'test', name: 'test' });
+  assert.equal(await status(await f.admin.request('/records/users', { pilot: 'weld' })), 403, 'no administrator in Weld Pilot any more');
+  assert.equal(await status(await f.admin.request('/records/users', { pilot: 'mto' })), 200, 'still an administrator in MTO Pilot');
+  const adminProfile = f.store.get('profiles', String(self.profileId));
+  assert.equal(await status(await f.admin.request(`/records/profiles/${adminProfile.id}`, { method: 'PUT', pilot: 'mto', data: { settingsPermission: NONE, _version: adminProfile._version } })), 409);
 });
 
 test('signatures: own records only, administrators view but never write; images are validated and replaced with history', async t => {

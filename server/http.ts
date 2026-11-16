@@ -18,7 +18,7 @@ import { RELATIONS,relationFields } from '../shared/welding.ts';
 import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/reports.ts';
 import { canResource,canReport,canScope,REPORT_RESOURCES } from '../shared/permissions.ts';
 import type { Row, Module } from '../shared/types.ts';
-import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, sessionCookie, type AuthRequest } from './auth.ts';
+import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, sessionCookie, signInLimiter, type AuthRequest } from './auth.ts';
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
@@ -40,7 +40,7 @@ import { reportWorkbook } from './report-export.ts';
 import { SPOOL_EXPORT_COLUMNS, spoolExportLines } from '../shared/mto-logistics.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
-import { assignIrn } from './iso-pages.ts';
+import { assignIrn, guardIrn } from './iso-pages.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
@@ -79,7 +79,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     next();
   });
   app.use(express.json({ limit: '5mb' }));
-  const attempts = new Map<string, { count: number; until: number }>();
+  const attempts = signInLimiter();
   app.get('/api/health', (_req, res) => {
     store.db.prepare('SELECT 1 AS connected').get();
     res.json({ ok: true, name: 'Blitzkrieg', database: store.db.dialect === 'postgres' ? 'postgres' : 'sqlite' });
@@ -101,14 +101,14 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     newSession(store, user.id, res, cookieName); res.status(201).json({ user: presentUser(user.id) });
   });
   app.post('/api/auth/login', (req, res) => {
-    const ip = req.ip || 'local'; let state = attempts.get(ip);
-    if (state && state.until < Date.now()) { attempts.delete(ip); state = undefined; }
-    if (state && state.count >= 8) throw new AppError(429, 'Too many sign-in attempts. Try again in a few minutes.');
-    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    // Counted per account and per address; a sign-in clears only its own account's count (server/auth.ts `signInLimiter`).
+    const ip = req.ip || 'local';
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase().slice(0, 320) : '';
+    attempts.check(ip, email);
     const user = store.list('users').find(u => u.email === email && u.active);
     const credential = user ? store.db.prepare('SELECT hash FROM credentials WHERE user_id=?').get(user.id) as { hash: string } | undefined : undefined;
-    if (!credential || !passwordMatches(req.body.password, credential.hash)) { attempts.set(ip, { count: (state?.count || 0) + 1, until: state?.until || Date.now() + 5 * 60_000 }); throw new AppError(401, 'Email or password is incorrect.'); }
-    attempts.delete(ip); newSession(store, user!.id, res, cookieName); res.json({ user: presentUser(user!.id) });
+    if (!credential || !passwordMatches(req.body.password, credential.hash)) { attempts.failed(ip, email); throw new AppError(401, 'Email or password is incorrect.'); }
+    attempts.succeeded(email); newSession(store, user!.id, res, cookieName); res.json({ user: presentUser(user!.id) });
   });
   app.use('/api', authMiddleware(store, cookieName));
   /** Requests that never need a pilot: sign-out and password change work from the selector and from any pilot. */
@@ -295,7 +295,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if(copyAcross)for(const part of ['copyWelds','copyMaterials','copyCalculations'] as const)delete permissionData[part];
     checkActionPermission(req,action.key,permissionData);
     if(copyAcross)assertCopyInScope(store,store.get('users',(req as unknown as AuthRequest).user.id),req.body);
-    if(copyAcross){const parts=access.copyParts((req as unknown as AuthRequest).user.id);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}
+    // The add right of each part is that of the profile of the main project copied in (sec1-005): the request's own, else the target project's.
+    if(copyAcross){const copyUser=(req as unknown as AuthRequest).user;let copySite=copyUser.siteId;if(!copySite){try{copySite=String(store.get('projects',req.body.projectId).siteId||'')||undefined;}catch{copySite=undefined;}}const parts=access.copyParts(copyUser.id,copySite);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}
     if (pilots && action.key === 'duplicate-site') { const parts = duplicateParts(req.body.parts ?? []); if (parts) for (const resource of duplicateReadResources(parts)) checkResourcePermission(req, resource); }
     const done = runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')), hosted: Boolean(availability?.features.includes('pilots')) });
     if (pilots) announce((req as unknown as AuthRequest).user.id, action.key, done);
@@ -315,7 +316,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
-    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
+    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),pilots&&resource.key==='isometrics'&&guardIrn(store, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
   });
   /** Flag columns of the isometrics list for an export: the server summary of each exported (readable) isometric, as in both pilots' list. */
   const isoFlagExport = (isos: Row[]) => {

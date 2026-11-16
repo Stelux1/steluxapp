@@ -5,6 +5,7 @@ import type { documentStorage } from './documents.ts';
 import type { releaseAccess } from './release-access.ts';
 import { actorOf, checkResourcePermission, type AuthRequest } from './auth.ts';
 import { checkItpLinkAccess } from './itp-dashboard.ts';
+import { scopeRows } from './site-scope.ts';
 import { ITP_REVISION_DOCUMENT, ITP_SCOPES, importFromIsometrics, isoWriteErrors, isoXRay, itpDeleteRefusal, itpIsometrics, itpLatest, itpRevisions, linkItp, revisionErrors, unlinkValues, type LinkSlot } from '../shared/itps.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -37,10 +38,14 @@ export function assertItpDeletable(store: Store, key: string, id: string) {
   const refusal = itpDeleteRefusal(itp, store.list('isometrics'));
   if (refusal) throw new AppError(422, refusal);
 }
-/** Manual: "When X-Ray % changes, linked isometrics are synchronised with the catalog value." */
+/**
+ * Manual: "When X-Ray % changes, linked isometrics are synchronised with the catalog value." Only the isometrics the
+ * request reaches (sec1-008): one of another main project or of a project switched off for the pilot is neither read
+ * nor changed, and follows at the next save of the ITP by an account that reaches it.
+ */
 export function syncItpXRay(store: Store, itp: Row, actor: Actor) {
   const itps = store.list('itps');
-  for (const iso of itpIsometrics(itp.id, store.list('isometrics'))) {
+  for (const iso of itpIsometrics(itp.id, scopeRows('isometrics', store.list('isometrics')))) {
     const xRay = isoXRay(iso, itps);
     if (xRay !== null && xRay !== str(iso.xRay)) store.update('isometrics', iso.id, { xRay }, iso._version, actor);
   }
@@ -129,7 +134,8 @@ export function registerItpRoutes(app: Application, { store, documents, access, 
     checkResourcePermission(req, 'itps', 'insert'); checkResourcePermission(req, 'isometrics', 'edit');
     const actor = actorOf(req);
     const result = store.transaction(() => {
-      const plan = importFromIsometrics(store.list('isometrics'), store.list('itps'));
+      // Only the isometrics the request reaches are read and linked (sec1-008).
+      const plan = importFromIsometrics(scopeRows('isometrics', store.list('isometrics')), store.list('itps'));
       const ids = new Map<string, string>();
       for (const entry of plan.create) ids.set(entry.number.toLowerCase(), store.create('itps', { number: entry.number, scope: entry.scope, ndtPercent: entry.ndtPercent, revision: entry.revision, active: true }, actor).id);
       let linked = 0;

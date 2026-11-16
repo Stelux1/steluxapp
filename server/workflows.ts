@@ -21,6 +21,7 @@ import { createSpoolServiceRequest, moveSpoolsToLaydown, nextNumber } from './sp
 import { duplicateSite } from './site-duplicate.ts';
 import { reorderAttachmentNames } from './attachment-names.ts';
 import { assignIrn, editedHeader, fillIrn, siteNumbersIrn } from './iso-pages.ts';
+import { ISO_SERVER_OWNED } from '../shared/iso-pages.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -266,6 +267,9 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       if (clashes.length) throw new AppError(422, `ISO number${clashes.length === 1 ? '' : 's'} ${clashes.join(', ')} already exist${clashes.length === 1 ? 's' : ''} in project ${target.internnumber}. Nothing was copied.`);
       // What a copy carries: descriptive and technical fields, but not the project-bound assignments, the progress or the phase flags.
       const leftOut = new Set(['projectId', 'testSystemId', 'fieldPackageId', 'itpId', 'itp2Id']);
+      // A copy starts not completed (sec1-006). Hosted: X Ray % follows the linked ITP and the punch progress is the server's,
+      // so a copy (which has no ITP) carries neither; the other profiles keep X-ray requirement as a typed field.
+      for (const name of ISO_SERVER_OWNED) if (options.hosted || !['xRay', 'punchProgress'].includes(name)) leftOut.add(name);
       const carried = RESOURCE_MAP.isometrics.fields.filter(field => !leftOut.has(field.name) && field.section !== 'Phases' && field.section !== 'Progress').map(field => field.name);
       const wpsRows = Object.fromEntries(['projects', 'wps_projects', 'wps_sites'].map(name => [name, store.list(name)]));
       const copies: Row[] = [];
