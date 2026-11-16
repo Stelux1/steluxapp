@@ -12,6 +12,20 @@ import '../client/project-workspace.css';
 import '../client/iso-header.css';
 import '../client/pilots.css';
 import '../client/signatures.css';
+// Pilot flows (keep in step with client/main.tsx: Next.js accepts global CSS only here).
+import '../client/hydrotest.css';
+import '../client/flanges.css';
+import '../client/itp-dashboard.css';
+import '../client/weld-catalogs.css';
+import '../client/welder-data.css';
+import '../client/weld-entry.css';
+import '../client/releases.css';
+import '../client/punch.css';
+import '../client/mto-materials.css';
+import '../client/mto-procurement.css';
+import '../client/mto-stock.css';
+import '../client/inspections.css';
+import '../client/mto-logistics.css';
 
 export default function WorkspaceApp({ Component, pageProps }: AppProps) {
   return <Component {...pageProps}/>;

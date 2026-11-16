@@ -24,5 +24,7 @@ import './punch.css';
 import './mto-materials.css';
 import './mto-procurement.css';
 import './mto-stock.css';
+import './inspections.css';
+import './mto-logistics.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

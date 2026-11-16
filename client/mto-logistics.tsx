@@ -8,7 +8,6 @@ import { useWorkspace, activeRows } from './context.tsx';
 import { formatDate, formatNumber, post, type ApiError } from './api.ts';
 import { Badge, EmptyState, FieldInput, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
-import './mto-logistics.css';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const includes = (values: unknown[], query: string) => !query || values.some(value => String(value ?? '').toLowerCase().includes(query.toLowerCase()));

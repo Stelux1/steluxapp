@@ -10,7 +10,6 @@ import { api, post, ApiError, apiUrl, formatDate } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { Badge, EmptyState, Modal, TableScroll } from './components.tsx';
-import './inspections.css';
 
 // ----- shared pieces ------------------------------------------------------------------------------------------
 
