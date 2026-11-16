@@ -9,6 +9,7 @@ import {
 } from '../shared/weld-entry.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
 import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
+import { applyWeldSpool, weldSpoolChoice, type WeldSpoolChoice } from './spool-catalog.ts';
 
 /**
  * Server side of the weld table and weld entry (Weld Pilot): the entry rules, the lock, and the actions behind the
@@ -161,6 +162,9 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       // A GAP / SP / E / B number is no weld: the weld fields the form hides for it are ignored (stored empty).
       const code = nonWeldCode(input.weldNo ?? existing?.weldNo);
       if (code) for (const name of specialWeldCleared(code)) { if (Object.hasOwn(input, name) || (existing && input.weldNo !== undefined && present(existing[name]))) input[name] = ''; }
+      // Spool select of the hosted form: a catalog name (shared/spool-catalog.ts), checked now; the isometric's spool is created on first use below.
+      let spoolChoice: WeldSpoolChoice | undefined;
+      if (data.spoolName !== undefined && !(code && specialWeldCleared(code).includes('spoolId'))) { spoolChoice = weldSpoolChoice(store, String(isoId), data.spoolName); delete input.spoolId; }
       if (!existing) for (const name of Object.keys(input)) if (input[name] === '' && name !== 'weldNo') delete input[name];
       const merged: Values = { ...existing, ...input, isoId };
       if (changed(input, existing, ['lengthMode', 'ndoReq', 'ndtpercent'])) { const percent = normalizedNdtPercent(merged); if (percent !== (merged.ndtpercent === '' || merged.ndtpercent === undefined ? null : merged.ndtpercent)) input.ndtpercent = percent === null ? '' : percent; }
@@ -186,6 +190,7 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       }
       for (const { weld, patch } of neighbours) { assertWeldEntry(store, { ...patch, isoId: weld.isoId }, weld, 'neighbour'); }
       if (existing && !reason && ndtOrPwhtInProgress(store.list('inspection_requests'), existing.id)) throw new AppError(422, EDIT_REASON_LABEL);
+      if (spoolChoice) { const spoolId = applyWeldSpool(store, spoolChoice, actor); if (existing ? spoolId !== String(existing.spoolId ?? '') : spoolId) input.spoolId = spoolId; }
       const record = existing ? store.update('welds', existing.id, input, existing._version, actor) : store.create('welds', { ...input, isoId, sortOrder: nextSortOrder(store, isoId, actor) }, actor);
       if (existing && reason) store.audit('welds', existing.id, EDIT_REASON_ACTION, reason, actor);
       const updated = neighbours.map(({ weld, patch }) => store.update('welds', weld.id, patch, store.get('welds', weld.id)._version, actor));

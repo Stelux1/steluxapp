@@ -694,3 +694,27 @@ test('E5: an account limited to North adds a coating (switched off elsewhere by 
   assert.equal((await north.as.request('/records/coatings', { method: 'POST', pilot: 'weld', data: { name: 'E5 river coating', abbreviation: 'E5R', enabledOnSite: true, enabledSiteId: RIVER } })).status, 403);
   assert.equal(f.store.list('coatings').length, count, 'nothing created');
 });
+
+// ----- wave 4: the spool name catalog is global; its availability per main project goes through catalog_sites -------------
+test('spool names: a North-only account reads the whole catalog, adds a name switched on for North only, and cannot switch it on for Riverside', async t => {
+  const f = await fixture(t);
+  assert.equal(SITE_RULES.spool_names, 'global');
+  const writer = f.profile('North spool writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
+  const north = f.account('North spool writer', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC, mtoEnabled: false }, { weld: [NORTH] });
+  await north.login();
+  const boot = await json<Bootstrap>(await north.as.request('/bootstrap', { pilot: 'weld' }));
+  assert.equal(boot.rows.spool_names.length, f.store.list('spool_names').length, 'every catalog name, whatever main project uses it');
+  const created = await north.as.request('/records/spool_names', { method: 'POST', pilot: 'weld', data: { name: 'SP-N1', abbreviation: 'N1', enabledOnSite: true, enabledSiteId: NORTH } });
+  assert.equal(created.status, 201, await created.clone().text());
+  const name = (await json<{ record: Row }>(created)).record;
+  const links = () => f.store.list('catalog_sites').filter(link => link.resourceKey === 'spool_names' && link.recordId === name.id);
+  assert.deepEqual(links().filter(link => link.enabled === false).map(link => link.siteId).sort(), f.store.list('sites', true).map(site => site.id).filter(id => id !== NORTH).sort(), 'off on every other main project');
+  const before = links().map(link => [link.siteId, link.enabled]);
+  const on = await north.as.request(`/records/spool_names/${name.id}`, { method: 'PUT', pilot: 'weld', data: { enabledOnSite: true, enabledSiteId: RIVER, _version: f.store.get('spool_names', name.id)._version } });
+  assert.equal(on.status, 403); assert.deepEqual(links().map(link => [link.siteId, link.enabled]), before);
+  // The weld form on a Riverside isometric cannot pick it either: the account does not reach Riverside, and the name is off there.
+  const refused = await north.as.request('/actions/save-weld', { method: 'POST', pilot: 'weld', data: { isoId: RIVER_ISOS[0], weldNo: 'SN-1', spoolName: 'SP-N1' } });
+  assert.equal(refused.status, 403);
+  const saved = await north.as.request('/actions/save-weld', { method: 'POST', pilot: 'weld', data: { isoId: 'iso-1', weldNo: 'SN-1', spoolName: 'SP-N1' } });
+  assert.equal(saved.status, 201, await saved.clone().text());
+});

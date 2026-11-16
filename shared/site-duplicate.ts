@@ -4,7 +4,7 @@ import { RESOURCE_MAP } from './resources.ts';
  * "Duplicate Project site" (reference: Edit project site → Duplicate): the copy gets " (Copy)" after the name and takes
  * over the ticked parts. Projects, isometrics, welds and every record that lives inside a main project are never copied;
  * the catalogs themselves are global, so an "activated list" copies only which records are switched on for the site.
- * The reference's ISO Book, Memo templates, Daily reporting and Spools options have nothing to copy here and are not offered.
+ * The reference's ISO Book, Memo templates and Daily reporting options have nothing to copy here and are not offered.
  */
 export interface DuplicatePart {
   key: string; label: string; group: 'Site settings' | 'Activated lists';
@@ -21,6 +21,7 @@ export const DUPLICATE_PARTS: DuplicatePart[] = [
   { key: 'weldTypes', label: 'Weld types', group: 'Activated lists', catalog: 'weld_types' },
   { key: 'wpsMethods', label: 'WPS methods', group: 'Activated lists', links: { resource: 'wps_sites', ownerKey: 'wpsId' } },
   { key: 'welders', label: 'Welders', group: 'Activated lists', links: { resource: 'welder_sites', ownerKey: 'welderId' } },
+  { key: 'spools', label: 'Spools', group: 'Activated lists', catalog: 'spool_names' },
   { key: 'materialSupplier', label: 'Material supplier', group: 'Activated lists', catalog: 'suppliers' },
   { key: 'ndtLocations', label: 'NDT locations', group: 'Activated lists', catalog: 'ndt_locations' },
   { key: 'pwhtProcess', label: 'PWHT process', group: 'Activated lists', catalog: 'pwht_processes' },

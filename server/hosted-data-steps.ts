@@ -3,6 +3,7 @@ import type { Store } from './store.ts';
 import { upgradeWeldCatalogs } from './catalog-upgrade.ts';
 import { loadDiameterCatalog, missingDiameterCatalog } from './diameter-catalog.ts';
 import { migrateProjectHoldings } from './mto-stock.ts';
+import { seedSpoolNames } from './spool-catalog.ts';
 
 /**
  * The data steps of the hosted preparation (server/prepare-welding.ts), in order. Every step only inserts: no step
@@ -18,4 +19,6 @@ export const hostedDataSteps = (store: () => Store): DataStep[] => [
   // MTO stock: what the first version kept as an invisible project holding is added to that project site's Material
   // inventory as a new row with one new movement; the old rows stay as stored (server/mto-stock.ts).
   { name: 'projectHoldings', run: options => migrateProjectHoldings(store(), options) },
+  // The spool name catalog (Weld data → Spools): one name per distinct name of the existing spools, added only; spools and welds stay as stored.
+  { name: 'spoolNames', run: options => seedSpoolNames(store(), options) },
 ];

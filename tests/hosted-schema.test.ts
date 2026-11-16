@@ -363,3 +363,29 @@ test('E7: an older hosted database gets welds.stampedBy from the preparation ste
   store.update('welds', weld.id, { stampedBy: engineer.id }, weld._version, { id: 'test', name: 'test' });
   assert.equal(db.prepare('SELECT "stampedBy" AS value FROM stelux."welds" WHERE id=?').get(weld.id)!.value, engineer.id);
 });
+
+// ----- w4: the spool name catalog (Weld data → Spools) -------------------------------------------------------------------
+test('the spool name catalog (wave 4) has a table, no unique rule (duplicates allowed), a global site rule and the Spools area', async () => {
+  const { planHostedSchema } = await import('../server/hosted-schema.ts');
+  const { SITE_RULES } = await import('../shared/site-scope.ts');
+  const { RESOURCE_SCOPES } = await import('../shared/permissions.ts');
+  const plan = planHostedSchema({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() });
+  assert.ok(plan.tables.includes('spool_names'), 'the preparation creates its table');
+  assert.ok(!plan.indexes.some(index => index.table === 'spool_names'), 'no unique index: the reference allows the same name twice');
+  assert.equal(SITE_RULES.spool_names, 'global'); assert.deepEqual(RESOURCE_SCOPES.spool_names, ['10']);
+  assert.ok(plan.tables.includes('spools'), 'the isometric spools keep their table');
+});
+
+test('an older hosted database gets the spool_names table from the preparation step, once, without touching records', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  workspace();
+  db.exec('DROP TABLE stelux."spool_names" CASCADE');
+  const records = rows();
+  assert.throws(() => verifyHostedSchema(db), /spool_names/);
+  const result = prepareHostedSchema(db);
+  assert.ok(result.created.tables.includes('spool_names')); assert.ok(result.created.rowLevelSecurity.includes('spool_names'));
+  verifyHostedSchema(db);
+  assert.deepEqual(rows(Object.keys(records)), records);
+  assert.equal(prepareHostedSchema(db).upToDate, true, 'a second run changes nothing');
+  assert.equal(count('spool_names'), 0, 'the table starts empty; the data step fills it (server/spool-catalog.ts)');
+});

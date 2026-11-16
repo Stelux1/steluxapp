@@ -101,6 +101,8 @@ export const SITE_RULES: Record<string, SiteRule> = {
   projects: via(SITE),
   isometrics: via(PROJECT),
   spools: via(ISO),
+  // The spool name catalog is global; each main project switches a name on or off through catalog_sites (shared/spool-catalog.ts).
+  spool_names: 'global',
   revisions: via(ISO),
   attachments: 'entity',
   catalog_sites: via(SITE),

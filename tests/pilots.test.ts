@@ -71,7 +71,8 @@ test('every menu item resolves to a real page and resource items use resourcePat
   // inspection requests open as the request archives of the NDT/PWHT Manager; isometric materials are edited on the
   // isometric itself (the reference's Order / Take in menu has no Isometric materials, mto-procurement-stock-011).
   // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025).
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // Weld data / Materials → Spools open the spool name catalog (w4-spool-catalog); an isometric's own spools open from its Spools tab and the Service request page.
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
   assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
@@ -119,7 +120,7 @@ test('selector eligibility follows the projected module levels', () => {
 });
 
 test('shared catalogs take the higher materials or welding level, only in module-level mode and only with pilots', () => {
-  assert.deepEqual(SHARED_PILOT_SCOPES.map(scope => Object.entries(RESOURCE_SCOPES).filter(([, scopes]) => scopes.includes(scope)).map(([key]) => key)).flat().sort(), ['certificate_projects', 'certifications', 'material_parts', 'material_types', 'spools', 'suppliers']);
+  assert.deepEqual(SHARED_PILOT_SCOPES.map(scope => Object.entries(RESOURCE_SCOPES).filter(([, scopes]) => scopes.includes(scope)).map(([key]) => key)).flat().sort(), ['catalog_sites', 'certificate_projects', 'certifications', 'material_parts', 'material_types', 'spool_names', 'spools', 'suppliers']);
   const widened = { ...structuredClone(hosted), resources: { ...hosted.resources, ...Object.fromEntries(['material_parts', 'material_types', 'suppliers', 'orders', 'stock', 'movements', 'picklists'].map(key => [key, ['name']])) } };
   const weld = account({ general: 1, welding: 2 }, widened), mto = account({ general: 1, materials: 2 }, widened);
   for (const key of ['material_parts', 'material_types', 'suppliers', 'certifications', 'spools']) {

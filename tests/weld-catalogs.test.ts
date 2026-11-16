@@ -35,7 +35,7 @@ test('a record without enablement information is enabled everywhere; a link swit
   assert.equal(enabledOnSite('weld_types', row('a'), '', rows), true, 'without an active site nothing is hidden');
   assert.equal(enabledOnSite('weld_types', row('a'), 'north', {}), true, 'a workspace that cannot read the links hides nothing');
   assert.equal(enabledOnSite('welds', row('a'), 'north', { catalog_sites: [link('welds', 'a', 'north', false)] }), true, 'resources without enablement are never hidden');
-  assert.deepEqual(SITE_ENABLED_RESOURCES.sort(), ['coatings', 'laydowns', 'material_laydowns', 'ndt_defect_codes', 'ndt_locations', 'ndt_processes', 'pwht_locations', 'pwht_processes', 'qa_engineers', 'service_companies', 'suppliers', 'weld_types', 'materials'].sort());
+  assert.deepEqual(SITE_ENABLED_RESOURCES.sort(), ['coatings', 'laydowns', 'material_laydowns', 'ndt_defect_codes', 'ndt_locations', 'ndt_processes', 'pwht_locations', 'pwht_processes', 'qa_engineers', 'service_companies', 'suppliers', 'weld_types', 'materials', 'spool_names'].sort());
 });
 
 test('a ref select offers the enabled records plus the value already stored', () => {
@@ -384,6 +384,8 @@ test('catalog pages carry the reference titles, add buttons and dialog headings 
     service_companies: ['Service companies', 'Add company', 'Edit company', 'Delete company'],
     laydowns: ['Laydown areas', 'Add laydown', 'Edit laydown', 'Delete laydown'],
     material_laydowns: ['Laydown areas - Materials', 'Add laydown', 'Edit laydown material', 'Delete laydown'],
+    // Weld data → Spools / Materials → Spools (w4-spool-catalog, weld__welddata__spools.txt).
+    spool_names: ['Spools', 'Add spool', 'Edit spool', 'Delete spool'],
   };
   for (const [key, [title, add, edit, remove]] of Object.entries(expected)) {
     const resource = catalog(key);
@@ -431,8 +433,8 @@ test('the Options menu asks for a Confirm before anything is written', () => {
   assert.match(source, /onClick=\{\(\) => void apply\(confirming\)\}/);
 });
 
-test('the Add form carries "Enable on this site" on NDT process, QA/QC engineers and Coating only, unticked', () => {
-  assert.deepEqual(Object.keys(FORM_ENABLEMENT).filter(key => FORM_ENABLEMENT[key] === false).sort(), ['coatings', 'ndt_processes', 'qa_engineers']);
+test('the Add form carries "Enable on this site" on NDT process, QA/QC engineers, Coating and Spools only, unticked', () => {
+  assert.deepEqual(Object.keys(FORM_ENABLEMENT).filter(key => FORM_ENABLEMENT[key] === false).sort(), ['coatings', 'ndt_processes', 'qa_engineers', 'spool_names']);
   for (const key of ['suppliers', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'ndt_defect_codes', 'weld_types', 'weld_processes']) assert.equal(Object.hasOwn(FORM_ENABLEMENT, key), false, key);
   assert.ok(NEW_RECORDS_OFF.includes('ndt_locations') && NEW_RECORDS_OFF.includes('ndt_processes') && !NEW_RECORDS_OFF.includes('weld_types'));
 });

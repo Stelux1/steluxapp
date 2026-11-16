@@ -10,7 +10,9 @@ import { AttachmentCountBadge } from './iso-dialogs.tsx';
 import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
 import { PunchDialog } from './punch.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
-import { enabledOptions } from '../shared/weld-catalogs.ts';
+import { enabledOnSite, enabledOptions } from '../shared/weld-catalogs.ts';
+import { SPOOL_NAMES, SPOOL_NAME_INPUT, spoolOptionsForIso } from '../shared/spool-catalog.ts';
+import { resourceAvailable } from '../shared/release.ts';
 import { NDT_ROUNDS, INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS, ndtOrPwhtInProgress } from '../shared/inspections.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
 import {
@@ -91,6 +93,20 @@ function chargeOptions(data: WeldData, selected: string, mode: 'add' | 'edit' = 
   const current = data.certs.get(selected); if (current && !list.some(row => row.id === current.id)) list.push(current);
   return chargeOptionList(list, mode, data.lookups).map(option => option.value === selected ? { ...option, disabled: false } : option);
 }
+/**
+ * The Spool select of the hosted form (shared/spool-catalog.ts): catalog names enabled on the main project minus names used on
+ * another isometric of the project, then this isometric's own spools; the weld's current spool stays listed. null elsewhere.
+ */
+function useSpoolOptions(iso: Row, data: WeldData, keep: string) {
+  const { rows, user } = useWorkspace();
+  return useMemo(() => {
+    if (!user.availability?.features.includes('pilots') || !resourceAvailable(user.availability, SPOOL_NAMES)) return null;
+    const isoIds = new Set((rows.isometrics || []).filter(row => !row._archived && row.projectId === iso.projectId).map(row => row.id)); isoIds.add(iso.id);
+    const siteId = str(data.site?.id);
+    const options = spoolOptionsForIso(activeRows(rows, SPOOL_NAMES), row => enabledOnSite(SPOOL_NAMES, row, siteId, rows), (rows.spools || []).filter(row => isoIds.has(str(row.isoId))), iso.id).map(option => option.name);
+    return keep && !options.includes(keep) ? [...options, keep] : options;
+  }, [rows, user, iso, data.site, keep]);
+}
 const welderOptions = (welders: Row[], keep: unknown[]) => sortByName(welders.filter(row => !row._archived && (row.status !== 'Inactive' || keep.includes(row.id))), 'number').map(row => ({ value: row.id, label: welderLabel(row) }));
 
 // --------------------------------------------------------------------------------------------------- add / edit weld
@@ -148,6 +164,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
   const [note, setNote] = useState(''), [defaultDiameter, setDefaultDiameter] = useState('');
   const [error, setError] = useState(''), [fields, setFields] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
   const [range, setRange] = useState(false);
+  const initialSpool = str(data.spools.get(str(weld?.spoolId))?.name), [spoolName, setSpoolName] = useState(initialSpool), spoolNames = useSpoolOptions(iso, data, initialSpool);
   const order = data.welds.map(row => row.id);
   const hasPrev = weld ? Boolean(neighbourOf(order, weld.id, 'prev')) : false, hasNext = weld ? Boolean(neighbourOf(order, weld.id, 'next')) : false;
   const set = (patch: Values) => setValues(current => ({ ...current, ...patch })); const set1 = (name: string) => (value: unknown) => set({ [name]: value });
@@ -197,6 +214,8 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
     const found = precheck(); if (Object.keys(found).length) { setError(Object.values(found).length === 1 ? Object.values(found)[0] : 'Please check the highlighted fields.'); setFields(found); return; }
     const target = asNew ? undefined : weld, editing = Boolean(target);
     const changes = weldPayload(values, target);
+    // Hosted Spool select: the chosen catalog name; the server finds or creates the isometric's spool (server/spool-catalog.ts).
+    if (spoolNames && shown('spoolId')) { delete changes.spoolId; if (target ? spoolName !== initialSpool || str(values.spoolId) !== str(target.spoolId) : spoolName) changes[SPOOL_NAME_INPUT] = spoolName; }
     if (target && !Object.keys(changes).length && !updatePrev && !updateNext) { notify('Nothing changed.'); onClose(); return; }
     const payload: Values = { ...changes, isoId: iso.id, ...(target ? { weldId: target.id, expectedVersion: target._version } : {}), ...(!weld && values.tracer ? { tracer: true } : {}), ...(updatePrev && hasPrev && editing ? { updatePrev: true } : {}), ...(updateNext && hasNext && editing ? { updateNext: true } : {}), ...(editing && editReason(note) ? { note: editReason(note) } : {}), ...(diameterCheck.needsRadio && defaultDiameter ? { defaultDiameter } : {}) };
     setBusy(true);
@@ -234,7 +253,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
     date: <TextField label="Weld Date" type="date" value={values.date} error={e.date && !missing.date ? e.date : undefined} invalid={red('date')} onChange={set1('date')}/>,
     diameterId: <SelectField label="Dia." value={explicit ? '__length' : diameterOptionValue(diameters, values.diameterId)} error={diameterError} invalid={red('diameterId')} placeholder="----------" options={[{ value: '__length', label: '-- Length in mm --' }, ...diameters]} onChange={value => set(value === '__length' ? { lengthMode: 'Length in mm', diameterId: '' } : { lengthMode: 'Diameter', diameterId: value, dialen: '', ndtpercent: '' })}/>,
     dialen: explicit && <TextField label="Length in mm" type="number" min={0} value={values.dialen} error={e.dialen && !missing.dialen ? e.dialen : undefined} invalid={red('dialen')} onChange={value => set({ dialen: value === '' ? '' : Number(value) })}/>,
-    spoolId: <SelectField label="Spool" value={values.spoolId} error={e.spoolId} placeholder="----------" options={options('spools', nameOf, row => row.isoId === iso.id)} onChange={set1('spoolId')}/>,
+    spoolId: spoolNames ? <SelectField label="Spool" value={spoolName} error={e.spoolId} placeholder="----------" options={spoolNames.map(name => ({ value: name, label: name }))} onChange={setSpoolName}/> : <SelectField label="Spool" value={values.spoolId} error={e.spoolId} placeholder="----------" options={options('spools', nameOf, row => row.isoId === iso.id)} onChange={set1('spoolId')}/>,
     ndtpercent: explicit && Boolean(values.ndoReq) && <TextField label="NDT percent" type="number" min={0} max={100} value={values.ndtpercent} error={e.ndtpercent} hint="0 to 100." onChange={value => set({ ndtpercent: value === '' ? '' : Number(value) })}/>,
     ...Object.fromEntries(FLAGS.map(name => [name, <CheckField key={name} label={FLAG_LABELS[name]} checked={Boolean(values[name])} onChange={set1(name)}/>])),
     tracer: weld ? <CheckField label="Tracer" checked={Boolean(weld.tracer)} disabled hint={EDIT_TRACER_HINT}/> : <CheckField label="Tracer" checked={Boolean(values.tracer)} error={e.tracer} onChange={set1('tracer')}/>,
