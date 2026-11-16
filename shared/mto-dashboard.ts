@@ -135,6 +135,31 @@ export function allocateOpenOrders(rows: Rows, lines: ScopeLine[], isoProject: (
   }
 }
 
+export interface ScopeOrderLine { projectId: string; ordered: number; received: number; open: number }
+/**
+ * INFERRED. The order lines (of orders not cancelled) for the materials in scope, each with its project: a line with a
+ * requirement in scope belongs to that requirement's isometric, one with an isometric to that isometric (same
+ * material), one without either to the order's project (same material). Open = ordered − received, never below 0.
+ * The "Open ordered" chip is the sum of `open`; the "Backlog by project" table sums it per project, so the two agree.
+ */
+export function orderLinesInScope(rows: Rows, entries: { requirement: Row; iso: Row; identity: string }[], projectOf: (isoId: string) => string): ScopeOrderLine[] {
+  const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
+  const requirementIso = new Map(entries.map(entry => [entry.requirement.id, entry.iso.id]));
+  const scopeKeys = new Set(entries.map(entry => `${entry.iso.id}|${entry.identity}`)), scopeProjects = new Set(entries.map(entry => `${projectOf(entry.iso.id)}|${entry.identity}`));
+  const result: ScopeOrderLine[] = [];
+  for (const line of active(rows, 'order_lines')) {
+    const order = orders.get(text(line.orderId)); if (!order) continue;
+    const identity = materialIdentity(line);
+    const projectId = line.requirementId ? (requirementIso.has(text(line.requirementId)) ? projectOf(requirementIso.get(text(line.requirementId))!) : null)
+      : line.isoId ? (scopeKeys.has(`${line.isoId}|${identity}`) ? projectOf(text(line.isoId)) : null)
+      : scopeProjects.has(`${text(order.projectId)}|${identity}`) ? text(order.projectId) : null;
+    if (projectId === null) continue;
+    const ordered = Number(line.quantity || 0), received = Number(line.received || 0);
+    result.push({ projectId, ordered, received, open: Math.max(0, ordered - received) });
+  }
+  return result;
+}
+
 export interface LogisticsFact { signal: LogisticsSignal; date: string }
 const SIGNAL_RANK: Record<LogisticsSignal, number> = { 'Not-sent': 0, 'At service': 1, 'At laydown': 2, Started: 3 };
 /**
@@ -274,25 +299,19 @@ export function mtoDashboard(rows: Rows, options: { phaseId?: string; today?: st
   const freePoolMaterials = [...pools.values()].filter(pool => pool.free > 0).length;
 
   // Order totals over the lines of the isometrics (and, in a phase scope, the materials) in view.
-  const scopeKeys = new Set(entries.map(entry => `${entry.iso.id}|${entry.identity}`)), scopeProjects = new Set(entries.map(entry => `${projectOf(entry.iso.id)}|${entry.identity}`));
-  let ordered = 0, received = 0, open = 0;
-  for (const line of active(rows, 'order_lines')) {
-    const order = orders.get(text(line.orderId)); if (!order) continue;
-    const identity = materialIdentity(line);
-    const inScope = line.requirementId ? requirementIso.has(text(line.requirementId)) : line.isoId ? scopeKeys.has(`${line.isoId}|${identity}`) : scopeProjects.has(`${text(order.projectId)}|${identity}`);
-    if (!inScope) continue;
-    ordered += Number(line.quantity || 0); received += Number(line.received || 0); open += Math.max(0, Number(line.quantity || 0) - Number(line.received || 0));
-  }
+  const scopeLines = orderLinesInScope(rows, entries, projectOf);
+  const ordered = scopeLines.reduce((sum, line) => sum + line.ordered, 0), received = scopeLines.reduce((sum, line) => sum + line.received, 0);
+  const openFor = (projectId?: string) => round(scopeLines.filter(line => projectId === undefined || line.projectId === projectId).reduce((sum, line) => sum + line.open, 0));
   const aging = Object.fromEntries(AGING_BUCKETS.map(bucket => [bucket, board.filter(row => row.aging === bucket).length])) as Record<AgingBucket, number>;
   const signals = Object.fromEntries(SIGNALS.map(signal => [signal, board.filter(row => row.signal === signal).length])) as Record<LogisticsSignal, number>;
 
-  const projects = [...new Set(board.map(row => row.projectId))];
-  const backlog = projects.map(projectId => { const own = board.filter(row => row.projectId === projectId); return { projectId, openOrdered: round(own.reduce((s, r) => s + r.openOrdered, 0)), blockingBackorder: round(own.reduce((s, r) => s + r.blockingBackorder, 0)), notOrdered: round(own.reduce((s, r) => s + r.notOrdered, 0)) }; });
+  const projects = [...new Set([...board.map(row => row.projectId), ...scopeLines.filter(line => line.open > 0).map(line => line.projectId)])];
+  const backlog = projects.map(projectId => { const own = board.filter(row => row.projectId === projectId); return { projectId, openOrdered: openFor(projectId), blockingBackorder: round(own.reduce((s, r) => s + r.blockingBackorder, 0)), notOrdered: round(own.reduce((s, r) => s + r.notOrdered, 0)) }; });
 
   return {
     phaseId, today, board,
     kpis: { startable: count('STARTABLE'), started: count('STARTED'), inScope: board.length, partial: count('PARTIAL'), blocked: count('BLOCKED'), blockingQuantity: sum(row => row.blockingBackorder), blockingIsometrics: board.filter(row => row.blockingBackorder > 0).length, notOrderedMaterials: notOrderedMaterials.size, notOrderedIsometrics: board.filter(row => row.notOrdered > 0).length, freePoolMaterials },
-    chips: { maxStartable: maxStartable(entries, reservedFor, pools, started), freePoolMaterials, ordered: round(ordered), received: round(received), openOrdered: round(open), blockingBackorder: sum(row => row.blockingBackorder), notOrdered: sum(row => row.notOrdered), aging, noLogisticsUpdate: board.filter(row => row.signal === 'Not-sent').length },
+    chips: { maxStartable: maxStartable(entries, reservedFor, pools, started), freePoolMaterials, ordered: round(ordered), received: round(received), openOrdered: openFor(), blockingBackorder: sum(row => row.blockingBackorder), notOrdered: sum(row => row.notOrdered), aging, noLogisticsUpdate: board.filter(row => row.signal === 'Not-sent').length },
     signals, backlog,
     focus: {
       startable: board.filter(row => row.readiness === 'STARTABLE').slice(0, FOCUS_SIZE),

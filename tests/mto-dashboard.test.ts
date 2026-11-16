@@ -248,3 +248,21 @@ test('an MTO profile without materials rights receives none of the dashboard rec
   assert.equal((await as.request('/api/records/stock', 'mto')).status, 403);
   assert.equal((await as.request('/api/records/order_lines', 'mto')).status, 403);
 });
+
+test('the "Open ordered" chip equals the sum of the Backlog table\'s open ordered column on the local sample', t => {
+  const store = new Store(':memory:'); seed(store); seedMtoLogistics(store, SYSTEM); seedMtoDashboard(store, SYSTEM); t.after(() => store.close());
+  const rows = Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key)])) as Record<string, Row[]>;
+  for (const phaseId of ['', ...rows.operation_phases.map(phase => phase.id)]) {
+    const model = mtoDashboard(rows, { today: '2026-11-16', phaseId });
+    assert.equal(model.chips.openOrdered, round(model.backlog.reduce((sum, item) => sum + item.openOrdered, 0)), `phase ${phaseId || 'all'}`);
+  }
+  const all = mtoDashboard(rows, { today: '2026-11-16' });
+  assert.ok(all.chips.openOrdered > 0, 'the sample has open ordered quantity');
+  // Per main project, as the dashboard shows it: the scoped rows give the same agreement.
+  for (const site of rows.sites) {
+    const projects = new Set(rows.projects.filter(project => project.siteId === site.id).map(project => project.id));
+    const isos = rows.isometrics.filter(iso => projects.has(String(iso.projectId)));
+    const model = mtoDashboard({ ...rows, projects: rows.projects.filter(project => projects.has(project.id)), isometrics: isos }, { today: '2026-11-16' });
+    assert.equal(model.chips.openOrdered, round(model.backlog.reduce((sum, item) => sum + item.openOrdered, 0)), site.id);
+  }
+});
