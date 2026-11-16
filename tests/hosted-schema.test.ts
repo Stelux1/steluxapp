@@ -251,3 +251,18 @@ test('an older hosted database gets the visual reports table from the preparatio
   assert.equal(count('visual_reports'), 1);
   assert.throws(() => store.create('visual_reports', { number: 'VT 1', seq: 1, siteId: report.siteId, isoId: 'iso-1' }), error => (error as { status?: number }).status === 409);
 });
+
+test('the record types of wave 2 (VT reports, spool history, hydrotest results) each have a table with its references, a site rule and a permission area', async () => {
+  const { planHostedSchema } = await import('../server/hosted-schema.ts');
+  const { SITE_RULES } = await import('../shared/site-scope.ts');
+  const { RESOURCE_SCOPES } = await import('../shared/permissions.ts');
+  const plan = planHostedSchema({ tables: new Map(), columns: new Map(), foreignKeys: new Map(), indexes: new Map() });
+  const expected: Record<string, string[]> = { visual_reports: ['116'], spool_moves: ['24'], hydrotest_results: ['74'] };
+  for (const [key, areas] of Object.entries(expected)) {
+    const resource = RESOURCE_MAP[key];
+    assert.ok(resource, key); assert.ok(plan.tables.includes(key), `${key}: the preparation creates its table`);
+    for (const field of resource.fields.filter(item => item.type === 'ref')) assert.ok(plan.columns.some(column => column.table === key && column.field === field.name && column.target === field.ref), `${key}.${field.name} → ${field.ref}`);
+    assert.ok(SITE_RULES[key], `${key}: a site-scope rule`);
+    assert.deepEqual(RESOURCE_SCOPES[key], areas, `${key}: its permission area`);
+  }
+});
