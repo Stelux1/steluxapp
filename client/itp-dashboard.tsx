@@ -143,6 +143,27 @@ export function ItpLinkControl({ iso, slot: slotNumber }: { iso: Row; slot: 1 | 
   </>;
 }
 
+/**
+ * The "Link ITP" button of the ITPs card (header and empty body): the picker offers every ITP the isometric can still
+ * take and the chosen ITP's scope decides the slot. Hidden without the rights, or when no slot is free (both pilots).
+ */
+export function ItpCardLinkButton({ iso, compact = false }: { iso: Row; compact?: boolean }) {
+  const { rows, canRecord, refresh, notify } = useWorkspace();
+  const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  if (!canRecord('itps') || !canRecord('isometrics', 'edit', iso) || !allowedScopes(iso, rows.itps || [], 'any').length) return null;
+  async function pick(itpId: string) {
+    setBusy(true); setError('');
+    try { await post('/itps/link', { isoId: iso.id, itpId, slot: 'any', _version: iso._version }); await refresh(); notify('ITP linked.'); setOpen(false); }
+    catch (failure) { setError(((failure as ApiError).fields && Object.values((failure as ApiError).fields!)[0]) || (failure as Error).message || 'Saving failed.'); }
+    finally { setBusy(false); }
+  }
+  return <>
+    {compact ? <button type="button" className="icon-btn" title="Link ITP" aria-label="Link ITP" onClick={() => { setError(''); setOpen(true); }}><Link2 size={16}/></button>
+      : <button type="button" className="btn small primary" onClick={() => { setError(''); setOpen(true); }}><Link2 size={14} aria-hidden="true"/>Link ITP</button>}
+    {open && <LinkItpDialog iso={iso} slot="any" busy={busy} error={error} onClose={() => setOpen(false)} onPick={id => void pick(id)}/>}
+  </>;
+}
+
 function LinkItpDialog({ iso, slot, busy, error, onClose, onPick }: { iso: Row; slot: LinkSlot; busy: boolean; error: string; onClose: () => void; onPick: (id: string) => void }) {
   const { rows } = useWorkspace();
   const [query, setQuery] = useState(''), [chosen, setChosen] = useState('');

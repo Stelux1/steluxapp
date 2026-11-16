@@ -246,7 +246,7 @@ test('register: create with project links, unique number, NDT % bounds, access i
   assert.deepEqual(f.store.list('itp_projects').filter(link => link.itpId === itp.id).map(link => link.projectId), ['project-cooling']);
   for (const bad of [{ number: 'ITP-10', ndtPercent: 101 }, { number: 'ITP-10', ndtPercent: -1 }, { number: '' }]) assert.equal((await f.admin.request('/records/itps', { method: 'POST', pilot: 'weld', data: bad })).status, 422, JSON.stringify(bad));
   assert.ok([409, 422].includes((await f.admin.request('/records/itps', { method: 'POST', pilot: 'weld', data: { number: 'ITP-09' } })).status));
-  // Weld Pilot: the account with write access works, a reader reads but cannot write, MTO Pilot refuses the register altogether.
+  // Weld Pilot: the account with write access works, a reader reads but cannot write, MTO Pilot reads the register (through the Isometrics right, for the ITPs card) but never writes it.
   const writer = f.client(); await writer.login(f.account('Itp writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW }));
   const reader = f.client(); await reader.login(f.account('Itp reader', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO }));
   const blind = f.client(); await blind.login(f.account('Itp blind', { generalPermission: RW, materialsPermission: RW, weldingPermission: NONE }, { weldEnabled: false, mtoEnabled: true }));
@@ -255,14 +255,15 @@ test('register: create with project links, unique number, NDT % bounds, access i
   assert.equal((await reader.request('/records/itps', { pilot: 'weld' })).status, 200);
   assert.equal((await reader.request('/records/itps', { method: 'POST', pilot: 'weld', data: { number: 'ITP-12' } })).status, 403);
   assert.equal((await reader.request(`/records/itps/${itp.id}`, { method: 'PUT', pilot: 'weld', data: { ndtPercent: 90, _version: itp._version } })).status, 403);
-  assert.equal((await writer.request('/records/itps', { pilot: 'mto' })).status, 403);
+  assert.equal((await writer.request('/records/itps', { pilot: 'mto' })).status, 200);
   assert.equal((await writer.request('/records/itps', { method: 'POST', pilot: 'mto', data: { number: 'ITP-13' } })).status, 403);
   assert.equal((await blind.request('/records/itps', { pilot: 'weld' })).status, 403);
-  assert.equal((await blind.request('/records/itps', { pilot: 'mto' })).status, 403);
-  assert.equal((await f.admin.request('/records/itps', { pilot: 'mto' })).status, 403);
+  assert.equal((await blind.request('/records/itps', { pilot: 'mto' })).status, 200, 'read through Isometrics (64)');
+  assert.equal((await f.admin.request('/records/itps', { pilot: 'mto' })).status, 200);
+  assert.equal((await f.admin.request('/records/itps', { method: 'POST', pilot: 'mto', data: { number: 'ITP-14' } })).status, 403);
   const bootstrap = async (as: ReturnType<typeof f.client>, pilot: string) => (await body<{ rows: Record<string, Row[]> }>(await as.request('/bootstrap', { pilot }))).rows;
   assert.ok((await bootstrap(writer, 'weld')).itps.length >= 5);
-  assert.equal((await bootstrap(writer, 'mto')).itps, undefined);
+  assert.ok((await bootstrap(writer, 'mto')).itps.length >= 5);
   // The register is not delivered to the other release profiles.
   assert.ok(!canResource({ id: 'u', name: 'x', email: 'x', profileId: 'p', availability: availabilityFor('welding-demo'), permissions: { general: 3, materials: 3, welding: 3, tools: 3, settings: 3 } }, 'itps'));
 });
@@ -292,13 +293,14 @@ test('Link ITP: the picker rules are enforced on the server, number and revision
   // Unlink: the link goes, the number and revision stay as free text.
   const unlinked = (await body(await put('iso-7', { itpId: '' }))).record as Row;
   assert.deepEqual([unlinked.itpId, unlinked.itpNo, unlinked.itpRevNo], ['', 'ITP-03-A', '4']);
-  // Rights: a reader may not link; a user outside Weld Pilot may not link through the other pilot either.
+  // Rights: a reader may not link; MTO Pilot links like Weld Pilot (same rules, same rights).
   const reader = f.client(); await reader.login(f.account('Link reader', { generalPermission: RO, materialsPermission: RW, weldingPermission: RO }));
   assert.equal((await put('iso-7', { itpId: 'itp-03' }, reader)).status, 403);
   const mto = f.client(); await mto.login(f.account('Link mto', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW }));
   // iso-1: STX-2403 (iso-7) is switched off for MTO Pilot, which does not deliver it at all (scn-SC-N9).
   const stale = f.store.get('isometrics', 'iso-1');
-  assert.equal((await mto.request('/records/isometrics/iso-1', { method: 'PUT', pilot: 'mto', data: { itpId: 'itp-03', _version: stale._version } })).status, 403, 'the ITP register belongs to Weld Pilot');
+  const viaMto = await mto.request('/records/isometrics/iso-1', { method: 'PUT', pilot: 'mto', data: { itpId: 'itp-03', _version: stale._version } });
+  assert.notEqual(viaMto.status, 403, `MTO Pilot may link with the rights (${viaMto.status})`);
 });
 
 test('the sample data lets the dashboard show compliant and not compliant groups, weld type abbreviations and tracers', () => {

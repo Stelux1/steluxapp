@@ -124,7 +124,9 @@ const round1 = (value: number) => Math.round(value * 10) / 10;
 // ----- blockers ------------------------------------------------------------------------------------------------
 
 export type BlockerKey = 'release' | 'welds' | 'ndt' | 'repair' | 'punch';
-export interface BlockerItem { message: string; /** The weld to open, where the item concerns one. */ weldId?: string; }
+/** What a click on a blocker item opens (shared/iso-blocker-targets.ts maps it to the dialog): the dialog that fixes the item. */
+export interface BlockerTarget { kind: 'release' | 'edit-weld' | 'ndt' | 'ndt-pre' | 'punch'; /** The weld whose dialog opens (for a repair that exists, the repair weld). */ weldId?: string; }
+export interface BlockerItem { message: string; /** The weld to open, where the item concerns one. */ weldId?: string; /** The dialog that fixes the item; absent on the count lines of a group the server counted alone. */ target?: BlockerTarget; }
 export interface BlockerGroup { key: BlockerKey; title: string; /** What the group adds to the total ("N open"). */ count: number; items: BlockerItem[]; }
 export interface IsoBlockers { groups: BlockerGroup[]; total: number; }
 export const BLOCKER_TITLES: Record<BlockerKey, string> = { release: 'Release', welds: 'Welds', ndt: 'NDT', repair: 'Repair', punch: 'Punch' };
@@ -171,11 +173,11 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
   const add = (key: BlockerKey, items: BlockerItem[], count = items.length) => { if (items.length) groups.push({ key, title: BLOCKER_TITLES[key], count, items }); };
   // Release: one item per phase that is not completed, whatever welds the isometric has. Skipped when releases cannot be read.
   if (input.releases) {
-    add('release', (['Prefab', 'Field'] as const).filter(phase => !phaseCompleted(input.iso, phase, input.releases)).map(phase => ({ message: `${phase} is not released yet` })));
+    add('release', (['Prefab', 'Field'] as const).filter(phase => !phaseCompleted(input.iso, phase, input.releases)).map(phase => ({ message: `${phase} is not released yet`, target: { kind: 'release' } as BlockerTarget })));
   }
-  add('welds', welds.filter(hasWelder).flatMap(weld => missingWeldFields(weld).length ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} is missing required fields` }] : []));
+  add('welds', welds.filter(hasWelder).flatMap(weld => missingWeldFields(weld).length ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} is missing required fields`, target: { kind: 'edit-weld', weldId: weld.id } as BlockerTarget }] : []));
   // NDT: a required examination without any result. Rejected results are handled under Repair.
-  add('ndt', welds.flatMap(weld => [['ndoReqPre', 'NDT PRE'], ['ndoReq', 'NDT']].flatMap(([flag, type]) => weld[flag] === true && !resultsOf(input.results, weld.id, [type]).length ? [{ weldId: weld.id, message: `${type} on weld ${weld.weldNo} has no result` }] : [])));
+  add('ndt', welds.flatMap(weld => [['ndoReqPre', 'NDT PRE'], ['ndoReq', 'NDT']].flatMap(([flag, type]) => weld[flag] === true && !resultsOf(input.results, weld.id, [type]).length ? [{ weldId: weld.id, message: `${type} on weld ${weld.weldNo} has no result`, target: { kind: type === 'NDT PRE' ? 'ndt-pre' : 'ndt', weldId: weld.id } as BlockerTarget }] : [])));
   // Repair: one item per rejection (latest NDT outcome NA, or ReWeld? ticked), naming the repair that follows it
   // (`003` → `003R1`, a rejected `003R1` → `003R2`; the next number when no repair weld exists yet, shared/inspections.ts).
   // A rejection is closed once a repair later in its chain (`repairOfId`) has an accepted result.
@@ -184,12 +186,14 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
     if (!rejection(weld, results)) return [];
     const chain = repairChain(weld, all);
     if (chain.some(repair => acceptedWeld(repair, results))) return [];
-    return [{ weldId: weld.id, message: `Rejection on weld ${weld.weldNo}, repair ${chain[0] ? text(chain[0].weldNo) : nextRepairNumber(weld, all)} is still open` }];
+    // The repair weld once it exists (Edit weld of it, read-only when locked); until then the NDT dialog of the rejected weld.
+    const target: BlockerTarget = chain[0] ? { kind: 'edit-weld', weldId: chain[0].id } : { kind: notAccepted(weld, results.filter(row => row.type === 'NDT')) ? 'ndt' : 'ndt-pre', weldId: weld.id };
+    return [{ weldId: weld.id, message: `Rejection on weld ${weld.weldNo}, repair ${chain[0] ? text(chain[0].weldNo) : nextRepairNumber(weld, all)} is still open`, target }];
   }));
   if (input.punch) {
     // Open items of the blocking categories A and B hold the isometric back (see shared/punch.ts).
     const open = punchBlocking(live(input.punch).filter(row => row.isoId === input.iso.id)).length;
-    if (open) add('punch', [{ message: `${open} open punch item${open === 1 ? '' : 's'} in category A or B.` }], open);
+    if (open) add('punch', [{ message: `${open} open punch item${open === 1 ? '' : 's'} in category A or B.`, target: { kind: 'punch' } }], open);
   }
   return { groups, total: groups.reduce((sum, group) => sum + group.count, 0) };
 }

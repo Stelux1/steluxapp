@@ -397,4 +397,15 @@ export class Store {
     const result=this.db.prepare(`SELECT ${sequence} AS sequence,* FROM audit WHERE entity_type=? AND entity_id=? AND ${sequence}<? ORDER BY ${sequence} DESC LIMIT 51`).all(key,id,before) as Record<string,unknown>[];
     return {events:result.slice(0,50).map(unpackAudit),nextCursor:result.length>50?String(result[49].sequence):null};
   }
+  /** The history of several records of different types at once (an isometric with its welds), newest first, 50 per page. */
+  historyOfMany(entities:{key:string;ids:string[]}[],before=Number.MAX_SAFE_INTEGER){
+    for(const entity of entities)this.resource(entity.key);
+    if(!Number.isSafeInteger(before)||before<1)throw new AppError(422,'Invalid history cursor.');
+    const used=entities.filter(entity=>entity.ids.length);
+    if(!used.length)return {events:[] as AuditEvent[],nextCursor:null};
+    const sequence = this.db.dialect === 'postgres' ? 'sequence' : 'rowid';
+    const match=used.map(entity=>`(entity_type=? AND entity_id IN (${entity.ids.map(()=>'?').join(',')}))`).join(' OR ');
+    const result=this.db.prepare(`SELECT ${sequence} AS sequence,* FROM audit WHERE (${match}) AND ${sequence}<? ORDER BY ${sequence} DESC LIMIT 51`).all(...used.flatMap(entity=>[entity.key,...entity.ids]),before) as Record<string,unknown>[];
+    return {events:result.slice(0,50).map(unpackAudit),nextCursor:result.length>50?String(result[49].sequence):null};
+  }
 }

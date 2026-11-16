@@ -113,6 +113,8 @@ test('quantity budgets do not exist yet: isoBudgets returns none and entered qua
   assert.deepEqual(isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 120 }, row('iso', { isoNo: 'ISO-1', shopPipeM: 120 }), { shop: { materialPipe: 100 } }), {}, 'an unchanged stored value does not block other saves');
 });
 
+/** The items without their click target (the targets are covered in tests/iso-page-dialogs.test.ts). */
+const plain = <T extends { target?: unknown }>(items: T[]) => items.map(({ target: _target, ...rest }) => rest);
 /** Both phases completed on the isometric, so a test sees only the group it is about. */
 const done = { prefabCompletedAt: '2026-10-10T08:00:00.000Z', fieldCompletedAt: '2026-10-11T08:00:00.000Z' };
 
@@ -144,7 +146,7 @@ test('blockers: Welds lists welds that have a welder and lack a mandatory field,
   ];
   const blockers = isoBlockers(base({ welds, iso: done }));
   assert.deepEqual(blockers.groups.map(group => group.key), ['welds']);
-  assert.deepEqual(blockers.groups[0].items, ['w1', 'w2', 'w4', 'w5'].map(id => ({ weldId: id, message: `Weld ${id.toUpperCase()} is missing required fields` })));
+  assert.deepEqual(plain(blockers.groups[0].items), ['w1', 'w2', 'w4', 'w5'].map(id => ({ weldId: id, message: `Weld ${id.toUpperCase()} is missing required fields` })));
   assert.equal(blockers.total, 4);
 });
 
@@ -152,7 +154,7 @@ test('blockers: NDT lists required examinations without a result; a rejection is
   const welds = [weld('n1', { ndoReq: true }), weld('n2', { ndoReq: true }), weld('n3', { ndoReqPre: true }), weld('n4', { ndoReqPre: true, ndoReq: true }), weld('n5', { ndoReq: true }), weld('n6')];
   const results = [result('n2', 'Accepted', '2026-10-06'), result('n4', 'Accepted', '2026-10-06', { type: 'NDT PRE' }), result('n5', 'Rejected', '2026-10-06'), result('n6', 'Accepted', '2026-10-06'), result('n1', 'Accepted', '2026-10-06', { type: 'VI' })];
   const ndt = isoBlockers(base({ welds, results, iso: done })).groups.find(group => group.key === 'ndt')!;
-  assert.deepEqual(ndt.items, [
+  assert.deepEqual(plain(ndt.items), [
     { weldId: 'n1', message: 'NDT on weld N1 has no result' },
     { weldId: 'n3', message: 'NDT PRE on weld N3 has no result' },
     { weldId: 'n4', message: 'NDT on weld N4 has no result' },
@@ -167,12 +169,13 @@ test('blockers: items keep the order the welds were created in (reference: 010R1
 
 test('blockers: Repair lists one item per rejection and names the next repair number (reference 0007, 0001)', () => {
   const repair = (welds: Row[], results: Row[]) => isoBlockers(base({ welds, results, iso: done })).groups.find(group => group.key === 'repair')?.items ?? [];
+  const plainRepair = (welds: Row[], results: Row[]) => plain(repair(welds, results));
   // 0007: 003 NA, 003R1 NA, 003R2 NA → three items, the last naming 003R3 which does not exist yet.
   const w003 = weld('a', { weldNo: '003', ndoReq: true, _createdAt: '2026-10-01T08:00:00.000Z' });
   const r1 = weld('b', { weldNo: '003R1', repairOfId: 'a', ndoReq: true, _createdAt: '2026-10-02T08:00:00.000Z' });
   const r2 = weld('c', { weldNo: '003R2', repairOfId: 'b', ndoReq: true, _createdAt: '2026-10-03T08:00:00.000Z' });
   const chain = [w003, r1, r2], rejected = [result('a', 'Rejected', '2026-10-04'), result('b', 'Rejected', '2026-10-05'), result('c', 'Rejected', '2026-10-06')];
-  assert.deepEqual(repair(chain, rejected), [
+  assert.deepEqual(plainRepair(chain, rejected), [
     { weldId: 'a', message: 'Rejection on weld 003, repair 003R1 is still open' },
     { weldId: 'b', message: 'Rejection on weld 003R1, repair 003R2 is still open' },
     { weldId: 'c', message: 'Rejection on weld 003R2, repair 003R3 is still open' },
@@ -181,10 +184,10 @@ test('blockers: Repair lists one item per rejection and names the next repair nu
   assert.deepEqual(repair(chain, [...rejected.slice(0, 2), result('c', 'Accepted', '2026-10-06')]), []);
   // 0001: weld 002, Initial NA then Remaining Accepted with ReWeld? ticked → a rejection, repair 002R1 (no such weld).
   const w002 = weld('d', { weldNo: '002', ndoReq: true });
-  assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial' }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', reweld: true })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
+  assert.deepEqual(plainRepair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial' }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', reweld: true })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
   assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04'), result('d', 'Accepted', '2026-10-05')]), [], 'a later accepted result without ReWeld? is no rejection');
   // The NDT dialog writes ReWeld? on the NA round: ticked there, a later Accepted round of the same request is still a rejection (shared/inspections.ts notAccepted).
-  assert.deepEqual(repair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial', requestId: 'rq-d', reweld: true }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', requestId: 'rq-d' })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
+  assert.deepEqual(plainRepair([w002], [result('d', 'Rejected', '2026-10-04', { round: 'Initial', requestId: 'rq-d', reweld: true }), result('d', 'Accepted', '2026-10-05', { round: 'Remaining', requestId: 'rq-d' })]), [{ weldId: 'd', message: 'Rejection on weld 002, repair 002R1 is still open' }]);
   // A repair whose only accepted round carries ReWeld? does not close the rejection.
   const r002 = weld('g', { weldNo: '002R1', repairOfId: 'd', ndoReq: true });
   assert.equal(repair([w002, r002], [result('d', 'Rejected', '2026-10-04'), result('g', 'Accepted', '2026-10-06', { reweld: true })]).length, 2);

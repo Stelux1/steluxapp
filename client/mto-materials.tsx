@@ -10,6 +10,7 @@ import { ApiError, api, apiUrl, formatNumber, post } from './api.ts';
 import { DEFAULT_UOM, MASS_EDIT_BLANK, MASS_EDIT_FIELDS, MASS_EDIT_HELP, MATERIAL_DEFAULT_SORT, MATERIAL_FORM_FIELDS, MATERIAL_IMPORT_PATH, MATERIAL_PAGE_SIZE, MATERIAL_PAGE_SIZES, catalogOrder, massEditChanges, massEditRefusal, materialTypeLabel, phasesById, phasesByName, showingEntries, sortMaterials, uomByName } from '../shared/material-db.ts';
 import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScroll, FormError, selectPrompt } from './components.tsx';
 import { RecordEditor } from './dialogs.tsx';
+import { AttachmentCountBadge } from './iso-dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
 import { MaterialQuantityLogDialog } from './material-quantity-log.tsx';
 import { MtoPrintButton } from './pdf-mto-print.tsx';
@@ -165,7 +166,7 @@ export function IsoMaterialsPanel({ iso, onAttachments, onAudit, onPhase }: Pane
   return <section className="panel iso-materials-panel" aria-label="Isometric materials">
     <div className="panel-heading"><div><h2>Materials</h2>{status && <p className="mto-status" role="status">Material status {status.percent === null ? 'n/a' : `${formatNumber(status.percent)} %`}<span>{status.required > 0 ? ` · ${formatNumber(status.covered, 3)} of ${formatNumber(status.required, 3)} covered by pick and inventory` : ' · nothing required yet'}</span></p>}</div>
       <div className="heading-actions">
-        <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}><button disabled={!onAttachments} onClick={onAttachments}>Attachments</button><button disabled={!onAudit} onClick={onAudit}>Audit trail</button><button disabled={!onPhase || !canRun('phases', { isoIds: [iso.id] })} onClick={onPhase}>Set phase</button></Dropdown>
+        <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}><button disabled={!onAttachments} onClick={onAttachments}>Attachments<AttachmentCountBadge isoId={iso.id}/></button><button disabled={!onAudit} onClick={onAudit}>Audit trail</button><button disabled={!onPhase || !canRun('phases', { isoIds: [iso.id] })} onClick={onPhase}>Set phase</button></Dropdown>
         <button className="btn" disabled={!checked.length || !canType} onClick={() => setDialog('type')}>Set type</button>
         <button className="btn" disabled={!checked.length || !canDelete} onClick={() => setDialog('delete')}><Trash2 size={15}/>Delete selected</button>
         {canAdd && <Dropdown label="Add" trigger={<span className="btn primary"><Plus size={15}/>Add<ChevronDown size={15}/></span>}><button onClick={() => setDialog('catalog')}>Add material from DB</button><button onClick={() => setDialog('custom')}>Add custom material</button></Dropdown>}

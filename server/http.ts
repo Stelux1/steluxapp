@@ -40,6 +40,7 @@ import { reportWorkbook } from './report-export.ts';
 import { SPOOL_EXPORT_COLUMNS, spoolExportLines } from '../shared/mto-logistics.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
+import { registerIsoDialogRoutes } from './iso-dialogs.ts';
 import { assignIrn } from './iso-pages.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
@@ -413,6 +414,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerPunchRoutes(app, { store, documents, access, upload: disk });
   // ITPs page: Add ITP with its PDF, Upload revision, Link ITP / Unlink, Import from isometrics (server/itps.ts).
   if (pilots) registerItpRoutes(app, { store, documents, access, upload: disk });
+  // Options of the isometric page: Attachments (several PDFs, delete) and the Audit trail of the isometric with its welds (server/iso-dialogs.ts).
+  if (pilots) registerIsoDialogRoutes(app, { store, documents, access });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
   if (pilots) registerWpsRoutes(app, { store, access });
   if (pilots) registerMaterialDbRoutes(app, { store, access });

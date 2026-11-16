@@ -5,8 +5,13 @@ import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
 import { AddRevisionDialog, DrawingRevisions } from './drawing-revisions.tsx';
-import { ItpLinkControl } from './itp-dashboard.tsx';
-import { itpSlots } from '../shared/itps.ts';
+import { ItpCardLinkButton, ItpLinkControl } from './itp-dashboard.tsx';
+import { EditWeldDialog } from './weld-entry.tsx';
+import { NdtWeldDialog } from './inspections.tsx';
+import { IDENTIFICATION_FACTS } from '../shared/iso-card-facts.ts';
+import { itpCard, NO_ITP_LINKED } from '../shared/iso-itps-card.ts';
+import { blockerOpening, punchListUrl, RELEASE_STATUS_ANCHOR, type BlockerOpening } from '../shared/iso-blocker-targets.ts';
+import { lockContext, weldLock } from '../shared/weld-entry.ts';
 import { materialStatus } from '../shared/mto-materials.ts';
 import { hydrotestState, isoTestSystemIds } from '../shared/hydrotest.ts';
 import { hydrotestSpoolsPath } from './hydrotest.tsx';
@@ -36,14 +41,12 @@ interface HeaderProps {
   /** Attached drawing and ITP files of the isometric, newest first. */
   documents: Row[];
   onUpload: (kind: string) => void;
-  /** Open one weld: the page switches to the weld register where it has one. */
-  onOpenWeld: (weldId: string) => void;
 }
 
 /** The six cards of the isometric header, identical under Weld Pilot and MTO Pilot. */
-export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld }: HeaderProps) {
+export function IsometricHeader({ iso, project, documents, onUpload }: HeaderProps) {
   const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot();
-  const [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false);
+  const [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false), [opened, setOpened] = useState<BlockerOpening | null>(null);
   const site = rows.sites?.find(row => row.id === project?.siteId);
   // Budgets: the server summary carries them in the hosted profile (Weld Pilot cannot read material lines); elsewhere from the rows.
   const budgets = useMemo(() => isoSummaries?.[iso.id] ? isoSummaries[iso.id].budgets : isoBudgets(iso, rows), [isoSummaries, iso, rows]);
@@ -66,9 +69,18 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   // MTO Pilot reads no test systems: the server summary carries the name of this isometric's own one.
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);
   const fileOf = (kind: string) => documents.find(row => row.documentType === `${kind} revision ${currentRevision(rows, iso.id, kind)}` || row.documentType === kind) ?? currentRevisionFile(rows, iso.id, kind, currentRevision(rows, iso.id, kind));
-  const itps = [['ITP', iso.itpNo], ['ITP 2', iso.itpNo2]] as const;
-  // Counter of linked ITPs (0/2, 1/1 …) and the second slot, hidden next to a Shop+Field ITP (shared/itps.ts).
-  const itpCard = itpSlots(iso, rows.itps || []);
+  // ITPs card: the register ITPs linked to this isometric and their counter (0/2, 1/1 …); typed ITP numbers do not count (shared/iso-itps-card.ts).
+  const itpCardState = itpCard(iso, rows.itps, rows.attachments);
+  const locks = useMemo(() => lockContext(rows.weld_types, rows.releases, rows.isometrics), [rows.weld_types, rows.releases, rows.isometrics]);
+  /** A click on a blocker item opens the dialog that fixes it (shared/iso-blocker-targets.ts). */
+  function openBlocker(item: { target?: Parameters<typeof blockerOpening>[0] }) {
+    const opening = blockerOpening(item.target, iso, id => { const weld = rows.welds?.find(row => row.id === id); return Boolean(weld) && weldLock(weld!, locks).locked; });
+    if (!opening) return;
+    setBlockers(false);
+    if (opening.dialog === 'release') requestAnimationFrame(() => { const line = document.getElementById(RELEASE_STATUS_ANCHOR); line?.scrollIntoView({ block: 'center' }); line?.focus({ preventScroll: true }); });
+    else if (opening.dialog === 'punch') return;
+    else setOpened(opening);
+  }
 
   const slot = (kind: string, number: unknown, label: string) => {
     const file = fileOf(kind), text = show(number), rev = currentRevision(rows, iso.id, kind);
@@ -79,7 +91,6 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
           {historyAvailable ? <button className="text-link" onClick={() => setHistory(true)} aria-label={`${kind} revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}
           {!file && ' · no file'}</span></div></div>
       <div className="iso-slot-actions">
-        {pilot?.pilot.key === 'weld' && kind !== 'ISO' && <ItpLinkControl iso={iso} slot={kind === 'ITP' ? 1 : 2}/>}
         {canRevise && <button className="icon-btn" aria-label={`Add ${kind === 'ISO' ? 'rev' : kind + ' revision'}`} title={kind === 'ISO' ? 'Add rev' : kind === 'ITP' ? 'Add ITP revision' : 'Add ITP revision 2'} onClick={() => setRevision(kind)}><Plus size={17}/></button>}
       </div>
     </div>;
@@ -88,10 +99,16 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   return <div className="iso-header" style={{ '--pilot-color': pilot?.pilot.color } as React.CSSProperties}>
     <Card title="Identification">
       {slot('ISO', iso.isoNo, 'ISO No')}
-      <dl className="iso-facts"><Fact label="Asset tag">{show(iso.assetTag)}</Fact><Fact label="Drawing no.">{show(iso.drawingNo)}</Fact></dl>
+      <dl className="iso-facts">{IDENTIFICATION_FACTS.map(fact => <Fact key={fact.field} label={fact.label}>{show(iso[fact.field])}</Fact>)}</dl>
     </Card>
-    <Card title="ITPs" aside={<span className="iso-count" aria-label={`${itpCard.count} of ${itpCard.max} ITP slots linked`}>{itpCard.counter}</span>}>
-      {itps.filter(([kind]) => kind === 'ITP' || itpCard.showSecond).map(([kind, number]) => slot(kind, number, kind === 'ITP' ? 'ITP No' : 'ITP No 2'))}
+    <Card title="ITPs" aside={<span className="iso-card-aside"><span className="iso-count" aria-label={`${itpCardState.count} of ${itpCardState.max} ITP slots linked`}>{itpCardState.counter}</span><ItpCardLinkButton iso={iso} compact/></span>}>
+      {itpCardState.rows.length ? <ul className="iso-itp-rows">{itpCardState.rows.map(entry => <li key={entry.slot} className="iso-itp-row">
+        <div><strong>{show(entry.number)}</strong>{entry.scope && <small>{entry.scope}</small>}</div>
+        <div className="iso-itp-title" title={entry.title || undefined}>{entry.titleCut || '—'}</div>
+        <div className="iso-itp-meta"><span>Rev {entry.revision || '—'}</span>{entry.file && <a className="text-link" href={apiUrl(`/files/${entry.file.id}`)} target="_blank" rel="noreferrer">PDF<Download size={13} aria-hidden="true"/></a>}</div>
+        <ItpLinkControl iso={iso} slot={entry.slot}/>
+      </li>)}</ul>
+        : <p className="iso-itp-empty"><span aria-hidden="true">—</span> {NO_ITP_LINKED}<ItpCardLinkButton iso={iso}/></p>}
     </Card>
     <Card title="Compliance">
       <dl className="iso-facts"><Fact label="NoBo">{iso.noBo ? 'Yes' : 'No'}</Fact><Fact label="NoBo Reg. no. / serial">{show(iso.noBoReg)} / {show(iso.noBoSerial)}</Fact><Fact label="PED Cat.-Mod">{show(iso.ped)}</Fact><Fact label="X Ray %">{show(iso.xRay)}</Fact></dl>
@@ -114,7 +131,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
         <Fact label="Priority">{priorityLabel(iso.priority)}</Fact>
       </dl>
       <PhaseFlags iso={iso}/>
-      <ReleaseStatus iso={iso}/>
+      <div id={RELEASE_STATUS_ANCHOR} tabIndex={-1} className="iso-release-anchor"><ReleaseStatus iso={iso}/></div>
       {pilot?.pilot.key === 'weld' && <HydrotestStep iso={iso} state={summary?.hydrotest ?? hydrotestState(iso, rows)} summaryName={summary?.testSystemName}/>}
       <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
       {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
@@ -122,11 +139,13 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>
       <div className="modal-body iso-blockers">{status.blockers.groups.map(group => <section key={group.key} aria-label={group.title}>
         <h3>{group.title}<span className="count-pill">{group.count}</span></h3>
-        <ul>{group.items.map((item, index) => <li key={`${item.weldId || 'iso'}-${index}`}>{item.weldId && canRecord('welds')
-          ? <button className="text-link" onClick={() => { setBlockers(false); onOpenWeld(item.weldId!); }}>{item.message}</button> : item.message}</li>)}</ul>
+        <ul>{group.items.map((item, index) => <li key={`${item.weldId || 'iso'}-${index}`}>{item.target && (!item.target.weldId || canRecord('welds'))
+          ? item.target.kind === 'punch' ? <Link className="text-link" to={punchListUrl(iso)} target="_blank" rel="noreferrer" onClick={() => setBlockers(false)}>{item.message}</Link> : <button className="text-link" onClick={() => openBlocker(item)}>{item.message}</button> : item.message}</li>)}</ul>
       </section>)}</div>
       <div className="modal-footer"><button className="btn" onClick={() => setBlockers(false)}>Close</button></div>
     </Modal>}
+    {opened?.dialog === 'edit-weld' && rows.welds?.find(row => row.id === opened.weldId) && <EditWeldDialog iso={iso} weld={rows.welds!.find(row => row.id === opened.weldId)!} onClose={() => setOpened(null)}/>}
+    {opened?.dialog === 'ndt' && rows.welds?.find(row => row.id === opened.weldId) && <NdtWeldDialog weld={rows.welds!.find(row => row.id === opened.weldId)!} type={opened.type} onClose={() => setOpened(null)}/>}
     {revision && <AddRevisionDialog iso={iso} kind={revision} onClose={() => setRevision('')}/>}
     {history && <Modal title="Revision history" subtitle={show(iso.isoNo)} onClose={() => setHistory(false)} wide><div className="modal-body"><DrawingRevisions isoId={iso.id}/></div><div className="modal-footer"><button className="btn" onClick={() => setHistory(false)}>Close</button></div></Modal>}
   </div>;
