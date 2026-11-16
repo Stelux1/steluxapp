@@ -1,0 +1,22 @@
+/* Hydrotest release (Weld Pilot): test systems, their isometrics and requests, spools. */
+.hydrotest-panel{overflow:hidden}
+.hydrotest-view{padding:0 0 18px}
+.hydrotest-head{display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-start;padding:18px 20px;border-bottom:1px solid var(--line)}
+.hydrotest-head h2{font-size:16px;margin:0 0 10px}
+.hydrotest-facts{display:flex;flex-wrap:wrap;gap:12px 28px;margin:0}
+.hydrotest-facts>div{min-width:120px}
+.hydrotest-facts dt{font-size:9px;color:var(--muted);margin-bottom:5px}
+.hydrotest-facts dd{margin:0;font-size:11px;color:var(--ink)}
+.hydrotest-title{display:flex;align-items:center;gap:8px;font-size:12px;margin:22px 20px 4px}
+.hydrotest-view .logistics-actions{padding:8px 20px}
+.hydrotest-options{display:flex;flex-wrap:wrap;gap:6px}
+.hydrotest-sub{display:block;margin-top:4px;font-size:9px}
+.hydrotest-filters{grid-template-columns:repeat(2,minmax(0,260px)) auto;padding-top:16px}
+.hydrotest-files{list-style:none;margin:0 0 16px;padding:0;display:grid;gap:8px}
+.hydrotest-upload{display:grid;gap:12px;border-top:1px solid var(--line);padding-top:16px}
+.hydrotest-upload .btn{justify-self:start}
+@media (max-width:760px){
+  .hydrotest-head{padding:16px}
+  .hydrotest-title,.hydrotest-view .logistics-actions{margin-inline:16px;padding-inline:0}
+  .hydrotest-filters{grid-template-columns:1fr}
+}
