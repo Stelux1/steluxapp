@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, Check, ChevronDown, LayoutGrid, LogOut } from 'lucide-react';
 import { NO_NOTIFICATIONS, type NotificationView } from '../shared/notifications.ts';
-import { passwordStrength } from '../shared/password-strength.ts';
+import { REFERENCE_PASSWORD_OK, referencePasswordLabel, referencePasswordScore } from '../shared/password-strength.ts';
 import type { Row } from '../shared/types.ts';
 import { api, formatDate, post } from './api.ts';
 import { Dropdown } from './components.tsx';
@@ -62,8 +62,8 @@ export function PilotSwitcher() {
   </Dropdown>;
 }
 
-/** The strength shown under "New password" while it is typed. */
+/** The strength shown under "New password" while it is typed: the bar and text of the reference's Change password dialog. */
 export function PasswordStrengthMeter({ password }: { password: string }) {
-  const strength = passwordStrength(password);
-  return <div className={`password-strength level-${strength.level}`} role="status" aria-live="polite"><span>Password strength</span><span className="strength-bar" aria-hidden="true"><i/><i/><i/></span><strong>{strength.label || '—'}</strong></div>;
+  const score = referencePasswordScore(password), band = !password ? 0 : score >= 8 ? 4 : score >= 6 ? 3 : score >= REFERENCE_PASSWORD_OK ? 2 : 1;
+  return <div className={`password-strength level-${band}`} role="status" aria-live="polite"><span>Password strength</span><span className="strength-bar" aria-hidden="true"><i style={{ width: `${Math.round(score / 8 * 100)}%` }}/></span><strong>{referencePasswordLabel(password) || '—'}</strong></div>;
 }

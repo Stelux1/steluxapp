@@ -18,7 +18,8 @@ import { RELATIONS,relationFields } from '../shared/welding.ts';
 import { REPORTS, buildReport, reportCsv, type ReportFilters } from '../shared/reports.ts';
 import { canResource,canReport,canScope,REPORT_RESOURCES } from '../shared/permissions.ts';
 import type { Row, Module } from '../shared/types.ts';
-import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, passwordHash, passwordMatches, sessionCookie, type AuthRequest } from './auth.ts';
+import { pilotProfileErrors, withNewUserDefaults } from '../shared/access-ui.ts';
+import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, ensureAdministrator, hashToken, newSession, assertPasswordStrength, passwordHash, passwordMatches, sessionCookie, type AuthRequest } from './auth.ts';
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
@@ -49,6 +50,12 @@ import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from '
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { activeSite, assertAccountReach, assertCopyInScope, assertSiteAccessEdit, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
+/** User accounts of the hosted pilots: a new account has no application ticked, and a ticked application needs a profile (access-users-profiles-004). Runs after the access checks. */
+function checkUserApplications(body: Record<string, unknown>, existing?: Row) {
+  if (!existing) withNewUserDefaults(body);
+  const problems = pilotProfileErrors(body, existing);
+  if (Object.keys(problems).length) throw new AppError(422, 'Please check the highlighted fields.', problems);
+}
 export function createApp(store: Store, dataDir: string, options: { releaseProfile?: ReleaseProfile; distDir?: string; serveClient?: boolean; publicOrigin?: string; documentStorage?: DocumentStorage; initializeStorage?: boolean; secureCookies?: boolean; sampleWorkspace?: boolean } = {}) {
   const app = express(); app.disable('x-powered-by');
   const availability = availabilityFor(options.releaseProfile || 'full');
@@ -94,7 +101,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const user = store.transaction(() => {
       if (!needsSetup()) throw new AppError(409, 'This workspace already has an administrator. Sign in instead.');
       const hash = passwordHash(req.body.password);
-      const user = store.create('users', { name: req.body.name, email: req.body.email, profileId: 'profile-admin', active: true });
+      const user = store.create('users', { name: req.body.name, email: req.body.email, profileId: 'profile-admin', active: true, ...(pilots ? { weldEnabled: true, mtoEnabled: true } : {}) });
       store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, hash);
       return user;
     });
@@ -160,6 +167,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const user = (req as AuthRequest).user;
     const old = store.db.prepare('SELECT hash FROM credentials WHERE user_id=?').get(user.id) as { hash: string };
     if (!passwordMatches(req.body.currentPassword, old.hash)) throw new AppError(422, 'Current password is incorrect.');
+    if (pilots) assertPasswordStrength(req.body.password);
     const hash = passwordHash(req.body.password);
     store.transaction(() => { store.db.prepare('UPDATE credentials SET hash=? WHERE user_id=?').run(hash, user.id); store.db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id); });
     newSession(store, user.id, res, cookieName); res.json({ ok: true });
@@ -244,7 +252,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'punchlists') assertPunchAddAllowed(store, req.body, (req as unknown as AuthRequest).user);
-    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body); assertSiteProfiles(store, req.body); }
+    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body); assertSiteProfiles(store, req.body); checkUserApplications(req.body); }
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body); access.links((req as unknown as AuthRequest).user, resource.key, req.body);
     if (pilots) checkIsoWrite(store, resource.key, req.body);
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
@@ -259,7 +267,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
-    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); }
+    if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); checkUserApplications(req.body, access.record(resource.key, String(req.params.id))); }
     const row = store.transaction(() => {
       const row = store.update(resource.key, String(req.params.id), req.body, req.body._version, actorOf(req));
       if (pilots && resource.key === 'itps') syncItpXRay(store, row, actorOf(req));

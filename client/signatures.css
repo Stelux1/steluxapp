@@ -13,6 +13,9 @@
 .signature-editor > .field { width: 100%; margin: 0; }
 .signature-canvas { display: block; width: 100%; height: auto; border: 1px dashed var(--border-strong); border-radius: 8px; background: #fff repeating-linear-gradient(to bottom, transparent 0 74%, var(--line) 74% 75%, transparent 75% 100%); touch-action: none; cursor: crosshair; }
 .signature-tools { margin: 0; }
+.signature-background { display: grid; gap: 10px; margin: 0 0 12px; min-width: 0; }
+.signature-background-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+.signature-background input[type="file"] { max-width: 100%; }
 @media (max-width: 760px) { .signature-card { padding: 14px; } }
 /* Permission profile editor: pilot of each area (pilots profile). */
 .permission-pilot-note { margin: 0 0 14px; }
@@ -21,3 +24,11 @@
 .permission-pilot.weld { background: #eef4ea; color: #3f6230; }
 .permission-pilot.mto { background: #fbefe2; color: #8a4f14; }
 .permission-pilot.none { background: var(--surface); color: var(--muted); }
+/* Profile form of the hosted pilots: the App badges, the 'Select / deselect all' row and the duplicate control of the footer. */
+.hosted-profile-matrix th:first-child, .hosted-profile-matrix td:first-child { min-width: 0; width: 64px; text-align: left; }
+.hosted-profile-matrix td:first-child .permission-pilot { margin-right: 4px; padding: 2px 6px; }
+.hosted-profile-matrix tbody th { text-align: left; }
+.modal-footer .duplicate-profile { display: flex; flex-wrap: wrap; gap: 8px; margin-right: auto; min-width: 0; max-width: 100%; }
+.duplicate-profile input { min-height: 38px; min-width: 0; width: 220px; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; font: inherit; font-size: 13px; background: #fff; }
+.duplicate-profile input[aria-invalid="true"] { border-color: #d93c1f; }
+.modal-footer:has(.duplicate-profile) { flex-wrap: wrap; }

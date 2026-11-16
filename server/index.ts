@@ -20,7 +20,7 @@ if (database) { try { if (config.cloud) { if (config.cloudDatabaseSource === 'ev
 const store = new Store(resolve(dataDir, 'stelux.sqlite'), database, { initialize: !config.cloud });
 if (config.cloud && database) verifyWeldingTraceability(database);
 if (config.profile === 'access-prototype') initializePrototype(store);
-else if (!config.cloud) { seed(store); if (config.profile === HOSTED_RELEASE_PROFILE) { seedAccessSamples(store); seedSiteScopeSamples(store); seedCompanySample(store); seedInspectionSamples(store); } if (config.profile === HOSTED_RELEASE_PROFILE || config.profile === 'full') { seedMtoLogistics(store, SYSTEM); seedMtoDashboard(store, SYSTEM); } }
+else if (!config.cloud) { seed(store, { hostedSample: config.profile === HOSTED_RELEASE_PROFILE }); if (config.profile === HOSTED_RELEASE_PROFILE) { seedAccessSamples(store); seedSiteScopeSamples(store); seedCompanySample(store); seedInspectionSamples(store); } if (config.profile === HOSTED_RELEASE_PROFILE || config.profile === 'full') { seedMtoLogistics(store, SYSTEM); seedMtoDashboard(store, SYSTEM); } }
 const port = config.port;
 const server = createApp(store, dataDir, { releaseProfile: config.profile, distDir: config.distDir, publicOrigin: config.publicOrigin, secureCookies: config.secureCookies, documentStorage: config.documentStorage, initializeStorage: !config.cloud, sampleWorkspace: !config.cloud || config.cloudDatabaseSource === 'evaluation' }).listen(port, config.host, () => console.log(`Blitzkrieg API ready on port ${port} (${database ? 'PostgreSQL' : 'SQLite'})`));
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));

@@ -330,5 +330,5 @@ test('the company logo of Company data is served to a signed-in account on the s
 test('password strength grows with length and variety; the strength meter shows it', () => {
   assert.equal(passwordStrength('').label, ''); assert.equal(passwordStrength('abcdefgh').label, 'Weak'); assert.equal(passwordStrength('Abcdefgh12').label, 'Fair'); assert.equal(passwordStrength('Tr0ub4dor&3-horse-staple').label, 'Strong');
   assert.ok(passwordStrength('a').level < passwordStrength('Abcdefgh12').level && passwordStrength('Abcdefgh12').level < passwordStrength('Tr0ub4dor&3-horse-staple').level);
-  assert.match(renderToStaticMarkup(createElement(PasswordStrengthMeter, { password: 'abc' })), /Password strength[\s\S]*Weak/); assert.match(renderToStaticMarkup(createElement(PasswordStrengthMeter, { password: 'Tr0ub4dor&3-horse-staple' })), /level-3[\s\S]*Strong/);
+  assert.match(renderToStaticMarkup(createElement(PasswordStrengthMeter, { password: 'abc' })), /Password strength[\s\S]*Password too weak/); assert.match(renderToStaticMarkup(createElement(PasswordStrengthMeter, { password: 'Tr0ub4dor&3-horse-staple' })), /level-4[\s\S]*Very strong/);
 });

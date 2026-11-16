@@ -73,10 +73,11 @@ export const HOSTED_REQUIRED: Record<string, string[]> = {
   qa_engineers: ['company'],
   companies: ['address'],
   sites: ['address'],
+  profiles: ['description'],
 };
 const FIELD_LABELS: Record<string, Record<string, string>> = {
   weld_types: { location: 'Shop/Field', abbreviation: 'Abbreviation' }, coatings: { abbreviation: 'Abbreviation' }, ndt_processes: { description: 'Description' },
-  pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' }, sites: { address: 'Address' },
+  pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' }, sites: { address: 'Address' }, profiles: { description: 'Description' },
 };
 /** Messages of the required fields a hosted write leaves empty, by field name. Empty when nothing is missing. */
 export function missingRequired(key: string, input: Record<string, unknown>, existing?: Row): Record<string, string> {

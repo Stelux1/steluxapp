@@ -7,16 +7,23 @@ import { seedWeldEntry } from './weld-entry.ts';
 export { seedInspectionSamples } from './inspections-seed.ts';
 import { seedMtoStock } from './mto-stock-seed.ts';
 import { loadDiameterCatalog } from './diameter-catalog.ts';
+import { SAMPLE_PROFILES } from './sample-profiles.ts';
 
-export function seed(store: Store) {
+/**
+ * `hostedSample`: the sample workspace of the hosted profile starts with the reference's profiles instead of Project operator and
+ * Viewer: the administrator profile is named 'Admin', the other five come from seedAccessSamples. A workspace that exists is not touched.
+ */
+export function seed(store: Store, options: { hostedSample?: boolean } = {}) {
   // An existing workspace is left as stored: a spool saved before test systems moved to spool level follows its isometric when read (shared/hydrotest.ts).
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
   store.transaction(() => {
     const add = (key: string, id: string, data: Record<string, unknown>) => store.create(key, data, SYSTEM, id);
     const action = (key: string, data: Record<string, unknown>) => runAction(store, key, data, SYSTEM);
-    add('profiles', 'profile-admin', { name: 'Administrator', generalPermission: 'Administration', materialsPermission: 'Administration', weldingPermission: 'Administration', toolsPermission: 'Administration', settingsPermission: 'Administration' });
+    add('profiles', 'profile-admin', { name: options.hostedSample ? 'Admin' : 'Administrator', ...(options.hostedSample ? { description: 'Admin' } : {}), generalPermission: 'Administration', materialsPermission: 'Administration', weldingPermission: 'Administration', toolsPermission: 'Administration', settingsPermission: 'Administration' });
+    if (!options.hostedSample) {
     add('profiles', 'profile-operator', { name: 'Project operator', generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read & write', toolsPermission: 'Read & write', settingsPermission: 'No access' });
     add('profiles', 'profile-viewer', { name: 'Viewer', generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only', toolsPermission: 'Read only', settingsPermission: 'No access' });
+    }
     add('sites', 'site-north', { name: 'North fabrication yard', address: '18 Foundry Road', residence: 'Rotterdam', zip: '3089', phone: '+31 10 555 0142', email: 'north@example.com',
       mandatoryFields: true, flangeStandard: 'ASME B16.5 torque table (2012)', wpsValidation: true, projectCertificates: true, materialDisplay: 'Materials added to isometrics', defectNorm: 'ISO 6520-1', repairLimit: 4, ndtMeasurement: 'Inch-weighted', irnCode: 'NFY-IRN',
       prefix: 'NFY', releaseDocDrawing: 'Drawing no + iso', hydrotestPlan: 'HEP-NFY-001 rev 2', flangeProcedureNo: 'FP-2026-03', signSubQaqc: 'QA/QC Manager', signSubConstruction: 'Construction Manager', signPrincipalUi: 'Principal inspector', signContractorQaqc: 'Contractor QA/QC lead', signContractorConstruction: 'Contractor site manager', signNobo: 'Notified body inspector',
@@ -198,10 +205,9 @@ export function seedAccessSamples(store: Store) {
   store.transaction(() => {
     const exists = (key: string, id: string, field: string, value: string) => store.list(key, true).some(row => row.id === id || String(row[field]).toLowerCase() === value.toLowerCase());
     const profile = (id: string, data: Record<string, unknown>) => { if (!exists('profiles', id, 'name', String(data.name))) store.create('profiles', data, SYSTEM, id); };
-    profile('profile-qaqc', { name: 'Highest rights for QAQC', description: 'QA/QC: welds, inspections and releases; reads the material side.', generalPermission: 'Read & write', materialsPermission: 'Read only', weldingPermission: 'Administration', toolsPermission: 'No access', settingsPermission: 'No access' });
-    profile('profile-workprep', { name: 'Standard profile for workpreparator', description: 'Work preparation: material take-off, ordering and logistics.', generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read only', toolsPermission: 'No access', settingsPermission: 'No access' });
-    profile('profile-review', { name: 'Only review', description: 'External reviewer: reads projects, isometrics and their records.', generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only', toolsPermission: 'No access', settingsPermission: 'No access' });
-    const ready = ['profile-qaqc', 'profile-workprep', 'profile-review'].every(id => { try { store.get('profiles', id); return true; } catch { return false; } });
+    // The reference's sample profiles with their rights (server/sample-profiles.ts); 'Full rights' is the profile a new account starts with.
+    for (const sample of SAMPLE_PROFILES) profile(sample.id, { name: sample.name, description: sample.description, permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(sample.rules) });
+    const ready = SAMPLE_PROFILES.map(sample => sample.id).every(id => { try { store.get('profiles', id); return true; } catch { return false; } });
     const company = (id: string) => store.list('companies').some(row => row.id === id) ? id : '';
     const user = (id: string, data: Record<string, unknown>) => { if (ready && !exists('users', id, 'email', String(data.email))) store.create('users', { active: true, ...data, companyId: company(String(data.companyId || 'company-north')) }, SYSTEM, id); };
     user('user-sample-qaqc', { name: 'Mila Kovač', email: 'mila.kovac@example.com', title: 'QA/QC inspector', phone: '+31 10 555 0175', profileId: 'profile-review', weldEnabled: true, weldProfileId: 'profile-qaqc', mtoEnabled: false });
