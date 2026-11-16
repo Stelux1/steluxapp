@@ -63,10 +63,11 @@ function budgetRows() {
   } as Record<string, Row[]>;
 }
 
-test('isoBudgets sums classified materials of one isometric by progress driver and Shop / Field phase', () => {
+test('isoBudgets sums classified materials of one isometric by progress driver: Shop the Shop-typed lines, Field the whole ISO', () => {
   const data = budgetRows();
-  assert.deepEqual(isoBudgets(data.isometrics[0], data), { shop: { materialPipe: 14.75, supports: 5 }, field: { materialPipe: 7, appendages: 2, supports: 4 } });
-  assert.deepEqual(isoBudgets(data.isometrics[1], data), { shop: { materialPipe: 99 } });
+  // Shop: pipe 12.5 + 2.25, supports 5. Field (whole ISO): pipe 14.75 + 7 = 21.75, supports 5 + 4 = 9, appendages 2.
+  assert.deepEqual(isoBudgets(data.isometrics[0], data), { shop: { materialPipe: 14.75, supports: 5 }, field: { materialPipe: 21.75, supports: 9, appendages: 2 } });
+  assert.deepEqual(isoBudgets(data.isometrics[1], data), { shop: { materialPipe: 99 }, field: { materialPipe: 99 } });
   assert.deepEqual(statusBudgets(data.isometrics[0], data), isoBudgets(data.isometrics[0], data), 'iso-status delegates to the MTO budgets');
 });
 
@@ -78,6 +79,32 @@ test('isoBudgets stays undefined without rows, without classified lines and for 
   assert.equal(isoBudgets(data.isometrics[0], { ...data, iso_materials: data.iso_materials.filter(line => ['r6', 'r7', 'r8', 'r9'].includes(line.id)) }), undefined);
   assert.equal(progressClassOf(data, data.iso_materials.find(line => line.id === 'r9')!), undefined);
   assert.equal(progressClassOf(data, data.iso_materials.find(line => line.id === 'r13')!), 'Supports');
+});
+
+test('component code 1 / 2 / 3 drives Pipe / Supports / Appendages; the line\'s own CC wins; older progress classes still read', () => {
+  const data = {
+    isometrics: [row('iso')], operation_phases: [row('shop', { name: 'Shop' }), row('field', { name: 'Field' })],
+    materials: [row('cc1', { componentCode: '1' }), row('cc2', { componentCode: '2' }), row('cc3', { componentCode: '3' }), row('ccx', { componentCode: 'PIP' }), row('old', { componentCode: '', progressClass: 'Pipe' })],
+    custom_materials: [] as Row[],
+    iso_materials: [
+      row('a', { isoId: 'iso', materialId: 'cc1', quantity: 30, phaseId: 'shop' }),
+      row('b', { isoId: 'iso', materialId: 'cc2', quantity: 4, phaseId: 'field' }),
+      row('c', { isoId: 'iso', materialId: 'cc3', quantity: 2, phaseId: 'field' }),
+      row('d', { isoId: 'iso', materialId: 'cc2', componentCode: '', quantity: 50, phaseId: 'field' }),
+      row('e', { isoId: 'iso', materialId: 'ccx', componentCode: '3', quantity: 1, phaseId: 'shop' }),
+      row('f', { isoId: 'iso', materialId: 'ccx', quantity: 77, phaseId: 'shop' }),
+      row('g', { isoId: 'iso', materialId: 'old', quantity: 5, phaseId: 'field' }),
+      row('h', { isoId: 'iso', customMaterial: true, materialNo: 'C-1', componentCode: '2', quantity: 3, phaseId: 'shop' }),
+    ],
+  } as Record<string, Row[]>;
+  const line = (id: string) => data.iso_materials.find(item => item.id === id)!;
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(id => progressClassOf(data, line(id))), ['Pipe', 'Supports', 'Appendages', undefined, 'Appendages', undefined, 'Pipe', 'Supports']);
+  // d: its own CC is empty, so its material's 2 does not count; f: 'PIP' is no component code; g: an older material without CC keeps its progress class.
+  // Shop: pipe 30, appendages 1 (e), supports 3 (h). Field = whole ISO: pipe 30 + 5 = 35, supports 4 + 3 = 7, appendages 2 + 1 = 3.
+  assert.deepEqual(isoBudgets(data.isometrics[0], data), { shop: { materialPipe: 30, appendages: 1, supports: 3 }, field: { materialPipe: 35, supports: 7, appendages: 3 } });
+  // With pick lists the picked quantity of the same lines comes along as the ceiling.
+  const picked = { ...data, picklists: [row('p1', { isoId: 'iso', requirementId: 'a', materialId: 'cc1', quantity: 20 }), row('p2', { isoId: 'iso', requirementId: 'b', materialId: 'cc2', quantity: 4 }), row('p3', { isoId: 'iso', requirementId: 'b', materialId: 'cc2', quantity: 9, taken: false })] };
+  assert.deepEqual(isoBudgets(data.isometrics[0], picked)?.issued, { shop: { materialPipe: 20, appendages: 0, supports: 0 }, field: { materialPipe: 20, supports: 4, appendages: 0 } }, 'a pick line not taken yet is not picked');
 });
 
 function statusRows() {
@@ -201,7 +228,8 @@ test('a custom material keeps its progress class and can be added to the catalog
   assert.ok('record' in kept && kept.record); assert.equal(s.list('materials').length, count);
   assert.deepEqual([kept.record.customMaterial, kept.record.progressClass, kept.record.componentCode], [true, 'Pipe', 'PIP']);
   const budgets = isoBudgets(s.get('isometrics', 'iso-2'), rows(s));
-  assert.deepEqual(budgets, { shop: { materialPipe: 6.5 } }, 'the custom line feeds the Shop pipe budget');
+  // An older line: 'PIP' is no component code, so its progress class Pipe still classifies it. Field counts the whole ISO; nothing is picked yet.
+  assert.deepEqual(budgets, { shop: { materialPipe: 6.5 }, field: { materialPipe: 6.5 }, issued: { shop: { materialPipe: 0 }, field: { materialPipe: 0 } } }, 'the custom line feeds the Shop pipe budget');
   const saved = runAction(s, 'add-iso-material', { ...custom, materialNo: 'CUS-PIPE-2', addToDB: true }, actor);
   assert.ok('record' in saved && saved.record);
   const entered = s.get('materials', String(saved.record.materialId));

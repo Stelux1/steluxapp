@@ -67,6 +67,8 @@ export interface AuditEvent { id: string; entityType: string; entityId: string; 
 export interface Bootstrap { user: User; rows: Record<string, Row[]>; activity: AuditEvent[];
   /** Pilots profile: the server summary of every visible isometric, by id (aggregates only; see shared/iso-summary.ts). */
   isoSummaries?: Record<string, import('./iso-summary.ts').IsoSummary>;
+  /** Pilots profile: Status (%) of every visible project, by id (shared/iso-summary.ts `projectStatuses`). */
+  projectStatus?: Record<string, number>;
   /** Pilots profile: which parts Copy isometrics may carry for this account. */
   copyParts?: import('./permissions.ts').CopyParts;
   /** Pilots profile, limited account with several main projects: the main-project choice (each main project read with its own profile). */

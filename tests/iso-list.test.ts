@@ -14,7 +14,8 @@ import { RESOURCES } from '../shared/resources.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { canAction } from '../shared/permissions.ts';
-import { NO_ISO_FILTERS, flagRank, flagText, isoFilterCount, isoFlags, isoKpis, isoListContext, matchesIsoFilters, type IsoListFilters, type IsoListSource } from '../shared/iso-list.ts';
+import { ISO_EXPORT_COLUMNS, ISO_FILTER_CHOICES, ISO_LIST_COLUMNS, ISO_LIST_PAGE_SIZES, ISO_LIST_TITLE, NO_ISO_FILTERS, ROW_STATE_FLAGS, flagRank, flagText, isoFilterCount, isoFlags, isoKpis, isoListContext, isoRowState, kpiFigure, matchesIsoFilters, type IsoListFilters, type IsoListSource } from '../shared/iso-list.ts';
+import { priorityShort } from '../shared/priority.ts';
 import type { Row, User } from '../shared/types.ts';
 
 const actor = { id: 'test-actor', name: 'Test operator' };
@@ -52,19 +53,117 @@ test('Pfb / Fld have four states: tick when the phase is completed, orange minus
   assert.deepEqual(flags(row('ready', { fieldCompletedAt: '2026-10-11T08:00:00.000Z' }), hidden), [null, true]);
   assert.deepEqual([flagText('ready'), flagRank(false) < flagRank('ready') && flagRank('ready') < flagRank(true)], ['Ready', true]);
   // The KPI cards count only the ticks.
-  assert.deepEqual(isoKpis(['ready', 'open'].map(id => isoFlags(row(id), released)), 2).filter(card => card.key === 'prefab' || card.key === 'field').map(card => card.count), [1, 1]);
+  assert.deepEqual(isoKpis(['ready', 'open'].map(id => isoFlags(row(id), released))).filter(card => card.key === 'prefab' || card.key === 'field').map(card => card.count), [1, 1]);
 });
 
-test('M, W, Doc., NoBo and PWHT read the isometric; E exists only where calculations are delivered', () => {
-  const iso = row('i', { noBo: true, pwht: false, prefab_materials: true, prefab_est: true, prefab_welds: false, prefab_doc: true, field_doc: false });
-  const flags = isoFlags(iso, context({}));
-  assert.deepEqual([flags.noBo, flags.pwht, flags.m, flags.e, flags.w, flags.doc], [true, false, true, true, false, false]);
-  assert.equal(isoFlags(row('i', { prefab_doc: true, field_doc: true }), context({})).doc, true);
-  assert.equal(isoFlags(iso, context({ planning: false })).e, null, 'no calculation feature: dash (the column is not shown)');
-  // A field that is not delivered is a dash, not a cross.
-  assert.deepEqual([isoFlags(row('bare'), context({})).m, isoFlags(row('bare'), context({})).doc, isoFlags(row('bare'), context({})).noBo], [null, null, null]);
+test('W, M, E and Doc. follow the data, not the Set-phase boxes; NoBo and PWHT read the isometric', () => {
+  // Every phase box ticked but no weld, pick list, material line, calculation or drawing: crosses (the reference ticks W on
+  // all seven sample isometrics although their eight Set-phase boxes are unticked).
+  const boxes = { noBo: true, pwht: false, prefab_materials: true, prefab_est: true, prefab_welds: true, prefab_doc: true, field_doc: true };
+  const empty = context({ welds: [], picklists: [], requirements: [], calculations: [], attachments: [], revisions: [] });
+  const ticked = isoFlags(row('i', boxes), empty);
+  assert.deepEqual([ticked.noBo, ticked.pwht, ticked.m, ticked.e, ticked.w, ticked.doc], [true, false, false, false, false, false]);
+  // One weld and no phase flag: W ticks.
+  assert.equal(isoFlags(row('i'), context({ welds: [weld('w1', 'i')] })).w, true);
+  assert.equal(isoFlags(row('i'), context({ welds: [weld('w1', 'i', { _archived: true })] })).w, false, 'an archived weld does not count');
+  // M: material lines but no pick list → cross; a pick list → tick.
+  const lines = [row('l1', { isoId: 'i', quantity: 9 })], picks = [row('p1', { isoId: 'j', quantity: 1 })];
+  assert.equal(isoFlags(row('i'), context({ requirements: lines, picklists: [] })).m, false);
+  assert.equal(isoFlags(row('j'), context({ requirements: lines, picklists: picks })).m, true);
+  assert.equal(isoFlags(row('j'), context({ requirements: lines, picklists: [{ ...picks[0], _archived: true }] })).m, false, 'an archived pick list does not count');
+  // With the project site's "Material Management Display Setting" ticked, material lines light M up instead.
+  const sites = [row('s-on', { materialManagementDisplay: true }), row('s-off', { materialManagementDisplay: false }), row('s-old', { materialDisplay: 'Materials added to isometrics' })];
+  const projects = [row('p-on', { siteId: 's-on' }), row('p-off', { siteId: 's-off' }), row('p-old', { siteId: 's-old' })];
+  const withSites = context({ requirements: lines, picklists: picks, projects, sites });
+  assert.equal(isoFlags(row('i', { projectId: 'p-on' }), withSites).m, true, 'ticked: a material line is enough');
+  assert.equal(isoFlags(row('j', { projectId: 'p-on' }), withSites).m, false, 'ticked: a pick list without a material line is not');
+  assert.equal(isoFlags(row('i', { projectId: 'p-off' }), withSites).m, false);
+  assert.equal(isoFlags(row('i', { projectId: 'p-old' }), withSites).m, false, 'a value of the earlier select reads as unticked');
+  // MTO Started and Materials Linked do not depend on the setting.
+  assert.deepEqual([isoFlags(row('i', { projectId: 'p-on' }), withSites).mtoStarted, isoFlags(row('i', { projectId: 'p-on' }), withSites).materialsLinked], [false, true]);
+  // E: a calculation line; a dash without the calculation feature.
+  assert.equal(isoFlags(row('i'), context({ calculations: [row('c1', { isoId: 'i' })] })).e, true);
+  assert.equal(isoFlags(row('i'), context({ calculations: [row('c1', { isoId: 'i' })], planning: false })).e, null, 'no calculation feature: dash (the column is not shown)');
+  // Doc.: a file of the current ISO drawing (own upload or the file of that ISO revision); an older revision's file does not count.
+  const revisions = [row('rev-1', { isoId: 'i', type: 'ISO', revNo: '1', _createdAt: '2026-10-01T00:00:00.000Z' }), row('rev-2', { isoId: 'i', type: 'ISO', revNo: '2', _createdAt: '2026-10-02T00:00:00.000Z' })];
+  const doc = (attachments: Row[]) => isoFlags(row('i', { revNo: '2' }), context({ attachments, revisions })).doc;
+  assert.equal(doc([row('f1', { entityType: 'revisions', entityId: 'rev-2', name: '20240101.0001.2.pdf' })]), true);
+  assert.equal(doc([row('f1', { entityType: 'revisions', entityId: 'rev-1' })]), false, 'only the current revision');
+  assert.equal(doc([row('f2', { entityType: 'isometrics', entityId: 'i', documentType: 'ISO revision 2' })]), true);
+  assert.equal(doc([row('f2', { entityType: 'isometrics', entityId: 'i', documentType: 'ISO revision 2', _archived: true })]), false);
+  assert.equal(doc([row('f3', { entityType: 'isometrics', entityId: 'i', documentType: 'ITP revision 2' })]), false, 'an ITP file is not the drawing');
+  assert.equal(doc([]), false);
+  // Collections that cannot be read give a dash, not a cross; NoBo not delivered is a dash too.
+  const bare = isoFlags(row('bare'), context({}));
+  assert.deepEqual([bare.noBo, bare.m, bare.e, bare.w, bare.doc], [null, null, null, null, null]);
   assert.deepEqual([flagText(true), flagText(false), flagText(null)], ['Yes', 'No', 'n/a']);
   assert.ok(flagRank(null) < flagRank(false) && flagRank(false) < flagRank(true));
+});
+
+/**
+ * The seven isometrics of the reference sample (weld__welding__isometrics-list.txt:436-442, mto__projects__isometrics-list.txt:43)
+ * with what decides each flag: every one has a weld (W), only 00022 a pick list (M), only 0001 a calculation line (E),
+ * 0001 and WF-73031 a drawing file (Doc.), 0001 (9 lines), 0003 (1), 00022 (2) and 00032 (3) material lines, 0003 both phases
+ * completed and 0001 Field completed, only 0001 PWHT, no NoBo.
+ */
+function referenceSample() {
+  const ids = ['0001', 'WF-73031', '0007', '00022', '00032', '0005', '0003'];
+  const completed = '2026-11-01T08:00:00.000Z';
+  const isos = ids.map(id => row(id, { isoNo: id, noBo: false, pwht: id === '0001', revNo: '2', ...(id === '0003' ? { prefabCompletedAt: completed, fieldCompletedAt: completed } : id === '0001' ? { fieldCompletedAt: completed } : {}) }));
+  // Pfb: 0001, 0007, 00032 have welded shop welds (orange minus); WF and 0005 a shop weld without welder (cross); 00022 field welds only (empty).
+  const welds = ids.flatMap(id => id === '00022' ? [weld(`${id}-f`, id, { typeId: 'field', welder1Id: 'w' })] : [weld(`${id}-s`, id, ['WF-73031', '0005'].includes(id) ? {} : { welder1Id: 'w' }), weld(`${id}-f`, id, { typeId: 'field', welder1Id: 'w' })]);
+  const lines = [...Array(9)].map((_, i) => row(`m-0001-${i}`, { isoId: '0001' })).concat([row('m-0003', { isoId: '0003' }), row('m-00022-a', { isoId: '00022' }), row('m-00022-b', { isoId: '00022' }), ...[1, 2, 3].map(i => row(`m-00032-${i}`, { isoId: '00032' }))]);
+  const revisions = ids.map(id => row(`rev-${id}`, { isoId: id, type: 'ISO', revNo: '2' }));
+  const attachments = ['0001', 'WF-73031'].map(id => row(`file-${id}`, { entityType: 'revisions', entityId: `rev-${id}`, name: `${id}.pdf` }));
+  const ctx = context({ welds, releases: [], results: [], picklists: [row('R00001', { isoId: '00022', reportNo: 'R00001' })], requirements: lines, calculations: [row('calc-1', { isoId: '0001' })], attachments, revisions });
+  return { ids, isos, flags: isos.map(iso => isoFlags(iso, ctx)) };
+}
+
+test('the reference sample: W ticks on all seven, M only on 00022, E only on 0001, Doc. on 0001 and WF-73031', () => {
+  const { ids, flags } = referenceSample();
+  const column = (key: 'm' | 'e' | 'w' | 'doc' | 'pfb' | 'fld') => Object.fromEntries(ids.map((id, i) => [id, flags[i][key]]));
+  assert.deepEqual(column('w'), Object.fromEntries(ids.map(id => [id, true])));
+  assert.deepEqual(column('m'), { '0001': false, 'WF-73031': false, '0007': false, '00022': true, '00032': false, '0005': false, '0003': false });
+  assert.deepEqual(column('e'), { '0001': true, 'WF-73031': false, '0007': false, '00022': false, '00032': false, '0005': false, '0003': false });
+  assert.deepEqual(column('doc'), { '0001': true, 'WF-73031': true, '0007': false, '00022': false, '00032': false, '0005': false, '0003': false });
+  assert.deepEqual(column('pfb'), { '0001': 'ready', 'WF-73031': false, '0007': 'ready', '00022': null, '00032': 'ready', '0005': false, '0003': true });
+  assert.deepEqual(column('fld'), { '0001': true, 'WF-73031': 'ready', '0007': 'ready', '00022': 'ready', '00032': 'ready', '0005': 'ready', '0003': true });
+});
+
+test('row colour: complete when every shown mark is a tick, critical with four or more crosses (reference: six critical rows, 0001 plain)', () => {
+  const { ids, flags } = referenceSample();
+  // Crosses over NoBo, PWHT, M, E, W, Pfb, Fld, Doc., counted by hand from the reference rows: 0001 2 (NoBo, M), WF 5, 0007 5, 00022 4, 00032 5, 0005 6, 0003 5.
+  assert.deepEqual(flags.map(f => ROW_STATE_FLAGS.filter(key => f[key] === false).length), [2, 5, 5, 4, 5, 6, 5]);
+  assert.deepEqual(Object.fromEntries(ids.map((id, i) => [id, isoRowState(flags[i])])), { '0001': '', 'WF-73031': 'critical', '0007': 'critical', '00022': 'critical', '00032': 'critical', '0005': 'critical', '0003': 'critical' });
+  const all = (flag: boolean | null | 'ready') => ({ noBo: flag, pwht: flag, m: flag, e: flag, w: flag, pfb: flag, fld: flag, doc: flag });
+  assert.equal(isoRowState({ ...all(true), e: null }), 'complete', 'a dash does not count');
+  assert.equal(isoRowState({ ...all(true), pfb: 'ready' }), '', 'the orange minus is no tick');
+  assert.equal(isoRowState({ ...all(true), noBo: false, pwht: false, m: false }), '', 'three crosses are not critical');
+  assert.equal(isoRowState({ ...all(true), noBo: false, pwht: false, m: false, e: false }), 'critical');
+  assert.equal(isoRowState(all(null)), '', 'no mark at all');
+});
+
+test('KPI cards per pilot on the reference sample: MTO Started 1 / 7, Materials Linked 4 / 7, Prefab 1 / 7, Field 2 / 7', () => {
+  const { flags } = referenceSample();
+  const mto = isoKpis(flags, 'mto');
+  assert.deepEqual(mto.map(card => card.key), ['total', 'mtoStarted', 'materialsLinked', 'documentation', 'prefab', 'field']);
+  assert.deepEqual(mto.map(card => card.label), ['Total Isometrics', 'MTO Started', 'Materials Linked', 'Documentation', 'Prefab Complete', 'Field Complete']);
+  // Shares by hand: 1 / 7 = 14.3 %, 4 / 7 = 57.1 %, 2 / 7 = 28.6 %. Documentation counts both documentation phase flags (none set here).
+  assert.deepEqual(mto.map(card => [card.count, card.total, card.percent]), [[7, 7, 100], [1, 7, 14.3], [4, 7, 57.1], [0, 7, 0], [1, 7, 14.3], [2, 7, 28.6]]);
+  assert.deepEqual(mto.map(kpiFigure), ['7', '14.3%', '57.1%', '0%', '14.3%', '28.6%'], 'Total Isometrics is the plain number');
+  const weld = isoKpis(flags);
+  assert.deepEqual(weld.map(card => card.label), ['Total Isometrics', 'NDT Approved', 'PWHT Approved', 'Prefab Complete', 'Field Complete', 'Documentation']);
+  assert.deepEqual(weld.map(card => card.count), [7, 0, 0, 1, 2, 0]);
+});
+
+test('list wording, page sizes, export columns and the Filter dialog follow the reference', () => {
+  assert.equal(ISO_LIST_TITLE, 'Isometrics list');
+  assert.deepEqual(ISO_LIST_PAGE_SIZES, { sizes: [10, 20, 50, 100, 500], initial: 20 });
+  assert.deepEqual(ISO_EXPORT_COLUMNS.map(column => column.label), ['Project', 'ISO No', 'IRN', 'ITP No', 'ITP No 2', 'P.Class', 'Prio.']);
+  assert.deepEqual(ISO_LIST_COLUMNS.map(column => column.label), ['Project', 'ISO No', 'IRN', 'ITP No', 'ITP No 2', 'P.Class', 'NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.', 'Prio.']);
+  assert.deepEqual(ISO_LIST_COLUMNS.filter(column => ['m', 'e', 'w'].includes(column.flag || '')).map(column => column.title), ['MTOPilot: started (pick list issued)', 'ESTPilot: calculation present', 'WeldPilot: welds present']);
+  assert.deepEqual(ISO_FILTER_CHOICES.map(choice => choice.label), ['NDT', 'PWHT', 'MTOPilot ready', 'ESTPilot ready', 'WeldPilot ready']);
+  assert.deepEqual(['Prio 1', 'Prio 3', 'Prio 5', 'Critical', 'Normal', '', 'No priority', undefined].map(priorityShort), ['P1', 'P3', 'P5', 'P1', 'P3', '-', '-', '-']);
 });
 
 test('NDT and PWHT approved need a requirement and an Accepted latest result for every requiring weld', () => {
@@ -93,23 +192,26 @@ test('NDT and PWHT approved need a requirement and an Accepted latest result for
   assert.equal(isoFlags(row('ok'), context({ welds, results: null })).ndtApproved, false, 'unreadable results cannot approve');
 });
 
-test('KPI cards give the share and n / total of the listed isometrics, "Total" against the whole scope, and are zero-safe', () => {
+test('KPI cards give the share and n / total of the listed isometrics, "Total Isometrics" as their number, and are zero-safe', () => {
   const welds = [weld('a', 'one', { ndoReq: true }), weld('b', 'two', { ndoReq: true })];
   const ctx = context({ welds, results: [result('a', 'Accepted', '2026-10-01')], releases: [row('r', { isoId: 'one', type: 'Prefab' })] });
   const listed = ['one', 'two', 'three'].map(id => isoFlags(row(id, { prefab_doc: id === 'one', field_doc: id === 'one' }), ctx));
-  const cards = isoKpis(listed, 12);
-  assert.deepEqual(cards.map(card => card.label), ['Total isometrics', 'NDT approved', 'PWHT approved', 'Prefab complete', 'Field complete', 'Documentation']);
-  assert.deepEqual(cards.map(card => [card.count, card.total, card.percent]), [[3, 12, 25], [1, 3, 33.3], [0, 3, 0], [1, 3, 33.3], [0, 3, 0], [1, 3, 33.3]]);
-  assert.deepEqual(isoKpis([], 0).map(card => [card.count, card.total, card.percent]), Array(6).fill([0, 0, 0]));
+  const cards = isoKpis(listed);
+  assert.deepEqual(cards.map(card => card.label), ['Total Isometrics', 'NDT Approved', 'PWHT Approved', 'Prefab Complete', 'Field Complete', 'Documentation']);
+  assert.deepEqual(cards.map(card => [card.count, card.total, card.percent]), [[3, 3, 100], [1, 3, 33.3], [0, 3, 0], [1, 3, 33.3], [0, 3, 0], [1, 3, 33.3]]);
+  assert.equal(kpiFigure(cards[0]), '3'); assert.equal(kpiFigure(cards[1]), '33.3%');
+  assert.deepEqual(isoKpis([]).map(card => [card.count, card.total, card.percent]), Array(6).fill([0, 0, 0]));
+  assert.deepEqual(isoKpis([], 'mto').map(card => [card.count, card.total, card.percent]), Array(6).fill([0, 0, 0]));
 });
 
 test('filters combine: column text, NDT, PWHT and the ready flags narrow the list together and the KPIs follow', () => {
-  const welds = [weld('a', 'i1', { ndoReq: true }), weld('b', 'i2')];
-  const ctx = context({ welds });
+  // M from pick lists (i1, i2), W from welds (i2, i3), E from a calculation line (i3); i1's only weld is archived.
+  const welds = [weld('a', 'i1', { ndoReq: true, _archived: true }), weld('a2', 'i3', { ndoReq: true }), weld('b', 'i2')];
+  const ctx = context({ welds, picklists: [row('p1', { isoId: 'i1' }), row('p2', { isoId: 'i2' })], calculations: [row('c', { isoId: 'i3' })] });
   const isos = [
-    row('i1', { isoNo: 'STX-CW-001', projectId: 'p1', pwht: true, prefab_materials: true, prefab_welds: false, prefab_est: false }),
-    row('i2', { isoNo: 'STX-CW-002', projectId: 'p1', pwht: false, prefab_materials: true, prefab_welds: true, prefab_est: false }),
-    row('i3', { isoNo: 'STX-ST-003', projectId: 'p2', pwht: true, prefab_materials: false, prefab_welds: true, prefab_est: true }),
+    row('i1', { isoNo: 'STX-CW-001', projectId: 'p1', pwht: true }),
+    row('i2', { isoNo: 'STX-CW-002', projectId: 'p1', pwht: false }),
+    row('i3', { isoNo: 'STX-ST-003', projectId: 'p2', pwht: true }),
   ];
   const shown = (iso: Row) => (column: string) => String(column === 'projectId' ? (iso.projectId === 'p1' ? 'STX-2401' : 'STX-2402') : iso[column] ?? '');
   const list = (filters: Partial<IsoListFilters>) => isos.filter(iso => matchesIsoFilters(isoFlags(iso, ctx), shown(iso), { ...NO_ISO_FILTERS, ...filters })).map(iso => iso.id);
@@ -117,26 +219,29 @@ test('filters combine: column text, NDT, PWHT and the ready flags narrow the lis
   assert.deepEqual(list({ text: { isoNo: 'cw' } }), ['i1', 'i2'], 'case-insensitive text');
   assert.deepEqual(list({ text: { projectId: '2402' } }), ['i3']);
   assert.deepEqual(list({ pwht: 'yes' }), ['i1', 'i3']); assert.deepEqual(list({ pwht: 'no' }), ['i2']);
-  assert.deepEqual(list({ ndt: 'yes' }), ['i1']); assert.deepEqual(list({ ndt: 'no' }), ['i2', 'i3']);
+  assert.deepEqual(list({ ndt: 'yes' }), ['i3']); assert.deepEqual(list({ ndt: 'no' }), ['i1', 'i2'], 'an archived weld requires nothing');
   assert.deepEqual(list({ mto: 'yes', weld: 'yes' }), ['i2']);
   assert.deepEqual(list({ mto: 'yes', weld: 'yes', text: { isoNo: 'st-0' } }), [], 'filters are ANDed');
   assert.deepEqual(list({ est: 'yes' }), ['i3']);
   assert.deepEqual(list({ text: { isoNo: '   ' } }), ['i1', 'i2', 'i3'], 'blank text is no filter');
   assert.equal(isoFilterCount({ ...NO_ISO_FILTERS, pwht: 'yes', text: { isoNo: 'x', irn: ' ' } }), 2);
-  const kpis = isoKpis(isos.filter(iso => matchesIsoFilters(isoFlags(iso, ctx), shown(iso), { ...NO_ISO_FILTERS, pwht: 'yes' })).map(iso => isoFlags(iso, ctx)), isos.length);
-  assert.deepEqual([kpis[0].count, kpis[0].total], [2, 3]);
+  const kpis = isoKpis(isos.filter(iso => matchesIsoFilters(isoFlags(iso, ctx), shown(iso), { ...NO_ISO_FILTERS, pwht: 'yes' })).map(iso => isoFlags(iso, ctx)));
+  assert.equal(kpiFigure(kpis[0]), '2', 'the cards follow the filters');
 });
 
 test('the sample data shows a tick, a cross and a dash in the flag columns and non-zero key figures', t => {
   const s = fixture(t);
-  const ctx = isoListContext({ welds: s.list('welds'), weldTypes: s.list('weld_types'), results: s.list('inspection_results'), releases: s.list('releases'), planning: true });
+  const ctx = isoListContext({ welds: s.list('welds'), weldTypes: s.list('weld_types'), results: s.list('inspection_results'), releases: s.list('releases'), planning: true, picklists: s.list('picklists'), requirements: s.list('iso_materials'), calculations: s.list('calculation_lines'), attachments: s.list('attachments'), revisions: s.list('revisions'), projects: s.list('projects'), sites: s.list('sites') });
   const flags = s.list('isometrics').map(iso => isoFlags(iso, ctx));
-  for (const key of ['noBo', 'pwht', 'm', 'e', 'w', 'pfb', 'fld', 'doc'] as const) assert.ok(flags.some(f => f[key] === true), `${key} has a tick`);
+  // The sample has no calculation line and no drawing file: E and Doc. are crosses throughout (their rules are covered above).
+  for (const key of ['noBo', 'pwht', 'm', 'w', 'pfb', 'fld'] as const) assert.ok(flags.some(f => f[key] === true), `${key} has a tick`);
   // Pfb shows no cross: every sample shop weld has its welder (the cross is covered by the rule test above).
-  for (const key of ['noBo', 'pwht', 'm', 'e', 'w', 'fld', 'doc'] as const) assert.ok(flags.some(f => f[key] === false), `${key} has a cross`);
+  // W shows no cross: every sample isometric has welds.
+  for (const key of ['noBo', 'pwht', 'm', 'e', 'fld', 'doc'] as const) assert.ok(flags.some(f => f[key] === false), `${key} has a cross`);
   assert.ok(flags.some(f => f.pfb === null), 'Pfb has a dash');
   assert.ok(flags.some(f => f.pfb === 'ready') && flags.some(f => f.fld === 'ready'), 'Pfb and Fld have the orange minus');
-  for (const card of isoKpis(flags, flags.length)) assert.ok(card.count > 0 && card.percent > 0, card.label);
+  for (const card of isoKpis(flags).filter(card => card.key !== 'documentation')) assert.ok(card.count > 0 && card.percent > 0, card.label);
+  for (const card of isoKpis(flags, 'mto').filter(card => card.key !== 'documentation')) assert.ok(card.count > 0 && card.percent > 0, `MTO ${card.label}`);
 });
 
 // ----- Set phase -------------------------------------------------------------------------------------------------------
@@ -341,17 +446,42 @@ test('hosted API: copy and phases work for a writer, a missing right is a 403 an
 });
 const copyOfProject = (s: Store, isoId: string) => s.get('isometrics', isoId).projectId === 'project-cooling' && s.get('isometrics', isoId).isoNo === 'STX-SK-009';
 
-test('hosted export gives the flag columns as Yes / No / n/a, the same in both pilots (from the server summary)', async t => {
+test('hosted export gives the reference columns only (Project, ISO No, IRN, ITP No, ITP No 2, P.Class, Prio.), the same in both pilots', async t => {
   const f = await hostedFixture(t); await f.setup();
-  const table = async (ids: string) => parse(await (await f.request(`/api/export/isometrics?format=csv&archived=true&ids=${ids}`)).text(), { columns: true, skip_empty_lines: true }) as Record<string, string>[];
-  const rows = await table('iso-3,iso-10,iso-1,iso-4');
-  const by = (isoNo: string) => rows.find(r => r['ISO number'] === isoNo)!;
-  for (const column of ['NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.']) assert.ok(column in rows[0], column);
-  assert.deepEqual(['NoBo', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'].map(c => by('STX-CW-003')[c]), ['Yes', 'No', 'No', 'No', 'Yes', 'Yes', 'No']);
-  assert.deepEqual([by('STX-SK-010').Pfb, by('STX-SK-010').Fld, by('STX-CW-001').Pfb, by('STX-ST-004').Pfb], ['n/a', 'No', 'Ready', 'Yes'], 'empty, cross, orange minus ("Ready") and a Prefab complete without release document');
+  const table = async (ids: string) => { const text = await (await f.request(`/api/export/isometrics?format=csv&archived=true&ids=${ids}`)).text(); return { header: text.split(/\r?\n/)[0], rows: parse(text, { columns: true, skip_empty_lines: true }) as Record<string, string>[] }; };
+  const { header, rows } = await table('iso-3,iso-10,iso-1');
+  assert.deepEqual(header.split(',').map(cell => cell.replace(/^"|"$/g, '')), ['Project', 'ISO No', 'IRN', 'ITP No', 'ITP No 2', 'P.Class', 'Prio.'], 'no flag columns');
+  const by = (isoNo: string) => rows.find(r => r['ISO No'] === isoNo)!;
+  assert.deepEqual(by('STX-CW-003'), { Project: 'STX-2401', 'ISO No': 'STX-CW-003', IRN: 'IRN-103', 'ITP No': 'ITP-01', 'ITP No 2': by('STX-CW-003')['ITP No 2'], 'P.Class': 'CS150', 'Prio.': 'P1' });
+  assert.deepEqual([by('STX-CW-001')['Prio.'], by('STX-SK-010')['Prio.']], ['P3', 'P3'], 'Prio. as the list writes it');
   await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
   assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Pilot');
   f.usePilot('mto');
-  const limited = (await table('iso-3')).at(0)!;
-  assert.deepEqual([limited.Pfb, limited.Fld, limited.M], ['Yes', 'Yes', 'No'], 'the MTO-only account sees the releases\' effect, not the releases');
+  assert.deepEqual((await table('iso-3')).rows, [by('STX-CW-003')], 'MTO Pilot exports the same row');
+});
+
+test('hosted Projects list: MTO Pilot carries the same Status (%) per project as Weld Pilot, from the server', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  type Body = { rows: Record<string, Row[]>; projectStatus?: Record<string, number> };
+  const weld = await (await f.request('/api/bootstrap')).json() as Body;
+  await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
+  f.usePilot('mto');
+  const mto = await (await f.request('/api/bootstrap')).json() as Body;
+  assert.equal(mto.rows.welds, undefined, 'MTO Pilot reads no welds');
+  assert.ok(mto.rows.projects?.length, 'but sees the projects');
+  // By hand: weld completion in inches per project (the WDI formula of Weld Pilot), from every weld of its isometrics.
+  const isoProject = new Map(f.store.list('isometrics').map(iso => [iso.id, iso.projectId]));
+  const inches = new Map(f.store.list('diameters').map(row => [row.id, Number(row.sizeinch)]));
+  for (const project of mto.rows.projects) {
+    let total = 0, done = 0;
+    for (const w of f.store.list('welds').filter(w => isoProject.get(String(w.isoId)) === project.id)) {
+      const size = inches.get(String(w.diameterId)); if (!size || !(size > 0)) continue;
+      total += size; if ([1, 2, 3, 4].some(side => String(w[`welder${side}Id`] || '').trim())) done += size;
+    }
+    assert.equal(mto.projectStatus?.[project.id], total ? Math.round(done / total * 100) : 0, String(project.internnumber));
+    assert.equal(mto.projectStatus?.[project.id], weld.projectStatus?.[project.id], `${String(project.internnumber)}: the same in both pilots`);
+  }
+  assert.ok(Object.values(mto.projectStatus || {}).some(value => value > 0), 'the sample has a project with progress');
+  // Only numbers leave.
+  assert.ok(Object.values(mto.projectStatus || {}).every(value => typeof value === 'number'));
 });

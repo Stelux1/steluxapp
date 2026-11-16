@@ -2,7 +2,7 @@ import type { Row } from './types.ts';
 import { hydrotestState } from './hydrotest.ts';
 import { hasPunchProgress, punchBlocking, punchProgress } from './punch.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
-import { ndtAccepted, nextRepairNumber, notAccepted, repairChain } from './inspections.ts';
+import { ndtAccepted, nextRepairNumber, notAccepted, repairChain, repairParent } from './inspections.ts';
 import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 
 /**
@@ -51,21 +51,37 @@ export const ISO_QUANTITIES: { phase: QuantityPhase; key: QuantityKey; field: st
   { phase: 'field', key: 'supports', field: 'fieldSupportsPcs', label: 'Supports', unit: 'pcs' },
   { phase: 'field', key: 'appendages', field: 'fieldAppendagesPcs', label: 'Appendages', unit: 'pcs' },
 ];
-/** Budget per phase and component; a missing or non-positive value means there is no budget. */
-export type ProgressBudgets = Partial<Record<QuantityPhase, Partial<Record<QuantityKey, number>>>>;
+export type QuantityBudget = Partial<Record<QuantityKey, number>>;
+/**
+ * Budget per phase and component; a missing or non-positive value means there is no budget. Shop: the Shop-typed MTO.
+ * Field: the whole ISO (Shop- and Field-typed MTO), because shop prefab is installed again in the field
+ * (weld__general__project-sites.txt:157-163). `issued`: the picked quantity, the ceiling of what counts (Shop: of the
+ * Shop-typed lines; Field: of the whole ISO); absent when pick lists were not read, and then nothing caps the entry.
+ */
+export interface ProgressBudgets { shop?: QuantityBudget; field?: QuantityBudget; issued?: { shop?: QuantityBudget; field?: QuantityBudget } }
 
 /**
- * The MTO budget of an isometric: its quantity of materials whose component code classifies them as pipe,
- * support or appendage, per Shop / Field operation phase. The classification is the optional "Progress class"
- * of the material (component codes are not guessed); see `isoBudgets()` in shared/mto-materials.ts. Without
- * `rows` there is no budget and the quantity drivers stay out of scope.
+ * The MTO budget of an isometric: its quantity of materials whose component code (CC 1 = pipe, 2 = supports,
+ * 3 = appendages) classifies them, per Shop / Field operation phase, with the picked quantity of each; see
+ * `isoBudgets()` in shared/mto-materials.ts. Without `rows` there is no budget and the quantity drivers stay out of scope.
  */
 export function isoBudgets(iso: Row, rows?: Record<string, Row[]>): ProgressBudgets | undefined { return mtoBudgets(iso, rows); }
 
-const budgetOf = (budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey) => {
-  const value = Number(budgets?.[phase]?.[key]);
-  return Number.isFinite(value) && value > 0 ? value : 0;
-};
+const positive = (value: unknown) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? number : 0; };
+const budgetOf = (budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey) => positive(budgets?.[phase]?.[key]);
+/** The picked quantity that caps an entry; Infinity while pick lists were not read. */
+const issuedOf = (budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey) => budgets?.issued ? positive(budgets.issued[phase]?.[key]) : Infinity;
+/**
+ * Progress 0..1 of a quantity driver: min(entered, picked) ÷ budget, capped at 1; null without a budget. Shop: the
+ * entered shop quantity over the Shop-typed MTO, counted up to the Shop-typed picked quantity. Field: the installed
+ * quantity over the whole ISO, counted up to the picked quantity of the whole ISO.
+ */
+export function quantityProgress(entered: unknown, budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey): number | null {
+  const budget = budgetOf(budgets, phase, key);
+  if (!budget) return null;
+  const counted = Math.min(Math.max(0, quantityOf(entered) ?? 0), issuedOf(budgets, phase, key));
+  return Math.min(1, counted / budget);
+}
 const quantityOf = (value: unknown) => {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
@@ -76,7 +92,9 @@ const quantityOf = (value: unknown) => {
 
 /** ISO numbers: letters, digits, `.`, `_` and `-`. */
 export const ISO_NUMBER_PATTERN = /^[A-Za-z0-9._-]+$/;
-export const ISO_NUMBER_MESSAGE = 'Use only letters, digits, ".", "_" and "-" in the ISO number.';
+/** The field message and the field's help text, as in the reference (weld__iso__0001__edit-isometric.txt:17-18). */
+export const ISO_NUMBER_MESSAGE = 'Special characters are not allowed in the ISO number';
+export const ISO_NUMBER_HINT = 'Special characters are not allowed in the ISO number. Only letters, numbers, dots, - and _ are allowed.';
 export const isoNumberError = (value: unknown) => { const text = typeof value === 'string' ? value.trim() : ''; return !text || ISO_NUMBER_PATTERN.test(text) ? '' : ISO_NUMBER_MESSAGE; };
 
 /**
@@ -92,11 +110,15 @@ export function isoInputErrors(input: Record<string, unknown>, existing?: Row, b
     const value = quantityOf(input[quantity.field]);
     if (value === null || value <= 0 || (existing && quantityOf(existing[quantity.field]) === value)) continue;
     const budget = budgetOf(budgets, quantity.phase, quantity.key);
-    if (!budget) errors[quantity.field] = `${quantity.label} has no MTO budget yet, so progress cannot be entered. Add materials with a matching component code in MTO first.`;
+    if (!budget) errors[quantity.field] = noBudgetText(quantity.phase, quantity.key);
     else if (value > budget) errors[quantity.field] = `${quantity.label} (${value} ${quantity.unit}) is above the MTO budget of ${budget} ${quantity.unit}.`;
   }
   return errors;
 }
+/** The component code (CC) that feeds each quantity driver: 1 = pipe, 2 = supports, 3 = appendages. */
+export const DRIVER_COMPONENT_CODE: Record<QuantityKey, '1' | '2' | '3'> = { materialPipe: '1', supports: '2', appendages: '3' };
+/** Why a quantity row cannot be entered (reference progress card tooltips, weld__iso__0001__progress-card.txt:11-19). */
+export const noBudgetText = (phase: QuantityPhase, key: QuantityKey) => phase === 'shop' ? 'No Shop-typed material on this ISO.' : `No MTO budget — add materials with this component code in MTOPilot. (CC ${DRIVER_COMPONENT_CODE[key]})`;
 
 // ----- shared row helpers --------------------------------------------------------------------------------------
 
@@ -197,9 +219,22 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
 // ----- quality -------------------------------------------------------------------------------------------------
 
 export interface IsoQuality { accepted: number; rejected: number; /** One decimal; null when nothing was examined. */ percent: number | null; }
-/** Accepted NDT results / (accepted + rejected). Not part of the progress. */
+/**
+ * A repair weld as the reference links one: made by the repair action (`repairOfId`), or added by hand as `<no>R<n>`
+ * with a capital R and an original on the isometric. The reference does not link a lower-case `003r1` (weld__iso__0005:
+ * its NDT and Quality figures count 003r1 as a weld of its own), so neither does this rule.
+ */
+export function isRepairWeld(weld: Row, welds: Row[]): boolean {
+  if (text(weld.repairOfId)) return Boolean(repairParent(weld, welds));
+  return /R\d+$/.test(text(weld.weldNo)) && Boolean(repairParent(weld, welds));
+}
+/**
+ * Accepted NDT / NDT PRE result rows ÷ (accepted + NA) over the isometric's welds that are not repair welds, one decimal.
+ * Not part of the progress. Reference 0003: 001_1 NA → 001_1R1 Accepted, 001_2 NA → 001_2R1 Accepted gives 0 %.
+ */
 export function isoQuality(input: Pick<IsoStatusInput, 'iso' | 'welds' | 'results'>): IsoQuality {
-  const ids = new Set(live(input.welds).filter(weld => weld.isoId === input.iso.id).map(weld => weld.id));
+  const all = live(input.welds);
+  const ids = new Set(all.filter(weld => weld.isoId === input.iso.id && !isRepairWeld(weld, all)).map(weld => weld.id));
   const examined = live(input.results).filter(row => ids.has(String(row.weldId)) && NDT_TYPES.includes(text(row.type)) && ['Accepted', 'Rejected'].includes(text(row.result)));
   const accepted = examined.filter(row => row.result === 'Accepted').length, rejected = examined.length - accepted;
   return { accepted, rejected, percent: examined.length ? percent1(accepted / examined.length) : null };
@@ -220,7 +255,7 @@ export interface DriverProgress {
 }
 export interface PhaseProgress {
   key: PhaseKey; label: string; weight: number;
-  /** One decimal; null while no driver of the phase is in scope. */
+  /** One decimal; 0 while no weighted driver of the phase is in scope; null only while the weights are not configured. */
   percent: number | null;
   drivers: DriverProgress[];
 }
@@ -228,7 +263,7 @@ export interface IsoProgress {
   /** False while the site has no progress weights: no percentages are produced. */
   configured: boolean;
   phases: PhaseProgress[];
-  /** The isometric's percentage, one decimal; null when not configured or nothing is in scope. */
+  /** The isometric's percentage, one decimal; 0 when nothing is in scope; null only when not configured. */
   total: number | null;
 }
 
@@ -242,7 +277,7 @@ export interface IsoProgress {
 export function isoProgress(input: IsoStatusInput): IsoProgress {
   const weights = progressWeights(input.site);
   if (!weights.configured) return { configured: false, phases: PROGRESS_PHASES.map(phase => ({ key: phase.key, label: phase.label, weight: 0, percent: null, drivers: [] })), total: null };
-  const welds = isoWelds(input), inch = ndtMeasurement(input.site) === 'inch-weighted';
+  const welds = isoWelds(input), allWelds = live(input.welds), inch = ndtMeasurement(input.site) === 'inch-weighted';
   const finish = ISO_FINISH_ITEMS.map((item): number | null => { const state = text(input.iso[item.field]) || 'Open'; return state === 'Done' ? 1 : state === 'Open' ? 0 : null; }).filter((value): value is number => value !== null);
   const hydrotest = hydrotestState(input.iso, { test_systems: input.testSystems, hydrotest_requests: input.hydrotestRequests, releases: input.releases, spools: input.spools, hydrotest_results: input.hydrotestResults });
 
@@ -259,11 +294,14 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
       return total > 0 ? done / total : null;
     }
     if (key === 'ndt') {
+      // Repair welds add no units; an original counts as done once the latest weld of its repair chain is Accepted
+      // ("Reject does not count as done. Repair welds add no extra earned units.", weld__general__project-sites.txt:162).
       let total = 0, done = 0;
-      for (const weld of inPhase.filter(weld => weld.ndoReq === true)) {
+      for (const weld of inPhase.filter(weld => weld.ndoReq === true && !isRepairWeld(weld, allWelds))) {
         const size = inch ? inchesOf(weld, input.diameters) : 1;
         total += size;
-        if (resultsOf(input.results, weld.id, ['NDT'])[0]?.result === 'Accepted') done += size;
+        const last = [weld, ...repairChain(weld, allWelds).filter(repair => isRepairWeld(repair, allWelds))].at(-1)!;
+        if (resultsOf(input.results, last.id, ['NDT'])[0]?.result === 'Accepted') done += size;
       }
       return total > 0 ? done / total : null;
     }
@@ -274,9 +312,7 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
       return hasPunchProgress(input.iso) ? punchProgress(input.iso) : null;
     }
     const quantity = ISO_QUANTITIES.find(item => item.phase === phase && item.key === key);
-    const budget = quantity ? budgetOf(input.budgets, phase, quantity.key) : 0;
-    if (!quantity || !budget) return null;
-    return Math.min(1, Math.max(0, (quantityOf(input.iso[quantity.field]) ?? 0) / budget));
+    return quantity ? quantityProgress(input.iso[quantity.field], input.budgets, quantity.phase, quantity.key) : null;
   };
 
   const phases = PROGRESS_PHASES.map(phase => {
@@ -296,9 +332,11 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
     for (const driver of entry.drivers.filter(driver => driver.inScope)) driver.earned = entry.weight / activeWeight * (driver.weight / entry.sum) * driver.progress! * 100;
     total += entry.weight / activeWeight * entry.fraction! * 100;
   }
+  // Once weights are configured every figure is a number: a phase without a weighted driver in scope is 0 %, and so is
+  // the isometric when no phase shares in it (phaseCompletion / den of the reference, weld__iso__0001.txt:2706-2748).
   return {
     configured: true,
-    phases: phases.map(entry => ({ key: entry.phase.key, label: entry.phase.label, weight: entry.weight, percent: entry.fraction === null ? null : percent1(entry.fraction), drivers: entry.drivers })),
-    total: active.length ? round1(total) : null,
+    phases: phases.map(entry => ({ key: entry.phase.key, label: entry.phase.label, weight: entry.weight, percent: entry.fraction === null ? 0 : percent1(entry.fraction), drivers: entry.drivers })),
+    total: active.length ? round1(total) : 0,
   };
 }
