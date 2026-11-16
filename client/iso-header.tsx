@@ -7,6 +7,7 @@ import { Modal, Progress } from './components.tsx';
 import { WorkflowDialog } from './dialogs.tsx';
 import { DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpLinkControl } from './itp-dashboard.tsx';
+import { materialStatus } from '../shared/mto-materials.ts';
 import { ReleaseStatus } from './releases.tsx';
 import { PunchStatus } from './punch.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
@@ -41,7 +42,8 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
   const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot();
   const [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false);
   const site = rows.sites?.find(row => row.id === project?.siteId);
-  const budgets = isoBudgets(iso);
+  // Budgets: the server summary carries them in the hosted profile (Weld Pilot cannot read material lines); elsewhere from the rows.
+  const budgets = useMemo(() => isoSummaries?.[iso.id] ? isoSummaries[iso.id].budgets : isoBudgets(iso, rows), [isoSummaries, iso, rows]);
   // Hosted profile: the server summary (computed from every record, the same in both pilots). Weld-level items are
   // computed here only where this pilot reads welds; elsewhere each group shows its count. Other profiles: computed here.
   const summary = isoSummaries?.[iso.id], weldItems = canRecord('welds');
@@ -109,7 +111,7 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       <PhaseFlags iso={iso}/>
       <ReleaseStatus iso={iso}/>
       <PunchStatus iso={iso} items={rows.punchlists ?? null}/>
-      {pilot?.pilot.key === 'mto' && <div className="iso-material-slot" data-slot="material-status" aria-hidden="true"/>}
+      {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent}/>}
     </Card>
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>
       <div className="modal-body iso-blockers">{status.blockers.groups.map(group => <section key={group.key} aria-label={group.title}>
@@ -121,6 +123,14 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
     </Modal>}
     {revision && <WorkflowDialog actionKey="revision" defaults={{ isoId: iso.id, type: revision }} onClose={() => setRevision('')}/>}
     {history && <Modal title="Revision history" subtitle={show(iso.isoNo)} onClose={() => setHistory(false)} wide><div className="modal-body"><DrawingRevisions isoId={iso.id}/></div><div className="modal-footer"><button className="btn" onClick={() => setHistory(false)}>Close</button></div></Modal>}
+  </div>;
+}
+
+/** Material status % (MTO Pilot): covered ÷ required over the isometric's material lines (shared/mto-materials.ts). */
+function MaterialStatusSlot({ percent }: { percent: number | null }) {
+  return <div className="iso-material-slot" data-slot="material-status">
+    <dl className="iso-facts"><Fact label="Material status">{percent === null ? <span title="The isometric requires no material yet.">—</span> : `${formatNumber(percent)} %`}</Fact></dl>
+    {percent !== null && <Progress value={percent}/>}
   </div>;
 }
 

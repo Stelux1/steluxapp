@@ -8,9 +8,10 @@ import type { Store } from './store.ts';
  *
  * Inside a pilot the other pilot's records are refused. The isometric header and the isometrics list must
  * nevertheless show the same numbers in Weld Pilot and MTO Pilot, so the summaries are computed here from every
- * record the release profile delivers (welds, inspection results, releases, punch items, material requirements),
+ * record the release profile delivers (welds, inspection results, releases, punch items, test systems and hydrotest requests, material requirements with
+ * the orders, stock and pick lists that cover them),
  * whatever the caller's pilot or profile may read. Only aggregates leave this function (see `IsoSummary`):
- * percentages, counts per blocker group and yes / no flags, never a weld, result, welder or material line.
+ * percentages, counts per blocker group, punch counts, budget totals and yes / no flags, never a weld, result, welder or material line.
  *
  * `isometrics` must already be the caller's visible isometrics (release projection, isometric permission and
  * per-pilot project enablement); a summary is produced for exactly those. Cost: one read of each collection
@@ -24,6 +25,7 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),
     releases: load('releases'), punch: load('punchlists'), testSystems: load('test_systems'), hydrotestRequests: load('hydrotest_requests'), requirements: load('iso_materials'),
     materials: load('materials'), customMaterials: load('custom_materials'), operationPhases: load('operation_phases'),
+    orders: load('orders'), orderLines: load('order_lines'), stock: load('stock'), picklists: load('picklists'),
     planning: Boolean(availability?.features.includes('project-planning')),
   });
 }

@@ -1,6 +1,9 @@
 import type { Row } from './types.ts';
 import { PROGRESS_PHASES, type PhaseKey } from './site-settings.ts';
-import { isoBlockers, isoBudgets, isoProgress, isoQuality, type BlockerKey, type IsoProgress } from './iso-status.ts';
+import { isoBlockers, isoBudgets, isoProgress, isoQuality, type BlockerKey, type IsoProgress, type ProgressBudgets } from './iso-status.ts';
+import { materialStatus } from './mto-materials.ts';
+import { punchCounts, type PunchCounts } from './punch.ts';
+import { hydrotestState } from './hydrotest.ts';
 import { isoFlags, isoKpiFacts, isoListContext, type IsoFlags, type IsoKpiFacts } from './iso-list.ts';
 
 /**
@@ -32,6 +35,14 @@ export interface IsoSummary {
   flags: IsoFlags;
   /** What the isometric adds to the KPI cards. */
   kpi: IsoKpiFacts;
+  /** MTO quantity budgets of the progress drivers (pipe m, supports and appendages pcs per Shop / Field); absent without classified lines. */
+  budgets?: ProgressBudgets;
+  /** Material status % (shared/mto-materials.ts `materialStatus`): covered ÷ required, one decimal; null while nothing is required or the material records are not delivered. */
+  materialStatus: { percent: number | null };
+  /** Punch counts of the isometric's own items (shared/punch.ts `punchCounts`); null when punch items are not delivered. */
+  punch: PunchCounts | null;
+  /** Hydrotest state (shared/hydrotest.ts `hydrotestState`). */
+  hydrotest: { inScope: boolean; completed: boolean };
 }
 
 /** Every collection the summary reads. `null`: the collection is not delivered by the release profile. */
@@ -54,6 +65,11 @@ export interface IsoSummarySource {
   materials?: Row[] | null;
   customMaterials?: Row[] | null;
   operationPhases?: Row[] | null;
+  /** Orders, order lines, stock and pick lists: what Material status % covers a requirement line with. */
+  orders?: Row[] | null;
+  orderLines?: Row[] | null;
+  stock?: Row[] | null;
+  picklists?: Row[] | null;
   /** The calculation feature is delivered: the E flag exists. */
   planning: boolean;
 }
@@ -88,14 +104,26 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       budgets: source.requirements ? isoBudgets(iso, { iso_materials: requirements.get(iso.id) || [], materials: source.materials || [], custom_materials: source.customMaterials || [], operation_phases: source.operationPhases || [] }) : undefined,
     };
     const blockers = isoBlockers(input), quality = isoQuality(input), progress = isoProgress(input), flags = isoFlags(iso, context);
+    const material = source.requirements && source.materials ? materialStatus(iso, materialRows(source, iso, requirements.get(iso.id) || [])).percent : null;
+    const hydrotest = hydrotestState(iso, { test_systems: source.testSystems ?? null, hydrotest_requests: source.hydrotestRequests ?? null, releases: source.releases ? releases.get(iso.id) || [] : null });
     output[iso.id] = {
       progress: { configured: progress.configured, phases: progress.phases.map(phase => ({ key: phase.key, percent: phase.percent })), total: progress.total },
       quality: { percent: quality.percent, accepted: quality.accepted, rejected: quality.rejected },
       blockers: { total: blockers.total, groups: blockers.groups.map(group => ({ key: group.key, count: group.count })) },
       flags, kpi: isoKpiFacts(flags),
+      ...(input.budgets ? { budgets: input.budgets } : {}),
+      materialStatus: { percent: material },
+      punch: source.punch ? punchCounts(punch.get(iso.id) || []) : null,
+      hydrotest: { inScope: hydrotest.inScope, completed: hydrotest.completed },
     };
   }
   return output;
+}
+
+/** The rows `materialStatus()` reads for one isometric: its own requirement lines plus the shared order, stock and pick-list rows. */
+function materialRows(source: IsoSummarySource, iso: Row, requirements: Row[]): Record<string, Row[]> {
+  return { isometrics: [iso], iso_materials: requirements, materials: source.materials || [], custom_materials: source.customMaterials || [],
+    orders: source.orders || [], order_lines: source.orderLines || [], stock: source.stock || [], picklists: source.picklists || [] };
 }
 
 /** The progress card's view of a summary (no driver detail: the summary does not carry it). */

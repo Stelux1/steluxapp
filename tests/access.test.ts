@@ -15,6 +15,9 @@ import { availabilityFor, HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '..
 import { areaPilots, canResource, isAdministrator, pilotBoundary, type CopyParts } from '../shared/permissions.ts';
 import { isoBlockers, isoProgress, isoQuality } from '../shared/iso-status.ts';
 import type { IsoSummary } from '../shared/iso-summary.ts';
+import { isoBudgets as mtoIsoBudgets, materialStatus } from '../shared/mto-materials.ts';
+import { punchCounts } from '../shared/punch.ts';
+import { hydrotestState } from '../shared/hydrotest.ts';
 import { allowedPilots } from '../shared/pilots.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { projectResource } from '../shared/release.ts';
@@ -401,7 +404,26 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   for (const text of records) assert.ok(!raw.includes(`"${text}"`), `MTO bootstrap carries ${text}`);
   const payload = JSON.stringify(view.isoSummaries);
   for (const text of [...records, ...f.store.list('welders', true).map(row => String(row.name)), 'H-1042', ...f.store.list('iso_materials', true).map(row => row.id)]) assert.ok(!payload.includes(text), `summary carries ${text}`);
-  for (const [id, item] of Object.entries(view.isoSummaries!)) { assert.deepEqual(Object.keys(item).sort(), ['blockers', 'flags', 'kpi', 'progress', 'quality'], id); assertAggregates(item, id); }
+  for (const [id, item] of Object.entries(view.isoSummaries!)) {
+    // budgets is present only while the isometric has classified material lines; every other key always.
+    assert.deepEqual(Object.keys(item).filter(key => key !== 'budgets').sort(), ['blockers', 'flags', 'hydrotest', 'kpi', 'materialStatus', 'progress', 'punch', 'quality'], id);
+    assertAggregates(item, id);
+  }
+  // Material status %, the MTO budgets, punch counts and the hydrotest state are the shared formulas over every record,
+  // and reach Weld Pilot too although it reads no material line, order, stock or pick list.
+  const all = (key: string) => f.store.list(key);
+  const rowsOf = { isometrics: all('isometrics'), iso_materials: all('iso_materials'), materials: all('materials'), custom_materials: all('custom_materials'), operation_phases: all('operation_phases'), orders: all('orders'), order_lines: all('order_lines'), stock: all('stock'), picklists: all('picklists') };
+  for (const id of inMto) {
+    const iso = f.store.get('isometrics', id);
+    assert.equal(weld.isoSummaries![id].materialStatus.percent, materialStatus(iso, rowsOf).percent, `${id} material status`);
+    assert.deepEqual(weld.isoSummaries![id].budgets, mtoIsoBudgets(iso, rowsOf), `${id} budgets`);
+    assert.deepEqual(weld.isoSummaries![id].punch, punchCounts(all('punchlists').filter(row => row.isoId === id)), `${id} punch`);
+    const hydro = hydrotestState(iso, { test_systems: all('test_systems'), hydrotest_requests: all('hydrotest_requests'), releases: all('releases') });
+    assert.deepEqual(weld.isoSummaries![id].hydrotest, { inScope: hydro.inScope, completed: hydro.completed }, `${id} hydrotest`);
+  }
+  assert.ok(weld.isoSummaries!['iso-1'].budgets, 'the first isometric has pipe, supports and appendage budgets');
+  assert.notEqual(weld.isoSummaries!['iso-1'].materialStatus.percent, null);
+  assert.equal(weld.rows.iso_materials, undefined, 'while Weld Pilot reads no material lines');
   for (const path of ['/records/welds', '/records/inspection_results', '/records/releases', '/history/welds/weld-1', '/reports/lisl', '/export/welds']) assert.equal(await status(await m.request(path, { pilot: 'mto' })), 403, path);
   // The isometrics export gives the same flags in both pilots (no n/a caused by the pilot).
   const FLAG_COLUMNS = ['NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'];

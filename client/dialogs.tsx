@@ -19,7 +19,7 @@ import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeigh
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
+  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.active?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):true}:{})}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
   const groups = [...new Set(editorFields.filter(f=>!f.hidden).map(f => f.section || 'Details'))];
@@ -27,7 +27,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   useEffect(() => { if (error) document.querySelector('.modal-body > .alert.error')?.scrollIntoView({ block: 'nearest' }); }, [error, fields]);
   async function submit(e: FormEvent) {
     e.preventDefault(); setError(''); setFields({});
-    if (resourceKey === 'isometrics') { const problems = isoInputErrors(values, record, isoBudgets(record ?? ({} as Row))); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
+    if (resourceKey === 'isometrics') { const problems = isoInputErrors(values, record, (record && isoSummaries?.[record.id]?.budgets) ?? isoBudgets(record ?? ({} as Row), rows)); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
     if (resourceKey === 'flanges') { const problems = flangeInputErrors(values); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
     if (resourceKey === 'sites') { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
     setBusy(true);
