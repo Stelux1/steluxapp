@@ -9,7 +9,7 @@ export function orderProjectIds(rows:Record<string,Row[]>,orderId:string){const 
 export function requirementExecution(rows:Record<string,Row[]>,filters:{projectId?:string;isoId?:string}={}){
   const active=(key:string)=>(rows[key]||[]).filter(r=>!r._archived);
   const isos=new Map(active('isometrics').map(i=>[i.id,i]));const orders=new Map(active('orders').filter(o=>o.status!=='Cancelled').map(o=>[o.id,o]));
-  const lines=active('order_lines').filter(l=>orders.has(String(l.orderId)));const picks=active('picklists');const stocks=active('stock');
+  const lines=active('order_lines').filter(l=>orders.has(String(l.orderId)));const picks=active('picklists').filter(p=>p.taken!==false);const stocks=active('stock');
   const legacyOrder=new Map<string,number>();for(const l of lines.filter(l=>!l.requirementId)){const project=String(orders.get(String(l.orderId))?.projectId||'');const id=project+'|'+materialIdentity(l);legacyOrder.set(id,round((legacyOrder.get(id)||0)+Number(l.quantity)));}
   const legacyPick=new Map<string,number>();for(const p of picks.filter(p=>!p.requirementId)){const id=String(p.isoId)+'|'+materialIdentity(p);legacyPick.set(id,round((legacyPick.get(id)||0)+Number(p.quantity)));}
   return active('iso_materials').sort((a,b)=>String(a._createdAt).localeCompare(String(b._createdAt))||a.id.localeCompare(b.id)).flatMap(requirement=>{

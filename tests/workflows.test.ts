@@ -105,7 +105,7 @@ test('custom isometric material stays out of the catalog unless add-to-catalog i
   const s = fixture(t); const count = s.list('materials').length;
   const result = runAction(s, 'add-iso-material', { isoId: 'iso-1', source: 'Custom', materialNo: 'CUSTOM-01', description: 'Custom support bracket', uom: 'EA', quantity: 2, price: 5.5, phaseId: 'phase-0', addToDB: false }, actor);
   assert.equal(s.list('materials').length, count); assert.ok('record' in result && result.record); assert.equal(result.record!.customMaterial, true); assert.equal(result.record!.materialId, ''); assert.equal(s.display('iso_materials', result.record!), 'CUSTOM-01');
-  const saved = runAction(s, 'add-iso-material', { isoId: 'iso-2', source: 'Custom', materialNo: 'CUSTOM-02', description: 'Catalog support bracket', uom: 'EA', quantity: 3, price: 4.5, addToDB: true }, actor);
+  const saved = runAction(s, 'add-iso-material', { isoId: 'iso-2', source: 'Custom', materialNo: 'CUSTOM-02', materialGroup: 'Supports', description: 'Catalog support bracket', uom: 'EA', quantity: 3, price: 4.5, addToDB: true }, actor);
   assert.equal(s.list('materials').length, count + 1); assert.ok('record' in saved && saved.record?.materialId); assert.equal(s.get('materials', saved.record!.materialId).materialNo, 'CUSTOM-02');
 });
 test('a failed custom material requirement rolls back a newly created catalog material', t => {

@@ -5,6 +5,7 @@ import { seedItpSamples } from './itp-dashboard.ts';
 import { seedWeldCatalogs } from './weld-catalogs-seed.ts';
 import { seedWeldEntry } from './weld-entry.ts';
 export { seedInspectionSamples } from './inspections-seed.ts';
+import { seedMtoStock } from './mto-stock-seed.ts';
 
 export function seed(store: Store) {
   if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
@@ -27,15 +28,15 @@ export function seed(store: Store) {
     add('warehouses', 'warehouse-field', { name: 'Field stores', siteId: 'site-river', companyId: 'company-stelux', use: 'Both', residence: 'Antwerp' });
     add('suppliers', 'supplier-steel', { name: 'Atlas Steel Supply', residence: 'Breda', email: 'orders@example.com' });
     add('suppliers', 'supplier-pipe', { name: 'Meridian Piping', residence: 'Delft', email: 'supply@example.com' });
-    add('service_companies', 'service-coating', { name: 'Precision Surface Works', residence: 'Rotterdam' });
+    add('service_companies', 'service-coating', { name: 'Precision Surface Works', address: '7 Havenstraat', residence: 'Rotterdam', phone: '+31 10 555 0121', email: 'planning@example.com' });
     add('laydowns', 'laydown-a', { name: 'Laydown A — Prefab', siteId: 'site-north' });
     add('laydowns', 'laydown-b', { name: 'Laydown B — Field', siteId: 'site-river' });
     ['Pipe', 'Elbow 90', 'Flange', 'Tee', 'Reducer', 'Valve', 'Cap'].forEach((name, i) => add('material_parts', `part-${i}`, { name }));
     add('material_parts', 'part-custom', { name: 'Customer spool piece', custom: true });
     ['Carbon steel', 'Stainless steel', 'Alloy steel'].forEach((name, i) => add('material_types', `material-type-${i}`, { name, typeOfSteel: name }));
     [['a106b', 'A106 Gr B', 'Carbon steel', 'Seamless carbon steel pipe for high-temperature service', 'C-Si', '1.1', 'P-1', '1'], ['a312-316l', 'A312 TP316L', 'Stainless steel', 'Seamless austenitic stainless steel pipe', 'Cr-Ni-Mo', '8.1', 'P-8', '1'], ['a335-p11', 'A335 P11', 'Alloy steel', 'Seamless ferritic alloy steel pipe for high-temperature service', 'Cr-Mo', '5.1', 'P-4', '1']].forEach(([id, name, typeOfSteel, materialDescription, basicMaterial, iso15608, asmePNumber, asmeGroup]) => add('material_types', `material-type-${id}`, { name, typeOfSteel, materialDescription, basicMaterial, materialGroup: typeOfSteel, iso15608, asmePNumber, asmeGroup, isoAsme: `${iso15608} / ${asmePNumber} Gr ${asmeGroup}` }));
-    ['EA', 'M', 'KG', 'SET'].forEach(name => add('uoms', `uom-${name}`, { name, symbol: name }));
-    ['Shop', 'Field', 'Hydrotest field'].forEach((name, i) => add('operation_phases', `phase-${i}`, { name, sort: i + 1 }));
+    ['EA', 'M', 'KG', 'SET', 'BX', 'L', 'M2', 'PR'].forEach(name => add('uoms', `uom-${name}`, { name, symbol: name }));
+    ['Shop', 'Field', 'Hydrotest field', 'Support Shop', 'Support Field', 'Valves'].forEach((name, i) => add('operation_phases', `phase-${i}`, { name, sort: i + 1 }));
     const projects = [
       { id: 'project-cooling', internnumber: 'STX-2401', externnumber: 'NLP-CW-04', description: 'Cooling water expansion', siteId: 'site-north', companyId: 'company-north', contact: 'Alex Morgan', authority: 'Project manager', startdate: '2026-09-01', enddate: '2026-11-28', status: 'Active' },
       { id: 'project-steam', internnumber: 'STX-2402', externnumber: 'RIV-ST-02', description: 'Riverside steam network', siteId: 'site-river', companyId: 'company-stelux', contact: 'Sam Rivers', startdate: '2026-09-14', enddate: '2026-12-18', status: 'Active' },
@@ -51,11 +52,17 @@ export function seed(store: Store) {
     // A field-only drawing: no shop welds yet, so its Prefab flag in the isometrics list is a dash.
     add('isometrics', 'iso-10', { isoNo: 'STX-SK-010', projectId: 'project-skid', revNo: '0', irn: 'IRN-110', pipingClass: 'SS300', material: 'A312 TP316L', itpNo: 'ITP-04', priority: 'Prio 3', date: '2026-09-25', assetTag: 'AT-SK-10', drawingNo: 'DWG-2410', testPressure: '24 bar', testMedium: 'Water', ped: 'Cat I / A', xRay: '5', paintSpec: 'PS-02', prefab_materials: true });
     const mats = [['CS-P060', 'Seamless carbon steel pipe', 'Pipe', '2', 'SCH 40', 'M', 28.4], ['CS-E090', '90° long radius elbow', 'Elbow', '2', 'SCH 40', 'EA', 18.6], ['CS-F150', 'Weld neck flange, class 150', 'Flange', '2', '150', 'EA', 42.5], ['SS-P114', 'Stainless steel pipe 316L', 'Pipe', '4', 'SCH 10S', 'M', 82], ['SS-T114', 'Equal tee, stainless steel 316L', 'Tee', '4', 'SCH 10S', 'EA', 118], ['CS-V060', 'Gate valve, flanged ends', 'Valve', '2', '150', 'EA', 156], ['SS-E114', '90° elbow, stainless steel 316L', 'Elbow', '4', 'SCH 10S', 'EA', 56], ['CS-B020', 'Stud bolt and two hex nuts', 'Bolt', '3/4', 'B7 / 2H', 'SET', 6.8]];
-    mats.forEach(([materialNo, description, materialGroup, dia, lbs, uom, price], i) => add('materials', `material-${i + 1}`, { materialNo, description, materialGroup, dia, lbs, uom, price, articleNo: `ART-${1001 + i}`, typeId: i >= 3 && i <= 4 ? 'material-type-1' : 'material-type-0' }));
+    // Component code and progress class: only pipe, supports and valves are classified; everything else stays unclassified.
+    const parts: Record<string, string> = { Pipe: 'part-0', Elbow: 'part-1', Flange: 'part-2', Tee: 'part-3', Valve: 'part-5' };
+    const classes: Record<string, [string, string]> = { 'CS-P060': ['PIP', 'Pipe'], 'SS-P114': ['PIP', 'Pipe'], 'CS-V060': ['VLV', 'Appendages'] };
+    mats.forEach(([materialNo, description, materialGroup, dia, lbs, uom, price], i) => add('materials', `material-${i + 1}`, { materialNo, description, materialGroup, dia, lbs, uom, price, articleNo: `ART-${1001 + i}`, typeId: i >= 3 && i <= 4 ? 'material-type-1' : 'material-type-0', partId: parts[String(materialGroup)] || '', componentCode: classes[materialNo]?.[0] || '', progressClass: classes[materialNo]?.[1] || '' }));
+    [['SUP-U060', 'U-bolt pipe clamp, galvanised', 'Support', '2', 'M10', 'EA', 7.4, 'SUP', 'Supports'], ['SUP-S114', 'Pipe shoe with welded base plate', 'Support', '4', 'L=200', 'EA', 24.9, 'SUP', 'Supports'], ['SUP-G060', 'Guide support, slotted', 'Support', '2', 'L=150', 'EA', 31.2, 'SUP', 'Supports'], ['GA-A150', 'Spectacle blind, class 150', 'Appendage', '2', '150', 'EA', 64, 'APP', 'Appendages']].forEach(([materialNo, description, materialGroup, dia, lbs, uom, price, componentCode, progressClass], i) => add('materials', `material-${i + 9}`, { materialNo, description, materialGroup, dia, lbs, uom, price, componentCode, progressClass, partId: '', articleNo: `ART-${1009 + i}`, typeId: 'material-type-0' }));
     for (let i = 1; i <= 9; i++) {
       add('spools', `spool-${i}`, { name: `SP-${String(i).padStart(3, '0')}`, isoId: `iso-${i}`, diameter: i < 4 ? '2' : '4', paintSpec: 'PS-02', laydownId: i < 7 ? 'laydown-a' : 'laydown-b' });
       add('iso_materials', `requirement-${i}`, { isoId: `iso-${i}`, materialId: `material-${(i - 1) % 8 + 1}`, quantity: i % 2 ? 12 : 4, phaseId: 'phase-0' });
     }
+    // The first isometric carries pipe, supports and an appendage in Shop and Field phases, so its progress budgets are not empty.
+    [['requirement-11', 'material-1', 18, 'phase-1'], ['requirement-12', 'material-9', 6, 'phase-3'], ['requirement-13', 'material-9', 4, 'phase-4'], ['requirement-14', 'material-12', 2, 'phase-4']].forEach(([id, materialId, quantity, phaseId]) => add('iso_materials', String(id), { isoId: 'iso-1', materialId, quantity, phaseId }));
     add('roles', 'role-welder', { name: 'Welder', abbreviation: 'WLD', maxTasks: 6, leadRole: false });
     add('roles', 'role-foreman', { name: 'Welding foreman', abbreviation: 'WFM', maxTasks: 10, leadRole: true });
     add('roles', 'role-trainee', { name: 'Trainee welder', abbreviation: 'TRW', maxTasks: 2, leadRole: false });
@@ -128,9 +135,17 @@ export function seed(store: Store) {
     add('field_packages', 'fwp-2', { name: 'Steam header — Area 2', number: 'FWP-002', projectId: 'project-steam', description: 'Riverside steam header and branches, installed after the cooling loop.' });
     for (const [isoId, packageId] of [['iso-1', 'fwp-1'], ['iso-2', 'fwp-1'], ['iso-4', 'fwp-2']]) store.update('isometrics', isoId, { fieldPackageId: packageId }, store.get('isometrics', isoId)._version, SYSTEM);
     for (let i = 1; i <= 8; i++) action('adjust-material', { materialId: `material-${i}`, warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: i === 3 ? 3 : 20 + i * 8, date: '2026-10-01', note: 'Sample opening balance' });
+    // Procurement samples: an order for checked requirements without a supplier (assigned at take-in, delivered in full)
+    // and a correction with its reason on the first order's partial delivery.
+    const requirementOrder = action('order-requirements', { requirementIds: ['requirement-6', 'requirement-7', 'requirement-9'], date: '2026-10-21', note: 'Steam and skid prefab package' });
+    if ('record' in requirementOrder && requirementOrder.record) {
+      const lines = store.list('order_lines').filter(l => l.orderId === requirementOrder.record?.id);
+      action('receive', { orderId: requirementOrder.record.id, supplierId: 'supplier-pipe', warehouseId: 'warehouse-main', date: '2026-10-23', items: lines.map((l, n) => ({ lineId: l.id, quantity: Number(l.quantity), chargeNo: `H-22${String(n + 6).padStart(2, '0')}` })) });
+    }
     const po = action('order', { supplierId: 'supplier-steel', projectId: 'project-cooling', date: '2026-10-16', items: [{ materialId: 'material-1', quantity: 60 }, { materialId: 'material-3', quantity: 24 }] });
     if ('record' in po && po.record) { const line = store.list('order_lines').find(l => l.orderId === po.record?.id)!; action('receive', { orderId: po.record.id, warehouseId: 'warehouse-main', date: '2026-10-20', items: [{ lineId: line.id, quantity: 12, chargeNo: 'H-1043' }] }); }
     action('order', { supplierId: 'supplier-pipe', projectId: 'project-steam', date: '2026-10-19', items: [{ materialId: 'material-4', quantity: 42 }, { materialId: 'material-5', quantity: 16 }] });
+    if ('record' in po && po.record) { const delivered = store.list('receipts').find(r => r.orderId === po.record?.id); if (delivered) action('correct-receipt', { receiptId: delivered.id, quantity: 2, date: '2026-10-22', note: 'Delivery note showed 12, two pieces were returned to the carrier' }); }
     action('issue-material', { isoId: 'iso-7', materialId: 'material-7', warehouseId: 'warehouse-main', chargeNo: 'H-1042', quantity: 8, date: '2026-10-18' });
     action('service', { spoolIds: ['spool-4'], companyId: 'service-coating', services: 'Surface preparation and coating', laydownId: 'laydown-b', date: '2026-10-20' });
     const tools = [['TIG welding set', true, 2], ['Angle grinder 125 mm', true, 3], ['Digital torque wrench', true, 2], ['Pipe alignment clamp', true, 4], ['Welding helmet', true, 4], ['Grinding discs, pack of 10', false, 5], ['Safety gloves, pair', false, 10], ['Hydraulic test pump', true, 1]];
@@ -140,6 +155,7 @@ export function seed(store: Store) {
     action('rent', { articleId: 'article-6', warehouseId: 'warehouse-main', clientId: 'client-1', quantity: 3, date: '2026-10-19' });
     seedWeldEntry(store);
     seedItpSamples(store);
+    seedMtoStock(store, SYSTEM);
     store.db.prepare('DELETE FROM audit').run();
     store.audit('projects', 'project-cooling', 'created', 'Cooling water expansion added to the workspace', SYSTEM);
     store.audit('orders', '', 'received', 'Partial delivery recorded from Atlas Steel Supply', SYSTEM);

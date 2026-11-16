@@ -1,0 +1,21 @@
+/* Storehouses, material inventory, transfer orders and the materials list (MTO Pilot). Tokens come from brand.css. */
+.mto-stock-page .inventory-filters{display:flex;flex-wrap:wrap;align-items:flex-end;gap:14px;padding:18px 20px 6px}
+.mto-stock-page .inventory-filters>.field{flex:1 1 220px;min-width:0;max-width:340px}
+.mto-stock-page .inventory-filters .search-field{flex:1 1 260px}
+.mto-stock-page .inventory-table td strong{font-weight:600}
+.mto-stock-page .numeric,.mto-stock-page td.numeric{text-align:right;font-variant-numeric:tabular-nums}
+.mto-stock-page .row-buttons{display:inline-flex;gap:8px;flex-wrap:wrap}
+.mto-stock-page .loading-note{display:flex;align-items:center;gap:8px;padding:24px 20px}
+.mto-stock-page .alert{margin:16px 20px}
+.stock-lines,.order-items{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:12px}
+.stock-lines>li{display:grid;grid-template-columns:minmax(0,1fr) minmax(150px,200px);gap:14px;align-items:end;padding:12px 14px;border:1px solid var(--line,#d9dee7);border-radius:10px}
+.stock-lines>li>span{display:grid;gap:2px;min-width:0}.stock-lines>li small{color:var(--muted,#5b6677);overflow-wrap:anywhere}
+.order-items>li{display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,2fr) minmax(110px,150px) minmax(80px,110px) auto;gap:12px;align-items:end;padding:12px 14px;border:1px solid var(--line,#d9dee7);border-radius:10px}
+.field-title{display:block;font-weight:600;margin-bottom:4px}
+.storehouse-shortcuts{margin:22px 0 0;padding:18px 20px}.storehouse-shortcuts h2{font-size:17px;margin:0 0 12px}
+.storehouse-shortcuts ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.storehouse-shortcuts li{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.storehouse-shortcuts li>span{display:grid;gap:2px}.storehouse-shortcuts small{color:var(--muted,#5b6677)}
+@media(max-width:760px){.stock-lines>li{grid-template-columns:1fr}.order-items>li{grid-template-columns:1fr 1fr}.order-items>li>.icon-btn{justify-self:start}.mto-stock-page .inventory-filters{padding:14px 14px 4px}.mto-stock-page .inventory-filters>.field{max-width:none;flex-basis:100%}}
+@media(max-width:420px){.order-items>li{grid-template-columns:1fr}}
+@media print{.mto-stock-page .heading-actions,.mto-stock-page .inventory-filters,.mto-stock-page .select-cell{display:none!important}}

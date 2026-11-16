@@ -1,13 +1,17 @@
 import type { ActionDefinition, Availability, Field, Resource, Row } from './types.ts';
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
-import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
 import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
+import { deliverMtoMaterials } from './mto-materials.ts';
+import { PROCUREMENT_ACTION_FIELDS, PROCUREMENT_PATHS, PROCUREMENT_RESOURCE_FIELDS } from './mto-procurement.ts';
+import { deliverMtoStock } from './mto-stock.ts';
+import { deliverMtoLogistics, MTO_LOGISTICS_PAGES } from './mto-logistics.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -87,10 +91,11 @@ const prototypeAvailability: Availability = {
  * Deliver a resource to a profile with all of its fields (or only `names`) and its menu entry. Fields the
  * profile already delivers are kept, so it can extend an existing entry as well as add a new resource.
  */
-export function deliverResource(availability: Availability, key: string, names?: string[]) {
+export function deliverResource(availability: Availability, key: string, names?: string[], options: { page?: boolean } = {}) {
   if (!RESOURCE_MAP[key]) throw new Error(`Unknown resource ${key}.`);
   availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...(names ?? RESOURCE_MAP[key].fields.map(field => field.name))])];
-  if (!availability.navigation.includes(key)) availability.navigation.push(key);
+  // `page: false` delivers the records only: the resource gets no table page (other pages read it).
+  if (options.page !== false && !availability.navigation.includes(key)) availability.navigation.push(key);
 }
 export const availabilityFor = (profile: ReleaseProfile): Availability | undefined => {
   if (profile === 'full') return undefined;
@@ -160,6 +165,22 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     availability.actions['add-welds'] = fields('isoId start end diameterId');
     availability.actions['mass-edit-welds'] = fields('weldIds changes versions');
     availability.actions['reorder-welds'] = fields('isoId weldIds');
+    // MTO records that several flows read and write, delivered once with every field: stock is the Material
+    // inventory page, picklists the Pick List archive page; orders, order lines (the procurement pages are reached by
+    // path) and movements (the inventory log) have no table page. Ord.? / Inv. / Picked read all five.
+    deliverResource(availability, 'stock');
+    deliverResource(availability, 'picklists');
+    for (const key of ['orders', 'order_lines', 'movements']) deliverResource(availability, key, undefined, { page: false });
+    // MTO catalogs and the Materials tab of the isometric.
+    deliverMtoMaterials(availability, deliverResource, key => RESOURCE_MAP[key].fields.map(field => field.name));
+    // MTO procurement pages (Order materials, Pending order, Material take in, Order archive): their records and
+    // actions are delivered without menu pages of their own; the pages are reached by path.
+    for (const [key, names] of Object.entries(PROCUREMENT_RESOURCE_FIELDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
+    for (const [key, names] of Object.entries(PROCUREMENT_ACTION_FIELDS)) availability.actions[key] = [...new Set([...(availability.actions[key] || []), ...names])];
+    // Storehouses, material inventory with its operations, transfer orders and the Materials list (MTO Pilot).
+    deliverMtoStock(availability, RESOURCES, deliverResource);
+    // Isometric execution, pick lists and logistics (shared/mto-logistics.ts).
+    deliverMtoLogistics(availability, deliverResource);
     availability.features.push('project-planning', 'pilots');
     // NDT per weld, tracers, repairs, visual inspection, Pre-HT / PWHT and the NDT/PWHT Manager (shared/inspections.ts).
     deliverInspections(availability, deliverResource);
@@ -202,7 +223,7 @@ export function projectResource(availability: Availability | undefined, resource
   const listed = pilots ? HOSTED_COLUMNS[resource.key] : undefined;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
+    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),
@@ -239,7 +260,10 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
+  if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
+  if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
+  if (availability.features.includes('pilots') && MTO_LOGISTICS_PAGES.includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);
 }

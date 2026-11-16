@@ -11,6 +11,12 @@ import { INSPECTION_ACTION_KEYS } from '../shared/inspections.ts';
 import { inspectionRules } from './inspections.ts';
 import { assignFieldPackage, releaseIsometrics, reopenRelease } from './releases.ts';
 import { runPunchAction } from './punch.ts';
+import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
+import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
+import { isMtoStockAction } from '../shared/mto-stock.ts';
+import { runMtoStock } from './mto-stock.ts';
+import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
+import { runMtoLogisticsAction } from './mto-logistics.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -27,6 +33,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
   if (!ACTIONS[key]) throw new AppError(404, 'This action does not exist.');
   if (key.startsWith('hydrotest-')) return runHydrotestAction(store, key, data, actor);
   if (WELD_ENTRY_ACTIONS.has(key)) return runWeldEntryAction(store, key, data, actor);
+  if (isMtoStockAction(key)) return store.transaction(() => runMtoStock(store, key, data, actor));
   return store.transaction(() => {
     if (INSPECTION_ACTION_KEYS.includes(key)) return inspectionRules(store, actor).run(key, data);
     const date = data.date ? validDate(data.date) : today();
@@ -50,17 +57,10 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       return existing ? patch(resource, existing, { quantity: next }) : add(resource, { [itemKey]: itemId, warehouseId, chargeNo, quantity: next });
     };
     const movement = (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra: Input = {},custom=false) => add(tool ? 'tool_movements' : 'movements', { number: store.next(tool ? 'TM' : 'MM'), [tool ? 'articleId' : custom?'customMaterialId':'materialId']: itemId, warehouseId, quantity: qty(amount), type, date, note, ...extra });
-    if (key === 'add-iso-material') {
-      ensure('isometrics', data.isoId); if (data.phaseId) ensure('operation_phases', data.phaseId);
-      const amount = positive(data.quantity);
-      if (data.source === 'Catalog') { const material = ensure('materials', data.materialId); return { resource:'iso_materials',record:add('iso_materials',{isoId:data.isoId,materialId:material.id,quantity:amount,phaseId:data.phaseId||'',chargeNo:str(data.chargeNo),customMaterial:false}) }; }
-      if (data.source !== 'Custom') throw new AppError(422,'Choose a material source.');
-      for (const name of ['materialNo','description','uom']) if (!str(data[name])) throw new AppError(422,'Enter the custom material number, description, and unit of measure.');
-      const custom = Object.fromEntries(['materialNo','description','materialGroup','articleNo','legacyNo','dia','lbs','uom','price'].map(k=>[k,data[k]??'']));
-      if (data.addToDB !== undefined && typeof data.addToDB !== 'boolean') throw new AppError(422,'Choose whether to add this material to the catalog.');
-      const material = data.addToDB ? add('materials',custom) : null;
-      return {resource:'iso_materials',record:add('iso_materials',{...custom,isoId:data.isoId,quantity:amount,phaseId:data.phaseId||'',chargeNo:str(data.chargeNo),customMaterial:!material,materialId:material?.id||''})};
-    }
+    if (MTO_ACTION_KEYS.includes(key)) return runMtoLogisticsAction(key, { store, actor, data, date, note, ensure, add, patch, balance, movement });
+    if (MTO_MATERIAL_ACTIONS.includes(key)) { const mto = runMtoMaterialAction(store, key, data, actor)!; return mto.records ? { resource: mto.resource, records: mto.records } : { resource: mto.resource, record: mto.record! }; }
+    const procurement: ProcurementContext = { store, date, note, ensure, add, patch, balance, movement };
+    if (key === 'correct-receipt') { const done = correctReceipt(procurement, data); return { resource: done.resource, record: done.record }; }
     if (key === 'order'||key==='order-requirements') {
       if(data.supplierId)ensure('suppliers', data.supplierId); if (data.projectId) ensure('projects', data.projectId);
       let items:Input[]=[];let projectId=str(data.projectId);
@@ -75,7 +75,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       return { resource: 'orders', record: order };
     }
     if (key === 'receive') {
-      const order = ensure('orders', data.orderId); const wh = warehouse(data.warehouseId, false);
+      const order = ensure('orders', data.orderId); const wh = warehouse(receivingWarehouseId(store, data.warehouseId), false);
       const supplierId=str(data.supplierId)||String(order.supplierId||'');if(!supplierId)throw new AppError(422,'Choose the delivery supplier.');ensure('suppliers',supplierId);
       if (order.status === 'Cancelled' || order.status === 'Received') throw new AppError(409, 'This order has no outstanding deliveries.');
       if (!Array.isArray(data.items) || !data.items.length) throw new AppError(422, 'Enter at least one received quantity.');
@@ -90,6 +90,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
         const chargeNo = str(item.chargeNo);
         balance(false, material.record.id, wh.id, chargeNo, amount,material.custom);
         movement(false, 'Receipt', material.record.id, wh.id, amount, { chargeNo,requirementId:line.requirementId||'',isoId:line.isoId||'', note: `${order.number}${note ? ' · ' + note : ''}` },material.custom);
+        recordReceipt(procurement, { order, line, warehouseId: wh.id, supplierId, chargeNo, quantity: amount });
       }
       const lines = store.list('order_lines').filter(l => l.orderId === order.id);
       const status = lines.every(l => Number(l.received) >= Number(l.quantity)) ? 'Received' : 'Partially received';
@@ -192,7 +193,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       for (const id of ids(data.spoolIds, 'spool')) {
         const spool = ensure('spools', id);
         if (store.list('service_requests').some(r => r.spoolId === id && r.status !== 'Completed')) throw new AppError(409, `Spool ${spool.name} already has an open service request.`);
-        created.push(add('service_requests', { number,name:str(data.name), spoolId: id, companyId: company.id, laydownId: data.laydownId || '', services, date, status: 'Requested', note }));
+        created.push(add('service_requests', { number,name:str(data.name), spoolId: id, companyId: company.id, laydownId: data.laydownId || '', services, includeDrawings: data.includeDrawings === true, date, status: 'Requested', note }));
         patch('spools', spool, { serviceCompanyId: company.id, laydownId: '' });
       }
       return { resource: 'service_requests', records: created };

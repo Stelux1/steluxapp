@@ -3,6 +3,7 @@ import { hydrotestState } from './hydrotest.ts';
 import { hasPunchProgress, punchBlocking, punchProgress } from './punch.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
 import { repairState } from './inspections.ts';
+import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 
 /**
  * Status of one isometric: what blocks it, the quality of its NDT results and its weighted progress.
@@ -52,11 +53,11 @@ export type ProgressBudgets = Partial<Record<QuantityPhase, Partial<Record<Quant
 
 /**
  * The MTO budget of an isometric: its quantity of materials whose component code classifies them as pipe,
- * support or appendage, per Shop / Field operation phase. Component codes do not exist in the material
- * database yet, so there is no budget and the quantity drivers stay out of scope. A later task fills this in;
- * nothing is invented here.
+ * support or appendage, per Shop / Field operation phase. The classification is the optional "Progress class"
+ * of the material (component codes are not guessed); see `isoBudgets()` in shared/mto-materials.ts. Without
+ * `rows` there is no budget and the quantity drivers stay out of scope.
  */
-export function isoBudgets(_iso: Row, _requirements?: Row[]): ProgressBudgets | undefined { return undefined; }
+export function isoBudgets(iso: Row, rows?: Record<string, Row[]>): ProgressBudgets | undefined { return mtoBudgets(iso, rows); }
 
 const budgetOf = (budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey) => {
   const value = Number(budgets?.[phase]?.[key]);

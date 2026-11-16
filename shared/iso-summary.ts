@@ -50,6 +50,10 @@ export interface IsoSummarySource {
   hydrotestRequests?: Row[] | null;
   /** Material requirements (the MTO budget of the progress drivers, once component codes exist). */
   requirements: Row[] | null;
+  /** Catalog rows the budgets classify requirement lines with (see `isoBudgets()` in shared/mto-materials.ts). */
+  materials?: Row[] | null;
+  customMaterials?: Row[] | null;
+  operationPhases?: Row[] | null;
   /** The calculation feature is delivered: the E flag exists. */
   planning: boolean;
 }
@@ -81,7 +85,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       iso, site, welds: welds.get(iso.id) || [], weldTypes: source.weldTypes || [], diameters: source.diameters || [], results: results.get(iso.id) || [],
       releases: source.releases ? releases.get(iso.id) || [] : null, punch: source.punch ? punch.get(iso.id) || [] : null,
       testSystems: source.testSystems ?? null, hydrotestRequests: source.hydrotestRequests ?? null,
-      budgets: isoBudgets(iso, requirements.get(iso.id)),
+      budgets: source.requirements ? isoBudgets(iso, { iso_materials: requirements.get(iso.id) || [], materials: source.materials || [], custom_materials: source.customMaterials || [], operation_phases: source.operationPhases || [] }) : undefined,
     };
     const blockers = isoBlockers(input), quality = isoQuality(input), progress = isoProgress(input), flags = isoFlags(iso, context);
     output[iso.id] = {

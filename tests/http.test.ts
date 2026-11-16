@@ -42,7 +42,7 @@ test('read-only users can read and export but cannot write, run actions, or acce
   assert.equal((await f.request('/records/sites', 'POST', { name: 'Denied site' })).status, 403);
   assert.equal((await f.request('/actions/rent', 'POST', {})).status, 403); assert.equal((await f.request('/records/users')).status, 403);
   assert.equal((await f.request('/actions/order-requirements','POST',{requirementIds:['requirement-2']})).status,403);
-  response = await f.request('/export/materials?format=csv'); assert.equal(response.status, 200); assert.match(await response.text(), /Material number/);
+  response = await f.request('/export/materials?format=csv'); assert.equal(response.status, 200); assert.match(await response.text(), /Material No/);
 });
 test('transaction records cannot be altered through generic CRUD endpoints', async t => {
   const f = await fixture(t); await f.setup(); const order = f.s.list('orders')[0]; const before = f.s.get('orders', order.id);

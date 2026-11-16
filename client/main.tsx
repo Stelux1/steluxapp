@@ -21,5 +21,8 @@ import './welder-data.css';
 import './weld-entry.css';
 import './releases.css';
 import './punch.css';
+import './mto-materials.css';
+import './mto-procurement.css';
+import './mto-stock.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
