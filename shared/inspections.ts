@@ -436,6 +436,9 @@ export function autoReweld(weld: Row, diameters: Row[] | null | undefined): bool
 /** PDF only for NDT documents. */
 export const inspectionFileError = (documentType: unknown, name: string) => documentType === NDT_DOCUMENT && !/\.pdf$/i.test(name) ? 'NDT documents must be PDF files.' : '';
 /** Distinct defect types already recorded, for the Initial round's suggestions (no site defect-code list exists yet). */
+/** Option text of a defect code in the NDT dialog: the defect's English name only (reference), the code when it has no name. */
+export const defectOptionLabel = (code: Row | { code?: unknown; english?: unknown }) => textOf(code.english) || textOf(code.code);
+export const DEFECT_EMPTY_OPTION = '-----------------';
 export const defectTypeOptions = (results: Row[] | null | undefined) => [...new Set(live(results).map(row => textOf(row.defectType)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
 // ----- visual (VT) reports -------------------------------------------------------------------------------------
