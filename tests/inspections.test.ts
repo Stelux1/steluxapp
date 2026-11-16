@@ -497,6 +497,27 @@ test('VT upload: A and NA are saved weld by weld, the PDF closes the report only
   assert.throws(() => rules.run('visual-inspection', { op: 'upload', reportId: report.id }), /PDF/, 'every file must be a PDF');
 });
 
+test('VT reports follow the Visual inspection area 116: deleting needs its Delete right, without the area nothing is read', async t => {
+  const f = await hostedFixture(t);
+  const detailed = (rules: Record<string, string[]>) => ({ permissionMode: 'Detailed permissions', permissionRules: JSON.stringify(rules), generalPermission: 'No access', materialsPermission: 'No access', weldingPermission: 'No access' });
+  const base = { '4': ['show'], '5': ['show'], '64': ['show'], '63': ['show'], '73': ['show'] };
+  const noDelete = f.client(); await noDelete.login(f.account('VtNoDelete', detailed({ ...base, '116': ['show', 'insert', 'edit', 'print'] })));
+  const withDelete = f.client(); await withDelete.login(f.account('VtWithDelete', detailed({ ...base, '116': ['show', 'insert', 'edit', 'delete', 'print'] })));
+  const without = f.client(); await without.login(f.account('VtWithoutArea', detailed({ ...base, '76': ['show', 'insert', 'edit', 'delete', 'print'] })));
+  const ids = isoWelds(f.store);
+  const made = await noDelete.request('/actions/visual-inspection', 'POST', 'weld', { op: 'generate', isoId: 'iso-1', weldIds: ids.slice(0, 2) });
+  assert.equal(made.status, 201, await made.clone().text());
+  const report = (await made.json()).record as Row;
+  assert.equal((await noDelete.request(`/pdf/visual-report?reportNo=${encodeURIComponent(String(report.number))}`, 'GET', 'weld')).status, 200, 'Print on 116 prints the VT report');
+  assert.equal((await noDelete.request('/actions/visual-inspection', 'POST', 'weld', { op: 'delete', reportIds: [report.id] })).status, 403, 'no Delete right on 116');
+  assert.equal(f.store.list('visual_reports').length, 1);
+  assert.equal((await without.request('/records/visual_reports', 'GET', 'weld')).status, 403, 'NDT rights do not open VT reports');
+  assert.equal((await without.request('/actions/visual-inspection', 'POST', 'weld', { op: 'generate', isoId: 'iso-1', weldIds: ids.slice(2, 3) })).status, 403);
+  assert.equal((await without.request(`/pdf/visual-report?reportNo=${encodeURIComponent(String(report.number))}`, 'GET', 'weld')).status, 403);
+  assert.equal((await withDelete.request('/actions/visual-inspection', 'POST', 'weld', { op: 'delete', reportIds: [report.id] })).status, 201, 'Delete on 116 deletes it');
+  assert.equal(f.store.list('visual_reports').length, 0);
+});
+
 test('VT archive: deleting a generated report frees its welds and takes its results with it', t => {
   const store = vtStore(t);
   const rules = inspectionRules(store, SYSTEM);

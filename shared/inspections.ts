@@ -522,11 +522,12 @@ export const INSPECTION_ACTION_KEYS = INSPECTION_ACTIONS.map(action => action.ke
 /** Actions whose permission depends on the inspection type in the request. */
 export const TYPED_INSPECTION_ACTIONS = ['ndt-weld', 'mass-inspection-request', 'inspection-upload'];
 /** Permission area and operation of an action of this flow (see `actionScope` in `shared/permissions.ts`). */
-export function inspectionActionScope(key: string, data: Record<string, unknown> = {}): [string, 'insert' | 'edit' | 'print'] | undefined {
+export function inspectionActionScope(key: string, data: Record<string, unknown> = {}): [string, 'insert' | 'edit' | 'delete' | 'print'] | undefined {
   if (key === 'ndt-weld' || key === 'inspection-upload') return [data.type === 'NDT PRE' ? '94' : '76', 'insert'];
   if (key === 'mass-inspection-request') return [data.type === 'PWHT' || data.type === 'PRE-HT' ? '65' : '50', 'print'];
   if (key === 'pwht-upload') return ['97', 'insert'];
-  if (key === 'visual-inspection') return ['116', 'insert'];
+  // Visual inspection 116: deleting a VT report needs its Delete right, every other operation its Add right.
+  if (key === 'visual-inspection') return ['116', data.op === 'delete' ? 'delete' : 'insert'];
   if (key === 'tracers') return ['63', 'edit'];
   return undefined;
 }
