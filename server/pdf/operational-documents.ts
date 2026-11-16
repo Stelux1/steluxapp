@@ -7,7 +7,7 @@ import { requestPdf, visualPdf } from './operational-requests.ts';
 import { hydrotestPdf, releasePdf } from './operational-release.ts';
 import { blankPunchPdf, flangePdf, pickListPdf, punchPdf } from './operational-lists.ts';
 import {
-  REQUEST_DOCUMENTS, engineerSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
+  REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
 } from '../../shared/pdf-documents.ts';
 import { flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../../shared/pdf-lists.ts';
 import { REQUEST_DOCUMENT } from '../../shared/inspections.ts';
@@ -78,7 +78,7 @@ const visualReport: PdfScopedDefinition = {
   async build({ store, documents, rows, isoIds, query, now }) {
     const model = visualReportModel(rows, query.reportNo ?? '', isoIds);
     if (!model) throw notFound('This visual inspection report');
-    const signature = signatureOf(store, documents, engineerSignerId(model.engineer, store.list('users')));
+    const signature = signatureOf(store, documents, visualSignerId(model.engineer, store.list('users'), model.resultIds, id => store.recordedBy('inspection_results', id)));
     const { bytes } = await visualPdf({ model, company: companyForDocuments(store, documents), generatedAt: now, rows, signature });
     return { bytes, fileName: `${isoDate(now)}-${projectNumber(rows, model.context.isometrics[0], model.context.project)}-VI-${safe(model.reportNo, 'report')}` };
   },

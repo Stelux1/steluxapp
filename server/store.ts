@@ -308,6 +308,12 @@ export class Store {
   activity(limit = 100): AuditEvent[] {
     return (this.db.prepare(`SELECT * FROM audit ORDER BY created_at DESC,${this.db.dialect === 'postgres' ? 'sequence' : 'rowid'} DESC LIMIT ?`).all(limit) as Record<string, unknown>[]).map(unpackAudit);
   }
+  /** The account of a record's latest create or update (from the audit trail), or '' when none is recorded. */
+  recordedBy(key: string, id: string): string {
+    const sequence = this.db.dialect === 'postgres' ? 'sequence' : 'rowid';
+    const row = this.db.prepare(`SELECT actor_id FROM audit WHERE entity_type=? AND entity_id=? AND action IN ('created','updated') ORDER BY ${sequence} DESC LIMIT 1`).get(key, id) as { actor_id?: unknown } | undefined;
+    return row?.actor_id ? String(row.actor_id) : '';
+  }
   history(key:string,id:string,before=Number.MAX_SAFE_INTEGER){
     this.resource(key);
     if(!Number.isSafeInteger(before)||before<1)throw new AppError(422,'Invalid history cursor.');

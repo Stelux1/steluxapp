@@ -137,7 +137,7 @@ export const requestRowCells = (line: WeldLine, withIso: boolean) => [...(withIs
 // ----- visual inspection report ------------------------------------------------------------------------------------------
 
 export interface VisualReportModel {
-  reportNo: string; itp: string; activityNo: string; customNo: string; date: string; engineer?: Row; lines: (WeldLine & { accepted: boolean; notApplicable: boolean; result: string })[];
+  reportNo: string; itp: string; activityNo: string; customNo: string; date: string; engineer?: Row; /** The VI results of the report (their recording account decides the signature). */ resultIds: string[]; lines: (WeldLine & { accepted: boolean; notApplicable: boolean; result: string })[];
   context: ProjectContext; /** VT document fields of the main project that are filled in. */ vtFields: LabelValueItem[];
 }
 export const VT_SETTINGS: [string, string][] = [['vtDocNo', 'VT Doc.No. & Rev.No.'], ['vtProcedureNo', 'VT Procedure No.'], ['vtType2No', 'VT type 2 no'], ['vtType2Rev', 'VT type 2 rev'], ['vtType2Date', 'VT type 2 date'], ['vtType2OrderNo', 'VT type 2 order No']];
@@ -153,7 +153,7 @@ export function visualReportModel(rows: Rows, reportNo: string, isoIds: Set<stri
   const lines = sortWeldLines(unique(results.map(row => text(row.weldId))).map(id => ({ ...weldLine(welds.get(id)!, rows), result: text(newest(id).result) })).map(line => ({ ...line, accepted: line.result === 'Accepted', notApplicable: line.result === 'Not applicable' }))) as VisualReportModel['lines'];
   const context = projectContext(rows, unique(lines.map(line => text(line.iso?.id))).map(id => find(rows, 'isometrics', id)!).filter(Boolean));
   const vtFields = VT_SETTINGS.map(([name, label]) => ({ label, value: name === 'vtType2Date' ? printDate(context.site?.[name]) : text(context.site?.[name]) })).filter(item => item.value);
-  return { reportNo: number, itp: text(oldest.itp), activityNo: text(oldest.activityNo), customNo: text(oldest.customNo), date: text(oldest.date).slice(0, 10), engineer: find(rows, 'qa_engineers', oldest.engineerId), lines, context, vtFields };
+  return { reportNo: number, itp: text(oldest.itp), activityNo: text(oldest.activityNo), customNo: text(oldest.customNo), date: text(oldest.date).slice(0, 10), engineer: find(rows, 'qa_engineers', oldest.engineerId), resultIds: results.map(row => row.id), lines, context, vtFields };
 }
 export const VISUAL_COLUMNS: (string | string[])[] = ['Weld no.', 'Type', 'Dia.', 'Wall thk.', 'Material', 'WPS', 'Welder', 'Weld date', 'Accepted', ['Not', 'applicable']];
 export const visualRowCells = (line: VisualReportModel['lines'][number], withIso: boolean) => [...(withIso ? [line.isoNo] : []), line.weldNo, line.type, line.diameter, line.wall, line.material, line.wps, line.welder, line.date, line.accepted ? 'X' : '', line.notApplicable ? 'X' : ''];
@@ -161,7 +161,17 @@ export const visualRowCells = (line: VisualReportModel['lines'][number], withIso
 /**
  * UNVERIFIED. The QA/QC engineer record has no link to a user account, so the engineer's signature is found by the
  * user whose e-mail address matches (else whose name matches). Returns that user's id, or '' when there is none.
+ * The report prints that signature only when this user also recorded every result of the report (`visualSignerId`).
  */
+/**
+ * The account whose signature the visual report may print: the engineer's account (`engineerSignerId`), and only when
+ * that account recorded every result of the report (`recordedBy` gives the account of a result's latest write).
+ * Otherwise '' and the report prints the engineer's name over an empty signature line.
+ */
+export function visualSignerId(engineer: Row | undefined, users: Row[], resultIds: string[], recordedBy: (resultId: string) => string): string {
+  const signer = engineerSignerId(engineer, users);
+  return signer && resultIds.length && resultIds.every(id => recordedBy(id) === signer) ? signer : '';
+}
 export function engineerSignerId(engineer: Row | undefined, users: Row[]): string {
   if (!engineer) return '';
   const email = text(engineer.email).toLowerCase(), name = text(engineer.name).toLowerCase();

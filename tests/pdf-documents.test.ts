@@ -13,7 +13,7 @@ import { HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.t
 import { RESOURCES } from '../shared/resources.ts';
 import { inspectionCellState, REQUEST_DOCUMENT } from '../shared/inspections.ts';
 import { pickListReports } from '../shared/mto-logistics.ts';
-import { engineerSignerId, hydrotestDocumentModel, releaseDocumentModel, releaseSignatureBlock, requestDocumentModel, requestDocumentOptions, visualReportModel, weldInspectionState } from '../shared/pdf-documents.ts';
+import { engineerSignerId, visualSignerId, hydrotestDocumentModel, releaseDocumentModel, releaseSignatureBlock, requestDocumentModel, requestDocumentOptions, visualReportModel, weldInspectionState } from '../shared/pdf-documents.ts';
 import { blankPunchHeader, flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../shared/pdf-lists.ts';
 import { companyFromRow } from '../shared/pdf-company.ts';
 import { requestPdf, visualPdf } from '../server/pdf/operational-requests.ts';
@@ -170,15 +170,28 @@ test('Visual inspection report: ITP, activity, engineer with stamp, VT fields of
   assert.equal((await f.admin.request('/pdf/visual-report?reportNo=NOPE', { pilot: 'weld' })).status, 404);
   const before = await pdf(await f.admin.request(`/pdf/${path}`, { pilot: 'weld' }));
   assert.ok(!hasImage(before), 'no signature when the engineer has none');
+  // Engineer qa-1 becomes account B, which has a full signature.
+  const b = f.account('Morgan Lee', { profileId: f.profile('Visual inspector', { generalPermission: RW, weldingPermission: RW, materialsPermission: NONE }) });
+  const inspectorB = f.client(); await inspectorB.login(b.email);
   const engineer = f.store.get('qa_engineers', 'qa-1');
-  f.store.update('qa_engineers', engineer.id, { email: 'pdf-docs-admin@example.test' }, engineer._version, SYSTEM);
-  const me = f.store.list('users').find(user => user.email === 'pdf-docs-admin@example.test')!;
-  const created = await f.admin.request('/records/signatures', { method: 'POST', pilot: 'weld', data: { name: 'Pdf admin', userId: me.id, kind: 'Full signature', nameUnder: true } });
+  f.store.update('qa_engineers', engineer.id, { email: b.email }, engineer._version, SYSTEM);
+  const created = await inspectorB.request('/records/signatures', { method: 'POST', pilot: 'weld', data: { name: 'Morgan Lee', userId: b.id, kind: 'Full signature', nameUnder: true } });
+  assert.equal(created.status, 201, await created.clone().text());
   const record = (await created.json() as { record: Row }).record;
-  assert.equal((await f.upload(f.admin, 'weld', 'signatures', record.id, PNG, 'full.png', 'image/png')).status, 201);
-  const signed = await pdf(await f.admin.request(`/pdf/${path}`, { pilot: 'weld' }));
-  assert.ok(hasImage(signed), 'the engineer\'s signature image');
-  assert.ok((await textOf(signed)).includes('Pdf admin'), 'name under the signature');
+  assert.equal((await f.upload(inspectorB, 'weld', 'signatures', record.id, PNG, 'full.png', 'image/png')).status, 201);
+  const print = async () => pdf(await f.admin.request(`/pdf/${path}`, { pilot: 'weld' }));
+  assert.ok(!hasImage(await print()), 'the sample data recorded the results, not the engineer');
+  const body = { weldIds: ['weld-1', 'weld-10', 'weld-19'], accepted: ['weld-1', 'weld-10'], notApplicable: ['weld-19'], itp: 'ITP 1', activityNo: '4.2', engineerId: 'qa-1', customNo: 'NFY-VT-07', reportNo: 'VT-2026-014', date: '2026-10-21' };
+  // Recorded by account A (the administrator) naming engineer B: the name prints over an empty signature line.
+  assert.equal((await f.admin.request('/actions/visual-inspection', { method: 'POST', pilot: 'weld', data: body })).status, 201);
+  const byA = await print();
+  assert.ok(!hasImage(byA), 'no image when another account recorded the result');
+  assert.ok((await textOf(byA)).some(line => line.includes('Morgan Lee')), 'the engineer\'s name is printed');
+  // Recorded by B itself: B's signature image.
+  assert.equal((await inspectorB.request('/actions/visual-inspection', { method: 'POST', pilot: 'weld', data: body })).status, 201);
+  const byB = await print();
+  assert.ok(hasImage(byB), 'the engineer\'s signature image once the engineer recorded the result');
+  assert.ok((await textOf(byB)).includes('Morgan Lee'), 'name under the signature');
 });
 
 test('the engineer signature is found through the matching user, else not at all', () => {
@@ -187,6 +200,10 @@ test('the engineer signature is found through the matching user, else not at all
   assert.equal(engineerSignerId({ id: 'e', email: '', name: 'a' } as unknown as Row, users), 'u1');
   assert.equal(engineerSignerId({ id: 'e', email: '', name: 'Nobody' } as unknown as Row, users), '');
   assert.equal(engineerSignerId(undefined, users), '');
+  const engineer = { id: 'e', email: 'quality@example.com', name: '' } as unknown as Row;
+  assert.equal(visualSignerId(engineer, users, ['r1', 'r2'], () => 'u2'), 'u2', 'the engineer recorded every result');
+  assert.equal(visualSignerId(engineer, users, ['r1', 'r2'], id => id === 'r1' ? 'u2' : 'u1'), '', 'one result recorded by another account');
+  assert.equal(visualSignerId(engineer, users, [], () => 'u2'), '');
 });
 
 // ----- release documents ----------------------------------------------------------------------------------------------------------
