@@ -7,10 +7,10 @@ import { punchWriteError } from '../shared/punch.ts';
 import type { Availability, AuditEvent, Module, Row, User } from '../shared/types.ts';
 import { Store, AppError } from './store.ts';
 import { effectiveProfileId, publicUser } from './auth.ts';
-import { availableWps } from '../shared/welding.ts';
+import { availableWps, RELATIONS, relationMatches } from '../shared/welding.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
 import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
-import { allowedSites, inSiteScope } from './site-scope.ts';
+import { allowedSites, inSiteScope, isSiteRefusal } from './site-scope.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
@@ -81,6 +81,28 @@ export function releaseAccess(store: Store, availability?: Availability) {
     if (!Object.keys(value).some(name => name !== '_version' && !ENABLEMENT_INPUT.includes(name))) return;
     const errors = missingRequired(key, value, existing);
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
+  }
+  /**
+   * A link can only be added to a record the account may read. A relation field (the PQRs of a WPS, the projects of
+   * an ITP, the main projects of a welder) that names a record not linked yet needs view access to that record; links
+   * already there may stay or be removed. Without this, the right to edit the owner would be enough to link any id.
+   */
+  function links(account: User, key: string, value: Record<string, unknown>, existing?: Row) {
+    if (!value || typeof value !== 'object') return;
+    for (const relation of RELATIONS[key] || []) {
+      if (relation.pilotsOnly && !pilots) continue;
+      let requested = value[relation.field];
+      // A WPS written with its primary PQR alone links that PQR (see `syncRelations` in server/store.ts).
+      if (key === 'wps' && relation.field === 'pqrIds' && requested === undefined && value.pqrId) requested = [value.pqrId];
+      if (!Array.isArray(requested)) continue;
+      const linked = new Set(existing ? store.list(relation.resource).filter(link => link[relation.ownerKey] === existing.id && relationMatches(relation, link)).map(link => String(link[relation.targetKey])) : []);
+      for (const id of new Set(requested)) {
+        if (typeof id !== 'string' || !id || linked.has(id)) continue;
+        let target: Row;
+        try { target = store.get(relation.target, id); } catch (error) { if (isSiteRefusal(error)) throw error; continue; /* missing or archived: the write reports it with the field */ }
+        if (!visible(account, relation.target, target)) throw new AppError(403, `Your permission profile does not allow linking ${store.resource(relation.target).title.toLowerCase()}.`, { [relation.field]: 'Select records you can open.' });
+      }
+    }
   }
   /** Weld entry rules and the lock of completed phases for the plain record routes of the hosted profile. */
   function weldRecord(key: string, value: Record<string, unknown>, existing?: Row) { if (pilots && key === 'welds') assertWeldEntry(store, value, existing); }
@@ -177,7 +199,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
     return output;
   }
-  return { user, resource, visible, record, input, complete, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
+  return { user, resource, visible, record, input, complete, links, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

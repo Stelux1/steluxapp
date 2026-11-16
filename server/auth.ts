@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
-import { AppError, Store } from './store.ts';
+import { AppError, Store, type Actor } from './store.ts';
 import { permissionValue } from '../shared/resources.ts';
 import type { Module, User } from '../shared/types.ts';
 import { canResource,canAction,parsePermissionRules,moduleSummary } from '../shared/permissions.ts';
@@ -39,7 +39,8 @@ export function publicUser(store: Store, id: string, profileId?: string): User {
   const permissions = capabilities?moduleSummary(capabilities):Object.fromEntries((['general', 'materials', 'welding', 'tools', 'settings'] as Module[]).map(m => [m, Math.max(0, permissionValue(profile[`${m}Permission`]))])) as User['permissions'];
   return { id: row.id, name: String(row.name), email: String(row.email), profileId: String(row.profileId), permissions,...(capabilities?{capabilities}:{}) };
 }
-export const actorOf = (req: Request) => ({ id: (req as AuthRequest).user.id, name: (req as AuthRequest).user.name });
+/** The account behind a request as the store records it, with its add rights (see `Actor.canAdd`). */
+export const actorOf = (req: Request): Actor => { const user = (req as AuthRequest).user; return { id: user.id, name: user.name, canAdd: resource => canResource(user, resource, 'insert') }; };
 export function checkPermission(req: Request, module: Module, level = 1) {
   if ((req as AuthRequest).user.permissions[module] < level) throw new AppError(403, 'Your permission profile does not allow this action.');
 }

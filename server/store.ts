@@ -22,7 +22,11 @@ import { archiveWelderQualifications, prepareWelderData, restoreWelderQualificat
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
 }
-export interface Actor { id: string; name: string }
+export interface Actor {
+  id: string; name: string;
+  /** Requests only: whether the account may add records to a resource. Asked where a write adds a record on the side (a new reusable value typed into a form field); system code has no limit. */
+  canAdd?: (resource: string) => boolean;
+}
 export const SYSTEM: Actor = { id: 'system', name: 'Stelux' };
 export const today = () => new Date().toISOString().slice(0, 10);
 export const qty = (value: unknown) => Math.round(Number(value) * 1_000_000) / 1_000_000;
@@ -163,7 +167,10 @@ export class Store {
         if (field.type === 'email' && text && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) errors[field.name] = 'Enter a valid email address.';
         if (field.type === 'date' && text) { try { validDate(text, field.label); } catch (e) { errors[field.name] = (e as Error).message; } }
         if (field.options && text && !field.options.includes(text) && !(field.legacy && Object.hasOwn(field.legacy, text))) errors[field.name] = `Choose a valid ${field.label.toLowerCase()}.`;
-        if(field.ref&&text&&field.creatable){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);value=(found||this.create(field.ref,{name:text,category:field.refCategory},actor)).id;}}
+        if(field.ref&&text&&field.creatable){const identified=this.list(field.ref,true).find(r=>r.id===text);if(identified){if(identified._archived||identified.category!==field.refCategory)errors[field.name]=`Choose an active value for ${field.label}.`;else value=identified.id;}else{const found=this.list(field.ref).find(r=>r.name===text&&r.category===field.refCategory);
+          // A text that names no existing value adds one to the catalog: that needs the add right there, not only the right to edit this record.
+          if(!found&&actor.canAdd&&!actor.canAdd(field.ref))throw new AppError(403,`Your permission profile does not allow adding a new value for ${field.label}. Choose an existing value.`,{[field.name]:'Choose an existing value.'});
+          value=(found||this.create(field.ref,{name:text,category:field.refCategory},actor)).id;}}
         if (field.ref && value) { try { this.get(field.ref, value); } catch (error) { if (error instanceof AppError && error.code === SITE_REFUSED) throw error; errors[field.name] = `Choose an active ${field.label.toLowerCase()}.`; } }
       }
       data[field.name] = value as Value;
@@ -173,6 +180,14 @@ export class Store {
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
     this.guardTestSystem(key, { ...existing, ...data } as Row); if (existing) this.guardTestSystem(key, existing);
+    // A test system of one project takes only that project's isometrics (the rule of the hydrotest move action, server/hydrotest.ts),
+    // on every write: a new or changed test system or project of an isometric, and a new project of a test system that holds isometrics.
+    if (key === 'isometrics' && data.testSystemId && !errors.testSystemId && (!existing || data.testSystemId !== existing.testSystemId || data.projectId !== existing.projectId)) {
+      const system = this.list('test_systems').find(row => row.id === data.testSystemId);
+      if (system?.projectId && system.projectId !== data.projectId) errors.testSystemId = 'Choose a test system of the isometric’s project.';
+    }
+    // Deleted isometrics count too: one brought back later would otherwise sit in a test system of another project.
+    if (key === 'test_systems' && existing && data.projectId && data.projectId !== existing.projectId && this.list('isometrics', true).some(iso => iso.testSystemId === existing.id && iso.projectId !== data.projectId)) errors.projectId = 'This test system holds isometrics of another project (deleted ones included). Move them to another test system first.';
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
     if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));

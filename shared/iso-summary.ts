@@ -97,7 +97,14 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
   const requirements = groupBy(source.requirements, row => String(row.isoId));
   const projects = new Map(source.projects.map(row => [row.id, row]));
   const sites = new Map(source.sites.map(row => [row.id, row]));
-  const testSystemNames = new Map((source.testSystems || []).filter(row => !row._archived && String(row.name ?? '').trim()).map(row => [row.id, String(row.name).trim()]));
+  const namedTestSystems = new Map((source.testSystems || []).filter(row => !row._archived && String(row.name ?? '').trim()).map(row => [row.id, row]));
+  // The one label of a summary. Only a test system of the isometric's own project, or of no project (shared), is named:
+  // the isometric is one the caller may read, so such a test system lies within the caller's main projects too. A link
+  // to another project's test system (possible in older data) never shows that project's name.
+  const testSystemName = (iso: Row) => {
+    const system = namedTestSystems.get(String(iso.testSystemId ?? ''));
+    return system && (!system.projectId || system.projectId === iso.projectId) ? String(system.name).trim() : undefined;
+  };
   const context = isoListContext({ welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, planning: source.planning });
   const output: Record<string, IsoSummary> = {};
   for (const iso of source.isometrics) {
@@ -120,7 +127,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       materialStatus: { percent: material },
       punch: source.punch ? punchCounts(punch.get(iso.id) || []) : null,
       hydrotest: { inScope: hydrotest.inScope, completed: hydrotest.completed },
-      ...(testSystemNames.has(String(iso.testSystemId ?? '')) ? { testSystemName: testSystemNames.get(String(iso.testSystemId))! } : {}),
+      ...(testSystemName(iso) ? { testSystemName: testSystemName(iso)! } : {}),
     };
   }
   return output;

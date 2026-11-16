@@ -12,7 +12,8 @@ import type { Store } from './store.ts';
  * the orders, stock and pick lists that cover them),
  * whatever the caller's pilot or profile may read. Only aggregates leave this function (see `IsoSummary`):
  * percentages, counts per blocker group, punch counts, budget totals and yes / no flags, never a weld, result, welder or material line,
- * plus one label: the name of the isometric's own test system (`testSystemName`), for the isometrics passed in only.
+ * plus one label: the name of the isometric's own test system (`testSystemName`), for the isometrics passed in only
+ * and only when that test system belongs to the isometric's project or to none (see `isoSummaries`).
  *
  * `isometrics` must already be the caller's visible isometrics (release projection, isometric permission and
  * per-pilot project enablement); a summary is produced for exactly those. Cost: one read of each collection

@@ -157,6 +157,8 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
     if (material) options = options.filter(row => !row.materialId || row.materialId === material);
   }
   if (field.ref === 'isometrics' && values.projectId) options = options.filter(r => r.projectId === values.projectId);
+  // A test system of one project takes only that project's isometrics; shared ones (no project) and the stored value stay offered.
+  if (field.ref === 'test_systems' && values.projectId) options = options.filter(r => !r.projectId || r.projectId === values.projectId || r.id === value);
   if (user.availability && field.ref === 'wps' && values.isoId) { const project=rows.isometrics?.find(row=>row.id===values.isoId)?.projectId; if(project) options=options.filter(wps=>availableWps(rows,wps,String(project))); options=options.filter(wps=>wps.active!==false || wps.id===value); }
   if (field.ref === 'rentals') options = options.filter(r => ['Rented', 'Partially returned'].includes(String(r.status)));
   // Isometric selects (e.g. punch Add item → ISO) list the isometrics by number in natural order.
