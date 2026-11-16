@@ -4,7 +4,7 @@ import { scopeRows } from './site-scope.ts';
 import {
   MASS_REQUEST_TEXTS, NDT_ROUNDS, NDT_TYPES, REPAIR_COPY_FIELDS, REQUEST_PREFIX, EXTRA_RESULT_OPTION, massRequestPlan, nextRequestNumber, requestFlag, requestProcessIds, VISUAL_NO_CHOICE, currentRequest, locationField, nextRepairNumber,
   processField, repairDue, roundErrors, roundLockedError, roundsHaveNa, naBlockErrors, tracerError, tracersOf, tracerProposal, weldWelderIds, type RoundInput, type TracerContext,
-  VT_DOCUMENT, VT_ITPS, VT_MODES, VT_NO_WELDS, VT_TICK_ONE, nextVtSeq, vtGenerateError, vtMarks, vtMissingMessage, vtNumber, vtOpenWeldIds, vtWeldIds,
+  PWHT_DOCUMENT, VT_DOCUMENT, VT_ITPS, VT_MODES, VT_NO_WELDS, VT_TICK_ONE, nextVtSeq, vtGenerateError, vtMarks, vtMissingMessage, vtNumber, vtOpenWeldIds, vtWeldIds,
 } from '../shared/inspections.ts';
 
 /**
@@ -317,6 +317,44 @@ export function inspectionRules(store: Store, actor: Actor) {
         const touched = lines.map(line => undoLine(line, picked)).filter((row): row is Row => Boolean(row));
         if (!touched.length) throw new AppError(422, 'The selected process is not on this request.');
         return { resource: 'inspection_requests', records: touched };
+      }
+      if (key === 'pwht-weld') {
+        // The weld's "PWHT request" dialog: per required treatment (Pre-HT, PWHT) its location and process (written on the weld), the request,
+        // and the report (date, Rp/Nr., 100%) recorded as an accepted result of that request. Documents ticked for deletion are archived.
+        const weld = store.get('welds', data.weldId);
+        if (!Array.isArray(data.sections) || !data.sections.length || data.sections.length > 2 || data.sections.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new AppError(422, 'Enter the heat treatment of the weld.');
+        const sections = data.sections as Input[];
+        if (new Set(sections.map(item => str(item.type))).size !== sections.length) throw new AppError(422, 'Enter each heat treatment once.');
+        const written: Row[] = [];
+        for (const section of sections) {
+          const type = str(section.type); if (type !== 'PRE-HT' && type !== 'PWHT') throw new AppError(422, 'Choose Pre-HT or PWHT.');
+          const pre = type === 'PRE-HT', label = pre ? 'Pre-HT' : 'PWHT';
+          if (weld[pre ? 'pwhtReqPre' : 'pwhtReq'] !== true) throw new AppError(422, `Weld ${weld.weldNo} does not require ${label}.`);
+          const locationId = short(section.locationId, `${label} location`), processId = short(section.processId, `${label} process`);
+          if (locationId) store.get('pwht_locations', locationId);
+          if (processId) store.get('pwht_processes', processId);
+          const reportNo = short(section.reportNo, `${label} Rp/Nr.`), sectionDate = optionalDate(section.date, `${label} Date`);
+          if (section.checked !== undefined && typeof section.checked !== 'boolean') throw new AppError(422, `${label} 100% must be ticked or not.`);
+          if (!reportNo && (sectionDate || section.checked === true)) throw new AppError(422, `Enter the ${label} Rp/Nr.`, { reportNo: `Enter the ${label} Rp/Nr.` });
+          const chosen = short(section.requestId, `${label} Rq/Nr.`);
+          if (chosen) { const request = store.get('inspection_requests', chosen); if (request.weldId !== weld.id || request.type !== type) throw new AppError(422, `${label} Rq/Nr. is not a request of this weld.`, { requestId: 'Choose a request of this weld.' }); }
+          patch('welds', store.get('welds', weld.id), { [pre ? 'pwhtPreLocationId' : 'pwhtLocationId']: locationId, [pre ? 'pwhtPreProcessId' : 'pwhtProcessId']: processId });
+          if (!reportNo) continue;
+          const request = chosen ? store.get('inspection_requests', chosen) : requestFor(weld, type);
+          const previous = store.list('inspection_results').find(row => row.requestId === request.id && row.round === 'Initial');
+          const values = { requestId: request.id, weldId: weld.id, type, round: 'Initial', result: 'Accepted', reportNo, preReportNo: previous?.preReportNo ?? '', checked: section.checked === true, date: sectionDate || str(previous?.date) || today(), examinedLength: weldLengthMm(store, weld) };
+          written.push(previous ? store.update('inspection_results', previous.id, values, previous._version, actor) : store.create('inspection_results', { ...values, note: '' }, actor));
+          patch('inspection_requests', store.get('inspection_requests', request.id), { status: 'Accepted' });
+          store.audit('welds', weld.id, 'inspected', `${type} accepted · ${reportNo}`, actor);
+        }
+        // Stored documents of this weld's heat treatment reports that the dialog ticked for deletion (nothing else is touched).
+        const resultIds = new Set(results().filter(row => row.weldId === weld.id && (row.type === 'PRE-HT' || row.type === 'PWHT')).map(row => row.id));
+        for (const id of optionalIds(data.deleteFileIds, 'document')) {
+          const file = store.get('attachments', id);
+          if (file.entityType !== 'inspection_results' || file.documentType !== PWHT_DOCUMENT || !resultIds.has(String(file.entityId))) throw new AppError(422, 'This document does not belong to the heat treatment of this weld.');
+          store.archive('attachments', file.id, file._version, actor);
+        }
+        return { resource: 'inspection_results', records: written };
       }
       if (key === 'pwht-upload') {
         const preReportNo = short(data.preReportNo, 'Pre report number'), reportNo = short(data.reportNo, 'Report number');
