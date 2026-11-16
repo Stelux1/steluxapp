@@ -29,7 +29,10 @@
     "build:prototype": "STELUX_RELEASE_PROFILE=access-prototype npm run build:local",
     "start:prototype": "STELUX_RELEASE_PROFILE=access-prototype npm run start:local",
     "import:prototype": "node --import tsx server/import-access-prototype.ts",
-    "db:prepare:welding": "node --import tsx server/prepare-welding.ts"
+    "db:prepare:welding": "node --import tsx server/prepare-welding.ts",
+    "db:prepare:hosted": "node --import tsx server/prepare-welding.ts",
+    "db:verify:hosted": "node --import tsx server/verify-hosted.ts",
+    "rehearse:hosted": "node --import tsx scripts/rehearse-hosted-upgrade.mjs"
   },
   "dependencies": {
     "@fontsource/outfit": "^5.3.0",
