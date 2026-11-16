@@ -361,7 +361,11 @@ test('the MTO actions are allowed to MTO writers and refused to readers, other p
   // Administrator in the MTO pilot.
   let response = await f.request('/api/actions/set-material-type', 'POST', { requirementIds: [requirement.id], phaseId: 'phase-1' });
   assert.equal(response.status, 201); assert.equal((await body(response)).records?.[0].phaseId, 'phase-1');
+  // A new material starts switched off on every main project until it is put on one (w3-mto-material-sites); this one is on iso-1's.
   const fresh = f.store.create('materials', { materialNo: 'FRESH-1', description: 'Nothing is ordered for this', materialGroup: 'Pipe', uom: 'EA' }, actor);
+  const iso1Site = String(f.store.get('projects', String(f.store.get('isometrics', 'iso-1').projectId)).siteId);
+  const freshLink = f.store.list('catalog_sites').find(link => link.resourceKey === 'materials' && link.recordId === fresh.id && link.siteId === iso1Site);
+  if (freshLink) f.store.update('catalog_sites', freshLink.id, { enabled: true }, freshLink._version, actor); else f.store.create('catalog_sites', { resourceKey: 'materials', recordId: fresh.id, siteId: iso1Site, enabled: true }, actor);
   response = await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Catalog', materialGroup: 'Pipe', materialId: fresh.id, quantity: 1.5, phaseId: 'phase-0', revisionId: 'revision-iso-1' });
   assert.equal(response.status, 201); const added = (await body(response)).record!;
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Catalog', materialGroup: 'Valve', materialId: 'material-1', quantity: 1 })).status, 422);

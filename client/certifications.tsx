@@ -10,6 +10,7 @@ import type { Field, Row } from '../shared/types.ts';
 import { CERTIFICATE_FORM_FIELDS, certificateUses, diameterIdFor } from '../shared/welder-data.ts';
 import { CERTIFICATE_PREVIEW_COLUMNS, importSummary, materialTypeOption } from '../shared/certifications.ts';
 import { RESOURCE_MAP, RELATIONS, relationFields, relationIds } from './catalog.ts';
+import { materialsOnSite } from '../shared/material-sites.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import { api, apiBlob, apiUrl, post, type ApiError } from './api.ts';
 import { EmptyState, FieldInput, Modal, TableScroll, revealInvalidField } from './components.tsx';
@@ -57,10 +58,11 @@ export const certificateFieldFor = (field: Field, editing: boolean): Field => ed
 export const certificateFormNames = CERTIFICATE_FORM_FIELDS.filter(name => name !== 'allProjects');
 /** Add certification / Edit certification of the reference: its fields in its order, the file, and in Edit Duplicate certificate with Copy file. */
 export function CertificationEditor({ record, onClose }: { record?: Row; onClose: () => void }) {
-  const def = RESOURCE_MAP.certifications; const { rows, siteId, refresh, notify, canRecord } = useWorkspace();
+  const def = RESOURCE_MAP.certifications; const { rows, allRows, siteId, refresh, notify, canRecord } = useWorkspace();
   const relation = (RELATIONS.certifications || []).find(item => item.field === 'projectIds');
   const fields = certificateFormNames.map(name => name === 'projectIds' ? (relationFields('certifications').find(field => field.name === name) as Field | undefined) && certificateProjectField(relationFields('certifications').find(field => field.name === name) as Field) : def.fields.find(field => field.name === name)).filter((field): field is Field => Boolean(field));
-  const materials = activeRows(rows, 'materials');
+  // The picker offers the Material database of the certificate's main project; the material a certificate already points at stays shown (`chosenMaterial`).
+  const materials = useMemo(() => materialsOnSite(activeRows(rows, 'materials'), text(record?.siteId) || siteId, allRows.catalog_sites), [rows, allRows.catalog_sites, record?.siteId, siteId]);
   const [values, setValues] = useState<Record<string, unknown>>(() => {
     const initial: Record<string, unknown> = Object.fromEntries(def.fields.filter(field => CERTIFICATE_FORM_FIELDS.includes(field.name)).map(field => [field.name, record?.[field.name] ?? field.default ?? (field.type === 'checkbox' ? false : '')]));
     // An older certificate keeps its diameter as text: it opens on the Weld diameter of that name.

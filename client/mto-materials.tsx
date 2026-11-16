@@ -312,10 +312,17 @@ function useInputRules(iso: Row): MaterialInputOptions {
 }
 
 /** Add material from DB (reference "Add material"): Quantity, Revision (newest), Type, then a material group and a material of it. */
+/** The Material database of the isometric's main project (shared/material-sites.ts): Add material from DB offers only these. */
+function useSiteMaterials(iso: Row): Row[] {
+  const { rows, allRows, siteId } = useWorkspace();
+  const site = text(activeRows(rows, 'projects').find(project => project.id === iso.projectId)?.siteId) || siteId;
+  return useMemo(() => materialsOnSite(activeRows(rows, 'materials'), site, allRows.catalog_sites), [rows, allRows.catalog_sites, site]);
+}
+
 function AddCatalogMaterial({ iso, onClose }: { iso: Row; onClose: () => void }) {
   const { rows } = useWorkspace(); const { error, fields, busy, submit } = useAddMaterial(iso, onClose); const rules = useInputRules(iso);
   const saved = useMemo(readSaved, []);
-  const materials = activeRows(rows, 'materials'), groups = [...new Set(materials.map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
+  const materials = useSiteMaterials(iso), groups = [...new Set(materials.map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
   const revisions = revisionOptions(rows, iso), phases = phaseOptions(rows);
   const firstOf = (group: string) => materialsOfGroup(materials, group)[0]?.id ?? '';
   const startGroup = saved.group && groups.includes(saved.group) ? saved.group : '';
@@ -340,7 +347,7 @@ function AddCustomMaterial({ iso, onClose }: { iso: Row; onClose: () => void }) 
   const [chargeTerm, setChargeTerm] = useState('');
   const set = (name: string) => (value: unknown) => setValues(old => ({ ...old, [name]: value }));
   const str = (name: string) => text(values[name]);
-  const groups = [...new Set(activeRows(rows, 'materials').map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
+  const siteMaterials = useSiteMaterials(iso), groups = [...new Set(siteMaterials.map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
   const charges = chargeNumberOptions(activeRows(rows, 'certifications').map(row => text(row.chargeNo)), chargeTerm);
   const input = (name: string, label: string, extra: Partial<{ required: boolean; type: 'text' | 'number'; step: number }> = {}) => <FieldInput field={{ name, label, type: extra.type || 'text', required: extra.required, step: extra.step, min: undefined }} value={values[name]} onChange={set(name)} error={fields[name]}/>;
   return <Form title={ADD_MATERIAL_DIALOG.title} subtitle={`Enter a material that is not in the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit={ADD_MATERIAL_DIALOG.submit}

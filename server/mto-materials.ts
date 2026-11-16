@@ -11,7 +11,7 @@ import {
 } from '../shared/material-db.ts';
 import { CATALOG_SITES } from '../shared/weld-catalogs.ts';
 import {
-  ALREADY_ON_SITE, LINK_NOTE, USED_ON_SITE_RESOURCES, changedSites, cleanImportPlan, importFromSitePlan, linkOnAdd, materialOnSite, materialSiteIds, materialsOnSite,
+  ALREADY_ON_SITE, LINK_NOTE, NOT_ON_SITE, USED_ON_SITE_RESOURCES, changedSites, cleanImportPlan, importFromSitePlan, linkOnAdd, materialOnSite, materialSiteIds, materialsOnSite,
   materialsUsedOnSite, siteLinkRows, takeOverLinks,
 } from '../shared/material-sites.ts';
 import { AppError, qty, type Actor, type Store } from './store.ts';
@@ -55,6 +55,8 @@ function addIsoMaterial(store: Store, input: Input, actor: Actor): MtoResult {
   if (data.source === 'Catalog') {
     const material = store.get('materials', data.materialId);
     if (str(data.materialGroup) && str(data.materialGroup) !== str(material.materialGroup)) throw new AppError(422, 'This material is not in the chosen group.', { materialId: 'Choose a material from the chosen group.' });
+    // Pilots: only a material of the Material database of the isometric's main project (shared/material-sites.ts).
+    if (hosted && !materialOnSite(material, siteOfIso(store, iso), store.list(CATALOG_SITES))) throw new AppError(422, NOT_ON_SITE, { materialId: NOT_ON_SITE });
     return { resource: 'iso_materials', record: store.create('iso_materials', { ...base, materialId: material.id, customMaterial: false }, actor) };
   }
   const custom = Object.fromEntries(CUSTOM_FIELDS.map(name => [name, data[name] ?? '']));
@@ -489,7 +491,11 @@ async function readIsoSheet(buffer: Buffer): Promise<{ rowNo: number; values: Re
   if (rows.length > MAX_ROWS) throw new AppError(422, `Import at most ${MAX_ROWS} rows at a time.`);
   return rows;
 }
-const isoImportRows = (store: Store, input: { rowNo: number; values: Record<string, string> }[]) => isoImportPreview(input, Object.fromEntries(['materials', 'uoms', 'operation_phases'].map(key => [key, store.list(key)])));
+/** The rows of an import into one isometric. In the pilots a Material No is looked up in the Material database of the isometric's main project only. */
+const isoImportRows = (store: Store, input: { rowNo: number; values: Record<string, string> }[], iso: Row) => isoImportPreview(input, {
+  ...Object.fromEntries(['uoms', 'operation_phases'].map(key => [key, store.list(key)])),
+  materials: store.hostedRules ? materialsOnSite(store.list('materials'), siteOfIso(store, iso), store.list(CATALOG_SITES)) : store.list('materials'),
+});
 const isoImportSummary = (rows: IsoImportRow[]) => ({ total: rows.length, valid: rows.filter(row => !Object.keys(row.error).length).length, errors: rows.filter(row => Object.keys(row.error).length).length });
 
 /**
@@ -500,7 +506,7 @@ export function commitIsoMaterialImport(store: Store, isoId: string, input: { ro
   const iso = store.get('isometrics', isoId), result = { committed: 0, failed: 0 };
   store.transaction(() => {
     const revision = isoRevisions({ revisions: store.list('revisions') }, iso.id)[0];
-    for (const row of isoImportRows(store, input)) {
+    for (const row of isoImportRows(store, input, iso)) {
       if (Object.keys(row.error).length) { result.failed++; continue; }
       store.db.exec('SAVEPOINT iso_material_import_row');
       try {
@@ -543,10 +549,10 @@ export function registerIsoMaterialImportRoutes(app: Application, { store, acces
     res.attachment('blitzkrieg-iso-materials-import-template.xlsx'); await workbook.xlsx.write(res); res.end();
   });
   app.post('/api/iso-material-import/preview', memory.single('file'), async (req, res) => {
-    allowed(req, req.body?.isoId);
+    const iso = allowed(req, req.body?.isoId);
     if (!req.file) throw new AppError(422, 'Choose an Excel file.');
     if (!/\.xlsx$/i.test(req.file.originalname)) throw new AppError(422, 'Choose an Excel file (.xlsx).');
-    const rows = isoImportRows(store, await readIsoSheet(req.file.buffer));
+    const rows = isoImportRows(store, await readIsoSheet(req.file.buffer), iso);
     res.json({ rows, summary: isoImportSummary(rows) });
   });
   app.post('/api/iso-material-import/commit', (req, res) => {

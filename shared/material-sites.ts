@@ -78,6 +78,8 @@ export function changedSites(material: Pick<Row, 'id'>, changes: Record<string, 
 
 // ----- Add material ---------------------------------------------------------------------------------------------------
 
+/** A catalog material that is not in the Material database of the isometric's main project cannot be added to it. */
+export const NOT_ON_SITE = 'This material is not in the material database of this project site.';
 export const ALREADY_ON_SITE = 'This Material No is already in the material database of this project site.';
 export const LINKED_TO_SITE = (materialNo: string) => `Material No ${materialNo} already existed in the material database; it is now available on this project site.`;
 /**

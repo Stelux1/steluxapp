@@ -269,3 +269,33 @@ test('Import Materials DB from another project site links the source’s materia
   const limited = await f.limited('River importer', RIVER);
   assert.equal((await limited.request('/material-sites/import', 'POST', { siteId: RIVER, sourceSiteId: NORTH })).status, 403, 'not from a main project outside its access');
 });
+
+// ----- wave 3 integration (E3): the isometric materials of the open main project --------------------------------------------
+test('E3: Add material from DB, Import in ISO and the certificate picker offer the materials of the main project; the server refuses a line with another one (422)', async t => {
+  const f = await fixture(t);
+  const { readFileSync } = await import('node:fs');
+  const created = (await json<{ record: Row }>(await f.add(f.admin, NORTH, 'E3-NORTH-ONLY', { description: 'North only shoe' }))).record;
+  const revision = (isoId: string) => f.store.list('revisions').filter(r => r.type === 'ISO' && r.isoId === isoId).sort((a, b) => String(b._createdAt).localeCompare(String(a._createdAt)))[0];
+  const phaseId = f.store.list('operation_phases')[0].id;
+  const line = (isoId: string, materialId: string) => ({ isoId, source: 'Catalog', materialId, quantity: 2, phaseId, ...(revision(isoId) ? { revisionId: revision(isoId).id } : {}) });
+  // Riverside's iso-4 does not have the North-only material: refused, nothing written.
+  const before = f.store.list('iso_materials').length;
+  const refused = await f.admin.request('/actions/add-iso-material', 'POST', line('iso-4', created.id));
+  assert.equal(refused.status, 422); assert.ok((await json<{ fields?: Record<string, string> }>(refused)).fields?.materialId);
+  assert.equal(f.store.list('iso_materials').length, before, 'no line');
+  // North's iso-1 has it; a material without links (the sample) is on every main project.
+  assert.equal((await f.admin.request('/actions/add-iso-material', 'POST', line('iso-1', created.id))).status, 201);
+  const legacy = f.store.list('materials').find(m => !f.links().some(l => l.recordId === m.id))!;
+  assert.equal((await f.admin.request('/actions/add-iso-material', 'POST', line('iso-4', legacy.id))).status, 201);
+  // Import in ISO looks the Material No up in the isometric's main project only: on Riverside it becomes a custom line.
+  const commit = await f.admin.request('/iso-material-import/commit', 'POST', { isoId: 'iso-4', rows: [{ rowNo: 2, values: { materialNo: 'E3-NORTH-ONLY', description: 'North only shoe', quantity: '1', uom: 'EA' } }] });
+  assert.equal(commit.status, 201, await commit.clone().text());
+  const imported = f.store.list('iso_materials').filter(r => r.isoId === 'iso-4' && r.materialNo === 'E3-NORTH-ONLY');
+  assert.equal(imported.length, 1); assert.equal(imported[0].materialId || '', '', 'not linked to the North-only material');
+  // The browser lists follow the same rule (Add material from DB, the custom group list and the certificate picker), and a material a certificate points at stays shown.
+  const materialsPage = readFileSync('client/mto-materials.tsx', 'utf8'), certificates = readFileSync('client/certifications.tsx', 'utf8');
+  assert.match(materialsPage, /const materials = useSiteMaterials\(iso\), groups/);
+  assert.match(materialsPage, /materialsOnSite\(activeRows\(rows, 'materials'\), site, allRows\.catalog_sites\)/);
+  assert.match(certificates, /materialsOnSite\(activeRows\(rows, 'materials'\), text\(record\?\.siteId\) \|\| siteId, allRows\.catalog_sites\)/);
+  assert.match(certificates, /const chosenMaterial = materials\.find\(row => row\.id === values\.materialId\) \|\| \(rows\.materials \|\| \[\]\)\.find/);
+});
