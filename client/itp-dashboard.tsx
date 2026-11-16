@@ -10,6 +10,7 @@ import { COMPLIANCE_PAGE_SIZE, GROUP_FILTERS, NO_DASHBOARD_FILTERS, dashboardFil
 import { DEFAULT_NDT_PERCENT, ITP_SLOTS, itpNdtPercent, itpsForProject } from '../shared/itp-dashboard.ts';
 import { allowedScopes, itpLatest, itpPickerOptions, itpScope, type LinkSlot } from '../shared/itps.ts';
 import type { Row } from '../shared/types.ts';
+import { DashboardReports } from './dashboard-reports.tsx';
 
 const show = (value: unknown) => String(value ?? '').trim();
 const distinct = (rows: Row[], key: string) => [...new Set(rows.map(row => show(row[key])).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
@@ -85,7 +86,7 @@ export function WeldDashboard() {
         <Select label="NDT process" value={draft.ndtProcessId} onChange={set('ndtProcessId')} options={named(processes)}/>
         <Select label="WPS method" value={draft.wpsId} onChange={set('wpsId')} options={named(activeRows(rows, 'wps'))}/>
       </div>
-      <div className="wd-filter-actions"><button className="btn primary" type="submit">Filter</button><button className="btn" type="button" onClick={reset} disabled={!dashboardFilterCount(filters) && !dashboardFilterCount(draft)}>Reset</button>
+      <div className="wd-filter-actions"><button className="btn primary" type="submit">Filter</button><button className="btn" type="button" onClick={reset} disabled={!dashboardFilterCount(filters) && !dashboardFilterCount(draft)}>Reset</button><DashboardReports filters={filters} defaultTo={NO_DASHBOARD_FILTERS.to}/>
         <span role="status" aria-live="polite">{result.scopeWelds} {result.scopeWelds === 1 ? 'weld' : 'welds'} selected</span></div>
     </form>
 

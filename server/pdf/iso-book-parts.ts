@@ -6,6 +6,7 @@ import { inspectionCellState, type InspectionKind } from '../../shared/inspectio
 import { certificatesForProject } from '../../shared/welder-data.ts';
 import { projectCertificates } from '../../shared/site-settings.ts';
 import type { Row, User } from '../../shared/types.ts';
+import { DASHBOARD_REPORTS } from '../../shared/dashboard-reports.ts';
 
 /**
  * Which files and which generated documents make up each part of the ISO Book. This module decides only what a part
@@ -54,6 +55,7 @@ export const NOT_IN_BOOK: Record<string, string> = {
   'flange-labels': 'Flange labels are printed for the flanges ticked on the Flange Management page; the book\'s Flange labels part stays deferred.',
   'hydrotest-request': 'A hydrotest request covers a test system of several isometrics; the book has no Hydrotest part.',
   'reserved-materials': 'Reserved materials lists the reservations of every isometric on the execution board; the book has no part for it.',  'order-materials': 'An order of materials covers the checked materials of several isometrics; the book has no order part.',
+  ...Object.fromEntries(DASHBOARD_REPORTS.map(report => [report.key, 'Reports of the Weld Pilot dashboard cover the welds of its filters, not one isometric.'])),
 };
 
 /** The part a registry document fills: its own `bookPart`, else a match on its key (names of other agents' documents follow the reference's wording). */

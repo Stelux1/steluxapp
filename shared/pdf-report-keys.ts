@@ -16,4 +16,6 @@ export const PDF_REPORT_RESOURCES: Record<string, string[]> = {
   'pdf-reserved-materials': ['reservations'],
   'pdf-order': ['orders'],
   'pdf-material-label': ['stock'],
+  // Reports ▾ of the Weld Pilot dashboard (shared/dashboard-reports.ts).
+  'pdf-dashboard-reports': ['welds'],
 };
