@@ -145,7 +145,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (req.query.format === 'xlsx') { res.attachment(`blitzkrieg-${definition.key}.xlsx`); await reportWorkbook(report).xlsx.write(res); res.end(); return; }
     res.setHeader('Cache-Control','no-store');res.attachment(`blitzkrieg-${definition.key}-${new Date().toISOString().slice(0,10)}.csv`).type('text/csv').send(reportCsv(report));
   });
-  registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics });
+  registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body);

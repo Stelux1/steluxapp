@@ -4,6 +4,9 @@ import type { documentStorage } from '../documents.ts';
 import { currentSignature } from '../signatures.ts';
 import { companyForDocuments } from './company.ts';
 import { lislPdf, type LislVariant } from './lisl.ts';
+import { lislGuPdf, ownerLislResult, type OwnerFormInput } from './lisl-gu.ts';
+import { lislMvPdf } from './lisl-mv.ts';
+import { lislGuRevPdf } from './lisl-gu-rev.ts';
 import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
 import type { Row, User } from '../../shared/types.ts';
 
@@ -15,6 +18,8 @@ export interface PdfRequest {
   store: Store; documents: ReturnType<typeof documentStorage>;
   user: User; iso: Row; rows: Record<string, Row[]>;
   query: Record<string, string>; now: Date;
+  /** Public origin of the app (for QR codes that point to a page of it). */
+  origin?: string;
 }
 export interface PdfResult { bytes: Uint8Array; /** Without extension. */ fileName: string }
 /**
@@ -49,8 +54,17 @@ const lisl = (key: string, title: string, variant: LislVariant, suffix: string):
   },
 });
 
+/** The owner-specific LISL forms: same access and dialog options as the base LISL, built by `ownerLislResult`. */
+const ownerLisl = (key: string, title: string, suffix: string, render: (input: OwnerFormInput) => Promise<{ bytes: Uint8Array }>): PdfDocumentDefinition => ({
+  key, title, report: 'lisl', build: request => ownerLislResult(request, lislOptions(request.query), suffix, render),
+});
+
 export const PDF_DOCUMENTS: PdfDocumentDefinition[] = [
   lisl('lisl', 'LISL Report', 'a4', ''),
   lisl('lisl-a3', 'LISL Report (A3)', 'a3', '-A3'),
   lisl('lisl-blank', 'Blank LISL template', 'blank', '-template'),
+  ownerLisl('lisl-gu', 'LISL Report [GU]', '-GU', lislGuPdf),
+  ownerLisl('lisl-mv', 'LISL Report [MV]', '-MV', lislMvPdf),
+  ownerLisl('lisl-gu-rev2', 'LISL Report [GU Rev 2]', '-GU-Rev2', input => lislGuRevPdf(input, 2)),
+  ownerLisl('lisl-gu-rev3', 'LISL Report [GU Rev 3]', '-GU-Rev3', input => lislGuRevPdf(input, 3)),
 ];

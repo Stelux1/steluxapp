@@ -101,3 +101,36 @@ export function validateProgressWeights(site: SiteLike): ProgressValidation {
   }
   return { valid: issues.length === 0, message: issues.join(' '), fields };
 }
+
+// ----- owner-specific LISL forms ([GU], [MV], [GU Rev 2 / Rev 3]) -----------------------------------------------------
+/**
+ * Texts of the owner-specific LISL forms that name a third party, a specification or a form number. They are never
+ * hard-coded: a line is printed only when its setting (section "Document settings" of the main project) is filled in.
+ * [GU] reuses "LISL [GU] Field 1 to 3" (Doc., Version, Date); every other setting is listed here.
+ */
+export type OwnerFormFamily = 'gu' | 'mv' | 'rev';
+export interface OwnerFormSetting { name: string; label: string; hint: string; type?: 'date' }
+export const OWNER_FORM_SETTINGS: OwnerFormSetting[] = [
+  { name: 'lislGuSpec1', label: 'LISL [GU] specification line 1', hint: 'Left of the second frame of the LISL [GU] report, e.g. the specification the welds were made to.' },
+  { name: 'lislGuSpec2', label: 'LISL [GU] specification line 2', hint: 'Second free line of the LISL [GU] report, e.g. a marking statement.' },
+  { name: 'lislMvDocNo', label: 'LISL [MV] Doc.No.', hint: 'Printed as Doc. on the LISL [MV] report.' },
+  { name: 'lislMvVersion', label: 'LISL [MV] Version', hint: 'Printed as Version on the LISL [MV] report.' },
+  { name: 'lislMvDate', label: 'LISL [MV] Date', hint: 'Printed as Date on the LISL [MV] report.', type: 'date' },
+  { name: 'lislMvSpec1', label: 'LISL [MV] specification line 1', hint: 'Left of the second frame of the LISL [MV] report.' },
+  { name: 'lislMvSpec2', label: 'LISL [MV] specification line 2', hint: 'Second free line of the LISL [MV] report.' },
+  { name: 'lislRevOwnerLine', label: 'LISL [GU Rev 2 / Rev 3] standard line', hint: 'The owner standard line at the top left of the LISL [GU Rev 2] and [GU Rev 3] reports.' },
+  { name: 'lislRevDocNo', label: 'LISL [GU Rev 2 / Rev 3] Doc.No.', hint: 'Printed as Doc. on the LISL [GU Rev 2] and [GU Rev 3] reports.' },
+  { name: 'lislRevVersion', label: 'LISL [GU Rev 2 / Rev 3] Version', hint: 'Printed as Version on the LISL [GU Rev 2] and [GU Rev 3] reports.' },
+  { name: 'lislRevDate', label: 'LISL [GU Rev 2 / Rev 3] Date', hint: 'Printed as Date on the LISL [GU Rev 2] and [GU Rev 3] reports.', type: 'date' },
+];
+export interface OwnerFormTexts { ownerLine: string; docNo: string; version: string; date: string; specLines: string[] }
+const FORM_FIELDS: Record<OwnerFormFamily, { ownerLine?: string; docNo: string; version: string; date: string; specLines: string[] }> = {
+  gu: { docNo: 'lislGuField1', version: 'lislGuField2', date: 'lislGuField3', specLines: ['lislGuSpec1', 'lislGuSpec2'] },
+  mv: { docNo: 'lislMvDocNo', version: 'lislMvVersion', date: 'lislMvDate', specLines: ['lislMvSpec1', 'lislMvSpec2'] },
+  rev: { ownerLine: 'lislRevOwnerLine', docNo: 'lislRevDocNo', version: 'lislRevVersion', date: 'lislRevDate', specLines: [] },
+};
+/** The settings of one form family; every value is an empty string (or the line is dropped) when it is not set. */
+export function ownerFormTexts(site: SiteLike, family: OwnerFormFamily): OwnerFormTexts {
+  const fields = FORM_FIELDS[family];
+  return { ownerLine: fields.ownerLine ? text(site, fields.ownerLine) : '', docNo: text(site, fields.docNo), version: text(site, fields.version), date: text(site, fields.date), specLines: fields.specLines.map(name => text(site, name)).filter(Boolean) };
+}

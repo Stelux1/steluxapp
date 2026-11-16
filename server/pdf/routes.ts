@@ -14,6 +14,8 @@ export interface PdfRouteDependencies {
   readableRows(req: Request, key: string, archived?: boolean): Row[];
   /** Isometrics of projects enabled in the pilot. */
   pilotIsometrics(isometrics: Row[], pilot: string): Row[];
+  /** Configured public origin; without it the origin of the request is used. */
+  publicOrigin?: string;
 }
 
 /**
@@ -22,7 +24,7 @@ export interface PdfRouteDependencies {
  * inside the pilot of the request) and the isometric must be readable by the account in that pilot.
  * `?download=1` sends it as an attachment instead of inline.
  */
-export function registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics }: PdfRouteDependencies) {
+export function registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin }: PdfRouteDependencies) {
   app.get('/api/pdf/:document', async (req, res) => {
     const definition = availability?.features.includes('pilots') ? PDF_DOCUMENTS.find(item => item.key === req.params.document) : undefined;
     if (!definition) throw new AppError(404, 'This document does not exist.');
@@ -35,7 +37,7 @@ export function registerPdfRoutes({ app, store, documents, availability, readabl
     if (!iso) throw new AppError(404, 'This isometric could not be found.');
     const primary = REPORT_RESOURCES[definition.report] || [];
     const rows = Object.fromEntries(RESOURCES.filter(resource => canResource(user, resource.key)).map(resource => [resource.key, readableRows(req, resource.key, true).filter(row => !primary.includes(resource.key) || canResource(user, resource.key, 'export', row))]));
-    const result = await definition.build({ store, documents, user, iso, rows, query, now: new Date() });
+    const result = await definition.build({ store, documents, user, iso, rows, query, now: new Date(), origin: publicOrigin || `${req.protocol}://${req.get('host')}` });
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `${query.download === '1' ? 'attachment' : 'inline'}; filename="${result.fileName.replace(/[^A-Za-z0-9._-]/g, '-')}.pdf"`);
