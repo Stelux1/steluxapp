@@ -23,6 +23,7 @@ import { PROGRESS_FIELDS, PROGRESS_PHASES, progressSumsOk, progressTotals, progr
 import { DuplicateSiteDialog } from './site-duplicate.tsx';
 import { AddNewIsometric } from './iso-add-new.tsx';
 import { UserSiteProfiles } from './user-site-profiles.tsx';
+import { newUserProfileDefaults } from '../shared/access-ui.ts';
 import { SCOPE_PILOTS, SITE_SCOPE_SPECIFIC, siteIdsField, siteScopeField } from '../shared/site-scope.ts';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
@@ -35,7 +36,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   // Welding wire (hosted): the certificate file is chosen in the same dialog and attached once the wire is saved.
   const [file, setFile] = useState<File | null>(null); const withFile = ['welding_wires', 'ndt_processes'].includes(resourceKey) && Boolean(user.availability?.features.includes('pilots')) && canRecord(resourceKey, 'import', record);
   const fileField = <div className={FORM_FILE_AFTER[resourceKey] ? 'field full-width' : 'field'} key="file"><label htmlFor="field-file">File</label><input id="field-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.csv,.xlsx,.docx,.txt" onChange={e => setFile(e.target.files?.[0] ?? null)}/><small className="field-hint">PDF, images, CSV, Excel, Word or text · up to 20 MB</small></div>;
-  const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.form?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):FORM_ENABLEMENT[resourceKey]??true}:{})}));
+  const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.form?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):FORM_ENABLEMENT[resourceKey]??true}:{}),...(resourceKey==='users'&&!record&&user.availability?.features.includes('pilots')?newUserProfileDefaults(activeRows(rows,'profiles')):{})}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
   const [photo, setPhoto] = useState<File | null>(null);
   const withPhoto = resourceKey === 'welders' && Boolean(user.availability?.features.includes('pilots')) && canRecord('welders', 'import', record);

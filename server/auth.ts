@@ -6,12 +6,17 @@ import type { Module, User } from '../shared/types.ts';
 import { canResource,canAction,parsePermissionRules,moduleSummary } from '../shared/permissions.ts';
 import { scopeLimited, siteProfilesField, siteProfilesOf, siteScopeField } from '../shared/site-scope.ts';
 import type {PermissionVerb,Row} from '../shared/types.ts';
+import { referencePasswordAccepted } from '../shared/password-strength.ts';
 export interface AuthRequest extends Request { user: User }
 export const hashToken = (v: string) => createHash('sha256').update(v).digest('hex');
 export function passwordHash(password: unknown) {
   if (typeof password !== 'string' || password.length < 10 || password.length > 256) throw new AppError(422, 'Use a password between 10 and 256 characters.', { password: 'At least 10 characters are required.' });
   const salt = randomBytes(16).toString('hex');
   return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
+}
+/** Change password of the hosted pilots: the new password must reach the score "OK" of the dialog's strength meter (shared/password-strength.ts). */
+export function assertPasswordStrength(password: unknown) {
+  if (!referencePasswordAccepted(password)) throw new AppError(400, 'Password too weak. Use at least 8 characters with uppercase, lowercase, numbers and special characters.', { password: 'The password is too weak.' });
 }
 export function passwordMatches(password: unknown, stored: string) {
   if (typeof password !== 'string' || password.length > 256) return false;

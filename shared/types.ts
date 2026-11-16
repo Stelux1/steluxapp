@@ -8,6 +8,8 @@ export interface Field {
   options?: string[]; min?: number; max?: number; step?:number; default?: Value; section?: string;
   hint?: string; hidden?: boolean; readonly?: boolean; showIf?: [string, Value];
   creatable?:boolean;refCategory?:string;
+  /** A select without an empty option (the profile of a ticked application: one profile is always chosen). */
+  noBlank?: boolean;
   /** Text of a select's empty option (default "Select <label>"). */
   blank?: string;
   /** Options of a reference to welders read "<ID nr.> <Name>" (the reference's Welder 1 / Welder 2 lists). */

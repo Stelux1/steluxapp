@@ -390,7 +390,7 @@ test('administrators set project site access per pilot in the user form; it cann
   // Users and their site links are for administrators only.
   assert.equal((await target.as.request('/records/user_sites', { pilot: 'weld' })).status, 403);
   // A new account is created with its access in one request.
-  const created = await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'New coordinator', email: 'new-coordinator@example.test', profileId: reviewer, active: true, weldEnabled: true, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: [RIVER], mtoEnabled: true, password: 'New-Coordinator-1' } });
+  const created = await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'New coordinator', email: 'new-coordinator@example.test', profileId: reviewer, active: true, weldEnabled: true, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: [RIVER], mtoEnabled: true, mtoProfileId: reviewer, password: 'New-Coordinator-1' } });
   assert.equal(created.status, 201);
   const createdId = (await json<{ record: Row }>(created)).record.id;
   assert.deepEqual(f.store.list(USER_SITES).filter(link => link.userId === createdId).map(link => [link.pilot, link.siteId]), [['weld', RIVER]]);

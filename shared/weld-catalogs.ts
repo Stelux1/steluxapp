@@ -86,11 +86,12 @@ export const HOSTED_REQUIRED: Record<string, string[]> = {
   qa_engineers: ['company'],
   companies: ['address'],
   sites: ['address'],
+  profiles: ['description'],
 };
 const FIELD_LABELS: Record<string, Record<string, string>> = {
   ndt_groups: { description: 'Description' }, diameters: { sizeinch: 'Size in inches' },
   weld_types: { location: 'Shop/Field', abbreviation: 'Abbreviation', jointType: 'Joint type' }, coatings: { abbreviation: 'Abbreviation' }, ndt_processes: { description: 'Description' },
-  pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' }, sites: { address: 'Address' },
+  pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' }, sites: { address: 'Address' }, profiles: { description: 'Description' },
 };
 /**
  * The reference's Edit dialogs differ from its Add dialogs (weld__*__edit.txt against the add dialogs): a few fields are required

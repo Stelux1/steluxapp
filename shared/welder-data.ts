@@ -66,6 +66,8 @@ export const WELDER_DATA_SCOPES: Record<string, string[]> = { certificate_projec
 const names = (value: string) => value.split(' ');
 /** Menu pages delivered to the hosted profile: resource -> delivered fields. */
 export const WELDER_DATA_PAGES: Record<string, string[]> = {
+  // User form: the application blocks in the reference order, MTO Pilot first (the other fields keep their order).
+  users: ['name', 'email', 'profileId', 'active', 'password', 'title', 'address', 'phone', 'companyId', 'mtoEnabled', 'mtoProfileId', 'mtoSiteScope', 'mtoSiteIds', 'mtoSiteProfiles', 'weldEnabled', 'weldProfileId', 'weldSiteScope', 'weldSiteIds', 'weldSiteProfiles'],
   welders: names('number name welderCode companyId roleId status currentlyOn globallyDeployable combination welder1Id welder2Id address zip residence phone email dob description siteIds customIds'),
   roles: names('name abbreviation maxTasks leadRole'),
   certificate_types: names('name abbreviation'),
@@ -128,12 +130,14 @@ export const HOSTED_COLUMNS: Record<string, string[]> = {
 export const HOSTED_COLUMN_LABELS: Record<string, Record<string, string>> = {
   welding_wires: { controlled: 'Ctrl.', accepted: 'Accp.' },
   certifications: { materialId: 'Material No', diameter: 'Dia.', controlled: 'Ctrl.', accepted: 'Accp.' },
+  profiles: { name: 'Name' },
+  users: { mtoEnabled: 'MTO Pilot', weldEnabled: 'Weld Pilot' },
 };
 /**
  * Default order of a list in the hosted profile, the reference's DataTable order (a field name; ascending, numbers by value):
  * diameters by Sorting, companies by e-mail address, project sites by IRN Code. The others sort by their display field.
  */
-export const HOSTED_DEFAULT_SORT: Record<string, string> = { diameters: 'sorting', companies: 'email', sites: 'irnCode' };
+export const HOSTED_DEFAULT_SORT: Record<string, string> = { diameters: 'sorting', companies: 'email', sites: 'irnCode', profiles: 'description' };
 /** The field a list sorts by first (ascending): the reference's default order in the hosted profile, else the resource's display field. */
 export const listDefaultSort = (resource: string, hosted: boolean, display: string) => (hosted && HOSTED_DEFAULT_SORT[resource]) || display;
 /** Fields of the shared definitions the hosted profile does not offer (stored values stay; the server no longer delivers them). */
@@ -146,6 +150,8 @@ export const HOSTED_FIELD_ORDER: Record<string, string[]> = {
   suppliers: ['name', 'address', 'zip', 'residence', 'mailbox', 'mnzip', 'mnresidence', 'phone', 'fax', 'email'],
   welding_wires: ['name', 'chargeNo', 'attestNo', 'diameter', 'classification', 'typeMaterial', 'norm', 'projectIds', 'supplierId', 'certType', 'controlled', 'accepted', 'description'],
   // Add / Edit welder (names of fields and of the relation fields).
+  // User form: the application blocks in the reference order, MTO Pilot first (the other fields keep their order).
+  users: ['name', 'email', 'profileId', 'active', 'password', 'title', 'address', 'phone', 'companyId', 'mtoEnabled', 'mtoProfileId', 'mtoSiteScope', 'mtoSiteIds', 'mtoSiteProfiles', 'weldEnabled', 'weldProfileId', 'weldSiteScope', 'weldSiteIds', 'weldSiteProfiles'],
   welders: names('number name welderCode address zip residence phone email status companyId welder1Id welder2Id dob currentlyOn siteIds globallyDeployable combination'),
 };
 /** Reference forms that are one flat list: their fields lose the sections of the shared definitions. */

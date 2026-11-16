@@ -56,7 +56,7 @@ test('a limited administrator cannot reach main projects beyond its own through 
   await limited.login();
   const before = f.store.list('users').length;
   // 1. A new account without scope fields would reach every main project.
-  const created = await limited.as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'Shadow admin', email: 'shadow@example.test', profileId: adminProfile, active: true, password: 'Shadow-Password-1' } });
+  const created = await limited.as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'Shadow admin', email: 'shadow@example.test', profileId: adminProfile, active: true, weldEnabled: true, weldProfileId: adminProfile, mtoEnabled: true, mtoProfileId: adminProfile, password: 'Shadow-Password-1' } });
   assert.equal(created.status, 403, 'new unlimited account');
   assert.equal(f.store.list('users').length, before);
   // 2. Resetting the password of the unlimited administrator would hand over its access.

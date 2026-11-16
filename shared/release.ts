@@ -259,21 +259,36 @@ const descriptions: Record<string, string> = {
 export function projectField(availability: Availability | undefined, field: Field): Field {
   return availability && field.name === 'type' && field.options?.includes('PWHT') ? { ...field, options: availability.inspectionTypes } : field;
 }
+/** New accounts start with no application ticked and each ticked application needs a profile (access-users-profiles-004); legacy rows read as enabled in projectRow. */
+function hostedAccessField(key: string, field: Field): Field {
+  if (key !== 'users') return field;
+  if (field.name === 'weldEnabled' || field.name === 'mtoEnabled') return { ...field, default: false };
+  if (field.name === 'weldProfileId' || field.name === 'mtoProfileId') return { ...field, required: true, noBlank: true, hint: undefined };
+  return field;
+}
+const HOSTED_ACCESS_WORDING: Record<string, NonNullable<Resource['wording']>> = {
+  sites: { add: 'Add project site', edit: 'Edit project site', remove: 'Delete project site' },
+  users: { add: 'Add user', edit: 'Edit user', remove: 'Delete user' },
+  profiles: { add: 'Add profile', edit: 'Edit profile', remove: 'Delete profile' },
+};
 export function projectResource(availability: Availability | undefined, resource: Resource): Resource {
   if (!availability) return resource;
   const prototype = availability.features.includes('lisl');
   const pilots = availability.features.includes('pilots');
-  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'operation_phases' ? ['number', 'name'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'operation_phases' ? ['number', 'name'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'mtoEnabled', 'weldEnabled'] : pilots && resource.key === 'profiles' ? ['name', 'description'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   const listed = pilots ? HOSTED_COLUMNS[resource.key] ?? WELD_DATA_COLUMNS[resource.key] : undefined;
   const ordered = (fields: Field[]) => pilots && resource.key === 'wps' ? orderWpsFields(fields) : fields;
   const projected: Resource = {
     ...(pilots ? catalogResource(resource) : resource), description: descriptions[resource.key] || resource.description,
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
+    // Profiles, user accounts and project sites: the reference's page title and its Add / Update dialogs (access-users-profiles-006, delta-I2b-004).
+    ...(pilots && resource.key === 'profiles' ? { title: 'Profiles' } : {}),
+    ...(pilots && HOSTED_ACCESS_WORDING[resource.key] ? { wording: HOSTED_ACCESS_WORDING[resource.key] } : {}),
     ...(pilots && resource.key === 'attachment_names' ? { singular: 'Attachment name' } : {}),
     // Welders (capture weld__welder__welders*.txt): Add Welder (Add / Cancel), Edit personnel info (Update / Close).
     ...(pilots && resource.key === 'welders' ? { wording: { add: 'Add Welder', edit: 'Edit personnel info', remove: 'Delete', cancelEdit: 'Close' } } : {}),
-    fields: (pilots && resource.key === 'sites' ? hostedSiteFields : (list: Field[]) => list)(ordered(resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? catalogField(resource.key, hostedWeldDataField(resource.key, hostedField(resource.key, f))) : f).map(f => pilots ? itpHostedField(resource.key, f) : f).map(f => {
+    fields: (pilots && resource.key === 'sites' ? hostedSiteFields : (list: Field[]) => list)(ordered(resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? catalogField(resource.key, hostedWeldDataField(resource.key, hostedField(resource.key, f))) : f).map(f => pilots ? itpHostedField(resource.key, f) : f).map(f => pilots ? hostedAccessField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     })),
