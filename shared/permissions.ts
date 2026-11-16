@@ -76,11 +76,14 @@ export function scopeLevel(user:User,key:string):number{
  return user.availability?.features.includes('pilots')&&SHARED_PILOT_SCOPES.includes(key)?Math.max(own,user.permissions.materials,user.permissions.welding):own;
 }
 /**
- * Areas a pilot may read but never change although they belong to the other pilot: inside Weld Pilot the Material
+ * Areas a pilot may read but never change although they belong to the other pilot: inside MTO Pilot the ITP register (120, for the
+ * ITPs card of the isometric); inside Weld Pilot the Material
  * database (6), so certificates and welds show their material and a certificate can choose one. It opens to accounts
  * that may read certifications (18) or welds (63) there; every other verb stays refused.
  */
-export const PILOT_READ_SCOPES:Partial<Record<PilotKey,{area:string;through:string[]}[]>>={weld:[{area:'6',through:['18','63']}]};
+export const PILOT_READ_SCOPES:Partial<Record<PilotKey,{area:string;through:string[]}[]>>={weld:[{area:'6',through:['18','63']}],mto:[{area:'120',through:['64']}]};
+// MTO Pilot: the ITP register (120, a Weld Pilot area) is read through the Isometrics right (64), so the ITPs card of the isometric shows
+// and offers Link ITP there too. Linking still needs Edit on the isometric; the register itself stays read-only in MTO Pilot.
 const pilotRead=(user:User,key:string)=>user.availability?.features.includes('pilots')&&user.pilot?PILOT_READ_SCOPES[user.pilot]?.find(entry=>entry.area===key):undefined;
 export function canScope(user:User,key:string,verb:PermissionVerb='show'):boolean{
  const area=areaOf(key);if(!area)return false;

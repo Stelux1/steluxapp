@@ -21,6 +21,8 @@ export function documentStorage(store: Store, dataDir: string, mode: DocumentSto
   } else if (initialize) initializeDocumentStorage(store);
   return {
     upload: multer({ ...(mode === 'database' ? { storage: multer.memoryStorage() } : { dest: uploadsDir }), limits: { fileSize: 20 * 1024 * 1024, files: 1 } }),
+    /** The same storage for the few requests that carry several files at once (Options → Attachments of an isometric). */
+    uploadMany: multer({ ...(mode === 'database' ? { storage: multer.memoryStorage() } : { dest: uploadsDir }), limits: { fileSize: 20 * 1024 * 1024, files: 20 } }),
     save(id: string, file: Express.Multer.File) {
       if (mode === 'database') store.db.prepare('INSERT INTO upload_blobs VALUES (?,?)').run(id, file.buffer.toString('base64'));
       else store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(id, file.filename);

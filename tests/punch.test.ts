@@ -616,8 +616,8 @@ test('the punch blocker line reads "<n> open pre-punch" and links to the filtere
   const blockers = isoBlockers({ iso, site: row('site'), welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch });
   assert.equal(blockers.total, 2);
   assert.deepEqual(blockers.groups[0].items, [
-    { message: '1 open pre-punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=prepunch' },
-    { message: '1 open punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=punch' },
+    { message: '1 open pre-punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=prepunch', target: { kind: 'punch' } },
+    { message: '1 open punch', href: '/welding/punchlists?iso_id=iso&project_id=project-1&punch_type=punch', target: { kind: 'punch' } },
   ]);
   assert.match(read('client/iso-header.tsx'), /item\.href && canRecord\('punchlists'\)/);
 });

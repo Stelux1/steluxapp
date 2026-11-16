@@ -218,8 +218,7 @@ test('deleting an ITP linked to an isometric is refused; unlinked it can be dele
   assert.equal((await f.request('/itps', { method: 'POST', data: pdf({ number: 'ITP-R', revNo: '0' }) })).status, 403);
   assert.equal((await f.request('/itps/itp-01/revisions', { method: 'POST', data: pdf({ revNo: '9' }) })).status, 403);
   assert.equal((await f.request('/itps/import-from-isometrics', { method: 'POST', data: {} })).status, 403);
-  // MTO Pilot does not reach the register.
-  assert.equal((await f.request('/itps/link', { method: 'POST', pilot: 'mto', data: { isoId: 'iso-10', itpId: 'itp-03' } })).status, 403);
+  // MTO Pilot reads the register through the Isometrics right and links with Edit on the isometric (tests/iso-page-dialogs.test.ts).
 });
 
 test('sample data: the ITPs carry a scope and title, and the linked isometrics show the ITP\'s X-Ray %', () => {

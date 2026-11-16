@@ -6,6 +6,7 @@ import { availableWps } from './catalog.ts';
 import { ApiError, post, formatDate } from './api.ts';
 import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
+import { AttachmentCountBadge } from './iso-dialogs.tsx';
 import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
@@ -101,7 +102,13 @@ function weldPayload(values: Values, weld?: Row): Values {
 }
 const errorMessage = (error: unknown) => (error as Error).message || 'The weld could not be saved.';
 
-export function WeldDialog({ iso, weld, data, onClose }: { iso: Row; weld?: Row; data: WeldData; onClose: () => void }) {
+/** Edit weld from the blockers list of the isometric page: read-only with the lock banner while the weld is locked. */
+export function EditWeldDialog({ iso, weld, onClose }: { iso: Row; weld: Row; onClose: () => void }) {
+  const data = useWeldData(iso), lock = weldLock(weld, data.lock);
+  return <WeldDialog iso={iso} weld={weld} data={data} onClose={onClose} lockedReason={lock.locked ? lock.reason : undefined}/>;
+}
+
+export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Row; weld?: Row; data: WeldData; onClose: () => void; lockedReason?: string }) {
   const { rows, refresh, notify } = useWorkspace();
   const [values, setValues] = useState<Values>(() => initialValues(weld, iso.id));
   const [multiple, setMultiple] = useState(() => Boolean(weld && WELDERS.slice(1).some(name => weld[name])));
@@ -154,7 +161,9 @@ export function WeldDialog({ iso, weld, data, onClose }: { iso: Row; weld?: Row;
   return <Modal title={weld ? 'Edit weld' : 'Add weld'} subtitle={`${str(iso.isoNo)}${weld ? ` · ${str(weld.weldNo)}` : ''}`} wide onClose={onClose}>
     <form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)} noValidate>
       <div className="modal-body weld-form">
+        {lockedReason && <div className="alert iso-lock-banner" role="status"><Lock size={16} aria-hidden="true"/><span><strong>{lockedReason}</strong> Weld {str(weld?.weldNo)} is read-only.</span></div>}
         <Failure message={error}/>
+        <fieldset className="weld-form-fields" disabled={Boolean(lockedReason)}>
         {!weld && <p className="weld-range-link muted">Need several welds at once? <button type="button" className="text-link" onClick={() => setRange(true)}><ListPlus size={14}/>Add welds (range)</button></p>}
         {section('Weld', <>
           <TextField label="Weld no." required value={values.weldNo} error={e.weldNo} onChange={set1('weldNo')}/>
@@ -195,11 +204,12 @@ export function WeldDialog({ iso, weld, data, onClose }: { iso: Row; weld?: Row;
           {FLAGS.map(name => <CheckField key={name} label={FLAG_LABELS[name]} checked={Boolean(values[name])} onChange={set1(name)}/>)}
           <CheckField label="Tracer" checked={Boolean(weld?.tracer)} disabled hint="Set by the tracer workflow."/>
         </>)}
+        </fieldset>
       </div>
       <div className="modal-footer">
-        <button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button>
-        {weld && <button type="button" className="btn" disabled={busy} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
-        <button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add weld'}</button>
+        <button type="button" className="btn" disabled={busy} onClick={onClose}>{lockedReason ? 'Close' : 'Cancel'}</button>
+        {weld && !lockedReason && <button type="button" className="btn" disabled={busy} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
+        {!lockedReason && <button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add weld'}</button>}
       </div>
     </form>
   </Modal>;
@@ -374,7 +384,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     <div className="panel-heading weld-panel-heading"><div><h2>Welds</h2><span className="muted">{welds.length} on this isometric</span></div>{switcher}
       <div className="heading-actions weld-actions">
         <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>
-          <button type="button" disabled={!canAttachments} onClick={onAttachments}>Attachments</button>
+          <button type="button" disabled={!canAttachments} onClick={onAttachments}>Attachments<AttachmentCountBadge isoId={iso.id}/></button>
           <button type="button" onClick={onAuditTrail}>Audit trail</button>
           <button type="button" disabled={!canSetPhase} onClick={onSetPhase}>Set phase</button>
           {inspectionMenu.map(item => <button key={item.key} type="button" onClick={() => setInspection(item)}>{item.label}</button>)}
