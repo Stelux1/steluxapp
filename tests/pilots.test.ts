@@ -93,7 +93,7 @@ test('selector eligibility follows the projected module levels', () => {
 });
 
 test('shared catalogs take the higher materials or welding level, only in module-level mode and only with pilots', () => {
-  assert.deepEqual(SHARED_PILOT_SCOPES.map(scope => Object.entries(RESOURCE_SCOPES).filter(([, scopes]) => scopes.includes(scope)).map(([key]) => key)).flat().sort(), ['certifications', 'material_parts', 'material_types', 'spools', 'suppliers']);
+  assert.deepEqual(SHARED_PILOT_SCOPES.map(scope => Object.entries(RESOURCE_SCOPES).filter(([, scopes]) => scopes.includes(scope)).map(([key]) => key)).flat().sort(), ['certificate_projects', 'certifications', 'material_parts', 'material_types', 'spools', 'suppliers']);
   const widened = { ...structuredClone(hosted), resources: { ...hosted.resources, ...Object.fromEntries(['material_parts', 'material_types', 'suppliers', 'orders', 'stock', 'movements', 'picklists'].map(key => [key, ['name']])) } };
   const weld = account({ general: 1, welding: 2 }, widened), mto = account({ general: 1, materials: 2 }, widened);
   for (const key of ['material_parts', 'material_types', 'suppliers', 'certifications', 'spools']) {
@@ -146,10 +146,11 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
-  for (const key of ['orders', 'stock', 'movements', 'material_parts', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
+  for (const key of ['orders', 'stock', 'movements', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
+  assert.equal((await f.request('/api/records/material_parts')).status, 200, 'material parts are delivered with the material data pages');
   assert.equal((await f.request('/api/reports/mto')).status, 403);
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'DENIED', quantity: 1 })).status, 403);
-  const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001' }); assert.equal(created.status, 201);
+  const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001', certType: '3.1', diameter: '1/2"', materialPartId: 'part-0', materialTypeId: 'material-type-0', schedule: '40', wallThickness: '2.77' }); assert.equal(created.status, 201);
   const data = await (await f.request('/api/bootstrap')).json() as Bootstrap;
   assert.ok(data.rows.certifications.some(row => row.name === 'Weld pilot cert')); assert.ok(data.rows.spools.length);
   for (const key of ['iso_materials', 'materials', 'orders', 'stock']) assert.equal(data.rows[key], undefined, key);

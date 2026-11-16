@@ -11,6 +11,7 @@ import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
+import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 
 export class AppError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>, public code?: string) { super(message); }
@@ -36,6 +37,8 @@ const unpackAudit=(r:Record<string,unknown>):AuditEvent=>({id:String(r.id),entit
 export class Store {
   db: Database;
   depth = 0;
+  /** Hosted workspace rules (welder data, certificates): set by createApp when the release profile delivers pilots. */
+  hostedRules = false;
   constructor(public filename: string, database?: Database, options: { initialize?: boolean } = {}) {
     if (!database && filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
     this.db = database || new DatabaseSync(filename);
@@ -104,6 +107,8 @@ export class Store {
     const resource = this.resource(key);
     const data: RecordData = {};
     const errors: Record<string, string> = {};
+    const prepared = this.hostedRules ? prepareWelderData(this, key, input, existing) : { input, errors: {} as Record<string, string> };
+    input = prepared.input;
     for (const field of resource.fields) {
       if (field.type === 'password') continue;
       let value: unknown = input[field.name] ?? existing?.[field.name] ?? field.default ?? (field.type === 'checkbox' ? false : '');
@@ -131,6 +136,7 @@ export class Store {
       }
       data[field.name] = value as Value;
     }
+    for (const [name, message] of Object.entries(prepared.errors)) errors[name] ??= message;
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
@@ -213,6 +219,7 @@ export class Store {
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       if (!row._archived) {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');
+        if(this.hostedRules&&key==='welders')archiveWelderQualifications(this,id,actor);
         for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource).filter(l=>l[relation.ownerKey]===id)){const marked=this.update(relation.resource,link.id,{ownerArchived:true},link._version,actor);this.archive(relation.resource,marked.id,marked._version,actor);}
         for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
           const dependent = this.db.prepare(`SELECT id FROM ${table(resource.key)} WHERE "${f.name}"=? AND archived=0 LIMIT 1`).get(id);
@@ -220,6 +227,7 @@ export class Store {
         }
       }
       this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id);
+      if(row._archived&&this.hostedRules&&key==='welders')restoreWelderQualifications(this,id,actor);
       if(row._archived)for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource,true).filter(l=>l[relation.ownerKey]===id&&l._archived&&l.ownerArchived)){this.get(relation.target,link[relation.targetKey]);const restored=this.archive(relation.resource,link.id,link._version,actor);this.update(relation.resource,restored.id,{ownerArchived:false},restored._version,actor);}
       this.audit(key, id, row._archived ? 'restored' : 'archived', `${row._archived ? 'Restored' : 'Archived'} ${this.resource(key).singular} ${this.display(key, row)}`, actor);
       return this.get(key, id, true);

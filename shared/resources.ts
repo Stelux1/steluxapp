@@ -3,6 +3,7 @@ import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
+import { ASME_GROUP_NUMBERS, ASME_P_NUMBERS, CERT_TYPES, ISO_15608_GROUPS, STANDARD_SYSTEMS, WELD_KINDS, WELD_POSITIONS } from './welder-data.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
 const d = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'date', ...extra });
@@ -131,6 +132,14 @@ extend('weld_types', [t('abbreviation', 'Abbreviation')]);
 extend('wps', [b('active', 'Active', { default: true })]);
 extend('materials', [t('wallThickness', 'Wall thickness')]);
 extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Material code'), t('diameter', 'Diameter (inch)'), t('materialDescription', 'Description of material'), t('wallThickness', 'Wall thickness'), t('schedule', 'Schedule')]);
+// Welders, roles, qualifications, material data and certificates (shared/welder-data.ts).
+extend('welders', [b('combination', 'Combination')]);
+extend('roles', [t('abbreviation', 'Abbreviation'), n('maxTasks', 'Max amount tasks', { step: 1 }), b('leadRole', 'Lead role?')]);
+extend('welder_certificates', [r('customId', 'Custom', 'welder_customs_catalog'), r('wireId', 'Welding wire', 'welding_wires'), s('position', 'Position', WELD_POSITIONS), s('weldKind', 'BW/FW', WELD_KINDS), s('system', 'ASME/EN', STANDARD_SYSTEMS), n('diameterFrom', 'Diameter from (mm)', { section: 'Qualified range' }), n('diameterTo', 'Diameter to (mm)', { section: 'Qualified range' }), n('thicknessFrom', 'Thickness from (mm)', { section: 'Qualified range' }), n('thicknessTo', 'Thickness to (mm)', { section: 'Qualified range' }), b('ownerArchived', 'Welder archived', { hidden: true })]);
+extend('material_parts', [b('custom', 'Custom')]);
+extend('material_types', [t('typeOfSteel', 'Type of steel'), t('materialDescription', 'Material description'), t('basicMaterial', 'Basic material'), t('materialGroup', 'Material group'), t('lucefinGroup', 'Lucefin group nr.'), s('iso15608', 'ISO 15608 group', ISO_15608_GROUPS), s('asmePNumber', 'ASME P-Number', ASME_P_NUMBERS), s('asmeGroup', 'ASME Group Number', ASME_GROUP_NUMBERS), t('isoAsme', 'ISO / ASME', { hidden: true, readonly: true })]);
+extend('certifications', [s('certType', 'Certificate type', CERT_TYPES), r('materialTypeId', 'Type of material', 'material_types'), r('materialPartId', 'Material part', 'material_parts'), t('basicMaterial', 'Basic material'), t('hotYield', 'Hot yield'), t('impactStrength', 'Impact strength'), b('allProjects', 'All projects', { default: true, hint: 'Untick to link the certificate to chosen projects only.' }), b('controlled', 'Controlled'), b('accepted', 'Accepted')]);
+extend('welding_wires', [r('materialTypeId', 'Type of material', 'material_types'), t('norm', 'Norm'), s('certType', 'Certificate type', CERT_TYPES), t('attestNo', 'Attest number'), r('supplierId', 'Supplier', 'suppliers'), b('allProjects', 'All projects', { default: true, hint: 'Untick to link the wire to chosen projects only.' }), b('controlled', 'Controlled'), b('accepted', 'Accepted')]);
 extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
   r(`material${i}Id`, `Material ${i}`, 'materials', { section: `Material side ${i}` }),
   r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),

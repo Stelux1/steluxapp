@@ -2,6 +2,7 @@ import type { ActionDefinition, Availability, Field, Resource, Row } from './typ
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -124,6 +125,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
+    // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
+    for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
+    for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
@@ -161,13 +165,14 @@ export function projectResource(availability: Availability | undefined, resource
   const prototype = availability.features.includes('lisl');
   const pilots = availability.features.includes('pilots');
   const columns = pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'weldEnabled', 'mtoEnabled', 'active'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const listed = pilots ? HOSTED_COLUMNS[resource.key] : undefined;
   return {
     ...resource, description: descriptions[resource.key] || resource.description,
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => {
+    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),
-    columns: columns.filter(key => fieldAvailable(availability, resource.key, key)),
+    columns: (listed ?? columns).filter(key => fieldAvailable(availability, resource.key, key)),
     actions: resource.actions?.filter(key => actionAvailable(availability, key)),
     createAction: resource.createAction && actionAvailable(availability, resource.createAction) ? resource.createAction : undefined,
   };
