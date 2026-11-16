@@ -20,7 +20,7 @@ import { canResource,canReport,canScope,isAdministrator,REPORT_RESOURCES } from 
 import type { Row, Module } from '../shared/types.ts';
 import { pilotProfileErrors, withNewUserDefaults } from '../shared/access-ui.ts';
 import { actorOf, authMiddleware, checkPermission,checkResourcePermission,checkActionPermission, endSession, ensureAdministrator, hashToken, newSession, assertPasswordStrength, passwordHash, passwordMatches, sessionCookie, signInLimiter, sessionSite, setSessionSite, setTokenSite, type AuthRequest } from './auth.ts';
-import { assertRightsWrite, assertUserInput, siteArchiveInput, assertSiteArchive } from './user-admin.ts';
+import { assertProfileUsersInReach, assertRightsWrite, assertUserInput, siteArchiveInput, assertSiteArchive } from './user-admin.ts';
 
 import { availabilityFor, pageAvailable, pagePath, projectReport, type ReleaseProfile } from '../shared/release.ts';
 import { pilotRefused, releaseAccess } from './release-access.ts';
@@ -332,6 +332,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots) assertItpDeletable(store, resource.key, String(req.params.id));
     if (pilots) assertRequestFileKept(store, resource.key, String(req.params.id));
     if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id), true));
+    if (pilots && resource.key === 'profiles') assertProfileUsersInReach(store, (req as unknown as AuthRequest).user.id, String(req.params.id));
     const row = store.transaction(() => { const row = store.archive(resource.key, String(req.params.id), req.body._version, actorOf(req)); if (['users', 'profiles'].includes(resource.key)) ensureAdmin(); return row; });
     res.json({ record: access.project(resource.key, row) });
   });
