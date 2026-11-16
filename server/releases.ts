@@ -1,5 +1,5 @@
 import type { Row } from '../shared/types.ts';
-import { RELEASE_PHASES, activeRelease, fwpAccepts, releaseCheck, releaseDocumentData, type ReleasePhase } from '../shared/releases.ts';
+import { COMPLETION_FIELDS, RELEASE_PHASES, activeRelease, fwpAccepts, phaseCompleted, releaseCheck, releaseDocumentData, type ReleasePhase } from '../shared/releases.ts';
 import { AppError, SYSTEM, validDate, type Actor, type Store } from './store.ts';
 
 type Input = Record<string, unknown>;
@@ -31,8 +31,8 @@ function checkOf(store: Store, iso: Row, type: ReleasePhase) {
 const isoName = (iso: Row) => String(iso.isoNo || iso.id);
 
 /**
- * The `release` action. A Prefab or Field release is created only when nothing blocks the phase and the phase is not
- * released already; the whole batch is one transaction, so a blocked isometric stops every record of the request.
+ * The `release` action (the release document). A Prefab or Field release is created only for isometrics whose phase
+ * is completed and not released already; the whole batch is one transaction, so a blocked isometric stops every record of the request.
  * Each record keeps who released and when, the numbering of the main project's Document settings and its signature block titles.
  * Hydrotest records keep their earlier behaviour (no checks) and get the same document data.
  * The system actor (sample data, imports of historic releases) is not checked.
@@ -50,11 +50,11 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
   }
   const isometrics = ids(data.isoIds, 'isometric').map(id => store.get('isometrics', id));
   if (type !== 'Hydrotest' && actor.id !== SYSTEM.id) {
-    const phase = type as ReleasePhase;
+    // The release document follows the phase's Complete on the isometric: only completed isometrics are released.
+    const phase = type as ReleasePhase; const releases = store.list('releases');
     const refused = isometrics.flatMap(iso => {
-      if (activeRelease(store.list('releases'), iso.id, phase)) return [{ iso, message: `${phase} is already released.` }];
-      const check = checkOf(store, iso, phase);
-      return check.ready ? [] : [{ iso, message: check.reasons[0].message + (check.reasons.length > 1 ? ` (and ${check.reasons.length - 1} more)` : '') }];
+      if (activeRelease(releases, iso.id, phase)) return [{ iso, message: `${phase} is already released.` }];
+      return phaseCompleted(iso, phase, releases) ? [] : [{ iso, message: `${phase} is not complete yet. Mark it ${phase} complete on the isometric first.` }];
     });
     if (refused.length) {
       const shown = refused.slice(0, 3).map(item => `${isoName(item.iso)}: ${item.message}`).join(' ');
@@ -70,23 +70,59 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
   return { resource: 'releases', records: created };
 }
 
-/** The `reopen-release` action: the phase's release becomes inactive (its welds unlock) and keeps the reason, who and when. */
-export function reopenRelease(store: Store, data: Input, actor: Actor): ActionResult {
+const phaseOf = (data: Input) => {
   const type = str(data.type);
   if (!(RELEASE_PHASES as readonly string[]).includes(type)) throw new AppError(422, 'Choose the prefab or the field release.', { type: 'Choose Prefab or Field.' });
+  return type as ReleasePhase;
+};
+
+/**
+ * The `complete-phase` action ("Prefab complete" / "Field complete" on the isometric): a confirmation only. Refused
+ * when the phase is completed already or not ready (`releaseCheck`: Field needs Prefab complete first; open punch
+ * never holds it). It stores who and when on the isometric, which locks the phase's welds and lists the isometric
+ * on the phase's release page. No release record and no number are made. The system actor is not checked.
+ */
+export function completePhase(store: Store, data: Input, actor: Actor): ActionResult {
+  const type = phaseOf(data);
+  const iso = store.get('isometrics', data.isoId);
+  if (phaseCompleted(iso, type, store.list('releases'))) throw new AppError(422, `${isoName(iso)} is already ${type} complete.`);
+  if (actor.id !== SYSTEM.id) {
+    const check = checkOf(store, iso, type);
+    if (!check.ready) throw new AppError(422, `${type} complete is not available for ${isoName(iso)}. ${check.reasons[0].message}${check.reasons.length > 1 ? ` (and ${check.reasons.length - 1} more)` : ''}`);
+  }
+  const fields = COMPLETION_FIELDS[type];
+  const record = store.update('isometrics', iso.id, { [fields.at]: new Date().toISOString(), [fields.by]: actor.name }, iso._version, actor);
+  store.audit('isometrics', iso.id, 'completed', `${type} complete`, actor);
+  return { resource: 'isometrics', record };
+}
+
+/**
+ * The `reopen-release` action ("Reopen" of Prefab / Field complete): the phase is no longer completed, its welds
+ * unlock and the isometric leaves the phase's release page. A release document of the phase becomes Reopened and
+ * keeps the reason, who and when. Prefab and Field reopen independently (reopening Prefab leaves Field completed).
+ */
+export function reopenRelease(store: Store, data: Input, actor: Actor): ActionResult {
+  const type = phaseOf(data);
   const reason = str(data.reason);
   if (!reason) throw new AppError(422, 'Enter the reason for reopening.', { reason: 'A reason is required.' });
   if (reason.length > REOPEN_REASON_LIMIT) throw new AppError(422, `The reason can have at most ${REOPEN_REASON_LIMIT} characters.`, { reason: `Use at most ${REOPEN_REASON_LIMIT} characters.` });
   if (data.date) validDate(data.date);
   const iso = store.get('isometrics', data.isoId);
   const releases = store.list('releases');
+  if (!phaseCompleted(iso, type, releases)) throw new AppError(422, `${isoName(iso)} is not ${type} complete, so there is nothing to reopen.`);
   const release = activeRelease(releases, iso.id, type);
-  if (!release) throw new AppError(422, `The ${type.toLowerCase()} release of ${isoName(iso)} is not active, so there is nothing to reopen.`);
-  if (type === 'Prefab' && activeRelease(releases, iso.id, 'Field')) throw new AppError(422, `Reopen the field release of ${isoName(iso)} first: it depends on the prefab release.`);
-  const record = store.update('releases', release.id, { status: 'Reopened', reopenedAt: new Date().toISOString(), reopenedBy: actor.name, reopenReason: reason }, release._version, actor);
-  store.audit('releases', release.id, 'reopened', `${type} release ${release.number} reopened · ${reason}`, actor);
-  store.audit('isometrics', iso.id, 'reopened', `${type} release reopened · ${reason}`, actor);
-  return { resource: 'releases', record };
+  const fields = COMPLETION_FIELDS[type];
+  const cleared = String(iso[fields.at] ?? '') || String(iso[fields.by] ?? '') ? store.update('isometrics', iso.id, { [fields.at]: '', [fields.by]: '' }, iso._version, actor) : iso;
+  const record = release ? store.update('releases', release.id, { status: 'Reopened', reopenedAt: new Date().toISOString(), reopenedBy: actor.name, reopenReason: reason }, release._version, actor) : undefined;
+  if (release) store.audit('releases', release.id, 'reopened', `${type} release ${release.number} reopened · ${reason}`, actor);
+  store.audit('isometrics', iso.id, 'reopened', `${type} complete reopened · ${reason}`, actor);
+  return record ? { resource: 'releases', record } : { resource: 'isometrics', record: cleared };
+}
+
+/** Plain record routes cannot write the completion fields: only the complete and reopen actions do. */
+export function dropCompletionInput(key: string, input: unknown) {
+  if (key !== 'isometrics' || !input || typeof input !== 'object') return;
+  for (const fields of Object.values(COMPLETION_FIELDS)) { delete (input as Input)[fields.at]; delete (input as Input)[fields.by]; }
 }
 
 /** The `assign-fwp` action: set (or, without a package, clear) the field work package of the checked isometrics, all or nothing. */

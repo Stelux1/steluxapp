@@ -29,22 +29,30 @@ const weld = (id: string, isoId: string, data: Record<string, unknown> = {}) => 
 const result = (weldId: string, outcome: string, date: string, type = 'NDT') => row(`${weldId}-${type}-${date}`, { weldId, type, result: outcome, date });
 const context = (source: IsoListSource) => isoListContext({ weldTypes: types, planning: true, ...source });
 
-test('Pfb is a tick with a Prefab release, a dash without shop welds and a cross otherwise; Fld follows the Field release', () => {
-  const welds = [weld('a', 'with-release'), weld('b', 'open'), weld('c', 'field-only', { typeId: 'field' })];
-  const ctx = context({ welds, releases: [row('r1', { isoId: 'with-release', type: 'Prefab' }), row('r2', { isoId: 'open', type: 'Field' }), row('r3', { isoId: 'field-only', type: 'Hydrotest' })] });
-  const flags = (id: string) => isoFlags(row(id), ctx);
-  assert.equal(flags('with-release').pfb, true);
-  assert.equal(flags('open').pfb, false, 'shop welds and no Prefab release (a Field release does not count)');
-  assert.equal(flags('field-only').pfb, null, 'no shop welds: dash');
-  assert.equal(flags('no-welds-at-all').pfb, null);
-  assert.deepEqual(['with-release', 'open', 'field-only'].map(id => flags(id).fld), [false, true, false]);
-  // A Prefab release wins over the dash: released drawings are complete even if the welds were moved away.
-  assert.equal(isoFlags(row('field-only'), context({ welds, releases: [row('r', { isoId: 'field-only', type: 'Prefab' })] })).pfb, true);
-  // Unreadable releases: neither a tick nor a cross can be told.
+test('Pfb / Fld have four states: tick when the phase is completed, orange minus when ready, cross when a weld has no welder, empty without shop welds', () => {
+  const welds = [weld('a', 'ready', { welder1Id: 'w1' }), weld('a2', 'ready', { typeId: 'field', welder1Id: 'w1' }), weld('b', 'open'), weld('b2', 'open', { typeId: 'field' }), weld('c', 'field-only', { typeId: 'field', welder1Id: 'w1' })];
+  const ctx = context({ welds, releases: [] });
+  const flags = (iso: Row, c = ctx) => { const f = isoFlags(iso, c); return [f.pfb, f.fld]; };
+  // Reference 0001 / 0007: every shop weld welded, nothing completed → orange minus; Fld minus.
+  assert.deepEqual(flags(row('ready')), ['ready', 'ready']);
+  // Reference 0005 / WF: a shop weld without a welder → red cross; Fld cross by symmetry for an unwelded field weld.
+  assert.deepEqual(flags(row('open')), [false, false]);
+  // Reference 00022: no shop welds → Pfb empty; Fld still the orange minus, also without field welds.
+  assert.deepEqual(flags(row('field-only')), [null, 'ready']);
+  assert.deepEqual(flags(row('no-welds-at-all')), [null, 'ready']);
+  // Reference 0003: completed on the isometric, no release document → ticks.
+  assert.deepEqual(flags(row('open', { prefabCompletedAt: '2026-10-10T08:00:00.000Z', fieldCompletedAt: '2026-10-11T08:00:00.000Z' })), [true, true]);
+  assert.deepEqual(flags(row('field-only', { prefabCompletedAt: '2026-10-10T08:00:00.000Z' })), [true, 'ready'], 'completed wins over the empty state');
+  // An active release from before the two steps counts as completed; reopened, archived or other types do not.
+  const released = context({ welds, releases: [row('r1', { isoId: 'open', type: 'Prefab' }), row('r2', { isoId: 'ready', type: 'Field' }), row('r3', { isoId: 'field-only', type: 'Hydrotest' }), row('r4', { isoId: 'no-welds-at-all', type: 'Prefab', status: 'Reopened' }), row('r5', { isoId: 'no-welds-at-all', type: 'Field', _archived: true })] });
+  assert.deepEqual(['open', 'ready', 'field-only', 'no-welds-at-all'].map(id => flags(row(id), released)), [[true, false], ['ready', true], [null, 'ready'], [null, 'ready']]);
+  // Unreadable releases: only the isometric's own completion can be told.
   const hidden = context({ welds, releases: null });
-  assert.deepEqual([flags('open'), isoFlags(row('open'), hidden)].map(f => [f.pfb, f.fld]), [[false, true], [null, null]]);
-  // Archived releases do not count.
-  assert.equal(isoFlags(row('open'), context({ welds, releases: [row('r', { isoId: 'open', type: 'Prefab', _archived: true })] })).pfb, false);
+  assert.deepEqual(flags(row('ready'), hidden), [null, null]);
+  assert.deepEqual(flags(row('ready', { fieldCompletedAt: '2026-10-11T08:00:00.000Z' }), hidden), [null, true]);
+  assert.deepEqual([flagText('ready'), flagRank(false) < flagRank('ready') && flagRank('ready') < flagRank(true)], ['Ready', true]);
+  // The KPI cards count only the ticks.
+  assert.deepEqual(isoKpis(['ready', 'open'].map(id => isoFlags(row(id), released)), 2).filter(card => card.key === 'prefab' || card.key === 'field').map(card => card.count), [1, 1]);
 });
 
 test('M, W, Doc., NoBo and PWHT read the isometric; E exists only where calculations are delivered', () => {
@@ -124,8 +132,10 @@ test('the sample data shows a tick, a cross and a dash in the flag columns and n
   const ctx = isoListContext({ welds: s.list('welds'), weldTypes: s.list('weld_types'), results: s.list('inspection_results'), releases: s.list('releases'), planning: true });
   const flags = s.list('isometrics').map(iso => isoFlags(iso, ctx));
   for (const key of ['noBo', 'pwht', 'm', 'e', 'w', 'pfb', 'fld', 'doc'] as const) assert.ok(flags.some(f => f[key] === true), `${key} has a tick`);
-  for (const key of ['noBo', 'pwht', 'm', 'e', 'w', 'pfb', 'fld', 'doc'] as const) assert.ok(flags.some(f => f[key] === false), `${key} has a cross`);
+  // Pfb shows no cross: every sample shop weld has its welder (the cross is covered by the rule test above).
+  for (const key of ['noBo', 'pwht', 'm', 'e', 'w', 'fld', 'doc'] as const) assert.ok(flags.some(f => f[key] === false), `${key} has a cross`);
   assert.ok(flags.some(f => f.pfb === null), 'Pfb has a dash');
+  assert.ok(flags.some(f => f.pfb === 'ready') && flags.some(f => f.fld === 'ready'), 'Pfb and Fld have the orange minus');
   for (const card of isoKpis(flags, flags.length)) assert.ok(card.count > 0 && card.percent > 0, card.label);
 });
 
@@ -333,11 +343,11 @@ const copyOfProject = (s: Store, isoId: string) => s.get('isometrics', isoId).pr
 test('hosted export gives the flag columns as Yes / No / n/a, the same in both pilots (from the server summary)', async t => {
   const f = await hostedFixture(t); await f.setup();
   const table = async (ids: string) => parse(await (await f.request(`/api/export/isometrics?format=csv&archived=true&ids=${ids}`)).text(), { columns: true, skip_empty_lines: true }) as Record<string, string>[];
-  const rows = await table('iso-3,iso-10,iso-1');
+  const rows = await table('iso-3,iso-10,iso-1,iso-4');
   const by = (isoNo: string) => rows.find(r => r['ISO number'] === isoNo)!;
   for (const column of ['NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.']) assert.ok(column in rows[0], column);
   assert.deepEqual(['NoBo', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.'].map(c => by('STX-CW-003')[c]), ['Yes', 'No', 'No', 'No', 'Yes', 'Yes', 'No']);
-  assert.deepEqual([by('STX-SK-010').Pfb, by('STX-SK-010').Fld, by('STX-CW-001').Pfb], ['n/a', 'No', 'No']);
+  assert.deepEqual([by('STX-SK-010').Pfb, by('STX-SK-010').Fld, by('STX-CW-001').Pfb, by('STX-ST-004').Pfb], ['n/a', 'No', 'Ready', 'Yes'], 'empty, cross, orange minus ("Ready") and a Prefab complete without release document');
   await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' });
   assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Pilot');
   f.usePilot('mto');

@@ -1,5 +1,5 @@
 import type { Field, Row } from './types.ts';
-import { isoBlockers, newest, type BlockerKey } from './iso-status.ts';
+import { COMPLETION_FIELDS, isoBlockers, newest, phaseCompleted, type BlockerKey } from './iso-status.ts';
 import { RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { punchBlocking, punchKind } from './punch.ts';
 
@@ -44,6 +44,7 @@ export const RELEASE_EXTRA_FIELDS: Field[] = [
 /** Fields the hosted profile delivers per action (see `availabilityFor`). */
 export const RELEASE_ACTIONS: Record<string, string[]> = {
   release: ['type', 'isoIds', 'reportNo', 'engineerId', 'signatureId', 'date', 'note'],
+  'complete-phase': ['isoId', 'type'],
   'reopen-release': ['isoId', 'type', 'reason', 'date'],
   'assign-fwp': ['isoIds', 'fieldPackageId'],
 };
@@ -54,6 +55,29 @@ export const isReleased = (row: Row) => !row._archived && row.status !== 'Reopen
 export const activeRelease = (releases: Row[] | null | undefined, isoId: string, type: string): Row | undefined =>
   (releases || []).filter(row => row.isoId === isoId && row.type === type && isReleased(row)).sort(newest)[0];
 
+// ----- phase completion -----------------------------------------------------------------------------------------
+
+/**
+ * Two steps per phase, as in the reference: (1) "Prefab complete" / "Field complete" on the isometric, a confirmation
+ * only, stored as `<phase>CompletedAt/By` on the isometric: it locks the phase's welds, lists the isometric on the
+ * phase's release page, clears its "not released yet" blocker and ticks Pfb / Fld; Reopen undoes it. (2) The release
+ * document (a `releases` record), made later for completed isometrics only. An active release from before the two
+ * steps counts as completed (see `phaseCompleted`).
+ */
+export { COMPLETION_FIELDS, phaseCompleted } from './iso-status.ts';
+/** Who completed a phase and when: the isometric's fields, else the active release that stands for it. */
+export function phaseCompletion(iso: Row, type: ReleasePhase, releases?: Row[] | null): { at: string; by: string } | null {
+  const fields = COMPLETION_FIELDS[type];
+  if (text(iso[fields.at])) return { at: text(iso[fields.at]), by: text(iso[fields.by]) };
+  const release = activeRelease(releases, iso.id, type);
+  return release ? { at: text(release.releasedAt || release.date || release._createdAt), by: text(release.releasedBy) } : null;
+}
+/** The confirmations of the reference's Prefab complete / Field complete dialogs. */
+export const COMPLETE_CONFIRM: Record<ReleasePhase, string> = {
+  Prefab: 'Are you sure you want to mark this isometric as Prefab complete? The isometric will appear in the release overview. Shop welds are locked immediately.',
+  Field: 'Are you sure you want to mark this isometric as Field complete? The isometric will appear in the field release overview. Hydrotest and handover follow.',
+};
+
 // ----- weld locking ---------------------------------------------------------------------------------------------
 
 /** Shop or field, from the weld type's location; undefined when the weld has no type or the type no location. */
@@ -62,41 +86,39 @@ export function weldPhase(weld: Row, weldTypes: Row[] = []): WeldPhase | undefin
   return location === 'Shop' ? 'shop' : location === 'Field' ? 'field' : undefined;
 }
 /**
- * Whether a weld is locked: field welds after the Field release, shop welds after the Prefab release of its
- * isometric. Reopen makes the release inactive, so the weld unlocks again. `weldTypes` supplies the weld's location
- * (shop / field); without it no weld can be placed in a phase and none is locked.
- * INFERRED from one sample of the reference (field welds locked while the isometric is Field completed); the shop side mirrors it.
+ * Whether a weld is locked: shop welds once the isometric is Prefab complete, field welds once it is Field complete
+ * (reference: "Shop welds are locked immediately."; rows locked while "Release not available"). Reopen unlocks.
+ * `isometric` is the weld's isometric; without it only an active release can tell the completion. `weldTypes`
+ * supplies the weld's location; a weld without one is in no phase and never locked.
  */
 export function weldLocked(weld: Row, isometric: Row | undefined | null, releases: Row[] | null | undefined, weldTypes: Row[] = []): boolean {
   const phase = weldPhase(weld, weldTypes);
   if (!phase) return false;
-  const isoId = text(isometric?.id ?? weld.isoId);
   if (isometric && weld.isoId !== undefined && weld.isoId !== isometric.id) return false;
-  return Boolean(activeRelease(releases, isoId, phase === 'shop' ? 'Prefab' : 'Field'));
+  const iso = isometric ?? ({ id: text(weld.isoId) } as Row);
+  return phaseCompleted(iso, phase === 'shop' ? 'Prefab' : 'Field', releases);
 }
-/** The sentence a locked weld shows, or '' when it is not locked. */
+/** The padlock / disabled-checkbox text of a locked weld (reference wording), or '' when it is not locked. */
 export function weldLockReason(weld: Row, isometric: Row | undefined | null, releases: Row[] | null | undefined, weldTypes: Row[] = []): string {
   if (!weldLocked(weld, isometric, releases, weldTypes)) return '';
-  return weldPhase(weld, weldTypes) === 'shop' ? 'Locked: the isometric is released for prefab. Reopen the Prefab release to change it.' : 'Locked: the field release is complete. Reopen the Field release to change it.';
+  return weldPhase(weld, weldTypes) === 'shop' ? 'Locked after Prefab complete' : 'Locked after Field complete';
 }
 
-// ----- what blocks a release -----------------------------------------------------------------------------------
+// ----- when a phase may be completed ----------------------------------------------------------------------------
 
 export interface ReleaseReason { group: BlockerKey; /** Group title as the blockers list prints it. */ title: string; message: string; weldId?: string; }
 export interface ReleaseCheckInput {
   iso: Row; welds: Row[]; weldTypes: Row[]; results: Row[];
-  /** Release records; null / absent when unreadable (the Prefab prerequisite of a Field release is then not checked). */
+  /** Release records (an active one stands for a completed phase); null / absent when unreadable. */
   releases?: Row[] | null;
-  /** Punch items; null / absent when unreadable (no punch reason is produced). */
+  /** Punch items. Read by the status card's warning only: open punch never holds a phase (see `releaseCheck`). */
   punch?: Row[] | null;
 }
 export interface ReleaseCheck { type: ReleasePhase; reasons: ReleaseReason[]; ready: boolean; /** Live welds of the phase. */ welds: number; }
 
 /**
- * INFERRED: an open pre-punch item of category A or B blocks the release (the reference warns "Pre-punch: 1 A/B still
- * need Finished + approval"). Status, category and type are read by the punch flow's rules (shared/punch.ts), so the
- * release agrees with the isometric's Punch blocker: only Open items block (legacy In progress reads as Open, Completed
- * as Finished), a missing category reads as B, and items saved before the type existed are Punch items.
+ * An open pre-punch item of category A or B (shared/punch.ts rules). The reference only warns about it ("Pre-punch:
+ * N A/B still need Finished + approval") and lists it in the blockers; it never holds Complete or the release.
  */
 export const punchBlocksRelease = (item: Row) => !item._archived && punchKind(item) === 'Pre-punch' && punchBlocking([item]).length > 0;
 
@@ -106,40 +128,44 @@ const hasWelder = (weld: Row) => [1, 2, 3, 4].some(side => text(weld[`welder${si
 const byWeldNo = (a: Row, b: Row) => text(a.weldNo).localeCompare(text(b.weldNo), 'en', { numeric: true });
 
 /**
- * What blocks releasing an isometric for a phase. Prefab looks at the shop welds, Field at the field welds; for both:
- * every weld is welded and carries its required fields, every required NDT has an accepted result, no rejection is
- * waiting for its repair, and no pre-punch item blocks. Field also needs the Prefab release when the isometric has shop welds.
- * INFERRED from the task description; the blockers list on the isometric (`isoBlockers`) is the same rule over every phase.
+ * When "Prefab complete" / "Field complete" becomes available (manual, "Prefab complete / Field complete"):
+ * Prefab: every weld of the isometric has a type with a shop / field location, every shop weld is welded, every
+ * required NDT of a shop weld has a result and no rejection waits for its repair. No shop welds: available (vacuous).
+ * Field: Prefab complete first ("Prefab complete is required first"), then the same for the field welds; no field
+ * welds: available once Prefab is complete. Open punch and missing optional weld fields do not hold a phase.
  */
 export function releaseCheck(type: ReleasePhase, input: ReleaseCheckInput): ReleaseCheck {
   const phase = PHASE_LOCATION[type];
-  const all = live(input.welds).filter(weld => weld.isoId === input.iso.id);
-  const welds = all.filter(weld => weldPhase(weld, input.weldTypes) === phase).sort(byWeldNo);
+  const all = live(input.welds).filter(weld => weld.isoId === input.iso.id).sort(byWeldNo);
+  const welds = all.filter(weld => weldPhase(weld, input.weldTypes) === phase);
   const reasons: ReleaseReason[] = [];
   const add = (group: BlockerKey, message: string, weldId?: string) => reasons.push({ group, title: TITLES[group], message, ...(weldId ? { weldId } : {}) });
-  if (!welds.length) add('welds', `This isometric has no ${phase} welds, so there is nothing to release for ${type === 'Prefab' ? 'prefab' : 'the field'}.`);
+  if (type === 'Field' && !phaseCompleted(input.iso, 'Prefab', input.releases)) add('release', 'Prefab complete is required first');
+  if (type === 'Prefab') for (const weld of all.filter(weld => !weldPhase(weld, input.weldTypes))) add('welds', `Weld ${weld.weldNo} has no type — assign shop or field.`, weld.id);
   for (const weld of welds.filter(weld => !hasWelder(weld))) add('welds', `Weld ${weld.weldNo} has not been welded yet.`, weld.id);
   const status = isoBlockers({ iso: input.iso, welds, weldTypes: input.weldTypes, diameters: [], results: input.results, releases: null, punch: null });
-  for (const group of status.groups) for (const item of group.items) add(group.key, item.message, item.weldId);
-  if (type === 'Field' && input.releases && all.some(weld => weldPhase(weld, input.weldTypes) === 'shop') && !activeRelease(input.releases, input.iso.id, 'Prefab')) add('release', 'The prefab has not been released yet. Release the shop welds first.');
-  if (input.punch) {
-    const open = live(input.punch).filter(item => item.isoId === input.iso.id && punchBlocksRelease(item)).length;
-    if (open) add('punch', `${open} open pre-punch item${open === 1 ? '' : 's'} of category A or B ${open === 1 ? 'needs' : 'need'} to be finished.`);
-  }
+  for (const group of status.groups.filter(group => group.key === 'ndt' || group.key === 'repair')) for (const item of group.items) add(group.key, item.message, item.weldId);
   reasons.sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));
   return { type, reasons, ready: reasons.length === 0, welds: welds.length };
 }
 
-export type PhaseStateKey = 'released' | 'ready' | 'not-ready' | 'none';
-export interface PhaseState { state: PhaseStateKey; label: string; release?: Row; check: ReleaseCheck; }
-/** "Prefab not ready / ready / released" and "Field open / ready / completed" for the status card. `none`: the isometric has no welds in the phase. */
+export type PhaseStateKey = 'released' | 'completed' | 'ready' | 'not-ready';
+export interface PhaseState {
+  state: PhaseStateKey;
+  /** "Prefab not ready" / "Prefab complete" (the button) / "Prefab completed", the same for Field. */
+  label: string;
+  /** The release document that holds the phase, once one is made. */
+  release?: Row;
+  completion: { at: string; by: string } | null;
+  check: ReleaseCheck;
+}
+/** The state of a phase on the isometric's Status card. */
 export function phaseState(type: ReleasePhase, input: ReleaseCheckInput): PhaseState {
   const check = releaseCheck(type, input);
   const release = activeRelease(input.releases, String(input.iso.id), type);
-  const noun = type === 'Prefab' ? 'Prefab' : 'Field';
-  if (release) return { state: 'released', label: type === 'Prefab' ? 'Prefab released' : 'Field completed', release, check };
-  if (!check.welds) return { state: 'none', label: `${noun}: no ${PHASE_LOCATION[type]} welds`, check };
-  return check.ready ? { state: 'ready', label: `${noun} ready`, check } : { state: 'not-ready', label: `${noun} not ready`, check };
+  const completion = phaseCompletion(input.iso, type, input.releases);
+  if (completion) return { state: release ? 'released' : 'completed', label: `${type} completed`, release, completion, check };
+  return check.ready ? { state: 'ready', label: `${type} complete`, completion, check } : { state: 'not-ready', label: `${type} not ready`, completion, check };
 }
 
 // ----- the release pages ---------------------------------------------------------------------------------------
@@ -149,11 +175,15 @@ export interface ReleaseListFilters { /** 'hide' (default): only isometrics that
 export interface ReleaseListSource { isometrics: Row[]; projects: Row[]; spools?: Row[]; welds: Row[]; weldTypes: Row[]; results: Row[]; releases?: Row[] | null; punch?: Row[] | null; }
 const isoOrder = (a: ReleaseListRow, b: ReleaseListRow) => text(a.iso.isoNo).localeCompare(text(b.iso.isoNo), 'en', { numeric: true });
 
-/** The rows of the Prefab or Field release page for the isometrics given (the pages pass those of the active main project). */
+/**
+ * The rows of the Prefab or Field release page for the isometrics given (the pages pass those of the active main
+ * project): only isometrics whose phase is completed; "Hide released" (default) also leaves out those that already
+ * have their release document.
+ */
 export function releaseListRows(type: ReleasePhase, source: ReleaseListSource, filters: ReleaseListFilters = {}): ReleaseListRow[] {
   const projects = new Map(source.projects.map(project => [project.id, project]));
   const itp = text(filters.itpNo).toLowerCase();
-  return live(source.isometrics).filter(iso => (!filters.projectId || iso.projectId === filters.projectId) && (!itp || [iso.itpNo, iso.itpNo2].some(value => text(value).toLowerCase().includes(itp)))).map(iso => {
+  return live(source.isometrics).filter(iso => phaseCompleted(iso, type, source.releases) && (!filters.projectId || iso.projectId === filters.projectId) && (!itp || [iso.itpNo, iso.itpNo2].some(value => text(value).toLowerCase().includes(itp)))).map(iso => {
     const release = activeRelease(source.releases, iso.id, type);
     const spools = live(source.spools).filter(spool => spool.isoId === iso.id).map(spool => text(spool.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).join(', ');
     return { iso, project: projects.get(String(iso.projectId)), spools, release, check: releaseCheck(type, { iso, welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, punch: source.punch }) };

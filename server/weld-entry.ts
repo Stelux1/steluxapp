@@ -23,13 +23,36 @@ const fail = (errors: Record<string, string>) => {
   return new AppError(422, messages.length === 1 ? messages[0] : 'Please check the highlighted fields.', fields);
 };
 
+const lockContextOf = (store: Store) => lockContext(store.list('weld_types', true), store.list('releases'), store.list('isometrics', true));
 function lockOf(store: Store, weld: Values) {
-  return weldLock(weld, lockContext(store.list('weld_types', true), store.list('releases')));
+  return weldLock(weld, lockContextOf(store));
 }
 /** Lock rule (d), server side: a weld of a completed phase cannot change, be deleted or be brought back. */
 export function assertWeldUnlocked(store: Store, weld: Values) {
   const lock = lockOf(store, weld);
   if (lock.locked) throw new AppError(423, lock.reason);
+}
+
+/**
+ * The lock also covers the inspection results (NDT, NDT Pre, VI, Pre-HT / PWHT) of a completed phase: they cannot be
+ * added, changed or removed until the phase is reopened, so a released document keeps what was released. The
+ * system actor (sample data, imports) is not checked. One call at the top of every inspection result action.
+ */
+export function assertInspectionUnlocked(store: Store, key: string, data: Values, actor: Actor) {
+  if (actor.id === SYSTEM.id) return;
+  const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : typeof value === 'string' && value ? [value] : [];
+  let weldIds: string[] = [];
+  if (key === 'ndt-weld') weldIds = ids(data.weldId);
+  else if (key === 'inspection-upload' || key === 'pwht-upload') weldIds = ids(data.weldIds);
+  else if (key === 'visual-inspection') weldIds = [...ids(data.weldIds), ...ids(data.accepted), ...ids(data.notAccepted), ...ids(data.notApplicable)];
+  else if (key === 'inspection-result') { try { weldIds = ids(store.get('inspection_requests', data.requestId, true).weldId); } catch { return; } }
+  else return;
+  const context = lockContextOf(store);
+  for (const id of new Set(weldIds)) {
+    let weld: Row; try { weld = store.get('welds', id, true); } catch { continue; /* the action reports it */ }
+    const lock = weldLock(weld, context);
+    if (lock.locked) throw new AppError(423, `Weld ${String(weld.weldNo ?? '')}: ${lock.reason}`);
+  }
 }
 
 /**
@@ -45,7 +68,7 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row) {
   catch { return; }
   const errors: Record<string, string> = {};
   // (d) lock: the stored weld and the weld as it would become.
-  const context = lockContext(store.list('weld_types', true), store.list('releases'));
+  const context = lockContextOf(store);
   for (const weld of existing ? [existing, merged] : [merged]) { const lock = weldLock(weld, context); if (lock.locked) throw new AppError(423, lock.reason); }
   if (existing ? input.tracer !== undefined && Boolean(input.tracer) !== Boolean(existing.tracer) : merged.tracer === true) errors.tracer = 'The tracer flag is set by the tracer workflow.';
   if (changed(input, existing, ['wpsId', 'isoId']) && merged.wpsId) {

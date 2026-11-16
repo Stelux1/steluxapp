@@ -364,10 +364,10 @@ test('a fresh sample workspace with seeded accounts still asks for its administr
 
 type Summaries = Record<string, IsoSummary>;
 type BootstrapBody = { rows: Record<string, Row[]>; isoSummaries?: Summaries; copyParts?: CopyParts };
-/** Only aggregates: numbers, booleans, null and the fixed keys of phases and blocker groups; no other text. */
+/** Only aggregates: numbers, booleans, null, the fixed keys of phases and blocker groups and the Pfb / Fld state 'ready'; no other text. */
 function assertAggregates(value: unknown, path = 'summary') {
   if (value === null || typeof value === 'number' || typeof value === 'boolean') return;
-  if (typeof value === 'string') { assert.ok(['shop', 'field', 'site', 'release', 'welds', 'ndt', 'repair', 'punch'].includes(value), `${path} carries text "${value}"`); return; }
+  if (typeof value === 'string') { assert.ok(['shop', 'field', 'site', 'release', 'welds', 'ndt', 'repair', 'punch', 'ready'].includes(value), `${path} carries text "${value}"`); return; }
   if (Array.isArray(value)) { value.forEach((item, index) => assertAggregates(item, `${path}[${index}]`)); return; }
   assert.equal(typeof value, 'object', path);
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) assertAggregates(item, `${path}.${key}`);

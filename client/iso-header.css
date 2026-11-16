@@ -94,6 +94,7 @@
 .iso-flag { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; }
 .iso-flag.yes { color: #1a7f4b; background: #e5f5ec; }
 .iso-flag.no { color: #b3261e; background: #fdecea; }
+.iso-flag.ready { color: #b35c00; background: #fff1e0; }
 .iso-flag.na { color: var(--muted); }
 .data-table th.flag-cell, .data-table td.flag-cell { text-align: center; padding-inline: 6px; }
 .data-table .column-filters td { padding: 4px 8px 8px; background: var(--surface, #fff); border-bottom: 1px solid var(--line); }

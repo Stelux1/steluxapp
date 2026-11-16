@@ -225,7 +225,7 @@ test('hosted: enablement through the form, the bulk Options and refusal of malfo
 test('hosted: a reference to a record switched off on the weld\'s main project is refused by the server', async t => {
   const f = await hostedFixture(t); await f.setup();
   const create = (isoId: string, typeId: string, weldNo: string) => f.request('/api/records/welds', 'POST', { weldNo, isoId, typeId });
-  let response = await create('iso-4', 'weld-type-11', 'W910');
+  let response = await create('iso-5', 'weld-type-11', 'W910'); // Riverside (iso-4 of the same site is Prefab complete in the sample, so its shop welds are locked)
   assert.equal(response.status, 422); assert.match((await body(response)).fields!.typeId, /not enabled/);
   assert.equal((await create('iso-1', 'weld-type-11', 'W911')).status, 201, 'the north site still has the type');
   // An inspection request names an NDT process: switch it off for the north site, then try again.

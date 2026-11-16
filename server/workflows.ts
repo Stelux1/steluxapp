@@ -6,10 +6,10 @@ import { Store, AppError, positive, qty, validDate, today, type Actor } from './
 import type { Row } from '../shared/types.ts';
 import { requirementExecution } from '../shared/materials.ts';
 import { runHydrotestAction } from './hydrotest.ts';
-import { WELD_ENTRY_ACTIONS, runWeldEntryAction } from './weld-entry.ts';
+import { WELD_ENTRY_ACTIONS, assertInspectionUnlocked, runWeldEntryAction } from './weld-entry.ts';
 import { INSPECTION_ACTION_KEYS } from '../shared/inspections.ts';
 import { inspectionRules } from './inspections.ts';
-import { assignFieldPackage, releaseIsometrics, reopenRelease } from './releases.ts';
+import { assignFieldPackage, completePhase, releaseIsometrics, reopenRelease } from './releases.ts';
 import { runPunchAction } from './punch.ts';
 import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
 import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
@@ -37,6 +37,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
   if (WELD_ENTRY_ACTIONS.has(key)) return runWeldEntryAction(store, key, data, actor);
   if (isMtoStockAction(key)) return store.transaction(() => runMtoStock(store, key, data, actor));
   return store.transaction(() => {
+    // Inspection results of a completed (locked) phase cannot change until it is reopened (shared/releases.ts lock).
+    assertInspectionUnlocked(store, key, data, actor);
     if (INSPECTION_ACTION_KEYS.includes(key)) return inspectionRules(store, actor).run(key, data);
     const date = data.date ? validDate(data.date) : today();
     const note = str(data.note);
@@ -251,6 +253,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       return { resource: 'welds', record: result };
     }
     if (key === 'release') return releaseIsometrics(store, data, actor, { date, note });
+    if (key === 'complete-phase') return completePhase(store, data, actor);
     if (key === 'reopen-release') return reopenRelease(store, data, actor);
     if (key === 'assign-fwp') return assignFieldPackage(store, data, actor);
     if (key === 'phases') {

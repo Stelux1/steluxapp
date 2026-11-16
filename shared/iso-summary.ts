@@ -149,7 +149,7 @@ const plural = (count: number, one: string, many = `${one}s`) => `${count} ${cou
 /** The line a blocker group shows when its items cannot be listed (the welds are not readable in this pilot). */
 export function blockerCountText(key: BlockerKey, count: number): string {
   switch (key) {
-    case 'release': return 'The shop welds have not been released for prefab yet.';
+    case 'release': return count === 1 ? 'One phase is not released yet' : 'Prefab and Field are not released yet';
     case 'welds': return `${plural(count, 'weld')} with a welder ${count === 1 ? 'is' : 'are'} missing required fields.`;
     case 'ndt': return `${plural(count, 'required examination')} ${count === 1 ? 'has' : 'have'} no result yet.`;
     case 'repair': return `${plural(count, 'weld')} ${count === 1 ? 'was' : 'were'} rejected and ${count === 1 ? 'waits' : 'wait'} for an accepted re-examination.`;

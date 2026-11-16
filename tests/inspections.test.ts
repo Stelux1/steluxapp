@@ -85,10 +85,10 @@ test('repair welds are numbered R1, R2 along the chain and the original stays op
   assert.equal(repairState(original, [original, r1, r2], [...rejected, result('r2', 'Accepted', '2026-10-05')])!.open, false);
   const iso = row('iso'); const input = (results: Row[], welds = [original, r1, r2]) => ({ iso, welds, weldTypes: [], diameters: [], results });
   const repair = isoBlockers(input(rejected)).groups.find(group => group.key === 'repair')!;
-  assert.deepEqual(repair.items, [{ weldId: 'o', message: 'Weld 010 was rejected; repair weld 010R2 has no accepted result yet.' }]);
+  assert.deepEqual(repair.items, [{ weldId: 'o', message: 'Rejection on weld 010, repair 010R1 is still open' }, { weldId: 'r1', message: 'Rejection on weld 010R1, repair 010R2 is still open' }], 'one item per rejection (reference wording, shared/iso-status.ts)');
   assert.equal(isoBlockers(input([...rejected, result('r2', 'Accepted', '2026-10-05')])).groups.find(group => group.key === 'repair'), undefined);
-  // Without a repair weld the earlier messages stay.
-  assert.equal(isoBlockers(input([result('o', 'Rejected', '2026-10-01')], [original])).groups.find(group => group.key === 'repair')!.items[0].message, 'Weld 010 was rejected; no repair is recorded yet.');
+  // Without a repair weld the item names the next repair number.
+  assert.equal(isoBlockers(input([result('o', 'Rejected', '2026-10-01')], [original])).groups.find(group => group.key === 'repair')!.items[0].message, 'Rejection on weld 010, repair 010R1 is still open');
 });
 
 test('tracers: two per not-accepted weld, chosen manually, excluded from compliance', () => {

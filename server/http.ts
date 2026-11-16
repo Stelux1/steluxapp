@@ -23,6 +23,7 @@ import { assertSignatureImage } from './signatures.ts';
 import { assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
 import { ISO_LIST_COLUMNS, flagText } from '../shared/iso-list.ts';
 import { isoSummariesFor } from './iso-summary.ts';
+import { dropCompletionInput } from './releases.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
@@ -212,6 +213,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
+    dropCompletionInput(resource.key, req.body);
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
     if (pilots) requireOwnerSite(resource.key, req.body);
     if (pilots && resource.key === 'users') assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body);
@@ -223,6 +225,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.put('/api/records/:resource/:id', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit',access.record(resource.key,String(req.params.id)));
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
+    dropCompletionInput(resource.key, req.body);
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
@@ -263,6 +266,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly || resource.key === 'users') throw new AppError(405, 'Bulk editing is unavailable for this record type.');
     if (!Array.isArray(req.body.ids) || !req.body.ids.length || req.body.ids.length > 500 || new Set(req.body.ids).size !== req.body.ids.length) throw new AppError(422, 'Select between 1 and 500 unique records.');
     if (!req.body.changes || typeof req.body.changes !== 'object' || Array.isArray(req.body.changes) || !Object.keys(req.body.changes).length) throw new AppError(422, 'Choose fields to update.');
+    dropCompletionInput(resource.key, req.body.changes);
     access.input(resource.key, req.body.changes);
     // Welding wires and certificates (hosted): only Controlled / Accepted, each Yes or No (true / false).
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
