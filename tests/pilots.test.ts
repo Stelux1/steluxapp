@@ -18,7 +18,7 @@ import { resourcePath } from '../client/records.tsx';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
-const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports'];
+const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
 const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.map(item => ({ pilot, group, item }))));
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
@@ -145,8 +145,8 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['weld']);
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
-  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
-  for (const key of ['orders', 'stock', 'movements', 'material_parts', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
+  for (const key of ['iso_materials', 'materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'stock', 'reservations', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
+  for (const key of ['orders', 'movements', 'material_parts', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 404, key);
   assert.equal((await f.request('/api/reports/mto')).status, 403);
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'DENIED', quantity: 1 })).status, 403);
   const created = await f.request('/api/records/certifications', 'POST', { name: 'Weld pilot cert', chargeNo: 'W-001' }); assert.equal(created.status, 201);

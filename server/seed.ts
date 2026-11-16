@@ -22,7 +22,7 @@ export function seed(store: Store) {
     add('warehouses', 'warehouse-field', { name: 'Field stores', siteId: 'site-river', companyId: 'company-stelux', use: 'Both', residence: 'Antwerp' });
     add('suppliers', 'supplier-steel', { name: 'Atlas Steel Supply', residence: 'Breda', email: 'orders@example.com' });
     add('suppliers', 'supplier-pipe', { name: 'Meridian Piping', residence: 'Delft', email: 'supply@example.com' });
-    add('service_companies', 'service-coating', { name: 'Precision Surface Works', residence: 'Rotterdam' });
+    add('service_companies', 'service-coating', { name: 'Precision Surface Works', address: '7 Havenstraat', residence: 'Rotterdam', phone: '+31 10 555 0121', email: 'planning@example.com' });
     add('laydowns', 'laydown-a', { name: 'Laydown A — Prefab', siteId: 'site-north' });
     add('laydowns', 'laydown-b', { name: 'Laydown B — Field', siteId: 'site-river' });
     ['Pipe', 'Elbow 90', 'Flange', 'Tee', 'Reducer', 'Valve', 'Cap'].forEach((name, i) => add('material_parts', `part-${i}`, { name }));

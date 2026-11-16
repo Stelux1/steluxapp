@@ -1,6 +1,7 @@
 import { materialRecord } from './materials.ts';
 import type { Row } from './types.ts';
-export const PLANNING_RESOURCES = ['calculation_norms', 'calculation_lines', 'cut_list'];
+import { MTO_LOGISTICS_RESOURCES } from './mto-logistics.ts';
+export const PLANNING_RESOURCES = ['calculation_norms', 'calculation_lines', 'cut_list', ...MTO_LOGISTICS_RESOURCES];
 
 const active = (rows: Record<string, Row[]>, key: string) => (rows[key] || []).filter(row => !row._archived);
 const round = (value: number) => Math.round(value * 1e6) / 1e6;

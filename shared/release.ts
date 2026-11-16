@@ -2,6 +2,7 @@ import type { ActionDefinition, Availability, Field, Resource, Row } from './typ
 import type { Report } from './reports.ts';
 import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP } from './resources.ts';
+import { deliverMtoLogistics, MTO_LOGISTICS_PAGES } from './mto-logistics.ts';
 
 export const HOSTED_RELEASE_PROFILE = 'welding-workspace' as const;
 export type ReleaseProfile = 'full' | 'welding-demo' | 'access-prototype' | typeof HOSTED_RELEASE_PROFILE;
@@ -124,6 +125,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
     for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
+    // Isometric execution, pick lists and logistics (shared/mto-logistics.ts).
+    deliverMtoLogistics(availability, deliverResource);
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
@@ -200,6 +203,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
+  if (availability.features.includes('pilots') && MTO_LOGISTICS_PAGES.includes(pathname)) return true;
   if (['/', '/dashboard', '/welding', '/welding/reports'].includes(pathname.replace(/\/$/, '') || '/')) return true;
   return definitions.some(r => availability.navigation.includes(r.key) && pathname === `/${r.module === 'general' ? 'workspace' : r.module}/${r.key}`);
 }
