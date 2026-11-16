@@ -255,7 +255,7 @@ function FinishDialog({ item, onClose, onDone }: { item: Row; onClose: () => voi
       <div className="punch-sign"><div className="table-tabs" role="group" aria-label="How the sign-off is given">
         <button type="button" className={method === 'Drawn' ? 'selected' : ''} aria-pressed={method === 'Drawn'} onClick={() => { setMethod('Drawn'); setProblems(old => ({ ...old, signMethod: '' })); }}><PenLine size={14}/>Sign on screen</button>
         <button type="button" className={method === 'Uploaded PDF' ? 'selected' : ''} aria-pressed={method === 'Uploaded PDF'} onClick={() => { setMethod('Uploaded PDF'); setProblems(old => ({ ...old, signMethod: '' })); }}><Upload size={14}/>Upload signed PDF</button></div>
-        {method === 'Drawn' ? <SignaturePad label={`Signature of ${client ? values.clientName || 'the client' : values.inspector || user.name}`} disabled={busy} onChange={setRead}/>
+        {method === 'Drawn' ? <SignaturePad label={`Signature of ${client ? values.clientName || 'the client' : values.inspector || user.name}`} disabled={busy} onChange={next => setRead(() => next)}/>
           : <div className="field"><label htmlFor={`${id}-pdf`}>Signed PDF (up to 10 MB)</label><input id={`${id}-pdf`} type="file" accept="application/pdf,.pdf" aria-invalid={Boolean(problems.signMethod)} onChange={event => choosePdf(event.target.files?.[0] || null)}/>{pdf && <small className="field-hint">{pdf.name}</small>}</div>}
         {problems.signMethod && <small className="field-error" role="alert">{problems.signMethod}</small>}
       </div>
