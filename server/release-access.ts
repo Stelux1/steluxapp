@@ -14,6 +14,7 @@ import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 import { deleteRefusal, guardIrn, guardSiteIrn } from './iso-pages.ts';
 import { allowedSites, inSiteScope, isSiteRefusal, singleSiteScope, siteScopeFor, withSiteScope } from './site-scope.ts';
 import { STANDARD_DOCUMENT_MESSAGE, isStandardAttachmentName } from '../shared/weld-catalogs.ts';
+import { withLegacyStock } from './mto-stock.ts';
 
 export const SITE_DELETE_REFUSED = 'This project site still has projects and cannot be deleted. Delete its projects first.';
 const notFound = () => new AppError(404, 'This resource could not be found.');
@@ -284,6 +285,10 @@ export function releaseAccess(store: Store, availability?: Availability) {
   }
   return { user, resource, visible, record, input, complete, links, weldRecord, archive, audit, project, present, pilotOf, pilotAccount, chooser, choiceRows, mainProjects, administrators, owner, copyParts, recipients,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
-    result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
+    result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => {
+      // Stock rows of an action result carry the old-model values like every delivered stock row.
+      const derive = (rows: Row[]) => result.resource === 'stock' ? withLegacyStock(store, rows) : rows;
+      return { ...result, ...(result.record ? { record: project(result.resource!, derive([result.record])[0]) } : {}), ...(result.records ? { records: derive(result.records).map(row => project(result.resource!, row)) } : {}) };
+    },
   };
 }

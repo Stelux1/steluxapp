@@ -2,6 +2,7 @@ import { projectRow, resourceAvailable, rowAvailable } from '../shared/release.t
 import { isoSummaries, projectStatuses, type IsoSummary } from '../shared/iso-summary.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { Store } from './store.ts';
+import { withLegacyStock } from './mto-stock.ts';
 
 /**
  * DELIBERATE PILOT-BOUNDARY CROSSING (1 of 2; the other is `copyParts` in `server/release-access.ts`).
@@ -23,7 +24,8 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
   if (!isometrics.length) return {};
   // Test systems are read whole (their project is no longer delivered in the hosted profile): only their names leave,
   // and only under the project rule of `testSystemName` in shared/iso-summary.ts.
-  const load = (key: string) => resourceAvailable(availability, key) ? store.list(key, true).filter(row => rowAvailable(availability, key, row)).map(row => projectRow(availability, key, row)) : null;
+  // Stock rows of the old model carry their derived main project before the projection drops the storehouse's (server/mto-stock.ts withLegacyStock).
+  const load = (key: string) => resourceAvailable(availability, key) ? (key === 'stock' ? withLegacyStock(store, store.list(key, true)) : store.list(key, true)).filter(row => rowAvailable(availability, key, row)).map(row => projectRow(availability, key, row)) : null;
   return isoSummaries({
     isometrics, projects: load('projects') || [], sites: load('sites') || [],
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),

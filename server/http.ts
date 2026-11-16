@@ -50,7 +50,7 @@ import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { registerIsoDialogRoutes } from './iso-dialogs.ts';
 import { assignIrn, guardIrn } from './iso-pages.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
-import { registerMtoStockRoutes } from './mto-stock.ts';
+import { registerMtoStockRoutes, withLegacyStock } from './mto-stock.ts';
 import { registerMtoLogisticsRoutes } from './mto-logistics.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
@@ -84,7 +84,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
   const needsSetup = () => !store.db.prepare('SELECT user_id FROM credentials LIMIT 1').get();
-  const readableRows = (req: Request, key: string, archived = false) => deriveMaterialRows(store, key, store.list(key, archived)).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, withLegacyValues(store, key, row)));
+  // Stock rows of the old model carry their derived main project and old pick-list claims (server/mto-stock.ts withLegacyStock).
+  const readableRows = (req: Request, key: string, archived = false) => (key === 'stock' ? withLegacyStock(store, store.list(key, archived)) : deriveMaterialRows(store, key, store.list(key, archived))).filter(row => access.visible((req as AuthRequest).user, key, row)).map(row => access.project(key, withLegacyValues(store, key, row)));
   const visibleAudit = (req: Request, events: ReturnType<Store['activity']>) => events.map(event => access.audit((req as AuthRequest).user, event)).filter((event): event is NonNullable<typeof event> => Boolean(event));
   const documents = documentStorage(store, dataDir, options.documentStorage || 'disk', options.initializeStorage !== false);
   if (options.secureCookies) app.set('secure cookies', true);

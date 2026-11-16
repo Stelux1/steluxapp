@@ -8,7 +8,7 @@ import { reportCsv, type Report } from '../shared/reports.ts';
 import { reportWorkbook } from './report-export.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { AuthRequest } from './auth.ts';
-import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, countedStock, hasLocationKind, isSiteStock, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
+import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, countedStock, hasLocationKind, isSiteStock, legacyClaimed, legacyStockValues, transferSourceSiteId, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
 import { nextSiteIndexNumber } from '../shared/welder-data.ts';
 
 type Input = Record<string, unknown>;
@@ -60,6 +60,18 @@ export function changeSiteStock(store: Store, actor: Actor, siteId: string, refs
   if (next < 0) throw new AppError(409, `Insufficient stock in the project site's inventory. Available: ${Number(existing?.quantity || 0)}.`);
   if (existing) return store.update('stock', existing.id, { quantity: next }, existing._version, actor);
   return store.create('stock', { ...refs, locationKind: 'site', siteId, warehouseId: '', chargeNo, quantity: next, ...wording }, actor);
+}
+/**
+ * The stock rows `rows` (a request's readable rows, or rows narrowed to its main projects) with the old-model values of
+ * shared/mto-stock.ts `LEGACY_STOCK_FIELDS`, derived from EVERY stored row: the storehouse's main project and what old
+ * pick lists claim of the row, whether or not the request receives that storehouse field or those pick lists. Every
+ * reader that hands stock rows to the client or computes from projected or narrowed rows goes through here; a copy is
+ * returned, nothing is stored.
+ */
+export function withLegacyStock(store: Store, rows: Row[]): Row[] {
+  if (!rows.some(row => !hasLocationKind(row) && row.warehouseId)) return rows;
+  const all = { stock: store.list('stock'), warehouses: store.list('warehouses', true), picklists: store.list('picklists') };
+  return rows.map(row => { const values = legacyStockValues(all, row); return values ? { ...row, ...values } : row; });
 }
 /**
  * Take a quantity of one material out of a project site's inventory, charge by charge in charge order (the inventory
@@ -153,6 +165,10 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     return row;
   };
   const nameOf = (row: Row, rows = catalog()) => stockDetails(rows, row).materialNo || 'material';
+  /** Every stored row the derivation of the old model reads (shared/mto-stock.ts). */
+  const stockRows = () => ({ stock: store.list('stock'), warehouses: store.list('warehouses', true), picklists: store.list('picklists'), transfer_orders: store.list('transfer_orders'), transfer_order_items: store.list('transfer_order_items') });
+  /** The main project a transfer order takes from: its own, or for an order of the old model the one its old-model rows count for. */
+  const sourceSite = (order: Row) => transferSourceSiteId(stockRows(), order);
   const copyWording = (row: Row) => row.corrected === true ? Object.fromEntries(['materialGroup', 'articleNo', 'uom', 'description', 'dia', 'lbs', 'corrected'].map(name => [name, row[name]])) : {};
 
   /**
@@ -346,8 +362,8 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
    */
   function sourceOrder(id: unknown): Row {
     const order = store.get('transfer_orders', id);
-    const scope = currentSiteScope();
-    if (order.fromSiteId && scope && !scope.allowsSite(String(order.fromSiteId))) throw siteRefused('Only accounts of the main project the material comes from can act on this transfer order.');
+    const scope = currentSiteScope(), from = sourceSite(order);
+    if (from && scope && !scope.allowsSite(from)) throw siteRefused('Only accounts of the main project the material comes from can act on this transfer order.');
     return order;
   }
   if (key === 'transfer-order-create') return createOrder();
@@ -454,7 +470,9 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     const plan = must(completePlan(items));
     const picked = new Map(plan.moves.map(move => [move.item.id, move.quantity]));
     const replan = () => new AppError(409, 'This transfer order was planned before project site inventories existed. Cancel it and create it again.');
-    if (route.from === 'inventory' && !order.fromSiteId) throw replan();
+    // An order of the old model out of "the inventory" takes from the old-model rows of its main project (sourceSite).
+    const fromSite = route.from === 'inventory' ? sourceSite(order) : '';
+    if (route.from === 'inventory' && !fromSite) throw replan();
     if (route.from === 'storehouse' && !order.fromWarehouseId && items.some(item => !item.stockId)) throw replan();
     if ((route.to === 'site' || route.to === 'inventory') && !order.siteId) throw replan();
     const rows = catalog();
@@ -480,16 +498,21 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
       if (!picked.has(item.id)) continue;
       let remaining = qty(picked.get(item.id));
       if (route.from === 'inventory') {
-        const from = String(order.fromSiteId);
-        const candidates = item.stockId ? [store.get('stock', item.stockId)] : siteStock({ stock: store.list('stock'), ...rows }, from).filter(row => sameNo(row, String(item.materialNo)) && Number(row.quantity) > 0);
-        if (item.stockId && (!isSiteStock(candidates[0]) || candidates[0].siteId !== from)) throw new AppError(409, `${item.materialNo} is no longer in the inventory of ${siteName(from)}.`);
+        const from = fromSite;
+        // The site's inventory rows; for an order of the old model also the old-model rows counted for the site (each up to
+        // what old pick lists do not claim of it), as Start and picking take them.
+        const counted = order.fromSiteId ? siteStock({ stock: store.list('stock') }, from) : countedStock(stockRows(), from).map(entry => entry.row);
+        const candidates = item.stockId ? counted.filter(row => row.id === item.stockId) : counted.filter(row => sameNo(row, String(item.materialNo)) && Number(row.quantity) > 0);
+        if (item.stockId && !candidates.length) throw new AppError(409, `${item.materialNo} is no longer in the inventory of ${siteName(from)}.`);
         for (const source of candidates) {
           if (remaining <= 0) break;
           const current = store.get('stock', source.id);
-          const take = qty(Math.min(remaining, Number(current.quantity)));
+          const free = isSiteStock(current) ? Number(current.quantity) : qty(Number(current.quantity) - legacyClaimed(stockRows(), current));
+          const take = qty(Math.min(remaining, free));
           if (take <= 0) continue;
           change(current, -take);
-          movement('Transfer out', current, { siteId: from }, -take, { ...orderFields, note: `${order.number} · To ${deliveredTo}` });
+          // An old-model row is a line of its storehouse: its movement names the storehouse (a reversal gives it back there).
+          movement('Transfer out', current, isSiteStock(current) ? { siteId: from } : { warehouseId: String(current.warehouseId), siteId: from }, -take, { ...orderFields, note: `${order.number} · To ${deliveredTo}` });
           deliver(current, take, 'Transfer in', itemCertIds(item));
           remaining = qty(remaining - take);
         }
@@ -552,6 +575,8 @@ export function registerMtoStockRoutes(app: Express, store: Store, availability:
     const filters = { siteId: param('siteId'), projectId: param('projectId'), isoId: param('isoId'), query: param('q').slice(0, 500), ordered: ['Yes', 'No'].includes(param('ordered')) ? param('ordered') : '' };
     // Access per project site: a limited request lists only its main projects' records (server/site-scope.ts).
     const rows = Object.fromEntries(['projects', 'isometrics', 'iso_materials', 'materials', 'custom_materials', 'orders', 'order_lines', 'picklists', 'stock', 'warehouses'].map(key => [key, scopeRows(key, store.list(key))]));
+    // Old-model rows carry what every stored row derives for them (pick lists of other main projects included).
+    rows.stock = withLegacyStock(store, rows.stock);
     const list = materialsList(rows, filters);
     const format = param('format');
     if (format === 'csv' || format === 'xlsx') {
