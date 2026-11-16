@@ -4,7 +4,8 @@ import { RESOURCE_MAP } from './resources.ts';
  * "Duplicate Project site" (reference: Edit project site → Duplicate): the copy gets " (Copy)" after the name and takes
  * over the ticked parts. Projects, isometrics, welds and every record that lives inside a main project are never copied;
  * the catalogs themselves are global, so an "activated list" copies only which records are switched on for the site.
- * The reference's ISO Book, Memo templates, Daily reporting and Spools options have nothing to copy here and are not offered.
+ * The reference's Daily reporting and Spools options have nothing to copy here and are not offered. ISO Book copies the
+ * site's ISO Book switches; Memo templates copies the site's own templates (a copy of a global or one of its own).
  */
 export interface DuplicatePart {
   key: string; label: string; group: 'Site settings' | 'Activated lists';
@@ -12,15 +13,19 @@ export interface DuplicatePart {
   section?: string;
   /** Activated lists: the catalog whose "Enabled on this site" links are copied (`catalog_sites`), or the link record of a list that is enabled per site. */
   catalog?: string; links?: { resource: string; ownerKey: string };
+  /** Activated lists: records of the site itself that are copied to the new site (server/site-duplicate.ts). */
+  records?: 'memo-templates';
 }
 export const DUPLICATE_PARTS: DuplicatePart[] = [
   { key: 'projectSettings', label: 'Project settings', group: 'Site settings', section: 'Project settings' },
   { key: 'documentSettings', label: 'Document settings', group: 'Site settings', section: 'Document settings' },
   { key: 'isoProgress', label: 'Iso progress', group: 'Site settings', section: 'Iso progress' },
+  { key: 'isobook', label: 'ISO Book', group: 'Site settings', section: 'ISO Book' },
   { key: 'ndtProcess', label: 'NDT process', group: 'Activated lists', catalog: 'ndt_processes' },
   { key: 'weldTypes', label: 'Weld types', group: 'Activated lists', catalog: 'weld_types' },
   { key: 'wpsMethods', label: 'WPS methods', group: 'Activated lists', links: { resource: 'wps_sites', ownerKey: 'wpsId' } },
   { key: 'welders', label: 'Welders', group: 'Activated lists', links: { resource: 'welder_sites', ownerKey: 'welderId' } },
+  { key: 'memoTemplates', label: 'Memo templates', group: 'Activated lists', records: 'memo-templates' },
   { key: 'materialSupplier', label: 'Material supplier', group: 'Activated lists', catalog: 'suppliers' },
   { key: 'ndtLocations', label: 'NDT locations', group: 'Activated lists', catalog: 'ndt_locations' },
   { key: 'pwhtProcess', label: 'PWHT process', group: 'Activated lists', catalog: 'pwht_processes' },

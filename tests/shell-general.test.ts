@@ -66,7 +66,9 @@ test('lists and pages use the reference texts', () => {
 test('main project form: reference labels, address required, everything first in Project settings', () => {
   assert.deepEqual(['name', 'address', 'zip', 'residence', 'phone', 'email'].map(name => [field(name).label, field(name).section]), [['Name', 'Project settings'], ['Address', 'Project settings'], ['Zip code', 'Project settings'], ['Residence', 'Project settings'], ['Phone', 'Project settings'], ['Email address', 'Project settings']]);
   assert.equal(field('name').required, true); assert.equal(field('address').required, true);
-  assert.deepEqual([...new Set(site.fields.map(item => item.section || 'Details'))], ['Project settings', 'Document settings', 'Iso progress']);
+  // ISO Book is a tab of Edit project site only (shell-general-012): its switches are hidden in Add.
+  assert.deepEqual([...new Set(site.fields.map(item => item.section || 'Details'))], ['Project settings', 'Document settings', 'Iso progress', 'ISO Book']);
+  assert.deepEqual([...new Set(site.fields.filter(item => !item.hidden).map(item => item.section || 'Details'))], ['Project settings', 'Document settings', 'Iso progress']);
   assert.deepEqual(Object.keys(missingRequired('sites', { name: 'Site' })), ['address']);
   // The other profiles keep the shared definitions.
   const demo = projectResource(availabilityFor('welding-demo'), RESOURCE_MAP.sites);

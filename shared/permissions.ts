@@ -7,6 +7,7 @@ import { FLANGE_RECORD_SCOPES } from './flanges.ts';
 import { WELDER_DATA_SCOPES } from './welder-data.ts';
 import { inspectionActionScope, TYPED_INSPECTION_ACTIONS } from './inspections.ts';
 import { MTO_ACTION_SCOPES } from './mto-logistics.ts';
+import { MEMO_TEMPLATE_SCOPES } from './memo-templates.ts';
 import { PDF_REPORT_RESOURCES } from './pdf-report-keys.ts';
 
 export const PERMISSION_VERBS:PermissionVerb[]=['show','insert','edit','delete','export','import','print'];
@@ -19,6 +20,8 @@ Object.assign(RESOURCE_SCOPES,WELDER_DATA_SCOPES);
 Object.assign(RESOURCE_SCOPES,HYDROTEST_SCOPES);
 Object.assign(RESOURCE_SCOPES,FLANGE_RECORD_SCOPES);
 Object.assign(RESOURCE_SCOPES,MTO_STOCK_SCOPES);
+// Memo templates of a project site: the right to edit the project site (4) changes them (shared/memo-templates.ts).
+Object.assign(RESOURCE_SCOPES,MEMO_TEMPLATE_SCOPES);
 const MODULE_SCOPES:Record<Module,string[]>={
  general:['4','5','10','37','64','75','93','local-documents'],
  materials:['71','1','2','3','6','7','8','9','11','12','13','14','15','16','17','18','20','21','22','23','24','25','70','78','80','83','88','local-material-logistics'],

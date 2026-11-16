@@ -53,6 +53,7 @@ import { registerMtoStockRoutes } from './mto-stock.ts';
 import { registerMtoLogisticsRoutes } from './mto-logistics.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
+import { registerMemoTemplateRoutes } from './memo-templates.ts';
 import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope, deriveMaterialRows, materialMassEdit, registerIsoMaterialImportRoutes, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
@@ -278,6 +279,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerMtoStockRoutes(app, store, availability, access);
   registerMtoLogisticsRoutes(app, availability);
   if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
+  if (pilots) registerMemoTemplateRoutes(app, { store, access });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     dropCompletionInput(resource.key, req.body);

@@ -104,6 +104,8 @@ export const SITE_RULES: Record<string, SiteRule> = {
   revisions: via(ISO),
   attachments: 'entity',
   catalog_sites: via(SITE),
+  // Memo templates: a site's own rows follow the site; a global row (no site) is shared.
+  iso_memo_templates: shared(SITE),
   [USER_SITES]: via(SITE),
   // Materials catalogs (global)
   suppliers: 'global', material_parts: 'global', material_types: 'global', uoms: 'global', operation_phases: 'global',

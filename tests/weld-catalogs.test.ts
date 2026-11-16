@@ -732,7 +732,8 @@ test('the Edit dialogs differ from the Add dialogs as in the reference; Add is u
   assert.ok(wire.indexOf('controlled') < wire.indexOf('accepted'), 'Add: Controlled, Accepted');
   assert.ok(names(edit('welding_wires')).indexOf('accepted') < names(edit('welding_wires')).indexOf('controlled'), 'Edit: Accepted before Controlled');
   assert.deepEqual([...names(edit('welding_wires'))].sort(), [...wire].sort(), 'nothing is added or lost');
-  assert.deepEqual(Object.keys(EDIT_FIELD_OVERRIDES).sort(), ['diameters', 'ndt_groups', 'roles', 'weld_types']);
+  // sites: the ISO Book tab of Edit project site (shell-general-012, tests/memo-templates.test.ts).
+  assert.deepEqual(Object.keys(EDIT_FIELD_OVERRIDES).sort(), ['diameters', 'ndt_groups', 'roles', 'sites', 'weld_types']);
   const coatings = add('coatings');
   assert.equal(editFields('coatings', coatings), coatings, 'a resource without overrides is returned as it is');
 });
