@@ -25,6 +25,9 @@ export interface IsoStatusInput {
   /** Test systems and hydrotest requests (see `hydrotestState`); absent or `null` when the account cannot read them. */
   testSystems?: Row[] | null;
   hydrotestRequests?: Row[] | null;
+  /** Spools (their test systems) and hydrotest results; absent or `null`: the isometric's own test system decides, results are not read. */
+  spools?: Row[] | null;
+  hydrotestResults?: Row[] | null;
   /** Punch items; `null` or absent when the account cannot read them. */
   punch?: Row[] | null;
   /** Budgets of the pipe / supports / appendages drivers. Absent: those drivers are out of scope. */
@@ -221,7 +224,7 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
   if (!weights.configured) return { configured: false, phases: PROGRESS_PHASES.map(phase => ({ key: phase.key, label: phase.label, weight: 0, percent: null, drivers: [] })), total: null };
   const welds = isoWelds(input), inch = ndtMeasurement(input.site) === 'inch-weighted';
   const finish = ISO_FINISH_ITEMS.map((item): number | null => { const state = text(input.iso[item.field]) || 'Open'; return state === 'Done' ? 1 : state === 'Open' ? 0 : null; }).filter((value): value is number => value !== null);
-  const hydrotest = hydrotestState(input.iso, { test_systems: input.testSystems, hydrotest_requests: input.hydrotestRequests, releases: input.releases });
+  const hydrotest = hydrotestState(input.iso, { test_systems: input.testSystems, hydrotest_requests: input.hydrotestRequests, releases: input.releases, spools: input.spools, hydrotest_results: input.hydrotestResults });
 
   /** Progress 0..1 of one driver, or null when it is out of scope. */
   const progressOf = (phase: PhaseKey, key: string): number | null => {

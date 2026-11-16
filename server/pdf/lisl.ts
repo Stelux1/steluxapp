@@ -1,7 +1,7 @@
 import { box, columns, GREY_FILL, GREY_LINE, imageBlock, labelValueGrid, lineHeight, spacer, stack, textBlock, type Block, type Cell, type EmbeddedImage, type Canvas, type PdfBuilder, type PageSetup, type TableSpec } from './engine.ts';
 import { renderDocument } from './document.ts';
 import type { CompanyForDocuments } from './company.ts';
-import { lislClientBlock, lislColumns, lislIsoBox, lislRowCells, type LislModel, type LislOptions } from '../../shared/pdf-lisl.ts';
+import { lislAcceptanceLabels, lislClientBlock, lislColumns, lislIsoBox, lislRowCells, type LislModel, type LislOptions } from '../../shared/pdf-lisl.ts';
 
 export type LislVariant = 'a4' | 'a3' | 'blank';
 export interface LislSignature { content: Uint8Array; name: string; nameUnder: boolean }
@@ -71,8 +71,7 @@ export async function lislPdf(input: LislPdfInput) {
       const columnSet = lislColumns(a3);
       const rows: Cell[][] = variant === 'blank' ? Array.from({ length: BLANK_ROWS }, () => columnSet.map(() => ['', ''])) : model.entries.map(entry => lislRowCells(entry, columnSet, options.weldRecord));
       const table: TableSpec = { columns: columnSet.map(column => ({ header: column.header, width: column.width })), rows, size: a3 ? 6.5 : 6, headerSize: a3 ? 6.5 : 6, fit: 'truncate', minLines: 2, padding: 2.5 };
-      const company_ = company?.company.name || 'Company', client_ = model.client || 'Client';
-      const labels = [company_, client_, 'NoBo'];
+      const labels = lislAcceptanceLabels(model, company?.company.name), company_ = labels[0];
       const acceptance = columns([
         { block: acceptanceBox('Acceptance / examine prefabrication', labels, signatureImage, signatureName), width: { fill: 1 } },
         { block: acceptanceBox('Acceptance / examine assembly', labels, signatureImage, signatureName), width: { fill: 1 } },

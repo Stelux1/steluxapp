@@ -63,6 +63,9 @@ export interface IsoSummarySource {
   /** Test systems and hydrotest requests (the hydrotest driver, shared/hydrotest.ts); absent or null when unreadable. */
   testSystems?: Row[] | null;
   hydrotestRequests?: Row[] | null;
+  /** Spools and hydrotest results: the hydrotest follows the test systems of an isometric's spools (shared/hydrotest.ts). */
+  spools?: Row[] | null;
+  hydrotestResults?: Row[] | null;
   /** Material requirements (the MTO budget of the progress drivers, once component codes exist). */
   requirements: Row[] | null;
   /** Catalog rows the budgets classify requirement lines with (see `isoBudgets()` in shared/mto-materials.ts). */
@@ -94,6 +97,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
   const results = groupBy(source.results, row => weldIso.get(String(row.weldId)) ?? '');
   const releases = groupBy(source.releases, row => String(row.isoId));
   const punch = groupBy(source.punch, row => String(row.isoId));
+  const spools = groupBy(source.spools ?? null, row => String(row.isoId));
   const requirements = groupBy(source.requirements, row => String(row.isoId));
   const projects = new Map(source.projects.map(row => [row.id, row]));
   const sites = new Map(source.sites.map(row => [row.id, row]));
@@ -112,12 +116,12 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
     const input = {
       iso, site, welds: welds.get(iso.id) || [], weldTypes: source.weldTypes || [], diameters: source.diameters || [], results: results.get(iso.id) || [],
       releases: source.releases ? releases.get(iso.id) || [] : null, punch: source.punch ? punch.get(iso.id) || [] : null,
-      testSystems: source.testSystems ?? null, hydrotestRequests: source.hydrotestRequests ?? null,
+      testSystems: source.testSystems ?? null, hydrotestRequests: source.hydrotestRequests ?? null, spools: source.spools ? spools.get(iso.id) || [] : null, hydrotestResults: source.hydrotestResults ?? null,
       budgets: source.requirements ? isoBudgets(iso, { iso_materials: requirements.get(iso.id) || [], materials: source.materials || [], custom_materials: source.customMaterials || [], operation_phases: source.operationPhases || [] }) : undefined,
     };
     const blockers = isoBlockers(input), quality = isoQuality(input), progress = isoProgress(input), flags = isoFlags(iso, context);
     const material = source.requirements && source.materials ? materialStatus(iso, materialRows(source, iso, requirements.get(iso.id) || [])).percent : null;
-    const hydrotest = hydrotestState(iso, { test_systems: source.testSystems ?? null, hydrotest_requests: source.hydrotestRequests ?? null, releases: source.releases ? releases.get(iso.id) || [] : null });
+    const hydrotest = hydrotestState(iso, { test_systems: source.testSystems ?? null, hydrotest_requests: source.hydrotestRequests ?? null, releases: source.releases ? releases.get(iso.id) || [] : null, spools: input.spools, hydrotest_results: source.hydrotestResults ?? null });
     output[iso.id] = {
       progress: { configured: progress.configured, phases: progress.phases.map(phase => ({ key: phase.key, percent: phase.percent })), total: progress.total },
       quality: { percent: quality.percent, accepted: quality.accepted, rejected: quality.rejected },

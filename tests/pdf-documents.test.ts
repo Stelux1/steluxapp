@@ -13,11 +13,12 @@ import { HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.t
 import { RESOURCES } from '../shared/resources.ts';
 import { inspectionCellState, REQUEST_DOCUMENT } from '../shared/inspections.ts';
 import { pickListReports } from '../shared/mto-logistics.ts';
-import { engineerSignerId, visualSignerId, hydrotestDocumentModel, releaseDocumentModel, releaseSignatureBlock, requestDocumentModel, requestDocumentOptions, visualReportModel, weldInspectionState } from '../shared/pdf-documents.ts';
+import { engineerSignerId, visualSignerId, hydrotestDocumentModel, pressureTestSignatures, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, weldInspectionState } from '../shared/pdf-documents.ts';
 import { blankPunchHeader, flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../shared/pdf-lists.ts';
 import { companyFromRow } from '../shared/pdf-company.ts';
 import { requestPdf, visualPdf } from '../server/pdf/operational-requests.ts';
-import { hydrotestPdf, releasePdf } from '../server/pdf/operational-release.ts';
+import { releasePdf } from '../server/pdf/operational-release.ts';
+import { hydrotestPdf } from '../server/pdf/hydrotest-book.ts';
 import { blankPunchPdf, flangePdf, pickListPdf, punchPdf } from '../server/pdf/operational-lists.ts';
 import { FOOTER_HEIGHT, type Layout } from '../server/pdf/engine.ts';
 import type { Row } from '../shared/types.ts';
@@ -60,8 +61,8 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, releaseP
   };
   const admin = client();
   assert.equal((await admin.request('/auth/setup', { method: 'POST', data: { name: 'Pdf admin', email: 'pdf-docs-admin@example.test', password: PASSWORD } })).status, 201);
-  const upload = (as: ReturnType<typeof client>, pilot: string, entityType: string, entityId: string, content: Uint8Array | string, name: string, type: string) => {
-    const body = new FormData(); body.set('entityType', entityType); body.set('entityId', entityId); body.set('file', new Blob([content as BlobPart], { type }), name);
+  const upload = (as: ReturnType<typeof client>, pilot: string, entityType: string, entityId: string, content: Uint8Array | string, name: string, type: string, documentType?: string) => {
+    const body = new FormData(); body.set('entityType', entityType); body.set('entityId', entityId); body.set('file', new Blob([content as BlobPart], { type }), name); if (documentType) body.set('documentType', documentType);
     return as.request('/files', { method: 'POST', pilot, data: body });
   };
   return { store, client, admin, profile, account, upload };
@@ -210,14 +211,16 @@ test('the engineer signature is found through the matching user, else not at all
 
 const releaseOf = (store: Store, isoId: string, type: string) => store.list('releases').find(row => row.isoId === isoId && row.type === type && row.status !== 'Reopened')!;
 
-test('Prefab and Field release: document number, isometric box, welds of the phase with their NDT state, punch summary, six signature titles', async t => {
+test('Prefab and Field release: document number, isometric box, welds of the phase with their NDT state, punch summary, one Released by box', async t => {
   const f = await fixture(t);
   const prefab = releaseOf(f.store, 'iso-3', 'Prefab'), field = releaseOf(f.store, 'iso-3', 'Field');
   const text = await get(f, `prefab-release?releaseId=${prefab.id}`);
   for (const label of ['Prefab release', 'Document DWG-2403-STX-CW-003', 'Document no.', 'Release no.', 'Report no.', 'PFR-002', 'Release date', 'Drawing no.', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT', 'Punch summary', 'Pre-punch', 'Punch', 'Open', 'Finished', 'Accepted', 'RT-2026-003']) assert.ok(text.includes(label), label);
   assert.ok(text.some(line => line.startsWith('Welds - shop')));
   const site = f.store.get('sites', 'site-north');
-  for (const name of ['signSubQaqc', 'signSubConstruction', 'signPrincipalUi', 'signContractorQaqc', 'signContractorConstruction', 'signNobo']) if (site[name]) assert.ok(text.includes(String(site[name])), String(site[name]));
+  // The six signature titles label the Pressure Test Plan, not the release document.
+  for (const name of ['signSubQaqc', 'signSubConstruction', 'signPrincipalUi', 'signContractorQaqc', 'signContractorConstruction', 'signNobo']) if (site[name]) assert.ok(!text.includes(String(site[name])), String(site[name]));
+  assert.ok(text.includes('Released by'));
   const welds = f.store.list('welds').filter(row => row.isoId === 'iso-3'), location = (weld: Row) => String(f.store.get('weld_types', String(weld.typeId)).location);
   for (const weld of welds.filter(weld => location(weld) === 'Shop')) assert.ok(text.includes(String(weld.weldNo)), `shop ${weld.weldNo}`);
   for (const weld of welds.filter(weld => location(weld) === 'Field')) assert.ok(!text.includes(String(weld.weldNo)), `no field ${weld.weldNo} on the prefab release`);
@@ -249,9 +252,9 @@ test('a release keeps the numbering and signature titles it was made with; a reo
   const signed = await pdf(await f.admin.request(`/pdf/prefab-release?releaseId=${release.id}`, { pilot: 'weld' }));
   assert.ok(hasImage(signed), 'the signature image of the releasing signer');
   assert.ok((await textOf(signed)).includes('Pdf admin'), 'name under the signature');
-  assert.equal(releaseSignatureBlock([{ label: 'Principal UI', title: 'x' }, { label: 'Subcontractor QA/QC', title: 'y' }]), 1);
-  assert.equal(releaseSignatureBlock([{ label: 'NoBo', title: 'x' }]), 0);
-  assert.equal(releaseSignatureBlock([]), -1);
+  // The six signature titles belong to the Pressure Test Plan: the release document has one "Released by" box.
+  const titles = await textOf(signed);
+  assert.ok(titles.includes('Released by') && !titles.includes('QA/QC Manager'), 'no signature titles on the release document');
 });
 
 test('release document number without stored data follows the main project settings', () => {
@@ -259,7 +262,7 @@ test('release document number without stored data follows the main project setti
   const rows = { releases: [{ id: 'r1', isoId: 'i1', type: 'Prefab', ...stamp }], isometrics: [{ id: 'i1', isoNo: 'ISO-7', drawingNo: 'DW-9', projectId: 'p1', ...stamp }], projects: [{ id: 'p1', siteId: 's1', ...stamp }], sites: [{ id: 's1', prefix: 'AB', releaseDocDrawing: 'Prefix + iso', signSubQaqc: 'QA', ...stamp }] } as unknown as Record<string, Row[]>;
   const model = releaseDocumentModel(rows, 'r1', new Set(['i1']))!;
   assert.equal(model.docNo, 'AB-ISO-7');
-  assert.deepEqual(model.signatureTitles.map(entry => entry.title), ['QA']);
+  assert.ok(!('signatureTitles' in model), 'the release document carries no signature titles');
   assert.equal(model.punch, null, 'without punch rows there is no punch summary');
   assert.equal(releaseDocumentModel(rows, 'r1', new Set()), null, 'an isometric outside the pilot');
 });
@@ -275,18 +278,48 @@ test('the final NDT state of a weld names the state and the report number', asyn
 
 // ----- hydrotest request -------------------------------------------------------------------------------------------------------------
 
-test('Hydrotest request: every field of the request and the isometrics of the test system', async t => {
+test('Pressure Test Plan: every field of the hydrotest release, the spools of the test system, the signature titles and the ticked documents', async t => {
   const f = await fixture(t);
   const text = await get(f, 'hydrotest-request?requestId=hydrotest-cw-1');
-  for (const label of ['Hydrotest request', 'Record HTR-CW-01', 'Test system', 'Test record no.', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Date', 'Pump type', 'Hose type', 'Manifold', 'Pressure gauge no.', 'Recorder No', 'Calibration cert', 'Piping class', 'Design code', 'Test medium',
-    'Required test pressure', 'Actual test pressure', 'Test start', 'Test end', 'Area temp', 'Test duration', 'Required leak test pressure', 'Leak test duration', 'Include isometric(s)', 'Result', 'Notes', 'Execution Plan', 'HEP-NFY-001 rev 2', '15.2 bar', 'PG-1187', 'CAL-2026-0312', 'ASME B31.3', 'Passed', 'No visible leaks, pressure held for the full duration.', 'Client representative', 'ISO number', 'Test pressure']) assert.ok(text.includes(label), label);
-  const isos = f.store.list('isometrics').filter(row => row.testSystemId === 'test-cw');
-  assert.ok(isos.length >= 1);
-  for (const iso of isos) assert.ok(text.includes(String(iso.isoNo)), String(iso.isoNo));
-  const without = await get(f, 'hydrotest-request?requestId=hydrotest-cw-1&isometrics=0');
-  assert.ok(!without.includes('ISO number'));
+  for (const label of ['Pressure Test Plan', 'Hydrotest release CW-01', 'Test system', 'CW-01', 'Test record no.', 'HTR-CW-01', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Date', 'Pump type', 'Hose type', 'Manifold', 'Pressure gauge no.', 'Recorder No', 'Calibration cert', 'Piping class', 'Design code', 'Test medium',
+    'Required Test pressure', 'Actual Test pressure', 'Test start', 'Test end', 'Area temp', 'Test duration', 'Required Leak Test Pressure', 'Leak Test duration', 'Note', 'HEP-NFY-001 rev 2', '15.2 bar', 'PG-1187', 'CAL-2026-0312', 'ASME B31.3', 'No visible leaks, pressure held for the full duration.',
+    'Paint spec.', 'Asset tag', 'ISO number', 'QA/QC Manager']) assert.ok(text.includes(label), label);
+  // The spools of the system (scenario SB S8: the request document listed no spools).
+  const spools = f.store.list('spools').filter(row => row.testSystemId === 'test-cw');
+  assert.ok(spools.length >= 1);
+  for (const spool of spools) assert.ok(text.includes(String(spool.name)), String(spool.name));
+  assert.ok(!(await get(f, 'hydrotest-request?requestId=hydrotest-cw-1&isometrics=0')).includes('ISO number'));
   assert.ok((await get(f, 'hydrotest-request?requestId=HTR-ST-01')).includes('HTR-ST-01'), 'by record number too');
   assert.equal((await f.admin.request('/pdf/hydrotest-request?requestId=missing', { pilot: 'weld' })).status, 404);
+  // Ticked custom documents of the test system are named in the plan and appended to it.
+  const { PDFDocument } = await import('pdf-lib');
+  const extra = await PDFDocument.create(); extra.addPage(); extra.addPage();
+  assert.equal((await f.upload(f.admin, 'weld', 'test_systems', 'test-cw', Buffer.from(await extra.save()), 'blinds.pdf', 'application/pdf', 'Blind list')).status, 201);
+  const release = await f.admin.request('/actions/hydrotest-release', { method: 'POST', pilot: 'weld', data: { testSystemId: 'test-cw', includeDocuments: ['Blind list'], includeIsometrics: false } });
+  assert.equal(release.status, 201, await release.clone().text());
+  const id = ((await release.json()) as { record: Row }).record.id;
+  const plain = await pdf(await f.admin.request(`/pdf/hydrotest-request?requestId=${id}`, { pilot: 'weld' }));
+  const pages = (await PDFDocument.load(plain)).getPageCount();
+  const bookText = await textOf(plain);
+  assert.ok(bookText.includes('Included files') && bookText.includes('blinds.pdf'));
+  assert.ok(pages >= 3, `plan plus the two pages of the blind list (${pages})`);
+});
+
+test('the Pressure Test Plan model of a site with signSubQaqc "QC lead" has a signature block "QC lead"; without titles our three', () => {
+  const stamp = { _version: 1, _archived: false, _createdAt: '2026-01-01T00:00:00Z', _updatedAt: '' };
+  const rows = {
+    hydrotest_requests: [{ id: 'h1', testSystemId: 't1', recordNo: 'HT-1', ...stamp }], test_systems: [{ id: 't1', name: 'PTC 01', ...stamp }],
+    spools: [{ id: 's1', isoId: 'i1', name: 'SP01', testSystemId: 't1', ...stamp }], isometrics: [{ id: 'i1', isoNo: 'ISO-7', projectId: 'p1', ...stamp }],
+    projects: [{ id: 'p1', siteId: 's1', internnumber: '20240101', ...stamp }], sites: [{ id: 's1', signSubQaqc: 'QC lead', signNobo: 'Notified body', ...stamp }],
+  } as unknown as Record<string, Row[]>;
+  const model = hydrotestDocumentModel(rows, 'h1', new Set(['i1']))!;
+  assert.deepEqual(model.signatureTitles.map(entry => entry.title), ['QC lead', 'Notified body']);
+  assert.deepEqual(pressureTestSignatures(model), ['QC lead', 'Notified body']);
+  assert.deepEqual(model.spools, [['20240101', 'ISO-7', 'SP01', '', '', '', '']]);
+  assert.equal(model.includeIsometrics, false, 'Include isometric(s) starts unchecked');
+  const plain = hydrotestDocumentModel({ ...rows, sites: [{ id: 's1', ...stamp }] } as unknown as Record<string, Row[]>, 'h1', new Set(['i1']))!;
+  assert.deepEqual(pressureTestSignatures(plain), ['QA/QC engineer', 'Client representative', 'Witness']);
+  assert.equal(hydrotestDocumentModel(rows, 'h1', new Set()), null, 'its spools lie outside the pilot');
 });
 
 // ----- punch lists -----------------------------------------------------------------------------------------------------------------------

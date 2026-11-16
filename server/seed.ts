@@ -1,6 +1,6 @@
 import { Store, SYSTEM } from './store.ts';
 import { runAction } from './workflows.ts';
-import { seedHydrotest } from './hydrotest.ts';
+import { backfillSpoolTestSystems, seedHydrotest } from './hydrotest.ts';
 import { seedItpSamples } from './itp-dashboard.ts';
 import { seedWeldCatalogs } from './weld-catalogs-seed.ts';
 import { seedWeldEntry } from './weld-entry.ts';
@@ -9,7 +9,8 @@ import { seedMtoStock } from './mto-stock-seed.ts';
 import { loadDiameterCatalog } from './diameter-catalog.ts';
 
 export function seed(store: Store) {
-  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) return;
+  // Spools of a workspace seeded before test systems moved to spool level take their isometric's test system once.
+  if (store.db.prepare("SELECT value FROM metadata WHERE key='seed_version'").get()) { backfillSpoolTestSystems(store); return; }
   store.transaction(() => {
     const add = (key: string, id: string, data: Record<string, unknown>) => store.create(key, data, SYSTEM, id);
     const action = (key: string, data: Record<string, unknown>) => runAction(store, key, data, SYSTEM);
@@ -19,8 +20,8 @@ export function seed(store: Store) {
     add('sites', 'site-north', { name: 'North fabrication yard', address: '18 Foundry Road', residence: 'Rotterdam', zip: '3089', phone: '+31 10 555 0142', email: 'north@example.com',
       mandatoryFields: true, flangeStandard: 'ASME B16.5 torque table (2012)', wpsValidation: true, projectCertificates: true, materialDisplay: 'Materials added to isometrics', defectNorm: 'ISO 6520-1', repairLimit: 4, ndtMeasurement: 'Inch-weighted', irnCode: 'NFY-IRN',
       prefix: 'NFY', releaseDocDrawing: 'Drawing no + iso', hydrotestPlan: 'HEP-NFY-001 rev 2', flangeProcedureNo: 'FP-2026-03', signSubQaqc: 'QA/QC Manager', signSubConstruction: 'Construction Manager', signPrincipalUi: 'Principal inspector', signContractorQaqc: 'Contractor QA/QC lead', signContractorConstruction: 'Contractor site manager', signNobo: 'Notified body inspector',
-      vtDocNo: 'VT-NFY-01 rev B', vtProcedureNo: 'PR-VT-004', vtType2No: 'VT2-118', vtType2Rev: 'A', vtType2Date: '2026-06-15', vtType2OrderNo: 'PO-44017', lislField1: 'Fabrication package', lislField2: 'Welding coordinator', lislField3: 'Cooling water', lislDocNo: 'LISL-NFY-01 rev C', lislProcedureNo: 'PR-LISL-002',
-      lislGuField1: 'LGU-NFY-07', lislGuField2: 'Rev. 3', lislGuField3: '2026-09-01', lislGuSpec1: 'Welded to the project piping specification PS-NFY-2026', lislGuSpec2: 'Welds carry welder code and weld number',
+      vtDocNo: 'VT-NFY-01 rev B', vtProcedureNo: 'PR-VT-004', vtType2No: 'VT2-118', vtType2Rev: 'A', vtType2Date: '2026-06-15', vtType2OrderNo: 'PO-44017', lislField1: 'Stelux Piping Contractor', lislField2: 'NLP Operations', lislField3: 'NB-0343', lislDocNo: 'LISL-NFY-01 rev C', lislProcedureNo: 'PR-LISL-002',
+      lislGuField1: 'Stelux Piping Contractor', lislGuField2: 'NLP Operations', lislGuField3: 'NB-0343', lislGuSpec1: 'Welded to the project piping specification PS-NFY-2026', lislGuSpec2: 'Welds carry welder code and weld number',
       lislMvDocNo: 'LMV-NFY-02', lislMvVersion: 'Rev. 1', lislMvDate: '2026-09-01', lislMvSpec1: 'Welded to the project piping specification PS-NFY-2026', lislMvSpec2: 'Consumables traceable by heat number',
       lislRevOwnerLine: 'Client heat transport standard HT-STD-12', lislRevDocNo: 'LGR-NFY-03', lislRevVersion: 'Rev. 2', lislRevDate: '2026-09-01',
       ownerName: 'Northgate Pipeline Owner', ownerStandard: 'Owner standard OS-PL-210 - pipeline construction', wqDocNo: 'FORM-LISL-014', wqVersion: '3', wqDate: '2026-03-01', issDocTemplate: 'TPL-ISS-007 rev 2', issSupplier: 'Stelux Engineering', issTrain: 'Train 2', issFluidService: 'Cooling water, fluid group 2', issNdtStandard: 'EN ISO',

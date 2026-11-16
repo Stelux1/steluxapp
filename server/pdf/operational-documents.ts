@@ -4,7 +4,8 @@ import { currentSignature } from '../signatures.ts';
 import { companyForDocuments } from './company.ts';
 import type { BookRun, PdfDocumentDefinition, PdfScopedDefinition } from './documents.ts';
 import { requestPdf, visualPdf } from './operational-requests.ts';
-import { hydrotestPdf, releasePdf } from './operational-release.ts';
+import { releasePdf } from './operational-release.ts';
+import { hydrotestPdf } from './hydrotest-book.ts';
 import { blankPunchPdf, flangePdf, pickListPdf, punchPdf } from './operational-lists.ts';
 import {
   REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
@@ -23,7 +24,7 @@ import type { Row } from '../../shared/types.ts';
  *   GET /api/pdf/ndt-pre-request?requestNo=…        GET /api/pdf/pwht-request?requestNo=…
  *   GET /api/pdf/visual-report?reportNo=…
  *   GET /api/pdf/prefab-release?releaseId=…         GET /api/pdf/field-release?releaseId=…
- *   GET /api/pdf/hydrotest-request?requestId=…[&isometrics=0]
+ *   GET /api/pdf/hydrotest-request?requestId=…[&isometrics=0|1]   (the Pressure Test Plan / hydrotest book of a hydrotest release)
  *   GET /api/pdf/punch-list?[projectId|isoId|punchType|category|kpi|q|documents=0|1]
  *   GET /api/pdf/punch-list-blank?isoId=…
  *   GET /api/pdf/flange-report?isoId=… | projectId=…[&finished=Yes|No][&q=…]
@@ -100,13 +101,14 @@ const releaseDefinition = (type: 'Prefab' | 'Field'): PdfScopedDefinition => ({
 });
 
 const hydrotestRequest: PdfScopedDefinition = {
-  key: 'hydrotest-request', title: 'Hydrotest request', report: 'pdf-hydrotest', scope: 'scoped',
+  key: 'hydrotest-request', title: 'Hydrotest release', report: 'pdf-hydrotest', scope: 'scoped',
   async build({ store, documents, rows, isoIds, projectIds, query, now }) {
     const include = query.isometrics === undefined || query.isometrics === '' ? null : ['1', 'true', 'yes', 'on'].includes(query.isometrics.toLowerCase());
     const model = hydrotestDocumentModel(rows, query.requestId ?? '', isoIds, include, projectIds);
     if (!model) throw notFound('This hydrotest request');
-    const { bytes } = await hydrotestPdf({ model, company: companyForDocuments(store, documents), generatedAt: now, rows });
-    return { bytes, fileName: `${isoDate(now)}-${projectNumber(rows, undefined, model.context.project)}-Hydrotest-request-${safe(model.request.recordNo, 'request')}` };
+    // The ticked custom documents are appended; the model holds only attachments the account may read (rows).
+    const { bytes } = await hydrotestPdf({ model, company: companyForDocuments(store, documents), generatedAt: now, rows, read: id => documents.read(id) });
+    return { bytes, fileName: `${isoDate(now)}-${projectNumber(rows, undefined, model.context.project)}-Hydrotest-release-${safe(model.testSystem?.name, 'system')}-${safe(model.request.recordNo, 'release')}` };
   },
 };
 

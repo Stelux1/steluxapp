@@ -5,7 +5,7 @@ import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
 import { FLANGE_COLUMNS, FLANGE_FIELDS } from './flanges.ts';
-import { HYDROTEST_RESOURCES, TEST_SYSTEM_FIELDS } from './hydrotest.ts';
+import { HYDROTEST_RESOURCES, SPOOL_TEST_SYSTEM_FIELDS, TEST_SYSTEM_FIELDS } from './hydrotest.ts';
 import { NOTIFICATION_KINDS } from './notifications.ts';
 import { ATTACHMENT_POSITIONS, CATALOG_SITES, DEFECT_CODE_NORMS, DEFECT_GROUPS, LEGACY_DEFECT_GROUPS, WELD_LOCATIONS } from './weld-catalogs.ts';
 import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELDS, INSPECTION_WELD_FIELDS } from './inspections.ts';
@@ -45,11 +45,11 @@ const siteSettings: Field[] = [
   s('releaseDocDrawing', 'Release doc drawing no', RELEASE_DOC_DRAWINGS, { section: DOCUMENTS, default: RELEASE_DOC_DRAWINGS[0] }),
   t('hydrotestPlan', 'Hydrotest Execution Plan', { section: DOCUMENTS }),
   t('flangeProcedureNo', 'Flange procedure No.', { section: DOCUMENTS }),
-  ...[['signSubQaqc', 'Subcontractor QA/QC'], ['signSubConstruction', 'Subcontractor Construction'], ['signPrincipalUi', 'Principal UI'], ['signContractorQaqc', 'Contractor QA/QC'], ['signContractorConstruction', 'Contractor Construction'], ['signNobo', 'NoBo']].map(([name, label]) => t(name, `Signature title: ${label}`, { section: DOCUMENTS })),
+  ...[['signSubQaqc', 'Subcontractor QA/QC'], ['signSubConstruction', 'Subcontractor Construction'], ['signPrincipalUi', 'Principal UI'], ['signContractorQaqc', 'Contractor QA/QC'], ['signContractorConstruction', 'Contractor Construction'], ['signNobo', 'NoBo']].map(([name, label]) => t(name, label, { section: DOCUMENTS })),
   t('vtDocNo', 'VT Doc.No. & Rev.No.', { section: DOCUMENTS }), t('vtProcedureNo', 'VT Procedure No.', { section: DOCUMENTS }),
-  t('vtType2No', 'VT type 2 no', { section: DOCUMENTS }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS }), d('vtType2Date', 'VT type 2 date', { section: DOCUMENTS }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS }),
-  ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL [GU] Field ${i}`, { section: DOCUMENTS, hint: ['Printed as Doc. on the LISL [GU] report.', 'Printed as Version on the LISL [GU] report.', 'Printed as Date on the LISL [GU] report.'][i - 1] })),
-  t('lislDocNo', 'LISL Doc.No. & Rev.No.', { section: DOCUMENTS }), t('lislProcedureNo', 'LISL Procedure No.', { section: DOCUMENTS }),
+  t('vtType2No', 'VT type 2 no', { section: DOCUMENTS }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS }), t('vtType2Date', 'VT type 2 date', { section: DOCUMENTS }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS }),
+  ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL A3/A4 Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL GU/MV Field ${i}`, { section: DOCUMENTS })),
+  t('lislDocNo', 'LISL GU/MV Doc.No. & Rev.No.', { section: DOCUMENTS }), t('lislProcedureNo', 'LISL GU/MV Procedure No.', { section: DOCUMENTS }),
   ...OWNER_FORM_SETTINGS.map(setting => setting.type === 'date' ? d(setting.name, setting.label, { section: DOCUMENTS, hint: setting.hint }) : t(setting.name, setting.label, { section: DOCUMENTS, hint: setting.hint })),
   t('ownerName', 'Owner name (owner-specific LISL forms)', { section: DOCUMENTS, hint: 'Printed on LISL [ISS] and [WQ]; left out when empty.' }), t('ownerStandard', 'Owner standard line [WQ]', { section: DOCUMENTS, hint: 'The line above the title of LISL [WQ]; left out when empty.' }),
   t('wqDocNo', 'LISL [WQ] Doc. no.', { section: DOCUMENTS }), t('wqVersion', 'LISL [WQ] Version', { section: DOCUMENTS }), d('wqDate', 'LISL [WQ] Date', { section: DOCUMENTS }),
@@ -127,7 +127,8 @@ add('welds', 'Weld register', 'weld', 'welding', 'Welding execution', 'Weld iden
 add('inspection_requests', 'Inspection requests', 'inspection request', 'welding', 'Welding execution', 'NDT, NDT PRE, visual, Pre-HT, and PWHT requests.', [t('number', 'Request number'), r('weldId', 'Weld', 'welds'), s('type', 'Inspection type', ['NDT', 'NDT PRE', 'VI', 'PWHT', 'PRE-HT']), r('processId', 'NDT process', 'ndt_processes'), r('locationId', 'NDT location', 'ndt_locations'), r('pwhtProcessId', 'PWHT process', 'pwht_processes'), r('pwhtLocationId', 'PWHT location', 'pwht_locations'), d('date', 'Request date'), status(['Open', 'Accepted', 'Rejected', 'Cancelled']), note('note', 'Notes')], ['number', 'type', 'weldId', 'processId', 'date', 'status'], { readonly: true, actions: ['inspection-request', 'inspection-result'] });
 add('inspection_results', 'Inspection results', 'inspection result', 'welding', 'Welding execution', 'Inspection results, report references, and examination history.', [r('requestId', 'Inspection request', 'inspection_requests'), r('weldId', 'Weld', 'welds'), t('reportNo', 'Report number'), s('type', 'Inspection type', ['NDT', 'NDT PRE', 'VI', 'PWHT', 'PRE-HT']), s('result', 'Result', ['Accepted', 'Rejected']), s('round', 'Examination', ['Initial', 'Remaining', 'Additional 1', 'Additional 2', 'Additional 3']), n('examinedLength', 'Examined length in mm'), d('date', 'Inspection date'), note('note', 'Notes')], ['reportNo', 'weldId', 'type', 'round', 'result', 'date'], { readonly: true, actions: ['inspection-result'] });
 catalog('field_packages', 'Field work packages', 'field work package', 'welding', 'Releases', [r('projectId', 'Project', 'projects'), t('number', 'Package number')]);
-catalog('test_systems', 'Test systems', 'test system', 'welding', 'Releases', [r('projectId', 'Project', 'projects'), t('medium', 'Test medium'), t('pressure', 'Test pressure')]);
+// Test system form of the reference: name, Description, then "Test system accepted by client" (extended below); Project, medium and pressure stay for the other profiles.
+add('test_systems', 'Test systems', 'test system', 'welding', 'Releases', 'Manage test systems used throughout your workspace.', [t('name', 'Name', { required: true }), t('description', 'Description', { type: 'textarea' }), r('projectId', 'Project', 'projects'), t('medium', 'Test medium'), t('pressure', 'Test pressure')], undefined, { unique: [['name']], wording: { add: 'Add test system', edit: 'Edit test system', remove: 'Delete test system' } });
 add('releases', 'Releases', 'release', 'welding', 'Releases', 'Prefab, field, and hydrotest release records and signed documents.', [t('number', 'Release number'), r('isoId', 'Isometric', 'isometrics'), s('type', 'Release type', ['Prefab', 'Field', 'Hydrotest']), t('reportNo', 'Report number'), d('date', 'Release date'), r('engineerId', 'QA / QC engineer', 'qa_engineers'), r('signatureId', 'Signature', 'signatures'), note('note', 'Notes')], ['number', 'isoId', 'type', 'reportNo', 'date'], { readonly: true, actions: ['release'] });
 add('punchlists', 'Punch lists', 'punch item', 'welding', 'Releases', 'Track pre-punch and punch items from the report to the sign-off.', [
   t('number', '#', { hidden: true }), s('punchType', 'Punch type', [...PUNCH_TYPES], { default: 'Punch' }),
@@ -214,6 +215,8 @@ add('notifications', 'Notifications', 'notification', 'settings', 'Administratio
 extend('signatures', [r('userId', 'User', 'users', { hidden: true }), s('kind', 'Signature', ['Full signature', 'Short signature'], { hidden: true }), b('nameUnder', 'Add name under the signature', { hidden: true })]);
 // Hydrotest release (hosted profile): the client's acceptance of a test system, and the hydrotest requests (shared/hydrotest.ts).
 extend('test_systems', TEST_SYSTEM_FIELDS);
+// Test systems are composed at spool level: the spool's own test system (shared/hydrotest.ts).
+extend('spools', SPOOL_TEST_SYSTEM_FIELDS);
 resources.push(...HYDROTEST_RESOURCES);
 // Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
 applyMtoStock(resources);

@@ -171,3 +171,34 @@ test('hosted editing: invalid weights are rejected with a message, valid setting
   const after = (await (await request('/api/bootstrap')).json() as Bootstrap).rows.projects.find(row => row.id === project.id)!;
   assert.deepEqual([after.weldPilot ?? true, after.mtoPilot], [true, false]);
 });
+
+// ----- Document settings (reference "Add project site" → Document settings) ------------------------------------------------------
+
+test('Document settings: labels, grouping and order of the reference; our owner-specific settings follow under their own heading', () => {
+  const site = projectResource(availabilityFor(HOSTED_RELEASE_PROFILE)!, RESOURCE_MAP.sites);
+  const documents = site.fields.filter(field => field.section === 'Document settings');
+  assert.deepEqual(documents.slice(0, 24).map(field => field.label), [
+    'Prefix', 'Release doc drawing no', 'Hydrotest Execution Plan', 'Flange procedure No.',
+    'Subcontractor QA/QC', 'Subcontractor Construction', 'Principal UI', 'Contractor QA/QC', 'Contractor Construction', 'NoBo',
+    'Doc.No. & Rev.No.', 'Procedure No.', 'VT type 2 no:', 'VT type 2 rev:', 'VT type 2 date:', 'VT type 2 order No:',
+    'Field 1:', 'Field 2:', 'Field 3:', 'Field 1:', 'Field 2:', 'Field 3:', 'Doc.No. & Rev.No.', 'Procedure No.',
+  ]);
+  const heading = (name: string) => documents.find(field => field.name === name)!.intro;
+  assert.deepEqual(['signSubQaqc', 'vtDocNo', 'vtType2No', 'lislField1', 'lislGuField1'].map(heading), ['Signature titles of the Pressure Test Plan', 'Visual Inspection', 'Visual Inspection V2', 'LISL A3/A4', 'LISL GU/MV']);
+  assert.equal(documents.find(field => field.name === 'vtType2Date')!.type, 'text', 'VT type 2 date is free text as in the reference');
+  assert.ok(documents.slice(24).length > 0 && documents[24].intro === 'Owner-specific LISL forms', 'the extras come after the reference fields');
+  assert.ok(!documents.some(field => field.label.startsWith('Signature title:')));
+});
+
+test('a LISL A3/A4 model of a site with LISL A3/A4 Field 1 "ACME" prints "ACME" in its title block; GU/MV prints its own fields', async () => {
+  const { lislAcceptanceLabels } = await import('../shared/pdf-lisl.ts');
+  const { ownerFormTexts } = await import('../shared/site-settings.ts');
+  const stamp = { _version: 1, _archived: false, _createdAt: '', _updatedAt: '' };
+  const model = { iso: { id: 'i', ...stamp }, client: 'Client BV', revision: '', testSystem: '', entries: [], site: { id: 's', lislField1: 'ACME', lislField3: 'TÜV', ...stamp } } as unknown as Parameters<typeof lislAcceptanceLabels>[0];
+  assert.deepEqual(lislAcceptanceLabels(model, 'Stelux'), ['ACME', 'Client BV', 'TÜV']);
+  assert.deepEqual(lislAcceptanceLabels({ ...model, site: undefined }, 'Stelux'), ['Stelux', 'Client BV', 'NoBo'], 'without the settings: company, client, NoBo');
+  const gu = ownerFormTexts({ lislGuField1: 'Contractor X', lislGuField2: 'Client Y', lislGuField3: 'NoBo Z', lislDocNo: 'EN10002121 Rev.05', lislProcedureNo: 'CSW-01-N' }, 'gu');
+  assert.deepEqual([gu.parties, gu.docNo, gu.procedureNo, gu.version, gu.date], [['Contractor X', 'Client Y', 'NoBo Z'], 'EN10002121 Rev.05', 'CSW-01-N', '', '']);
+  const mv = ownerFormTexts({ lislDocNo: 'D-1', lislProcedureNo: 'P-1', lislGuField1: 'C' }, 'mv');
+  assert.deepEqual([mv.docNo, mv.procedureNo, mv.parties[0]], ['D-1', 'P-1', 'C'], '[MV] without its own Doc.No. prints the LISL GU/MV one');
+});

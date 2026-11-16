@@ -8,7 +8,7 @@ import type { Store } from './store.ts';
  *
  * Inside a pilot the other pilot's records are refused. The isometric header and the isometrics list must
  * nevertheless show the same numbers in Weld Pilot and MTO Pilot, so the summaries are computed here from every
- * record the release profile delivers (welds, inspection results, releases, punch items, test systems and hydrotest requests, material requirements with
+ * record the release profile delivers (welds, inspection results, releases, punch items, test systems, spools, hydrotest releases and results, material requirements with
  * the orders, stock and pick lists that cover them),
  * whatever the caller's pilot or profile may read. Only aggregates leave this function (see `IsoSummary`):
  * percentages, counts per blocker group, punch counts, budget totals and yes / no flags, never a weld, result, welder or material line,
@@ -21,11 +21,13 @@ import type { Store } from './store.ts';
  */
 export function isoSummariesFor(store: Store, availability: Availability | undefined, isometrics: Row[]): Record<string, IsoSummary> {
   if (!isometrics.length) return {};
+  // Test systems are read whole (their project is no longer delivered in the hosted profile): only their names leave,
+  // and only under the project rule of `testSystemName` in shared/iso-summary.ts.
   const load = (key: string) => resourceAvailable(availability, key) ? store.list(key, true).filter(row => rowAvailable(availability, key, row)).map(row => projectRow(availability, key, row)) : null;
   return isoSummaries({
     isometrics, projects: load('projects') || [], sites: load('sites') || [],
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),
-    releases: load('releases'), punch: load('punchlists'), testSystems: load('test_systems'), hydrotestRequests: load('hydrotest_requests'), requirements: load('iso_materials'),
+    releases: load('releases'), punch: load('punchlists'), testSystems: resourceAvailable(availability, 'test_systems') ? store.list('test_systems', true).filter(row => rowAvailable(availability, 'test_systems', row)) : null, hydrotestRequests: load('hydrotest_requests'), spools: load('spools'), hydrotestResults: load('hydrotest_results'), requirements: load('iso_materials'),
     materials: load('materials'), customMaterials: load('custom_materials'), operationPhases: load('operation_phases'),
     orders: load('orders'), orderLines: load('order_lines'), stock: load('stock'), picklists: load('picklists'),
     planning: Boolean(availability?.features.includes('project-planning')),

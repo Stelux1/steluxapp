@@ -188,7 +188,9 @@ test('release document data follows the Document settings of the main project', 
   assert.deepEqual(signatureTitlesOf(site), [{ label: 'Subcontractor QA/QC', title: 'QA/QC Manager' }, { label: 'NoBo', title: 'Notified body inspector' }]);
   const data = releaseDocumentData(site, iso);
   assert.deepEqual([data.docNo, data.docPrefix, data.docDrawingRule], ['DWG-1-CW-001', 'NFY', 'Drawing no + iso']);
-  assert.deepEqual(storedSignatureTitles({ signatureTitles: data.signatureTitles } as unknown as Row), signatureTitlesOf(site));
+  // The titles label the Pressure Test Plan; a new release stores none (shared/pdf-documents.ts hydrotestDocumentModel).
+  assert.deepEqual(storedSignatureTitles({ signatureTitles: data.signatureTitles } as unknown as Row), []);
+  assert.deepEqual(storedSignatureTitles({ signatureTitles: JSON.stringify(signatureTitlesOf(site)) } as unknown as Row), signatureTitlesOf(site), 'an older release keeps what it stored');
   assert.deepEqual(storedSignatureTitles({ signatureTitles: 'not json' } as unknown as Row), []);
   assert.deepEqual(storedSignatureTitles({} as unknown as Row), []);
   assert.deepEqual(releaseDocumentData(undefined, iso).signatureTitles, '[]');
@@ -287,7 +289,7 @@ function readyIso(store: Store, id = 'iso-ready', isoNo = 'STX-CW-901') {
 const releaseData = (isoIds: string[], type = 'Prefab', extra: Record<string, unknown> = {}) => ({ isoIds, type, reportNo: 'PFR-900', engineerId: 'qa-1', date: '2026-11-02', ...extra });
 const refusal = (fn: () => unknown) => { try { fn(); } catch (error) { return error as AppError; } assert.fail('expected a refusal'); };
 
-test('releasing: a ready isometric is released with who, when, the document numbering and signature titles of its main project', t => {
+test('releasing: a ready isometric is released with who, when, the document numbering of its main project', t => {
   const store = fixture(t); const { id } = readyIso(store);
   const { records } = runAction(store, 'release', releaseData([id], 'Prefab', { note: 'Shop welds complete' }), actor);
   const release = records![0];
@@ -295,11 +297,10 @@ test('releasing: a ready isometric is released with who, when, the document numb
   assert.match(String(release.releasedAt), /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(release.docNo, 'DWG-2499-STX-CW-901', 'North fabrication yard numbers by drawing number + ISO');
   assert.equal(release.docPrefix, 'NFY'); assert.equal(release.docDrawingRule, 'Drawing no + iso');
-  assert.deepEqual(storedSignatureTitles(release).map(entry => entry.label), ['Subcontractor QA/QC', 'Subcontractor Construction', 'Principal UI', 'Contractor QA/QC', 'Contractor Construction', 'NoBo']);
-  assert.equal(storedSignatureTitles(release)[0].title, 'QA/QC Manager');
+  assert.deepEqual(storedSignatureTitles(release), [], 'the signature titles belong to the Pressure Test Plan, not to the release');
   // Later changes of the Document settings do not rewrite the document that was released.
   const site = store.get('sites', 'site-north'); store.update('sites', site.id, { prefix: 'ZZZ', releaseDocDrawing: 'Prefix + iso', signSubQaqc: 'Someone else' }, site._version, SYSTEM);
-  assert.equal(store.get('releases', release.id).docNo, 'DWG-2499-STX-CW-901'); assert.equal(storedSignatureTitles(store.get('releases', release.id))[0].title, 'QA/QC Manager');
+  assert.equal(store.get('releases', release.id).docNo, 'DWG-2499-STX-CW-901');
   // The next release uses the new settings.
   const second = readyIso(store, 'iso-ready-2', 'STX-CW-902');
   assert.equal(runAction(store, 'release', releaseData([second.id]), actor).records![0].docNo, 'ZZZ-STX-CW-902');

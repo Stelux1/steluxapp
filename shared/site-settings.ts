@@ -121,7 +121,27 @@ export const NDT_MEASUREMENT_HINTS: Record<string, string> = {
   [NDT_MEASUREMENTS[0]]: 'A DN500 weld counts more than a DN15 weld.',
   [NDT_MEASUREMENTS[1]]: '10 welds with NDT required, 1 Accepted = 10% of the NDT weight.',
 };
-interface SiteFormField { name: string; label: string; section?: string; default?: unknown; options?: string[]; control?: 'radio'; optionHints?: Record<string, string> }
+interface SiteFormField { name: string; label: string; section?: string; default?: unknown; options?: string[]; control?: 'radio'; optionHints?: Record<string, string>; intro?: string; hint?: string }
+/**
+ * Document settings of the hosted main project form in the order, grouping and wording of the reference ("Add project
+ * site", tab Document settings). A group heading is the `intro` line above its first field. Our owner-specific LISL form
+ * settings follow under their own heading.
+ */
+export const HOSTED_DOCUMENT_SETTINGS: { name: string; label: string; intro?: string; hint?: string }[] = [
+  { name: 'prefix', label: 'Prefix' }, { name: 'releaseDocDrawing', label: 'Release doc drawing no' },
+  { name: 'hydrotestPlan', label: 'Hydrotest Execution Plan', hint: 'Printed on every Pressure Test Plan of this main project.' },
+  { name: 'flangeProcedureNo', label: 'Flange procedure No.' },
+  { name: 'signSubQaqc', label: 'Subcontractor QA/QC', intro: 'Signature titles of the Pressure Test Plan' },
+  { name: 'signSubConstruction', label: 'Subcontractor Construction' }, { name: 'signPrincipalUi', label: 'Principal UI' },
+  { name: 'signContractorQaqc', label: 'Contractor QA/QC' }, { name: 'signContractorConstruction', label: 'Contractor Construction' }, { name: 'signNobo', label: 'NoBo' },
+  { name: 'vtDocNo', label: 'Doc.No. & Rev.No.', intro: 'Visual Inspection' }, { name: 'vtProcedureNo', label: 'Procedure No.' },
+  { name: 'vtType2No', label: 'VT type 2 no:', intro: 'Visual Inspection V2' }, { name: 'vtType2Rev', label: 'VT type 2 rev:' }, { name: 'vtType2Date', label: 'VT type 2 date:' }, { name: 'vtType2OrderNo', label: 'VT type 2 order No:' },
+  { name: 'lislField1', label: 'Field 1:', intro: 'LISL A3/A4', hint: 'First acceptance line, e.g. the company name.' }, { name: 'lislField2', label: 'Field 2:', hint: 'Second acceptance line, e.g. the client.' }, { name: 'lislField3', label: 'Field 3:', hint: 'Third acceptance line, e.g. NoBo.' },
+  { name: 'lislGuField1', label: 'Field 1:', intro: 'LISL GU/MV', hint: 'First signature group, e.g. the contractor or supplier.' }, { name: 'lislGuField2', label: 'Field 2:', hint: 'Second signature group, e.g. the client.' }, { name: 'lislGuField3', label: 'Field 3:', hint: 'Third signature group, e.g. NoBo.' },
+  { name: 'lislDocNo', label: 'Doc.No. & Rev.No.' }, { name: 'lislProcedureNo', label: 'Procedure No.' },
+];
+/** Heading above our own document settings (owner-specific LISL forms), placed after the reference ones. */
+export const OWNER_SETTINGS_HEADING = 'Owner-specific LISL forms';
 /**
  * The fields of the main project form as the hosted profile shows them (reference "Add project site"): name and address
  * data inside the first section "Project settings" with the reference labels, "Repair performance", NDT measurement as
@@ -130,9 +150,14 @@ interface SiteFormField { name: string; label: string; section?: string; default
  */
 export function hostedSiteFields<T extends SiteFormField>(fields: T[]): T[] {
   const progress = new Set(PROGRESS_FIELDS);
+  const documentSettings = new Map(HOSTED_DOCUMENT_SETTINGS.map(setting => [setting.name, setting]));
+  let firstOwner = '';
   const adapted = fields.map(field => {
     if (SITE_CONTACT_LABELS[field.name]) return { ...field, label: SITE_CONTACT_LABELS[field.name], section: SITE_FORM_SECTION };
     if (field.name === 'repairLimit') return { ...field, label: 'Repair performance' };
+    const document = documentSettings.get(field.name);
+    if (document) return { ...field, label: document.label, ...(document.intro ? { intro: document.intro } : {}), ...(document.hint ? { hint: document.hint } : {}) };
+    if (field.section === 'Document settings' && !firstOwner) { firstOwner = field.name; return { ...field, intro: OWNER_SETTINGS_HEADING }; }
     if (field.name === 'ndtMeasurement') return { ...field, control: 'radio' as const, optionHints: NDT_MEASUREMENT_HINTS, default: NDT_MEASUREMENTS[0] };
     if (progress.has(field.name)) {
       const phase = PROGRESS_PHASES.find(item => item.field === field.name || item.activities.some(a => a.field === field.name))!;
@@ -153,7 +178,7 @@ export function hostedSiteFields<T extends SiteFormField>(fields: T[]): T[] {
 /**
  * Texts of the owner-specific LISL forms that name a third party, a specification or a form number. They are never
  * hard-coded: a line is printed only when its setting (section "Document settings" of the main project) is filled in.
- * [GU] reuses "LISL [GU] Field 1 to 3" (Doc., Version, Date); every other setting is listed here.
+ * [GU] and [MV] print the reference "LISL GU/MV" settings (signature groups, Doc.No. & Rev.No., Procedure No.); every other setting is listed here.
  */
 export type OwnerFormFamily = 'gu' | 'mv' | 'rev';
 export interface OwnerFormSetting { name: string; label: string; hint: string; type?: 'date' }
@@ -170,14 +195,27 @@ export const OWNER_FORM_SETTINGS: OwnerFormSetting[] = [
   { name: 'lislRevVersion', label: 'LISL [GU Rev 2 / Rev 3] Version', hint: 'Printed as Version on the LISL [GU Rev 2] and [GU Rev 3] reports.' },
   { name: 'lislRevDate', label: 'LISL [GU Rev 2 / Rev 3] Date', hint: 'Printed as Date on the LISL [GU Rev 2] and [GU Rev 3] reports.', type: 'date' },
 ];
-export interface OwnerFormTexts { ownerLine: string; docNo: string; version: string; date: string; specLines: string[] }
-const FORM_FIELDS: Record<OwnerFormFamily, { ownerLine?: string; docNo: string; version: string; date: string; specLines: string[] }> = {
-  gu: { docNo: 'lislGuField1', version: 'lislGuField2', date: 'lislGuField3', specLines: ['lislGuSpec1', 'lislGuSpec2'] },
-  mv: { docNo: 'lislMvDocNo', version: 'lislMvVersion', date: 'lislMvDate', specLines: ['lislMvSpec1', 'lislMvSpec2'] },
-  rev: { ownerLine: 'lislRevOwnerLine', docNo: 'lislRevDocNo', version: 'lislRevVersion', date: 'lislRevDate', specLines: [] },
+export interface OwnerFormTexts {
+  ownerLine: string; docNo: string; version: string; date: string; specLines: string[];
+  /** "Procedure No." of LISL GU/MV ([GU] and [MV] only). */
+  procedureNo: string;
+  /** Titles of the three signature groups from "LISL GU/MV" Field 1 to 3; empty where not set (the form then uses its own). */
+  parties: [string, string, string];
+}
+const FORM_FIELDS: Record<OwnerFormFamily, { ownerLine?: string; docNo: string[]; version?: string; date?: string; specLines: string[]; guMv: boolean }> = {
+  // Reference "LISL GU/MV": Field 1 to 3 are the signature groups, Doc.No. & Rev.No. and Procedure No. the document lines.
+  gu: { docNo: ['lislDocNo'], specLines: ['lislGuSpec1', 'lislGuSpec2'], guMv: true },
+  // [MV] keeps its own Doc./Version/Date settings; without its own Doc.No. it prints the LISL GU/MV one.
+  mv: { docNo: ['lislMvDocNo', 'lislDocNo'], version: 'lislMvVersion', date: 'lislMvDate', specLines: ['lislMvSpec1', 'lislMvSpec2'], guMv: true },
+  rev: { ownerLine: 'lislRevOwnerLine', docNo: ['lislRevDocNo'], version: 'lislRevVersion', date: 'lislRevDate', specLines: [], guMv: false },
 };
 /** The settings of one form family; every value is an empty string (or the line is dropped) when it is not set. */
 export function ownerFormTexts(site: SiteLike, family: OwnerFormFamily): OwnerFormTexts {
   const fields = FORM_FIELDS[family];
-  return { ownerLine: fields.ownerLine ? text(site, fields.ownerLine) : '', docNo: text(site, fields.docNo), version: text(site, fields.version), date: text(site, fields.date), specLines: fields.specLines.map(name => text(site, name)).filter(Boolean) };
+  return {
+    ownerLine: fields.ownerLine ? text(site, fields.ownerLine) : '', docNo: fields.docNo.map(name => text(site, name)).find(Boolean) ?? '',
+    version: fields.version ? text(site, fields.version) : '', date: fields.date ? text(site, fields.date) : '', specLines: fields.specLines.map(name => text(site, name)).filter(Boolean),
+    procedureNo: fields.guMv ? text(site, 'lislProcedureNo') : '',
+    parties: fields.guMv ? [text(site, 'lislGuField1'), text(site, 'lislGuField2'), text(site, 'lislGuField3')] : ['', '', ''],
+  };
 }

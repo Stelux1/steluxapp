@@ -159,6 +159,14 @@ export const lislClientBlock = (model: LislModel): LabelValueItem[] => [
   { label: 'Client', value: model.client }, { label: 'Intern prj. no.', value: text(model.project?.internnumber) },
   { label: 'Extern prj. no.', value: text(model.project?.externnumber) }, { label: 'Project description', value: text(model.project?.description) },
 ];
+/**
+ * The three lines of the acceptance boxes (the title block of the LISL A3/A4 reports): "LISL A3/A4" Field 1 to 3 of the
+ * main project's Document settings (e.g. company name, client, NoBo); without them the company, the client and "NoBo".
+ */
+export function lislAcceptanceLabels(model: LislModel, companyName = ''): [string, string, string] {
+  const site = model.site;
+  return [text(site?.lislField1) || text(companyName) || 'Company', text(site?.lislField2) || model.client || 'Client', text(site?.lislField3) || 'NoBo'];
+}
 /** The grey isometric box in row order for three columns (column 1: isometric, 2: compliance, 3: technical). */
 export function lislIsoBox(model: LislModel): LabelValueItem[] {
   const iso = model.iso;

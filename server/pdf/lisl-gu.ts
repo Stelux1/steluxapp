@@ -240,7 +240,7 @@ export function labelColumns(items: [string, string][], count: number, options: 
   };
 }
 /** The Doc. / Version / Date lines of a form, only those that are set. */
-export const documentLines = (texts: OwnerFormTexts): [string, string][] => [['Doc.', texts.docNo], ['Version', texts.version], ['Date', printDate(texts.date)]].filter((item): item is [string, string] => Boolean(item[1]));
+export const documentLines = (texts: OwnerFormTexts): [string, string][] => [['Doc.', texts.docNo], ['Version', texts.version], ['Date', printDate(texts.date)], ['Procedure', texts.procedureNo]].filter((item): item is [string, string] => Boolean(item[1]));
 
 /** Framed header of [GU] and [MV]: title and project, Doc. / Version / Date / Page; the second frame with the specification lines, the installation data and the section. */
 export function guMvHeader(model: OwnerModel, texts: OwnerFormTexts, company: CompanyForDocuments | null, state: PageState): Block {
@@ -281,9 +281,10 @@ export function signatureBox(title: string, labels: string[], options: { image?:
     },
   };
 }
-/** Three groups side by side: company, Client, NoBo, each with Compiled by / Date / Signature. */
+/** Three groups side by side: company, Client, NoBo (or "LISL GU/MV" Field 1 to 3 of the main project), each with Compiled by / Date / Signature. */
 export function signatureGroups(model: OwnerModel, company: CompanyForDocuments | null, image: EmbeddedImage | null, imageName: string | null): Block {
-  const labels = ['Compiled by', 'Date', 'Signature'], titles = [company?.company.name || 'Contractor', model.base.client || 'Client', 'NoBo'];
+  const parties = ownerFormTexts(model.site, 'gu').parties;
+  const labels = ['Compiled by', 'Date', 'Signature'], titles = [parties[0] || company?.company.name || 'Contractor', parties[1] || model.base.client || 'Client', parties[2] || 'NoBo'];
   const boxes = titles.map((title, i) => signatureBox(title, labels, i === 0 ? { image, imageLine: 'Signature', imageName } : {}));
   return {
     height: (width, m) => boxes[0].height(width, m),
