@@ -550,7 +550,7 @@ test('client: the query of a document dialog, and every menu entry names a docum
 test('every operational document has an access key that names a resource, and no key is a report', () => {
   const operational = OPERATIONAL_DOCUMENTS;
   for (const item of operational) assert.ok(PDF_DOCUMENTS.includes(item), `${item.key} is registered`);
-  assert.equal(operational.length, 12);
+  assert.equal(operational.length, 13); // + Reserved materials (Isometric execution, mto-iso-execution-017)
   for (const item of operational) { assert.ok(PDF_REPORT_RESOURCES[item.report], `${item.key} -> ${item.report}`); assert.ok(item.report.startsWith('pdf-')); }
   assert.deepEqual(new Set(operational.map(item => item.key)).size, operational.length, 'unique keys');
   const nobody = { id: 'u', name: 'n', email: 'e', profileId: '', permissions: { general: 2, materials: 2, welding: 2, tools: 0, settings: 0 } } as never;

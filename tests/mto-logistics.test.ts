@@ -14,7 +14,8 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, pageAvailable, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { PILOTS, pilotItemPath } from '../shared/pilots.ts';
 import { planHostedSchema } from '../server/hosted-schema.ts';
-import { archiveDefaultRange, isoStatuses, laydownContent, laydownHistory, materialStatus, nextRequestNumber, operationPhaseGroup, percentBand, pickListReports, planReserve, planStart, requestArchive, spoolExportLines, spoolHistory, spoolLocation, spoolRows, startedReports } from '../shared/mto-logistics.ts';
+import { DEFAULT_PERCENT_RANGE, EXECUTION_EXPORT_COLUMNS, EXECUTION_TYPES, PERCENT_CHIPS, PICKLIST_ARCHIVE_COLUMNS, archiveDefaultRange, canStartAt, defaultMaterialGroup, executionBoard, executionPriority, executionTypePhaseId, isoStatuses, laydownContent, laydownHistory, materialCurrentLabel, materialHistory, materialServiceRows, materialStatus, nextRequestNumber, percentBand, pickListReports, pickListStamp, planReserve, requestArchive, reservedMaterials, spoolExportLines, spoolHistory, spoolLocation, spoolRows, startedReports } from '../shared/mto-logistics.ts';
+import { requirementExecution } from '../shared/materials.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -31,6 +32,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   'reserve-iso': { isoId: 'iso-3', date: '2026-10-27' }, 'start-iso': { isoId: 'iso-3', date: '2026-10-27' }, 'take-picklist': { reportNo: 'PL-2026-0002', date: '2026-10-27' },
   service: { spoolIds: ['spool-1'], companyId: 'service-pwht' }, 'move-spools': { spoolIds: ['spool-1'], laydownId: 'laydown-a' },
   'move-materials': { requirementIds: ['requirement-1'], laydownId: 'mlaydown-rack-1' },
+  'picklist-note': { reportNo: '00001', note: 'Issued to J. de Vries' }, 'undo-iso-execution': { reportNo: '00002' }, 'move-materials-inventory': { requirementIds: ['requirement-1'] },
 };
 
 test('material status is the covered share of the requirement, rounded down, and empty without requirements', () => {
@@ -42,7 +44,6 @@ test('material status is the covered share of the requirement, rounded down, and
   assert.equal(materialStatus([{ required: 200, picked: 199, available: 0 }]), 99);
   assert.equal(materialStatus([{ required: 10, picked: 10, available: 0 }, { required: 10, picked: 0, available: 0 }]), 50);
   assert.deepEqual([100, 99, 80, 79, 70, 69, 0, null].map(percentBand), ['100 %', '80–99 %', '80–99 %', '70–79 %', '70–79 %', '< 70 %', '< 70 %', '']);
-  assert.deepEqual(['Shop', 'Field', 'Hydrotest field', 'Support Field', 'Valves', 'Support Shop', 'Revision mat', ''].map(operationPhaseGroup), ['Shop', 'Field', 'Field', 'Field', 'Valves', 'Shop', '', '']);
 });
 
 test('the local sample spreads isometrics over every percentage band and the type filter narrows the lines', t => {
@@ -50,9 +51,9 @@ test('the local sample spreads isometrics over every percentage band and the typ
   const bands = new Set([...statuses.values()].map(status => percentBand(status.percent)));
   for (const band of ['100 %', '80–99 %', '70–79 %', '< 70 %']) assert.ok(bands.has(band as never), band);
   assert.equal(statuses.get('iso-1')!.percent, 100);
-  const valves = isoStatuses(rows, { group: 'Valves' });
+  const valves = isoStatuses(rows, { phaseId: executionTypePhaseId(rows, 'Valves') });
   assert.deepEqual([...valves.keys()], ['iso-1']); assert.equal(valves.get('iso-1')!.lines.length, 1);
-  assert.ok([...isoStatuses(rows, { group: 'Field' }).keys()].includes('iso-6'));
+  assert.ok([...isoStatuses(rows, { phaseId: executionTypePhaseId(rows, 'Field') }).keys()].includes('iso-6'));
 });
 
 test('reserve sets the uncovered quantity aside from free stock so another isometric cannot take it', t => {
@@ -82,60 +83,248 @@ test('reserve sets the uncovered quantity aside from free stock so another isome
   assert.throws(() => runAction(store, 'reserve-iso', { isoId: 'missing-iso' }, actor), /could not be found/);
 });
 
-test('start creates one pick list for the available quantities, claims stock and marks the isometric as started', t => {
-  const store = bare(t); const flange = stockOf(store, 'material-3');
-  assert.deepEqual(startedReports(rowsOf(store), 'iso-3'), []);
-  const plan = planStart(rowsOf(store), 'iso-3'); assert.equal(plan[0].quantity, 3);
-  const result = runAction(store, 'start-iso', { isoId: 'iso-3', date: '2026-10-24' }, actor);
-  assert.equal(result.records!.length, 1);
-  const [line] = result.records!;
-  assert.equal(line.quantity, 3); assert.equal(line.taken, false); assert.equal(line.warehouseId, '', 'taken from the project site inventory'); assert.equal(line.siteId, 'site-north'); assert.match(String(line.reportNo), /^\d{5}$/, 'five-digit Pick List No.');
-  assert.equal(stockOf(store, 'material-3'), flange, 'starting does not issue stock yet');
-  assert.deepEqual(startedReports(rowsOf(store), 'iso-3'), [line.reportNo]);
-  const status = isoStatuses(rowsOf(store)).get('iso-3')!;
-  assert.equal(status.lines[0].claimed, 3); assert.equal(status.lines[0].available, 0); assert.equal(status.percent, 25);
-  // The claimed flanges are gone for everyone else.
-  store.create('iso_materials', { isoId: 'iso-9', materialId: 'material-3', quantity: 2, phaseId: 'phase-1' }, actor, 'req-flange-9');
-  assert.equal(isoStatuses(rowsOf(store)).get('iso-9')!.lines.find(entry => entry.requirement.id === 'req-flange-9')!.available, 0);
-  // Nothing more can be started until stock arrives.
-  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-3', date: '2026-10-24' }, actor), /None of the missing materials is in stock/);
+// ---- Isometric execution: Start, Confirm material take, Undo execution, Move to inventory (every quantity by hand) ------
+
+const PIPE = 'material-exe-pipe', BOLT = 'material-exe-bolt';
+/**
+ * EXE-01 in Cooling water (North site) needs 10 m of EXE-PIPE (Shop) and 4 sets of EXE-BOLT (Field). North's Material
+ * inventory holds pipe 6 m on charge C-1 and 5 m on C-2 (11 m) and 3 bolt sets on K-1.
+ *   Mat.status = (min(10, 11) + min(4, 3)) / 14 = 13 / 14 = 92.8 % → 92 %; Shop 10 / 10 = 100 %; Field 3 / 4 = 75 %.
+ */
+function execution(t: { after: (fn: () => void) => void }) {
+  const store = bare(t);
+  store.create('materials', { materialNo: 'EXE-PIPE', description: 'Pipe 2 in sch 40 A106B', materialGroup: 'Pipe', uom: 'm' }, actor, PIPE);
+  store.create('materials', { materialNo: 'EXE-BOLT', description: 'Stud bolt set 5/8 in', materialGroup: 'Bolt', uom: 'SET' }, actor, BOLT);
+  store.create('isometrics', { isoNo: 'EXE-01', projectId: 'project-cooling', priority: 'Prio 1' }, actor, 'iso-exe');
+  store.create('iso_materials', { isoId: 'iso-exe', materialId: PIPE, quantity: 10, phaseId: 'phase-0' }, actor, 'req-a-pipe');
+  store.create('iso_materials', { isoId: 'iso-exe', materialId: BOLT, quantity: 4, phaseId: 'phase-1' }, actor, 'req-b-bolt');
+  for (const [materialId, chargeNo, quantity] of [[PIPE, 'C-1', 6], [PIPE, 'C-2', 5], [BOLT, 'K-1', 3]] as const) runAction(store, 'stock-add', { siteId: 'site-north', materialId, chargeNo, quantity, date: '2026-11-10' }, actor);
+  return store;
+}
+/** What North's Material inventory holds of one material, per charge. */
+const charges = (store: Store, materialId: string) => Object.fromEntries(store.list('stock').filter(row => row.locationKind === 'site' && row.siteId === 'site-north' && row.materialId === materialId).map(row => [String(row.chargeNo), Number(row.quantity)]).sort());
+const percentOf = (store: Store, isoId: string, phaseId?: string) => isoStatuses(rowsOf(store), phaseId ? { phaseId } : {}).get(isoId)?.percent ?? null;
+const lineOf = (store: Store, requirementId: string) => isoStatuses(rowsOf(store)).get(String(store.get('iso_materials', requirementId).isoId))!.lines.find(line => line.requirement.id === requirementId)!;
+const board = (store: Store, phaseId: string) => executionBoard(rowsOf(store), { phaseId, from: 70, to: 100 }).map(entry => entry.iso.id);
+const day = '2026-11-16';
+/** Movements are written in the same millisecond: compare them as sets. */
+const sorted = (lines: unknown[][]) => [...lines].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+
+test('delta-I3-R1 / mto-iso-execution-014 / scn-SC-D5: Start books the pick list out of the inventory at once and Undo execution puts back exactly what it took', t => {
+  const store = execution(t);
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 6, 'C-2': 5 }, { 'K-1': 3 }]);
+  assert.deepEqual([percentOf(store, 'iso-exe'), percentOf(store, 'iso-exe', 'phase-0'), percentOf(store, 'iso-exe', 'phase-1')], [92, 100, 75]);
+  assert.ok(board(store, 'phase-0').includes('iso-exe') && board(store, 'phase-1').includes('iso-exe'));
+  const movements = store.list('movements').length;
+  const started = runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-0', date: day, note: 'Shop week 47' }, actor);
+  const reportNo = String(started.records![0].reportNo); assert.match(reportNo, /^\d{5}$/);
+  // One line per requirement: all 10 m of pipe, the 3 bolt sets that are there; Taken? No, already issued.
+  assert.deepEqual(started.records!.map(line => [line.requirementId, line.quantity, line.taken, line.issued, line.note, line.phaseId]), [['req-a-pipe', 10, false, true, 'Shop week 47', 'phase-0'], ['req-b-bolt', 3, false, true, 'Shop week 47', 'phase-0']]);
+  // The inventory drops at Start, charge by charge in charge order: pipe C-1 6 − 6 = 0, C-2 5 − 4 = 1; bolts K-1 3 − 3 = 0.
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 0, 'C-2': 1 }, { 'K-1': 0 }]);
+  const log = `Isometric execution EXE-01 | Pick List ${reportNo}`;
+  assert.deepEqual(sorted(store.list('movements').filter(move => move.pickListNo === reportNo).map(move => [move.materialId, move.chargeNo, move.quantity, move.type, move.note, move.siteId])),
+    sorted([[PIPE, 'C-1', -6, 'Issue', log, 'site-north'], [PIPE, 'C-2', -4, 'Issue', log, 'site-north'], [BOLT, 'K-1', -3, 'Issue', log, 'site-north']]));
+  assert.equal(store.list('movements').length, movements + 3);
+  // Picked = the issued lines (10 and 3), Inv. = what is left (1 and 0); nothing is claimed twice, the status stays 92 %.
+  assert.deepEqual(requirementExecution(rowsOf(store), { isoId: 'iso-exe' }).map(entry => [entry.picked, entry.inventory]), [[10, 1], [3, 0]]);
+  assert.deepEqual([lineOf(store, 'req-a-pipe').claimed, lineOf(store, 'req-a-pipe').picked, percentOf(store, 'iso-exe')], [0, 10, 92]);
+  // An issued line is no claim on the stock: another isometric can still count the one metre that is left.
+  store.create('iso_materials', { isoId: 'iso-9', materialId: PIPE, quantity: 2, phaseId: 'phase-0' }, actor, 'req-exe-other');
+  assert.equal(lineOf(store, 'req-exe-other').available, 1);
+  // scn-SC-D5: started from Shop, EXE-01 leaves the Shop board (the Field board still lists it: 3 of 4 bolts = 75 %); Start again from Shop is refused.
+  assert.equal(board(store, 'phase-0').includes('iso-exe'), false); assert.ok(board(store, 'phase-1').includes('iso-exe'));
+  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-0', date: day }, actor), /already started for this type/);
+  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-1', date: day }, actor), /None of the missing materials is in stock/);
+  assert.deepEqual(startedReports(rowsOf(store), 'iso-exe'), [reportNo]);
+  // Undo execution: every Issue of the pick list comes back on its own charge (+6 C-1, +4 C-2, +3 K-1).
+  const undone = runAction(store, 'undo-iso-execution', { reportNo }, actor);
+  assert.equal(undone.records!.length, 2); assert.ok(undone.records!.every(line => line._archived === true), 'the pick list is archived, never deleted');
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 6, 'C-2': 5 }, { 'K-1': 3 }]);
+  assert.deepEqual(sorted(store.list('movements').filter(move => move.pickListNo === reportNo && move.type === 'Return to inventory').map(move => [move.materialId, move.chargeNo, move.quantity, move.note])),
+    sorted([[PIPE, 'C-1', 6, `Undo execution EXE-01 | Pick List ${reportNo}`], [PIPE, 'C-2', 4, `Undo execution EXE-01 | Pick List ${reportNo}`], [BOLT, 'K-1', 3, `Undo execution EXE-01 | Pick List ${reportNo}`]]));
+  assert.equal(store.list('picklists').filter(line => line.reportNo === reportNo).length, 0);
+  assert.equal(store.list('picklists', true).filter(line => line.reportNo === reportNo && line._archived).length, 2);
+  // Not started again: back on the Shop board with the status of before; Picked 0, Inv. 11 and 3 again.
+  assert.deepEqual(startedReports(rowsOf(store), 'iso-exe'), []);
+  assert.ok(board(store, 'phase-0').includes('iso-exe')); assert.equal(percentOf(store, 'iso-exe'), 92);
+  assert.deepEqual(requirementExecution(rowsOf(store), { isoId: 'iso-exe' }).map(entry => [entry.picked, entry.inventory]), [[0, 11], [0, 3]]);
+  assert.throws(() => runAction(store, 'undo-iso-execution', { reportNo }, actor), /could not be found/);
 });
 
-test('start uses up the isometric’s own reservation and keeps what it does not use', t => {
-  const store = bare(t);
-  runAction(store, 'reserve-iso', { isoId: 'iso-4', date: '2026-10-20' }, actor);
-  const reserved = Number(store.list('reservations').find(row => row.isoId === 'iso-4')!.quantity);
-  assert.equal(reserved, 4);
-  runAction(store, 'start-iso', { isoId: 'iso-4', date: '2026-10-21' }, actor);
-  const reservation = store.list('reservations').find(row => row.isoId === 'iso-4')!;
-  assert.equal(reservation.status, 'Used');
-  // A pick list that cannot start (stock too low for the reserved part) leaves nothing half-written.
-  const picks = store.list('picklists').length;
-  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-4', date: '2026-10-21' }, actor), /None of the missing|already picked/);
-  assert.equal(store.list('picklists').length, picks);
+test('mto-iso-execution-014: Undo execution releases the isometric’s reservations and returns a start that used part of them', t => {
+  const store = execution(t);
+  // Reserve: pipe 10 of the free 11, bolts 3 of 3.
+  runAction(store, 'reserve-iso', { isoId: 'iso-exe', date: day }, actor);
+  const reserved = () => Object.fromEntries(store.list('reservations').filter(row => row.isoId === 'iso-exe').map(row => [row.materialId, [row.status, row.quantity]]));
+  assert.deepEqual(reserved(), { [PIPE]: ['Reserved', 10], [BOLT]: ['Reserved', 3] });
+  // Two metres are written off from the inventory (charge order: C-1 6 → 4), so pipe has 9 left for its reservation of 10.
+  runAction(store, 'inventory-remove', { siteId: 'site-north', materialId: PIPE, quantity: 2, comment: 'Damaged in transport' }, actor);
+  assert.deepEqual(charges(store, PIPE), { 'C-1': 4, 'C-2': 5 });
+  const started = runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-0', date: day }, actor); const reportNo = String(started.records![0].reportNo);
+  assert.deepEqual(started.records!.map(line => line.quantity), [9, 3]);
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 0, 'C-2': 0 }, { 'K-1': 0 }]);
+  // The pick list used 9 of the 10 reserved metres (1 stays reserved) and all 3 bolt sets.
+  assert.deepEqual(reserved(), { [PIPE]: ['Reserved', 1], [BOLT]: ['Used', 3] });
+  runAction(store, 'undo-iso-execution', { reportNo }, actor);
+  // Back: C-1 0 + 4 = 4, C-2 0 + 5 = 5, K-1 0 + 3 = 3; the remaining reservation is released, the used one stays used.
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 4, 'C-2': 5 }, { 'K-1': 3 }]);
+  assert.deepEqual(reserved(), { [PIPE]: ['Released', 1], [BOLT]: ['Used', 3] });
+  assert.equal(lineOf(store, 'req-a-pipe').available, 9, 'the nine metres are free stock again');
 });
 
-test('marking a pick list as taken issues stock once and never below zero', t => {
-  const store = bare(t);
-  const started = runAction(store, 'start-iso', { isoId: 'iso-2', date: '2026-10-22' }, actor);
-  const reportNo = String(started.records![0].reportNo); const elbows = stockOf(store, 'material-2');
-  assert.throws(() => runAction(store, 'take-picklist', { reportNo: 'PL-NOPE', date: '2026-10-23' }, actor), /could not be found/);
-  assert.throws(() => runAction(store, 'take-picklist', { reportNo, date: '2026-10-21' }, actor), /before the pick list date/);
-  assert.equal(stockOf(store, 'material-2'), elbows);
-  runAction(store, 'take-picklist', { reportNo, date: '2026-10-23', note: 'Collected at the main warehouse' }, actor);
-  assert.equal(stockOf(store, 'material-2'), elbows - 4);
-  assert.ok(store.list('picklists').filter(row => row.reportNo === reportNo).every(row => row.taken === true && row.takenDate === '2026-10-23'));
-  assert.ok(store.list('movements').some(row => row.type === 'Issue' && String(row.note).includes('Collected at the main warehouse')));
-  assert.throws(() => runAction(store, 'take-picklist', { reportNo, date: '2026-10-23' }, actor), /already taken/);
-  // Picked now counts the taken lines: the isometric's material status is unchanged.
-  assert.equal(isoStatuses(rowsOf(store)).get('iso-2')!.lines[0].picked, 4);
-  // Stock that disappears between Start and taking stops the whole pick list and changes nothing.
-  const second = runAction(store, 'start-iso', { isoId: 'iso-5', date: '2026-10-24' }, actor);
-  const tees = store.list('stock').filter(row => row.locationKind === 'site' && row.siteId === 'site-river' && row.materialId === 'material-5').reduce((sum, row) => sum + Number(row.quantity), 0);
-  runAction(store, 'inventory-remove', { siteId: 'site-river', materialId: 'material-5', quantity: tees - 1, comment: 'Stock count correction' }, actor);
-  const snapshot = JSON.stringify([store.list('stock'), store.list('picklists'), store.list('movements')]);
-  assert.throws(() => runAction(store, 'take-picklist', { reportNo: String(second.records![0].reportNo), date: '2026-10-25' }, actor), /Insufficient stock/);
-  assert.equal(JSON.stringify([store.list('stock'), store.list('picklists'), store.list('movements')]), snapshot);
+test('mto-iso-execution-015: Confirm material take records the Note and moves no stock; the Note can be edited; a taken pick list cannot be undone', t => {
+  const store = execution(t);
+  const reportNo = String(runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-0', date: day }, actor).records![0].reportNo);
+  const stock = () => JSON.stringify(store.list('stock').map(row => [row.id, row.quantity]));
+  const after = stock(), movements = store.list('movements').length;
+  assert.throws(() => runAction(store, 'take-picklist', { reportNo, date: '2026-11-15' }, actor), /before the pick list date/);
+  assert.throws(() => runAction(store, 'take-picklist', { reportNo, date: day, note: 'x'.repeat(2001) }, actor), /too long/);
+  const taken = runAction(store, 'take-picklist', { reportNo, date: day, note: 'Issued to J. de Vries' }, actor);
+  assert.deepEqual(taken.records!.map(line => [line.taken, line.takenDate, line.note]), [[true, day, 'Issued to J. de Vries'], [true, day, 'Issued to J. de Vries']]);
+  assert.equal(stock(), after, 'taking booked out at Start: no stock moves again'); assert.equal(store.list('movements').length, movements);
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 0, 'C-2': 1 }, { 'K-1': 0 }]);
+  assert.deepEqual(requirementExecution(rowsOf(store), { isoId: 'iso-exe' }).map(entry => entry.picked), [10, 3]);
+  assert.equal(pickListReports(rowsOf(store)).find(report => report.reportNo === reportNo)!.note, 'Issued to J. de Vries');
+  // Edit of the note (#materialTakeEdit): the lines change, the stock does not.
+  runAction(store, 'picklist-note', { reportNo, note: 'Issued to J. de Vries, foreman shop' }, actor);
+  assert.ok(store.list('picklists').filter(line => line.reportNo === reportNo).every(line => line.note === 'Issued to J. de Vries, foreman shop'));
+  assert.equal(stock(), after); assert.equal(store.list('movements').length, movements);
+  assert.throws(() => runAction(store, 'picklist-note', { reportNo: '99999', note: 'x' }, actor), /could not be found/);
+  // Undo is refused once the take is confirmed, and changes nothing.
+  assert.throws(() => runAction(store, 'undo-iso-execution', { reportNo }, actor), /already taken/);
+  assert.equal(stock(), after); assert.equal(store.list('picklists').filter(line => line.reportNo === reportNo).length, 2);
+  assert.throws(() => runAction(store, 'take-picklist', { reportNo, date: day }, actor), /already taken/);
+});
+
+test('mto-iso-execution-013: Start is allowed from a Mat.status of 70 %, and its Note stays on the pick list', t => {
+  const store = execution(t);
+  assert.deepEqual([null, 0, 69, 70, 100].map(value => canStartAt(value)), [false, false, false, true, true]);
+  // STX-CW-003 needs 12 flanges (3 in North) and gets 88 m of a plate: 100 units, covered 3 + plate stock.
+  store.create('materials', { materialNo: 'EXE-PLATE', description: 'Plate 10 mm', materialGroup: 'Plate', uom: 'm' }, actor, 'material-exe-plate');
+  store.create('iso_materials', { isoId: 'iso-3', materialId: 'material-exe-plate', quantity: 88, phaseId: 'phase-0' }, actor, 'req-exe-plate');
+  runAction(store, 'stock-add', { siteId: 'site-north', materialId: 'material-exe-plate', chargeNo: 'P-1', quantity: 66, date: day }, actor);
+  assert.equal(percentOf(store, 'iso-3'), 69, '(3 + 66) / 100');
+  const stock = JSON.stringify(store.list('stock').map(row => [row.id, row.quantity]));
+  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-3', date: day }, actor), /from a material status of 70 %\. This isometric is at 69 %/);
+  assert.equal(JSON.stringify(store.list('stock').map(row => [row.id, row.quantity])), stock, 'a refused Start moves nothing');
+  runAction(store, 'stock-add', { siteId: 'site-north', materialId: 'material-exe-plate', chargeNo: 'P-1', quantity: 1, date: day }, actor);
+  assert.equal(percentOf(store, 'iso-3'), 70);
+  const started = runAction(store, 'start-iso', { isoId: 'iso-3', date: day, note: 'Rush: shutdown week' }, actor);
+  assert.deepEqual(started.records!.map(line => [line.materialId, line.quantity, line.note, line.phaseId]), [['material-3', 3, 'Rush: shutdown week', ''], ['material-exe-plate', 67, 'Rush: shutdown week', '']]);
+  // The Type chip decides the threshold when it is given: Field of EXE-01 is at 75 %, a type without lines is refused.
+  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-2', date: day }, actor), /no materials of this type/);
+  assert.throws(() => runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-missing', date: day }, actor), /could not be found/);
+});
+
+test('delta-I3-R1: a pick list written before Start issued stock still claims its quantity until it is taken, and its undo returns nothing', t => {
+  const store = execution(t);
+  const old = (reportNo: string, quantity: number) => store.create('picklists', { number: `PICK-${reportNo}`, reportNo, isoId: 'iso-exe', materialId: PIPE, requirementId: 'req-a-pipe', warehouseId: '', siteId: 'site-north', quantity, date: '2026-11-01', chargeNo: '', taken: false }, actor);
+  old('00090', 4);
+  // The stock is still there (11 m) but 4 m are claimed: picked 0, claimed 4, available 11 − 4 = 7 → covered min(10, 4 + 6) = 10.
+  assert.deepEqual(charges(store, PIPE), { 'C-1': 6, 'C-2': 5 });
+  assert.deepEqual([lineOf(store, 'req-a-pipe').picked, lineOf(store, 'req-a-pipe').claimed, lineOf(store, 'req-a-pipe').available], [0, 4, 6]);
+  assert.equal(requirementExecution(rowsOf(store), { isoId: 'iso-exe' })[0].inventory, 7);
+  // Taking it issues the 4 m now, as before: C-1 6 → 2.
+  runAction(store, 'take-picklist', { reportNo: '00090', date: day }, actor);
+  assert.deepEqual(charges(store, PIPE), { 'C-1': 2, 'C-2': 5 });
+  assert.deepEqual(store.list('movements').filter(move => move.pickListNo === '00090').map(move => [move.chargeNo, move.quantity, move.type]), [['C-1', -4, 'Issue']]);
+  assert.equal(lineOf(store, 'req-a-pipe').picked, 4);
+  // An old untaken pick list never took stock: undoing it archives its lines and puts nothing back.
+  old('00091', 2);
+  runAction(store, 'undo-iso-execution', { reportNo: '00091' }, actor);
+  assert.deepEqual(charges(store, PIPE), { 'C-1': 2, 'C-2': 5 });
+  assert.equal(store.list('picklists').some(line => line.reportNo === '00091'), false);
+  // A line issued directly (no report number) is not an execution pick list.
+  const direct = runAction(store, 'issue-material', { isoId: 'iso-exe', materialSource: 'Catalog', materialId: BOLT, requirementId: 'req-b-bolt', quantity: 1, date: day }, actor).record!;
+  assert.throws(() => runAction(store, 'undo-iso-execution', { reportNo: String(direct.number) }, actor), /Only a pick list made by Start/);
+});
+
+test('mto-logistics-010: Move to inventory puts the issued material back into the site inventory, charge by charge, and the line is no longer picked', t => {
+  const store = execution(t);
+  const reportNo = String(runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-0', date: day }, actor).records![0].reportNo);
+  store.create('material_laydowns', { name: 'Pipe rack 1' }, actor, 'mlaydown-rack-1');
+  runAction(store, 'move-materials', { requirementIds: ['req-a-pipe'], laydownId: 'mlaydown-rack-1', date: day }, actor);
+  assert.deepEqual(charges(store, PIPE), { 'C-1': 0, 'C-2': 1 });
+  runAction(store, 'move-materials-inventory', { requirementIds: ['req-a-pipe'], date: day }, actor);
+  // Back as it left: C-1 0 + 6 = 6, C-2 1 + 4 = 5; the bolts stay issued.
+  assert.deepEqual([charges(store, PIPE), charges(store, BOLT)], [{ 'C-1': 6, 'C-2': 5 }, { 'K-1': 0 }]);
+  assert.deepEqual(sorted(store.list('movements').filter(move => move.type === 'Return to inventory' && move.materialId === PIPE).map(move => [move.chargeNo, move.quantity])), [['C-1', 6], ['C-2', 4]]);
+  assert.deepEqual(requirementExecution(rowsOf(store), { isoId: 'iso-exe' }).map(entry => [entry.picked, entry.inventory]), [[0, 11], [3, 0]]);
+  assert.equal(percentOf(store, 'iso-exe'), 92, 'the pipe is covered by free stock again: (10 + 3) / 14');
+  assert.equal(store.list('picklists').find(line => line.reportNo === reportNo && line.materialId === PIPE)!.returned, true);
+  const location = store.list('material_locations').find(row => row.requirementId === 'req-a-pipe')!;
+  assert.deepEqual([location.laydownId, location.companyId], ['', '']);
+  assert.deepEqual(materialHistory(rowsOf(store), 'req-a-pipe').map(entry => entry.location), ['Inventory', 'mlaydown-rack-1']);
+  // Nothing issued is left on the pipe line; a pick list with material moved back cannot be undone.
+  assert.throws(() => runAction(store, 'move-materials-inventory', { requirementIds: ['req-a-pipe'], date: day }, actor), /nothing to move back/);
+  assert.throws(() => runAction(store, 'undo-iso-execution', { reportNo }, actor), /moved back to the inventory/);
+  assert.deepEqual(charges(store, PIPE), { 'C-1': 6, 'C-2': 5 });
+});
+
+test('delta-I3-001 / mto-iso-execution-017: a Type chip is one operation phase; the board filters by percent and priority, highest status first', t => {
+  const store = sample(t);
+  store.create('iso_materials', { isoId: 'iso-2', materialId: 'material-9', quantity: 1, phaseId: 'phase-3' }, actor, 'req-support-shop');
+  const rows = rowsOf(store); const shop = executionTypePhaseId(rows, 'Shop');
+  assert.deepEqual(EXECUTION_TYPES.map(type => executionTypePhaseId(rows, type)), ['phase-0', 'phase-1', 'phase-5']);
+  assert.equal(executionTypePhaseId(rows, 'Bernecker'), '');
+  // 'Support Shop' is not Shop.
+  assert.equal(isoStatuses(rows, { phaseId: shop }).get('iso-2')!.lines.some(line => line.requirement.id === 'req-support-shop'), false);
+  assert.ok(isoStatuses(rows, { phaseId: 'phase-3' }).get('iso-2')!.lines.some(line => line.requirement.id === 'req-support-shop'));
+  const list = executionBoard(rows, { phaseId: shop, ...DEFAULT_PERCENT_RANGE });
+  assert.ok(list.length > 0 && list.every(entry => entry.percent >= 70 && entry.status.lines.every(line => String(line.requirement.phaseId) === shop)));
+  assert.deepEqual(list.map(entry => entry.percent), [...list.map(entry => entry.percent)].sort((a, b) => b - a));
+  const all = executionBoard(rows, { phaseId: shop, from: 0, to: 100 });
+  assert.ok(all.some(entry => entry.percent < 70), 'the All chip shows the isometrics below 70 % as well');
+  assert.deepEqual(executionBoard(rows, { phaseId: '', from: 0, to: 100 }), []);
+  assert.ok(executionBoard(rows, { phaseId: shop, from: 0, to: 100, prio: 'Prio-1' }).every(entry => entry.priority === 'Prio-1'));
+  assert.deepEqual(['Prio 1', 'Critical', '', 'Prio 3', 'No priority'].map(executionPriority), ['Prio-1', 'Prio-1', 'Prio not set', 'Prio-3', 'Prio not set']);
+  assert.deepEqual(PERCENT_CHIPS.map(chip => [chip.label, chip.from, chip.to]), [['All', 0, 100], ['100%', 100, 100], ['80 – 99%', 80, 99], ['70 – 79%', 70, 79], ['< 70%', 0, 69]]);
+  assert.deepEqual([...EXECUTION_EXPORT_COLUMNS], ['Project', 'ISO', 'Piping class', 'Priority', 'Drawing no. 1', 'Chemical clean', 'Mat.status']);
+  // The seed started STX-CW-001 without a Type: like the reference's 00022 it stays on the board.
+  assert.ok(startedReports(rows, 'iso-1').length > 0); assert.ok(all.some(entry => entry.iso.id === 'iso-1'));
+  // Reserved materials (Print): per reservation, or summed per material.
+  const lines = reservedMaterials(rows, { grouped: false }); const grouped = reservedMaterials(rows, { grouped: true });
+  assert.ok(lines.length > 0);
+  const total = (items: { quantity: number }[]) => items.reduce((sum, item) => sum + item.quantity, 0);
+  assert.equal(total(grouped), total(lines)); assert.equal(new Set(grouped.map(line => line.materialNo)).size, grouped.length);
+});
+
+test('mto-iso-execution-016: the archive lists date and time, exports its five columns and opens on the last 30 days to the end of the month', () => {
+  assert.deepEqual([...PICKLIST_ARCHIVE_COLUMNS], ['Date', 'Report No.', 'Project', 'ISO No', 'Taken?']);
+  assert.deepEqual(archiveDefaultRange('2026-11-16'), { from: '2026-10-17', to: '2026-11-30' });
+  const line = (date: string, createdAt: string) => ({ id: createdAt, date, _createdAt: createdAt } as unknown as Row);
+  assert.equal(pickListStamp([line('2026-11-16', '2026-11-16T07:44:00.000Z')]), '2026-11-16T07:44:00.000Z', 'started today: date and time');
+  assert.equal(pickListStamp([line('2026-10-23', '2026-11-16T07:44:00.000Z')]), '2026-10-23', 'dated another day: the day only');
+});
+
+test('mto-logistics-010 / delta-I3-010: Service req. - Materials opens on group SUPPORT, shows "No update" and the Material history, and sends lines on no laydown', t => {
+  const store = sample(t);
+  assert.equal(defaultMaterialGroup(rowsOf(store)), 'Support', 'the sample writes the group Support');
+  store.create('materials', { materialNo: 'SUP-X1', description: 'Pipe shoe', materialGroup: 'SUPPORT', uom: 'EA' }, actor);
+  assert.equal(defaultMaterialGroup(rowsOf(store)), 'SUPPORT');
+  assert.equal(defaultMaterialGroup({ materials: [{ id: 'a', materialGroup: 'Valve' }, { id: 'b', materialGroup: 'Bolt' }] as unknown as Row[] }), 'Bolt', 'else the first group A-Z');
+  const rows = rowsOf(store); const label = (resource: string, id: string) => String(rows[resource]?.find(row => row.id === id)?.name ?? id);
+  const valves = materialServiceRows(rows, { group: 'Valve' }, label);
+  const valve = valves.find(entry => entry.requirement.id === 'requirement-field-1')!;
+  assert.ok(valves.every(entry => entry.material.materialGroup === 'Valve'));
+  assert.equal(materialCurrentLabel(valve, label), 'Delta Blast & Paint');
+  const free = valves.find(entry => !entry.locationId)!; assert.equal(materialCurrentLabel(free, label), 'No update');
+  assert.deepEqual(materialServiceRows(rows, { group: 'Valve', currently: 'Service:service-blast' }, label).map(entry => entry.requirement.id), ['requirement-field-1']);
+  assert.ok(materialServiceRows(rows, { group: 'Valve', keyword: 'cs-v' }, label).length > 0);
+  // Material history: newest first, with the request number on the service entry.
+  const request = store.list('service_requests').find(row => row.requirementId === 'requirement-field-1')!;
+  assert.deepEqual(materialHistory(rows, 'requirement-field-1', label).map(entry => [entry.date, entry.location, entry.orderNo]), [['2026-10-25', 'Delta Blast & Paint', String(request.number)], ['2026-10-22', 'Valve cage', '']]);
+  assert.deepEqual(materialHistory(rows, free.requirement.id, label), []);
+  // A line on no laydown can be sent to a service company; the request carries the user's name.
+  const sent = runAction(store, 'service-materials', { requirementIds: [free.requirement.id], companyId: 'service-pwht', note: 'Coating' }, { id: 'u1', name: 'Matej Spisak' });
+  assert.equal(sent.records![0].name, 'Matej Spisak'); assert.equal(store.list('material_locations').find(row => row.requirementId === free.requirement.id)!.companyId, 'service-pwht');
+  const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
+  assert.deepEqual([...hosted.actions['service-materials']].sort(), ['companyId', 'note', 'requirementIds']);
+  assert.deepEqual([...hosted.actions['move-materials-inventory']], ['requirementIds']);
+  assert.deepEqual([...hosted.actions['start-iso']].sort(), ['date', 'isoId', 'note', 'phaseId']);
+  assert.ok(['picklist-note', 'undo-iso-execution', 'take-picklist'].every(key => hosted.actions[key]?.includes('reportNo')));
+  assert.equal(ACTIONS['undo-iso-execution'].description, 'This will reverse the pick list, release reservations and return materials to inventory if already issued. The isometric will appear on the execution board again. Continue?');
 });
 
 test('pick lists issued directly count as taken and the archive groups lines per report with date and project filters', t => {
@@ -367,12 +556,31 @@ test('Reserve, Start and taking a pick list work through the API for MTO account
   const reserved = await f.request('/api/actions/reserve-iso', 'POST', { isoId: 'iso-8', date: '2026-10-27' }); assert.equal(reserved.status, 201);
   assert.ok(f.store.list('reservations').some(row => row.isoId === 'iso-8'));
   assert.equal((await f.request('/api/actions/reserve-iso', 'POST', { isoId: 'iso-8', date: '2026-10-27' })).status, 409);
-  const started = await f.request('/api/actions/start-iso', 'POST', { isoId: 'iso-6', date: '2026-10-27' }); assert.equal(started.status, 201);
-  const body = await started.json() as { records: Row[] }; const reportNo = String(body.records[0].reportNo); assert.equal(body.records[0].taken, false);
-  const before = f.store.list('stock').reduce((sum, row) => sum + Number(row.quantity), 0);
-  assert.equal((await f.request('/api/actions/take-picklist', 'POST', { reportNo, date: '2026-10-27' })).status, 201);
-  assert.ok(f.store.list('stock').reduce((sum, row) => sum + Number(row.quantity), 0) < before);
+  // Below 70 % Start is refused (STX-SK-008 is at 9 %); STX-ST-006 is at 72 %.
+  assert.equal((await f.request('/api/actions/start-iso', 'POST', { isoId: 'iso-8', date: '2026-10-27' })).status, 409);
+  const total = () => f.store.list('stock').reduce((sum, row) => sum + Number(row.quantity), 0);
+  const before = total();
+  const started = await f.request('/api/actions/start-iso', 'POST', { isoId: 'iso-6', date: '2026-10-27', note: 'Field crew B' }); assert.equal(started.status, 201);
+  const body = await started.json() as { records: Row[] }; const reportNo = String(body.records[0].reportNo); assert.equal(body.records[0].taken, false); assert.equal(body.records[0].note, 'Field crew B');
+  // Start issues the material at once (delta-I3-R1): the inventory drops by the pick list, taking it moves nothing.
+  const picked = body.records.reduce((sum, row) => sum + Number(row.quantity), 0);
+  assert.equal(total(), before - picked);
+  assert.equal((await f.request('/api/actions/take-picklist', 'POST', { reportNo, date: '2026-10-27', note: 'Issued to the field crew' })).status, 201);
+  assert.equal(total(), before - picked);
   assert.equal((await f.request('/api/actions/take-picklist', 'POST', { reportNo, date: '2026-10-27' })).status, 409);
+  assert.equal((await f.request('/api/actions/picklist-note', 'POST', { reportNo, note: 'Issued to P. Jansen' })).status, 201);
+  assert.equal((await f.request('/api/actions/undo-iso-execution', 'POST', { reportNo })).status, 409, 'a taken pick list cannot be undone');
+  // An untaken execution pick list can be undone: what it issued returns.
+  const second = await (await f.request('/api/actions/start-iso', 'POST', { isoId: 'iso-4', date: '2026-10-27' })).json() as { records: Row[] };
+  const issued = second.records.reduce((sum, row) => sum + Number(row.quantity), 0); assert.ok(issued > 0);
+  assert.equal(total(), before - picked - issued);
+  assert.equal((await f.request('/api/actions/undo-iso-execution', 'POST', { reportNo: String(second.records[0].reportNo) })).status, 201);
+  assert.equal(total(), before - picked);
+  // Excel of a table and the Reserved materials PDF.
+  const excel = await f.request('/api/mto/table-export', 'POST', { table: 'picklist-archive', columns: ['Date', 'Report No.'], rows: [['16.11.2026. 07:44', reportNo]] });
+  assert.equal(excel.status, 200); assert.match(String(excel.headers.get('content-type')), /spreadsheetml/);
+  assert.equal((await f.request('/api/mto/table-export', 'POST', { table: 'anything', columns: ['A'], rows: [] })).status, 404);
+  const pdf = await f.request('/api/pdf/reserved-materials?grouped=1'); assert.equal(pdf.status, 200); assert.match(String(pdf.headers.get('content-type')), /pdf/);
   const archive = await (await f.request('/api/bootstrap')).json() as { rows: Record<string, Row[]> };
   assert.ok(archive.rows.picklists.some(row => row.reportNo === reportNo && row.taken === true));
   assert.ok(archive.rows.reservations.some(row => row.isoId === 'iso-8'));

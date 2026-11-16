@@ -1,8 +1,13 @@
+import type { Express } from 'express';
+import ExcelJS from 'exceljs';
 import { AppError, qty, type Actor, type Store } from './store.ts';
-import type { Row } from '../shared/types.ts';
-import { allocateStock, isoStatuses, planReserve, planStart } from '../shared/mto-logistics.ts';
+import type { AuthRequest } from './auth.ts';
+import { canResource } from '../shared/permissions.ts';
+import type { Availability, Row } from '../shared/types.ts';
+import { PICKLIST_NOTE_MAX, START_FROM_PERCENT, allocateStock, canStartAt, isoStatuses, pickIssued, planReserve, planStart, startedPhases, undoRefusal } from '../shared/mto-logistics.ts';
+import { materialRecord } from '../shared/materials.ts';
 import { runAction } from './workflows.ts';
-import { siteOfIso, takeFromSite } from './mto-stock.ts';
+import { changeSiteStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 
 type Input = Record<string, unknown>;
 /** The helpers `runAction` hands to the actions of this flow: they share its transaction, date and note. */
@@ -14,8 +19,7 @@ export interface MtoActionContext {
   balance: (tool: boolean, itemId: string, warehouseId: string, chargeNo: string, delta: number, custom?: boolean) => Row;
   movement: (tool: boolean, type: string, itemId: string, warehouseId: string, amount: number, extra?: Input, custom?: boolean) => Row;
 }
-const RESOURCES = ['isometrics', 'projects', 'iso_materials', 'materials', 'custom_materials', 'operation_phases', 'orders', 'order_lines', 'stock', 'picklists', 'reservations'];
-const rowsOf = (store: Store) => Object.fromEntries(RESOURCES.map(key => [key, store.list(key)])) as Record<string, Row[]>;
+const RESOURCES = ['isometrics', 'projects', 'iso_materials', 'materials', 'custom_materials', 'operation_phases', 'orders', 'order_lines', 'stock', 'picklists', 'reservations'];const rowsOf = (store: Store) => Object.fromEntries(RESOURCES.map(key => [key, store.list(key)])) as Record<string, Row[]>;
 const refs = (requirement: Row) => ({ materialId: String(requirement.materialId || ''), customMaterialId: String(requirement.customMaterialId || '') });
 const ids = (value: unknown, label: string) => {
   if (!Array.isArray(value) || !value.length || value.length > 500 || value.some(item => typeof item !== 'string' || !item)) throw new AppError(422, `Select at least one ${label}.`);
@@ -53,48 +57,175 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
   }
   if (key === 'start-iso') {
     const iso = ensure('isometrics', data.isoId);
-    const rows = rowsOf(store); const plan = planStart(rows, iso.id);
+    const phaseId = text(data.phaseId);
+    if (phaseId) ensure('operation_phases', phaseId);
+    const pickNote = noteOf(data.note);
+    const rows = rowsOf(store);
+    // Start is offered from a Mat.status of 70 % (of the Type shown on the board, else of the whole isometric).
+    const percent = isoStatuses(rows, phaseId ? { isoId: iso.id, phaseId } : { isoId: iso.id }).get(iso.id)?.percent ?? null;
+    if (percent === null) throw new AppError(409, phaseId ? 'This isometric has no materials of this type.' : 'This isometric has no material requirements.');
+    if (!canStartAt(percent)) throw new AppError(409, `Start is possible from a material status of ${START_FROM_PERCENT} %. This isometric is at ${percent} %.`);
+    if (phaseId && startedPhases(rows, iso.id).has(phaseId)) throw new AppError(409, 'This isometric is already started for this type. Undo its execution in the Pick List archive to start it again.');
+    const plan = planStart(rows, iso.id);
     if (!plan.length) throw new AppError(409, nothingBecause(rows, iso.id, 'start'));
+    const siteId = siteOfIso(store, iso.id);
+    if (!siteId) throw new AppError(422, 'The isometric’s project belongs to no project site, so there is no Material inventory to take from.');
     // Pick List No.: five digits, as the reference's Pick List archive ("00001"); one counter for the workspace.
     const reportNo = String(store.next('PL').split('-').pop()).padStart(5, '0'); const lines: Row[] = [];
-    const siteId = siteOfIso(store, iso.id);
+    const logText = `Isometric execution ${iso.isoNo} | Pick List ${reportNo}`;
     for (const item of plan) {
-      // The source is the isometric's project site's Material inventory; one pick line per requirement line (the
-      // inventory is kept per Material No, the charges are drawn when the pick list is taken).
+      // The source is the isometric's project site's Material inventory; one pick line per requirement line. Older
+      // pick lists that are not taken yet still hold their quantities, so this one may only use what is left.
       const { shortfall } = allocateStock(rowsOf(store), siteId, item.identity, item.quantity);
       if (shortfall > 0) throw new AppError(409, 'Other pick lists already claim this stock. Try again after they are taken.');
-      lines.push(add('picklists', { number: store.next('PICK'), reportNo, isoId: iso.id, ...refs(item.requirement), requirementId: item.requirement.id, warehouseId: '', siteId, quantity: item.quantity, date, chargeNo: '', taken: false }));
+      const material = materialRecord(rows, item.requirement);
+      // delta-I3-R1: Start books the issue at once, charge by charge in charge order (Material log "Isometric execution
+      // <ISO> | Pick List <no>"); the pick list stays "Taken? No" until the take is confirmed.
+      const parts = takeFromSite(store, context.actor, siteId, refs(item.requirement), item.quantity, String(material?.materialNo || 'material'));
+      const charges = [...new Set(parts.map(part => String(part.row.chargeNo || '')))];
+      lines.push(add('picklists', { number: store.next('PICK'), reportNo, isoId: iso.id, ...refs(item.requirement), requirementId: item.requirement.id, warehouseId: '', siteId, quantity: item.quantity, date, chargeNo: charges.length === 1 ? charges[0] : '', taken: false, issued: true, note: pickNote, phaseId }));
+      for (const part of parts) add('movements', { number: store.next('MM'), ...refs(item.requirement), warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), isoId: iso.id, requirementId: item.requirement.id, note: logText, pickListNo: reportNo });
       // The reservation is used up by what this pick list takes; a larger reservation keeps its remainder.
       const reservation = rows.reservations.find(row => row.requirementId === item.requirement.id && row.status === 'Reserved');
       if (reservation) { const left = qty(Number(reservation.quantity) - item.quantity); patch('reservations', reservation, left > 0 ? { quantity: left } : { status: 'Used', quantity: Math.min(Number(reservation.quantity), item.quantity) }); }
     }
+    store.audit('isometrics', iso.id, 'started', `Started: Pick List ${reportNo}${pickNote ? ' · ' + pickNote : ''}`, context.actor);
     return { resource: 'picklists', records: lines };
   }
   if (key === 'take-picklist') {
-    const reportNo = typeof data.reportNo === 'string' ? data.reportNo.trim() : '';
-    const lines = store.list('picklists').filter(line => String(line.reportNo || line.number) === reportNo);
-    if (!lines.length) throw new AppError(404, 'This pick list could not be found.');
+    const lines = reportLines(store, data.reportNo);
     // In the order the lines were written (requirement order), so the charges are drawn the same way every time.
-    const open = lines.filter(line => line.taken === false).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)) || String(a.number).localeCompare(String(b.number)));
+    const open = lines.filter(line => line.taken === false && line.returned !== true).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)) || String(a.number).localeCompare(String(b.number)));
     if (!open.length) throw new AppError(409, 'This pick list is already taken.');
+    const given = data.note === undefined ? undefined : noteOf(data.note);
     const records = open.map(line => {
       if (date < String(line.date)) throw new AppError(422, 'The taken date cannot be before the pick list date.');
+      const confirmed = { taken: true, takenDate: date, ...(given === undefined ? {} : { note: given }) };
+      // Booked out at Start: confirming the take is a sign-off, the stock does not move again.
+      if (line.issued === true) return patch('picklists', line, confirmed);
       const custom = Boolean(line.customMaterialId); const item = String(custom ? line.customMaterialId : line.materialId);
-      const extra = { isoId: String(line.isoId), requirementId: String(line.requirementId || ''), note: `${line.number}${note ? ' · ' + note : ''}` };
+      const extra = { isoId: String(line.isoId), requirementId: String(line.requirementId || ''), note: `${line.number}${note ? ' · ' + note : ''}`, pickListNo: String(line.reportNo || '') };
       if (line.warehouseId) {
         // A pick line written before the site inventories existed takes from its storehouse line.
         balance(false, item, String(line.warehouseId), String(line.chargeNo || ''), -Number(line.quantity), custom);
         movement(false, 'Issue', item, String(line.warehouseId), -Number(line.quantity), { ...extra, chargeNo: String(line.chargeNo || '') }, custom);
       } else {
+        // A pick list written before Start issued stock: it issues now, as it always did.
         const siteId = String(line.siteId || '') || siteOfIso(store, line.isoId);
         const parts = takeFromSite(store, context.actor, siteId, refs(line), Number(line.quantity));
         for (const part of parts) add('movements', { number: store.next('MM'), ...refs(line), warehouseId: '', siteId, quantity: -part.quantity, type: 'Issue', date, chargeNo: String(part.row.chargeNo || ''), ...extra });
       }
-      return patch('picklists', line, { taken: true, takenDate: date });
+      return patch('picklists', line, confirmed);
     });
     return { resource: 'picklists', records };
   }
+  if (key === 'picklist-note') {
+    // Edit of the Note (#materialTakeEdit): every line of the pick list carries it; no stock moves.
+    const lines = reportLines(store, data.reportNo); const value = noteOf(data.note);
+    const records = lines.map(line => String(line.note ?? '') === value ? line : patch('picklists', line, { note: value }));
+    return { resource: 'picklists', records };
+  }
+  if (key === 'undo-iso-execution') {
+    const lines = reportLines(store, data.reportNo); const reportNo = String(lines[0].reportNo || lines[0].number);
+    const refusal = undoRefusal({ execution: lines.every(line => Boolean(line.reportNo)), lines });
+    if (refusal) throw new AppError(409, refusal);
+    const iso = store.get('isometrics', lines[0].isoId, true);
+    const logText = `Undo execution ${iso.isoNo} | Pick List ${reportNo}`;
+    // Return exactly what Start took, charge by charge: the Issue movements of this pick list, reversed.
+    for (const move of store.list('movements').filter(row => row.pickListNo === reportNo && row.type === 'Issue' && !row.warehouseId && row.siteId)) {
+      const amount = qty(-Number(move.quantity)); if (amount <= 0) continue;
+      changeSiteStock(store, context.actor, String(move.siteId), refs(move), String(move.chargeNo || ''), amount);
+      add('movements', { number: store.next('MM'), ...refs(move), warehouseId: '', siteId: String(move.siteId), quantity: amount, type: 'Return to inventory', date, chargeNo: String(move.chargeNo || ''), isoId: iso.id, requirementId: String(move.requirementId || ''), note: logText, pickListNo: reportNo });
+    }
+    // The pick list leaves the archive (archived, never deleted); the isometric's reservations are released.
+    const archived = lines.map(line => store.archive('picklists', line.id, line._version, context.actor));
+    for (const reservation of store.list('reservations').filter(row => row.isoId === iso.id && row.status === 'Reserved')) patch('reservations', reservation, { status: 'Released', note: [reservation.note, `Released by Undo execution of Pick List ${reportNo}`].filter(Boolean).join(' · ') });
+    store.audit('isometrics', iso.id, 'execution undone', `Undo execution: Pick List ${reportNo}`, context.actor);
+    return { resource: 'picklists', records: archived };
+  }
   throw new AppError(404, 'This action does not exist.');
+}
+
+/**
+ * Excel of the tables of this flow, as the screen shows them (the reference's DataTables "Excel" button): the page sends
+ * the columns and rows it lists, the server writes the workbook. Each table needs the export right of its records.
+ */
+export const TABLE_EXPORTS: Record<string, { resource: string; title: string }> = {
+  'iso-execution': { resource: 'iso_materials', title: 'Isometric execution' },
+  'picklist-archive': { resource: 'picklists', title: 'Pick List archive' },
+  picklist: { resource: 'picklists', title: 'Pick List' },
+};
+export function registerMtoLogisticsRoutes(app: Express, availability: Availability | undefined) {
+  app.post('/api/mto/table-export', async (req, res) => {
+    if (!availability?.features.includes('pilots')) throw new AppError(404, 'This resource could not be found.');
+    const body = (req.body ?? {}) as Input; const table = TABLE_EXPORTS[text(body.table)];
+    if (!table) throw new AppError(404, 'This table cannot be exported.');
+    const user = (req as unknown as AuthRequest).user;
+    if (!canResource(user, table.resource, 'export')) throw new AppError(403, 'Your permission profile does not allow this export.');
+    const cell = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : String(value ?? '').slice(0, 2000);
+    const columns = Array.isArray(body.columns) ? body.columns.slice(0, 30).map(value => String(value ?? '').slice(0, 100)) : [];
+    const rows = Array.isArray(body.rows) ? body.rows.slice(0, 10000) : [];
+    if (!columns.length || rows.some(row => !Array.isArray(row))) throw new AppError(422, 'Send the columns and the rows of the table.');
+    const workbook = new ExcelJS.Workbook(); workbook.creator = 'Blitzkrieg';
+    const sheet = workbook.addWorksheet(table.title.slice(0, 31)); sheet.columns = columns.map(header => ({ header, width: 22 }));
+    for (const row of rows as unknown[][]) sheet.addRow(columns.map((_, index) => cell(row[index])));
+    sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }; sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF061B42' } }; sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    res.attachment(`blitzkrieg-${text(body.table)}.xlsx`); await workbook.xlsx.write(res); res.end();
+  });
+}
+
+const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+/** The Note of a pick list: plain text up to PICKLIST_NOTE_MAX characters. */
+function noteOf(value: unknown) {
+  if (value !== undefined && value !== null && typeof value !== 'string') throw new AppError(422, 'The note must be text.', { note: 'Enter text.' });
+  const note = text(value);
+  if (note.length > PICKLIST_NOTE_MAX) throw new AppError(422, `The note is too long (at most ${PICKLIST_NOTE_MAX} characters).`, { note: `Use at most ${PICKLIST_NOTE_MAX} characters.` });
+  return note;
+}
+/** The active lines of one pick list (by its report number; a line issued directly stands under its own number). */
+function reportLines(store: Store, value: unknown) {
+  const reportNo = text(value);
+  const lines = reportNo ? store.list('picklists').filter(line => String(line.reportNo || line.number) === reportNo) : [];
+  if (!lines.length) throw new AppError(404, 'This pick list could not be found.');
+  return lines;
+}
+
+/**
+ * Service req. - Materials → Move to inventory: the material that was issued to the checked lines goes back into the
+ * isometric's project site inventory, charge by charge as it left (an issue without a known charge comes back without
+ * one). Its pick-list lines no longer count as Picked; the line's location is cleared and an open service request of it
+ * closes with the date. A line with nothing issued is refused, and nothing is written.
+ */
+export function moveMaterialsToInventory(store: Store, actor: Actor, requirementIds: string[], date: string, note: string) {
+  const records: Row[] = [];
+  for (const id of requirementIds) {
+    const requirement = store.get('iso_materials', id); const iso = store.get('isometrics', requirement.isoId);
+    const lines = store.list('picklists').filter(line => line.requirementId === requirement.id && pickIssued(line));
+    const material = materialRecord(rowsOf(store), requirement);
+    if (!lines.length) throw new AppError(409, `Nothing of ${material?.materialNo || 'this material'} on ${iso.isoNo} was issued from the inventory, so there is nothing to move back.`);
+    for (const line of lines) {
+      const siteId = String(line.siteId || '') || siteOfIso(store, iso.id);
+      if (!siteId) throw new AppError(422, 'The isometric’s project belongs to no project site, so there is no Material inventory to move back to.');
+      const issues = store.list('movements').filter(move => move.type === 'Issue' && move.requirementId === requirement.id && (line.reportNo ? move.pickListNo === line.reportNo : String(move.note || '').startsWith(String(line.number))));
+      const issuedTotal = qty(issues.reduce((sum, move) => sum - Number(move.quantity), 0));
+      // The charges as they left; when the issue movements do not add up to the line (old data), the line's quantity returns on its own charge.
+      const parts = issuedTotal === qty(line.quantity) ? issues.map(move => ({ chargeNo: String(move.chargeNo || ''), quantity: qty(-Number(move.quantity)) })) : [{ chargeNo: String(line.chargeNo || ''), quantity: qty(line.quantity) }];
+      for (const part of parts.filter(part => part.quantity > 0)) {
+        changeSiteStock(store, actor, siteId, refs(line), part.chargeNo, part.quantity);
+        store.create('movements', { number: store.next('MM'), ...refs(line), warehouseId: '', siteId, quantity: part.quantity, type: 'Return to inventory', date, chargeNo: part.chargeNo, isoId: iso.id, requirementId: requirement.id, note: `Moved back to inventory | ${iso.isoNo}${line.reportNo ? ` | Pick List ${line.reportNo}` : ''}${note ? ' · ' + note : ''}`, pickListNo: String(line.reportNo || '') }, actor);
+      }
+      records.push(store.update('picklists', line.id, { returned: true, returnedDate: date }, line._version, actor));
+    }
+    const location = store.list('material_locations').find(row => row.requirementId === requirement.id);
+    if (location && (location.laydownId || location.companyId)) store.update('material_locations', location.id, { laydownId: '', companyId: '', date }, location._version, actor);
+    for (const request of store.list('service_requests').filter(row => row.requirementId === requirement.id && row.status !== 'Completed')) {
+      if (date < String(request.date)) throw new AppError(422, 'The move date cannot be before the request date.');
+      store.update('service_requests', request.id, { status: 'Completed', completedAt: date }, request._version, actor);
+    }
+    store.create('material_location_events', { number: store.next('MLOC'), requirementId: requirement.id, type: 'Move to inventory', laydownId: '', companyId: '', date, note }, actor);
+    store.audit('iso_materials', requirement.id, 'moved', `Move to inventory · ${date}${note ? ' · ' + note : ''}`, actor);
+  }
+  return records;
 }
 
 

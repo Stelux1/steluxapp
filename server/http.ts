@@ -44,6 +44,7 @@ import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
 import { assignIrn, guardIrn } from './iso-pages.ts';
 import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
+import { registerMtoLogisticsRoutes } from './mto-logistics.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
 import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
@@ -241,6 +242,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   registerIsoBookRoutes({ app, store, documents, availability, access, readableRows, pilotIsometrics, publicOrigin: options.publicOrigin });
   registerMtoStockRoutes(app, store, availability, access);
+  registerMtoLogisticsRoutes(app, availability);
   if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   app.post('/api/records/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');

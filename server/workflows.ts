@@ -16,7 +16,7 @@ import { correctReceipt, receivingWarehouseId, recordReceipt, type ProcurementCo
 import { isMtoStockAction } from '../shared/mto-stock.ts';
 import { changeSiteStock, receivingSiteId, runMtoStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
-import { runMtoLogisticsAction } from './mto-logistics.ts';
+import { moveMaterialsToInventory, runMtoLogisticsAction } from './mto-logistics.ts';
 import { createSpoolServiceRequest, moveSpoolsToLaydown, nextNumber } from './spool-logistics.ts';
 import { duplicateSite } from './site-duplicate.ts';
 import { reorderAttachmentNames } from './attachment-names.ts';
@@ -173,6 +173,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
       movement(true, 'Return', String(rental.articleId), String(rental.warehouseId), amount, { rentalId: rental.id });
       return { resource: 'rentals', record: patch('rentals', rental, { returned, status: returned === Number(rental.quantity) ? 'Returned' : 'Partially returned' }) };
     }
+    if(key==='move-materials-inventory')return{resource:'picklists',records:moveMaterialsToInventory(store,actor,ids(data.requirementIds,'material requirement'),date,note)};
     if(key==='move-materials'||key==='service-materials'){
       const updateLocation=(requirement:Row,input:Input)=>{
         const current=store.list('material_locations').find(r=>r.requirementId===requirement.id);
@@ -195,8 +196,8 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
         if(company&&(current?.companyId||open.length))throw new AppError(409,'This material already has an open service request.');
         if(!company)for(const request of open){if(date<String(request.date))throw new AppError(422,'The move date cannot be before the request date.');patch('service_requests',request,{status:'Completed',completedAt:date});}
         if(company){
-          if(!current?.laydownId)throw new AppError(409,'Move the material to a laydown before requesting service.');
-          const request=add('service_requests',{number,name:str(data.name),requirementId:requirement.id,companyId:company.id,materialLaydownId:laydown?.id||current.laydownId,date,requestedAt:new Date().toISOString(),addedBy:actor.name,status:'Requested',note});
+          // A material line on no laydown can be sent as well (mto-logistics-010: the laydown rule was ours); the request carries the signed-in user's name unless one was given.
+          const request=add('service_requests',{number,name:str(data.name)||actor.name,requirementId:requirement.id,companyId:company.id,materialLaydownId:laydown?.id||current?.laydownId||'',date,requestedAt:new Date().toISOString(),addedBy:actor.name,status:'Requested',note});
           created.push(request);updateLocation(requirement,{laydownId:'',companyId:company.id});event(requirement,'Service request',{companyId:company.id,requestId:request.id});
         }else{updateLocation(requirement,{laydownId:laydown!.id,companyId:''});event(requirement,'Move to laydown',{laydownId:laydown!.id});}
       }

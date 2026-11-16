@@ -202,6 +202,11 @@ extend('materials', [t('wallThickness', 'Wall thickness')]);
 extend('materials', [r('uomId', 'UOM', 'uoms', { hidden: true })]);
 // The ID of an operation phase is its own number, given on create (shared/material-db.ts); the number typed before stays as `sort`.
 extend('operation_phases', [n('number', 'ID', { generated: true, readonly: true, hidden: true })]);
+// Isometric execution (shared/mto-logistics.ts): the Note of a pick list, its Type, lines booked out at Start or moved back to the inventory, and the pick list of a stock movement.
+extend('picklists', [t('note', 'Note', { type: 'textarea', hidden: true }), t('phaseId', 'Type', { hidden: true }), b('issued', 'Issued at start', { hidden: true }), b('returned', 'Moved back to inventory', { hidden: true }), d('returnedDate', 'Moved back on', { hidden: true })]);
+extend('movements', [t('pickListNo', 'Pick List', { hidden: true })]);
+// Service req. - Materials → Move to inventory is a step of a material line's history.
+resources.find(resource => resource.key === 'material_location_events')!.fields.find(field => field.name === 'type')!.options!.push('Move to inventory');
 extend('certifications', [t('indexNo', 'Index number'), t('materialCode', 'Material code'), t('diameter', 'Diameter (inch)'), t('materialDescription', 'Description of material'), t('wallThickness', 'Wall thickness'), t('schedule', 'Schedule')]);
 // Welders, roles, qualifications, material data and certificates (shared/welder-data.ts).
 extend('welders', [b('combination', 'Combination')]);
