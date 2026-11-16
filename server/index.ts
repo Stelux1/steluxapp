@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { Store, SYSTEM } from './store.ts';
 import { seed, seedAccessSamples, seedCompanySample, seedInspectionSamples } from './seed.ts';
 import { seedMtoLogistics } from './mto-logistics.ts';
+import { seedMtoDashboard } from './mto-dashboard-seed.ts';
 import { createApp } from './http.ts';
 import { PostgresDatabase, postgresConfig } from './postgres.ts';
 import { runtimeConfig } from './runtime-config.ts';
@@ -19,7 +20,7 @@ if (database) { try { if (config.cloud) { if (config.cloudDatabaseSource === 'ev
 const store = new Store(resolve(dataDir, 'stelux.sqlite'), database, { initialize: !config.cloud });
 if (config.cloud && database) verifyWeldingTraceability(database);
 if (config.profile === 'access-prototype') initializePrototype(store);
-else if (!config.cloud) { seed(store); if (config.profile === HOSTED_RELEASE_PROFILE) { seedAccessSamples(store); seedCompanySample(store); seedInspectionSamples(store); } if (config.profile === HOSTED_RELEASE_PROFILE || config.profile === 'full') seedMtoLogistics(store, SYSTEM); }
+else if (!config.cloud) { seed(store); if (config.profile === HOSTED_RELEASE_PROFILE) { seedAccessSamples(store); seedCompanySample(store); seedInspectionSamples(store); } if (config.profile === HOSTED_RELEASE_PROFILE || config.profile === 'full') { seedMtoLogistics(store, SYSTEM); seedMtoDashboard(store, SYSTEM); } }
 const port = config.port;
 const server = createApp(store, dataDir, { releaseProfile: config.profile, distDir: config.distDir, publicOrigin: config.publicOrigin, secureCookies: config.secureCookies, documentStorage: config.documentStorage, initializeStorage: !config.cloud, sampleWorkspace: !config.cloud || config.cloudDatabaseSource === 'evaluation' }).listen(port, config.host, () => console.log(`Blitzkrieg API ready on port ${port} (${database ? 'PostgreSQL' : 'SQLite'})`));
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));

@@ -12,7 +12,8 @@ import { DataLisl } from './data-lisl.tsx';
 import { WeldsPanel } from './weld-entry.tsx';
 import { wdiProgress } from '../shared/wdi.ts';
 import { WdiProgress } from './wdi-progress.tsx';
-import { MtoDashboardPlaceholder, WeldDashboard } from './itp-dashboard.tsx';
+import { WeldDashboard } from './itp-dashboard.tsx';
+import { MtoDashboard } from './mto-dashboard.tsx';
 import { IsometricHeader } from './iso-header.tsx';
 import { PdfReportsMenu } from './pdf-reports.tsx';
 import { ArchiveRecordButton, ArchiveRecordDialog } from './archive-record.tsx';
@@ -67,7 +68,7 @@ export function ProjectOverview() {
   });
   return <div className="page workflow-page project-overview">
     <div className="page-heading"><div><div className="eyebrow">MAIN PROJECT · DASHBOARD</div><h1>{String(site?.name || 'Project overview')}</h1><p>Execution and traceability across this project's subprojects.</p></div><div className="heading-actions"><Link className="btn" to="/workspace/main-projects"><ArrowLeft size={16}/>All main projects</Link>{canRecord('projects', 'insert') && <button className="btn primary" onClick={() => setEditor(true)}><Plus size={16}/>Add subproject</button>}</div></div>
-    {pilot?.pilot.key === 'mto' ? <MtoDashboardPlaceholder/> : <>
+    {pilot?.pilot.key === 'mto' ? <MtoDashboard/> : <>
     {!hosted && <div className="workflow-stats">{[
       ['Subprojects', projects.length, `${isos.length} isometrics`, FolderKanban], ['Registered welds', welds.length, `${welded} welded`, ScanLine], ['WDI total', formatNumber(wdi), 'Diameter inches · all registered welds', FileStack], ['NDT required', ndt, 'Welds marked for examination', ScanLine],
     ].map(([title, value, description, Icon]) => { const I = Icon as typeof FileStack; return <div className="panel workflow-stat" key={String(title)}><span className="project-card-icon"><I size={20}/></span><small>{String(title)}</small><strong>{String(value)}</strong><span>{String(description)}</span></div>; })}</div>}
