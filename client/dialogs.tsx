@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { flangeInputErrors } from '../shared/flanges.ts';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ACTIONS } from './catalog.ts';
@@ -25,6 +26,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   async function submit(e: FormEvent) {
     e.preventDefault(); setError(''); setFields({});
     if (resourceKey === 'isometrics') { const problems = isoInputErrors(values, record, isoBudgets(record ?? ({} as Row))); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
+    if (resourceKey === 'flanges') { const problems = flangeInputErrors(values); if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); setFields(problems); return; } }
     if (resourceKey === 'sites') { const progress = validateProgressWeights(values); if (!progress.valid) { setError(progress.message); setFields(progress.fields); return; } }
     setBusy(true);
     try { const payload = record && user.availability ? Object.fromEntries(Object.entries(values).filter(([name,value]) => {

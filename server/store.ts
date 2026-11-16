@@ -9,6 +9,7 @@ import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { hydrotestErrors } from '../shared/hydrotest.ts';
+import { flangeInputErrors, flangeStoredValue } from '../shared/flanges.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
@@ -111,6 +112,7 @@ export class Store {
       if(key==='wps'&&field.name==='pqrId'&&Array.isArray(input.pqrIds))value=input.pqrIds[0]||'';
       if(key==='pqr'&&input[field.name]===undefined&&existing?.[field.name]===undefined){if(field.name==='attribute25Id')value=input.standard??existing?.standard??'';if(field.name==='attribute5Id')value=input.material??existing?.material??'';}
       if(key==='isometrics'&&field.name==='xRay'&&typeof value==='number')value=String(value);
+      if(key==='flanges')value=flangeStoredValue(field,value);
       if(key==='isometrics'&&existing&&['itpRevNo','itp2RevNo'].includes(field.name)&&input[field.name]===undefined&&existing[field.name]===undefined){const type=field.name==='itpRevNo'?'ITP':'ITP 2';value=this.list('revisions').find(r=>r.isoId===existing.id&&r.type===type)?.revNo??field.default??'0';}
       if (field.required && (value === '' || value === null || value === undefined)) { errors[field.name] = `${field.label} is required.`; continue; }
       if (field.type === 'checkbox') {
@@ -132,6 +134,7 @@ export class Store {
       }
       data[field.name] = value as Value;
     }
+    if (key === 'flanges') for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);

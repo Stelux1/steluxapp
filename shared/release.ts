@@ -130,6 +130,8 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     deliverResource(availability, 'test_systems', ['accepted']);
     for (const resource of HYDROTEST_RESOURCES) availability.resources[resource.key] = resource.fields.map(field => field.name);
     for (const action of HYDROTEST_ACTIONS) availability.actions[action.key] = action.fields.map(field => field.name);
+    // Flange Management (Weld Pilot → Releases): the flange record and its page.
+    deliverResource(availability, 'flanges');
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
