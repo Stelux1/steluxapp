@@ -1,53 +1,104 @@
 import type { Row } from './types.ts';
 import { materialIdentity, materialRecord, requirementExecution } from './materials.ts';
 import { priorityLabel } from './priority.ts';
+import { freePool as sitePools, isTaken, poolKey, spoolLocation } from './mto-logistics.ts';
+import { isoSiteId } from './mto-stock.ts';
 
 /**
  * MTO Pilot dashboard (Start). Every number on the page comes from `mtoDashboard()` below: pure functions over the
  * workspace rows the pilot already loads (collections keyed by resource), so the client and the tests run the same code.
  *
- * The reference's formulas are not in the capture. Each definition is ONE named function and is listed as unverified
- * in PARITY.md: `freePoolByMaterial`, `allocateCoverage`, `readinessOf`, `maxStartable`, `allocateOpenOrders`,
- * `logisticsSignalOf`, `agingOf`, `agingBucket`, `hottestMaterials`.
+ * The definitions were recomputed from the reference sandbox (mto__start__dashboard.txt, phase Shop, and
+ * mto__start__dashboard__phase.txt, phase Field); tests/mto-dashboard.test.ts reproduces both captures. Rules the
+ * captures do not settle are marked UNVERIFIED: `allocateCoverage` (order of sharing the pool), `exceptionScore`,
+ * `logisticsSignalOf` (service-company wording), `serverFilterEntries` (spool and supplier).
  */
 type Rows = Record<string, Row[]>;
 const active = (rows: Rows, key: string) => (rows[key] || []).filter(row => !row._archived);
 const round = (value: number) => Math.round(value * 1e6) / 1e6;
 const text = (value: unknown) => String(value ?? '').trim();
 const day = (value: unknown) => text(value).slice(0, 10);
-const byIso = (a: Row, b: Row) => String(a.isoNo ?? '').localeCompare(String(b.isoNo ?? ''), 'en', { numeric: true }) || a.id.localeCompare(b.id);
+const byNumber = (a: string, b: string) => a.localeCompare(b, 'en', { numeric: true });
+const byIso = (a: Row, b: Row) => byNumber(String(a.isoNo ?? ''), String(b.isoNo ?? '')) || a.id.localeCompare(b.id);
 
 /** Resources the dashboard reads; without all of them the page shows its no-access state. */
 export const MTO_DASHBOARD_REQUIRED = ['isometrics', 'iso_materials', 'stock', 'reservations', 'picklists', 'orders', 'order_lines'];
 /** Read when the account can see them; the dashboard still works (with less detail) without them. */
 export const MTO_DASHBOARD_OPTIONAL = ['operation_phases', 'material_location_events', 'service_requests', 'spools', 'material_quantity_changes', 'projects'];
 
+/**
+ * The dashboard's page areas (reference profile areas, mto__system__profiles.txt): "Dashboard - Spools locations" 1,
+ * "Dashboard - Pending materials" 2, "Dashboard - Pending orders" 3. Each gates one part of the page:
+ * logistics (signal chart, aging chips, the Logistics / aging column and the At service / At laydown / Aging views),
+ * materials (KPI cards, Max startable and Free pool chips, Readiness focus, Operations board) and orders (Ordered,
+ * Received, Open ordered, Blocking backorder and Not ordered chips, the Backlog by site chart, the Open ordered view).
+ */
+export const MTO_DASHBOARD_PANEL_AREAS = { logistics: '1', materials: '2', orders: '3' } as const;
+export type DashboardPanel = keyof typeof MTO_DASHBOARD_PANEL_AREAS;
+export function dashboardPanels(canArea: (key: string) => boolean): Record<DashboardPanel, boolean> {
+  return Object.fromEntries(Object.entries(MTO_DASHBOARD_PANEL_AREAS).map(([panel, area]) => [panel, canArea(area)])) as Record<DashboardPanel, boolean>;
+}
+
 export const READINESS = ['STARTED', 'STARTABLE', 'PARTIAL', 'BLOCKED'] as const;
 export type Readiness = typeof READINESS[number];
+/** The readiness badge as the reference writes it (mto__start__dashboard.txt:182-184). */
+export const READINESS_LABEL: Record<Readiness, string> = { STARTED: 'Started', STARTABLE: 'Startable', PARTIAL: 'Partial', BLOCKED: 'Blocked' };
 export const SIGNALS = ['Not-sent', 'At service', 'At laydown', 'Started'] as const;
 export type LogisticsSignal = typeof SIGNALS[number];
+/** The signal word of the Logistics / aging cell: "Not-sent", "Laydown", "Started" (captured); "Service" is UNVERIFIED. */
+export const SIGNAL_LABEL: Record<LogisticsSignal, string> = { 'Not-sent': 'Not-sent', 'At service': 'Service', 'At laydown': 'Laydown', Started: 'Started' };
 export const AGING_BUCKETS = ['0-7 days', '8-14 days', '15+ days'] as const;
 export type AgingBucket = typeof AGING_BUCKETS[number];
 
-export const BOARD_TABS = ['ALL', 'STARTABLE', 'PARTIAL', 'BLOCKED', 'OPEN ORDERED', 'NOT ORDERED', 'AT SERVICE', 'AT LAYDOWN', 'AGING'] as const;
+/** The quick filters of the Operations board, in the reference order and wording (mto__start__dashboard.txt:156-164). */
+export const BOARD_TABS = ['All', 'Startable', 'Partial', 'Blocked', 'Open ordered', 'Not ordered', 'At service', 'At laydown', 'Aging'] as const;
 export type BoardTab = typeof BOARD_TABS[number];
-export const BOARD_PAGE_SIZE = 10;
+/** "Open ordered" shows material rows instead of isometrics (syncBoardLayout, mto__start__dashboard.txt:2709-2724). */
+export const MATERIAL_VIEW_TAB: BoardTab = 'Open ordered';
+export const MATERIAL_VIEW_COLUMNS = ['Material number', 'Description', 'Shortage', 'Open ordered', 'Not ordered'] as const;
+export const BOARD_COLUMNS = ['Project / ISO', 'Readiness', 'Shortage', 'Blocking backorder', 'Not ordered', 'Logistics / aging', 'Action'] as const;
+/** Show 4 / 25 / 50 / 100 entries, 4 first (mto__start__dashboard.txt:2778-2779). */
+export const BOARD_PAGE_SIZES = [4, 25, 50, 100] as const;
+export const BOARD_PAGE_SIZE = BOARD_PAGE_SIZES[0];
+/** The board reloads every 45 seconds while the page is open (mto__start__dashboard.txt:2825-2830). */
+export const BOARD_RELOAD_MS = 45000;
 export const FOCUS_SIZE = 5;
+/** The tab a KPI card opens (its data-filter, mto__start__dashboard.txt:130-135). */
+export const KPI_FILTERS = { startable: 'Startable', partial: 'Partial', blocked: 'Blocked', backorder: 'Open ordered', notOrdered: 'Not ordered', freePool: 'All' } as const satisfies Record<string, BoardTab>;
 
-// ----- definitions (UNVERIFIED reference rules) -------------------------------------------------------------------
+// ----- scope ---------------------------------------------------------------------------------------------------------
 
-export interface FreePool { stock: number; reserved: number; free: number }
+/** The Operation phase the dashboard opens on: the phase named Shop, else the first phase of the list; '' without phases. */
+export function defaultDashboardPhase(phases: Row[]): string {
+  const list = phases.filter(row => !row._archived);
+  return (list.find(row => text(row.name).toLowerCase() === 'shop') || list[0])?.id ?? '';
+}
+
 /**
- * UNVERIFIED. Free pool of a material = stock on hand − quantities reserved for isometrics (reservations still
- * "Reserved"), never below zero. Stock is already net of take-ins and issues (the balance moves with them).
+ * Server-side filters of the dashboard (deep links, reference `serverFilters`): project, spool, supplier and the operation
+ * phase (`type`; '0' = all operation phases). Read from the URL; absent values stay empty.
+ */
+export interface DashboardFilters { phaseId: string; projectId: string; spoolId: string; supplierId: string }
+export const DASHBOARD_FILTER_PARAMS = { projectId: 'project', spoolId: 'spool', supplierId: 'supplier', phaseId: 'type' } as const;
+export const ALL_PHASES = '0';
+export function dashboardFilters(params: URLSearchParams, defaultPhase: string): DashboardFilters {
+  const type = params.get(DASHBOARD_FILTER_PARAMS.phaseId);
+  return {
+    phaseId: type === null ? defaultPhase : type === ALL_PHASES ? '' : type,
+    projectId: text(params.get(DASHBOARD_FILTER_PARAMS.projectId)), spoolId: text(params.get(DASHBOARD_FILTER_PARAMS.spoolId)), supplierId: text(params.get(DASHBOARD_FILTER_PARAMS.supplierId)),
+  };
+}
+
+// ----- definitions ---------------------------------------------------------------------------------------------------
+
+export interface FreePool { stock: number; reserved: number; claimed: number; free: number }
+/**
+ * Free pool per material and project site (the one rule of shared/mto-logistics.ts `freePool`): the site's Material
+ * inventory − quantities reserved for isometrics − quantities on pick lists not taken yet, never below zero. Stock is
+ * already net of take-ins and issues. Storehouse lines are not in it.
  */
 export function freePoolByMaterial(rows: Rows): Map<string, FreePool> {
-  const pools = new Map<string, FreePool>();
-  const pool = (identity: string) => { let value = pools.get(identity); if (!value) pools.set(identity, value = { stock: 0, reserved: 0, free: 0 }); return value; };
-  for (const row of active(rows, 'stock')) { const value = pool(materialIdentity(row)); value.stock = round(value.stock + Number(row.quantity || 0)); }
-  for (const row of active(rows, 'reservations').filter(row => row.status === 'Reserved')) { const value = pool(materialIdentity(row)); value.reserved = round(value.reserved + Number(row.quantity || 0)); }
-  for (const value of pools.values()) value.free = round(Math.max(0, value.stock - value.reserved));
-  return pools;
+  return new Map([...sitePools(rows)].map(([key, pool]) => [key, { ...pool, free: round(Math.max(0, pool.free)) }]));
 }
 
 /** Priority rank of an isometric: "Prio 1" first … "Prio 5", "No priority" last. */
@@ -56,7 +107,7 @@ export function priorityRank(iso: Row): number {
   return match ? Number(match[1]) : 99;
 }
 
-/** Readiness of an isometric once its coverage is known. UNVERIFIED: STARTED (a pick list exists) wins over the coverage states. */
+/** Readiness of an isometric once its coverage is known: STARTED (a pick list exists) wins over the coverage states. */
 export function readinessOf(input: { required: number; covered: number; started: boolean }): Readiness {
   if (input.started) return 'STARTED';
   if (input.covered >= input.required) return 'STARTABLE';
@@ -64,51 +115,52 @@ export function readinessOf(input: { required: number; covered: number; started:
 }
 
 export interface ScopeLine {
-  requirementId: string; isoId: string; identity: string; material: Row; phaseId: string;
-  required: number; picked: number; reserved: number; fromFree: number; covered: number; shortage: number;
+  requirementId: string; isoId: string; identity: string; pool: string; material: Row; phaseId: string;
+  required: number; picked: number; claimed: number; reserved: number; fromFree: number; covered: number; shortage: number;
   blockingBackorder: number; notOrdered: number; openLinked: number; openExtra: number;
 }
-interface Entry { requirement: Row; iso: Row; material: Row; identity: string; required: number; picked: number }
+interface Entry { requirement: Row; iso: Row; material: Row; identity: string; pool: string; required: number; picked: number }
+type Own = (requirementId: string) => number;
 
 /**
- * UNVERIFIED. Covered = min(required, picked + reserved for the line + share of the free pool). The free pool of a
- * material is handed out isometric by isometric in priority order, then ISO number (lines in creation order inside an
- * isometric); what one isometric takes is gone for the next. Reserved quantities belong to their own line only.
+ * Covered = min(required, picked + own untaken pick list + own reservations + share of the free pool). A quantity on
+ * the isometric's own pick list that is not taken yet counts as covered for its line and is not in the free pool for
+ * anyone (reference 00022 "Covered 2 / 2" with stock 0). UNVERIFIED: the free pool of a material is handed out isometric
+ * by isometric in priority order, then ISO number (lines in creation order); what one isometric takes is gone for the next.
  */
-export function allocateCoverage(entries: Entry[], reservedFor: (requirementId: string) => number, pools: Map<string, FreePool>): ScopeLine[] {
-  const left = new Map([...pools].map(([identity, pool]) => [identity, pool.free]));
+export function allocateCoverage(entries: Entry[], reservedFor: Own, claimedFor: Own, pools: Map<string, FreePool>): ScopeLine[] {
+  const left = new Map([...pools].map(([key, pool]) => [key, pool.free]));
   const order = [...new Set(entries.map(entry => entry.iso))].sort((a, b) => priorityRank(a) - priorityRank(b) || byIso(a, b));
   const lines: ScopeLine[] = [];
   for (const iso of order) {
     for (const entry of entries.filter(item => item.iso.id === iso.id)) {
-      const reserved = round(Math.max(0, reservedFor(entry.requirement.id)));
-      const need = Math.max(0, round(entry.required - entry.picked - reserved));
-      const fromFree = round(Math.min(need, left.get(entry.identity) ?? 0));
-      left.set(entry.identity, round((left.get(entry.identity) ?? 0) - fromFree));
-      const covered = round(Math.min(entry.required, entry.picked + reserved + fromFree));
-      lines.push({ requirementId: entry.requirement.id, isoId: iso.id, identity: entry.identity, material: entry.material, phaseId: text(entry.requirement.phaseId), required: entry.required, picked: entry.picked, reserved, fromFree, covered, shortage: round(entry.required - covered), blockingBackorder: 0, notOrdered: 0, openLinked: 0, openExtra: 0 });
+      const reserved = round(Math.max(0, reservedFor(entry.requirement.id))), claimed = round(Math.max(0, claimedFor(entry.requirement.id)));
+      const need = Math.max(0, round(entry.required - entry.picked - claimed - reserved));
+      const fromFree = round(Math.min(need, left.get(entry.pool) ?? 0));
+      left.set(entry.pool, round((left.get(entry.pool) ?? 0) - fromFree));
+      const covered = round(Math.min(entry.required, entry.picked + claimed + reserved + fromFree));
+      lines.push({ requirementId: entry.requirement.id, isoId: iso.id, identity: entry.identity, pool: entry.pool, material: entry.material, phaseId: text(entry.requirement.phaseId), required: entry.required, picked: entry.picked, claimed, reserved, fromFree, covered, shortage: round(entry.required - covered), blockingBackorder: 0, notOrdered: 0, openLinked: 0, openExtra: 0 });
     }
   }
   return lines;
 }
 
 /**
- * UNVERIFIED. Max startable = isometrics (not started) whose every line could be covered from picked + its own
- * reservations + the WHOLE free pool, ignoring what other isometrics take. It is the ceiling of the startable count.
+ * Max startable = isometrics in scope, started ones included, whose every line could be covered from picked + own
+ * pick list + own reservations + the WHOLE free pool, ignoring what other isometrics take (reference Shop: 1 = the
+ * started 00022; Field: 2).
  */
-export function maxStartable(entries: Entry[], reservedFor: (requirementId: string) => number, pools: Map<string, FreePool>, startedIsoIds: Set<string>): number {
+export function maxStartable(entries: Entry[], reservedFor: Own, claimedFor: Own, pools: Map<string, FreePool>): number {
   const ids = new Set(entries.map(entry => entry.iso.id));
-  return [...ids].filter(isoId => !startedIsoIds.has(isoId) && entries.filter(entry => entry.iso.id === isoId).every(entry => {
-    const own = Math.max(0, entry.picked) + Math.max(0, reservedFor(entry.requirement.id)) + (pools.get(entry.identity)?.free ?? 0);
-    return own >= entry.required;
-  })).length;
+  return [...ids].filter(isoId => entries.filter(entry => entry.iso.id === isoId).every(entry =>
+    Math.max(0, entry.picked) + Math.max(0, claimedFor(entry.requirement.id)) + Math.max(0, reservedFor(entry.requirement.id)) + (pools.get(entry.pool)?.free ?? 0) >= entry.required)).length;
 }
 
 /**
- * UNVERIFIED. Splits every line's shortage: what sits on an open order line (ordered, not yet received) is the
- * blocking backorder, the rest is not ordered. An order line belongs to its requirement; one without a requirement
- * belongs to its isometric, and one without an isometric to the order's project, for the same material. Each open
- * quantity is used once, in the same isometric order as `allocateCoverage`.
+ * Splits every line's shortage: what sits on an open order line (ordered, not yet received) is the blocking backorder,
+ * the rest is not ordered. An order line belongs to its requirement; one without a requirement belongs to its
+ * isometric, and one without an isometric to the order's project, for the same material. Each open quantity is used
+ * once, in the same isometric order as `allocateCoverage`.
  */
 export function allocateOpenOrders(rows: Rows, lines: ScopeLine[], isoProject: (isoId: string) => string) {
   const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
@@ -135,52 +187,53 @@ export function allocateOpenOrders(rows: Rows, lines: ScopeLine[], isoProject: (
   }
 }
 
-export interface ScopeOrderLine { projectId: string; ordered: number; received: number; open: number }
+export interface ScopeOrderLine { identity: string; ordered: number; received: number; open: number }
 /**
- * INFERRED. The order lines (of orders not cancelled) for the materials in scope, each with its project: a line with a
- * requirement in scope belongs to that requirement's isometric, one with an isometric to that isometric (same
- * material), one without either to the order's project (same material). Open = ordered − received, never below 0.
- * The "Open ordered" chip is the sum of `open`; the "Backlog by project" table sums it per project, so the two agree.
+ * The order lines (of orders not cancelled) of every material in scope, whatever requirement or phase they were ordered
+ * for: reference Shop "Ordered 62 Received 45" counts the 10 of 8138268881 ordered for 00022's Field line. Open =
+ * ordered − received, never below 0. A project or supplier filter keeps the lines of orders of that project / supplier.
  */
-export function orderLinesInScope(rows: Rows, entries: { requirement: Row; iso: Row; identity: string }[], projectOf: (isoId: string) => string): ScopeOrderLine[] {
+export function orderLinesInScope(rows: Rows, identities: Set<string>, filters: { projectId?: string; supplierId?: string } = {}): ScopeOrderLine[] {
   const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
-  const requirementIso = new Map(entries.map(entry => [entry.requirement.id, entry.iso.id]));
-  const scopeKeys = new Set(entries.map(entry => `${entry.iso.id}|${entry.identity}`)), scopeProjects = new Set(entries.map(entry => `${projectOf(entry.iso.id)}|${entry.identity}`));
-  const result: ScopeOrderLine[] = [];
-  for (const line of active(rows, 'order_lines')) {
-    const order = orders.get(text(line.orderId)); if (!order) continue;
-    const identity = materialIdentity(line);
-    const projectId = line.requirementId ? (requirementIso.has(text(line.requirementId)) ? projectOf(requirementIso.get(text(line.requirementId))!) : null)
-      : line.isoId ? (scopeKeys.has(`${line.isoId}|${identity}`) ? projectOf(text(line.isoId)) : null)
-      : scopeProjects.has(`${text(order.projectId)}|${identity}`) ? text(order.projectId) : null;
-    if (projectId === null) continue;
+  const isoProject = new Map(active(rows, 'isometrics').map(iso => [iso.id, text(iso.projectId)]));
+  return active(rows, 'order_lines').flatMap(line => {
+    const order = orders.get(text(line.orderId)), identity = materialIdentity(line);
+    if (!order || !identities.has(identity)) return [];
+    if (filters.supplierId && text(order.supplierId) !== filters.supplierId) return [];
+    if (filters.projectId && (text(order.projectId) || isoProject.get(text(line.isoId)) || '') !== filters.projectId) return [];
     const ordered = Number(line.quantity || 0), received = Number(line.received || 0);
-    result.push({ projectId, ordered, received, open: Math.max(0, ordered - received) });
-  }
-  return result;
+    return [{ identity, ordered, received, open: round(Math.max(0, ordered - received)) }];
+  });
 }
 
-export interface LogisticsFact { signal: LogisticsSignal; date: string }
-const SIGNAL_RANK: Record<LogisticsSignal, number> = { 'Not-sent': 0, 'At service': 1, 'At laydown': 2, Started: 3 };
+export interface LogisticsFact { signal: LogisticsSignal; location: string; date: string }
+const nameOf = (rows: Rows, key: string, id: unknown) => text(active(rows, key).find(row => row.id === text(id))?.name);
 /**
- * UNVERIFIED. Logistics signal of an isometric from its latest service or laydown movement (material location
- * history, spool service requests) or pick list: Move to laydown → At laydown, Service request → At service, Service
- * completed → At laydown, a pick list → Started. The latest date wins; on the same date Started beats At laydown beats
- * At service. Without any event: Not-sent with no date.
+ * Logistics signal of an isometric from where its things are now. A pick list (the isometric was started) → Started,
+ * "Materials issued". Otherwise the current location of its spools (Move to laydown → At laydown with the laydown name,
+ * a service request → At service with the company name) and of its requirement lines (material laydown / service
+ * company), the latest one winning; its date is the latest Spool history entry of that place (else the location date).
+ * Without any: Not-sent, "Not sent".
  */
-export function logisticsSignalOf(rows: Rows, isoId: string): LogisticsFact {
+export function logisticsSignalOf(rows: Rows, isoId: string, started = active(rows, 'picklists').some(row => row.isoId === isoId)): LogisticsFact {
+  if (started) return { signal: 'Started', location: 'Materials issued', date: '' };
+  const facts: LogisticsFact[] = [];
+  const moves = active(rows, 'spool_moves');
+  for (const spool of active(rows, 'spools').filter(row => row.isoId === isoId)) {
+    const place = spoolLocation(spool); if (!place.id) continue;
+    const kind = place.type === 'Service' ? 'Service' : 'Laydown';
+    const history = moves.filter(move => move.spoolId === spool.id && move.type === kind).sort((a, b) => text(b.date).localeCompare(text(a.date)));
+    const request = place.type === 'Service' ? active(rows, 'service_requests').filter(row => row.spoolId === spool.id && row.status !== 'Completed').sort((a, b) => text(b.date).localeCompare(text(a.date)))[0] : undefined;
+    const location = place.type === 'Service' ? nameOf(rows, 'service_companies', place.id) : nameOf(rows, 'laydowns', place.id) || text(history[0]?.location);
+    facts.push({ signal: place.type === 'Service' ? 'At service' : 'At laydown', location: location || (place.type === 'Service' ? 'Service' : 'Laydown'), date: day(history[0]?.date || request?.date) });
+  }
   const requirements = new Set(active(rows, 'iso_materials').filter(row => row.isoId === isoId).map(row => row.id));
-  const spools = new Set(active(rows, 'spools').filter(row => row.isoId === isoId).map(row => row.id));
-  const events: LogisticsFact[] = [];
-  for (const event of active(rows, 'material_location_events').filter(row => requirements.has(text(row.requirementId)))) {
-    events.push({ signal: event.type === 'Service request' ? 'At service' : 'At laydown', date: day(event.date) });
+  for (const place of active(rows, 'material_locations').filter(row => requirements.has(text(row.requirementId)) && (row.laydownId || row.companyId))) {
+    facts.push(place.companyId ? { signal: 'At service', location: nameOf(rows, 'service_companies', place.companyId) || 'Service', date: day(place.date) }
+      : { signal: 'At laydown', location: nameOf(rows, 'material_laydowns', place.laydownId) || 'Laydown', date: day(place.date) });
   }
-  for (const request of active(rows, 'service_requests').filter(row => row.spoolId && spools.has(text(row.spoolId)))) {
-    events.push(request.status === 'Completed' ? { signal: 'At laydown', date: day(request.completedAt || request.date) } : { signal: 'At service', date: day(request.date) });
-  }
-  for (const pick of active(rows, 'picklists').filter(row => row.isoId === isoId)) events.push({ signal: 'Started', date: day(pick.date) });
-  events.sort((a, b) => b.date.localeCompare(a.date) || SIGNAL_RANK[b.signal] - SIGNAL_RANK[a.signal]);
-  return events[0] || { signal: 'Not-sent', date: '' };
+  facts.sort((a, b) => b.date.localeCompare(a.date));
+  return facts[0] || { signal: 'Not-sent', location: 'Not sent', date: '' };
 }
 
 /** Whole days between two dates (YYYY-MM-DD), never negative; null when either is missing or invalid. */
@@ -188,32 +241,52 @@ export function daysBetween(from: string, to: string): number | null {
   const a = Date.parse(`${day(from)}T00:00:00Z`), b = Date.parse(`${day(to)}T00:00:00Z`);
   return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, Math.round((b - a) / 86400000)) : null;
 }
-/** UNVERIFIED. Aging = days since the latest logistics event, else since the oldest open order date; null with neither. */
-export function agingOf(eventDate: string, oldestOpenOrder: string, today: string): number | null {
-  const from = eventDate || oldestOpenOrder;
-  return from ? daysBetween(from, today) : null;
+/** A date as the board writes it: 20-03-2024. */
+export const boardDate = (value: string) => { const date = day(value); return /^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date.slice(8, 10)}-${date.slice(5, 7)}-${date.slice(0, 4)}` : date; };
+
+export interface Aging { ageDays: number | null; text: string }
+/**
+ * The second part of the Logistics / aging cell (reference :182-184 and the Field capture :104-105):
+ *   Started                           → "Materials issued / No log" (no aging);
+ *   an open order for its lines        → "Ordered <oldest open order date> / N days", N counted from that date;
+ *   else a location with a date        → "<location> / N days", N counted from the date it got there;
+ *   else                               → "<location or Not sent> / No log".
+ */
+export function agingOf(fact: LogisticsFact, oldestOpenOrder: string, today: string): Aging {
+  if (fact.signal === 'Started') return { ageDays: null, text: `${fact.location} / No log` };
+  const since = oldestOpenOrder ? daysBetween(oldestOpenOrder, today) : null;
+  if (since !== null) return { ageDays: since, text: `Ordered ${boardDate(oldestOpenOrder)} / ${since} days` };
+  const there = fact.date ? daysBetween(fact.date, today) : null;
+  return there !== null ? { ageDays: there, text: `${fact.location} / ${there} days` } : { ageDays: null, text: `${fact.location} / No log` };
 }
 /** The three aging chips: 0-7, 8-14 and 15+ days. */
 export const agingBucket = (days: number | null): AgingBucket | '' => days === null ? '' : days <= 7 ? '0-7 days' : days <= 14 ? '8-14 days' : '15+ days';
+/** A chart label as the reference shortens it: names longer than 10 characters become their first 9 and a dot ("Farbara o.", "Materials."). */
+export const chartLabel = (name: string) => name.length > 10 ? `${name.slice(0, 9)}.` : name;
 
 // ----- the model ---------------------------------------------------------------------------------------------------
 
-export interface ShortageMaterial { materialNo: string; description: string; quantity: number }
+export interface MaterialQuantity { materialNo: string; description: string; quantity: number }
 export interface BoardRow {
   isoId: string; isoNo: string; projectId: string; priority: string;
-  readiness: Readiness; coveredLines: number; totalLines: number; required: number; covered: number; shortage: number;
-  shortageMaterials: ShortageMaterial[]; blockingBackorder: number; notOrdered: number; openOrdered: number;
-  signal: LogisticsSignal; lastEvent: string; ageDays: number | null; aging: AgingBucket | '';
-  lines: ScopeLine[];
+  readiness: Readiness; required: number; covered: number; shortage: number;
+  /** Materials short, most first (the cell shows two); materials on a blocking backorder, by material number. */
+  shortageMaterials: MaterialQuantity[]; backorderMaterials: MaterialQuantity[];
+  blockingBackorder: number; notOrdered: number; openOrdered: number;
+  signal: LogisticsSignal; location: string; lastEvent: string; ageDays: number | null; aging: AgingBucket | ''; logistics: string;
+  exceptionScore: number; lines: ScopeLine[];
 }
+export interface MaterialRow { identity: string; materialNo: string; description: string; shortage: number; openOrdered: number; notOrdered: number }
 export interface HotMaterial { identity: string; materialNo: string; description: string; isometrics: number; shortage: number; blockingBackorder: number; notOrdered: number }
-export interface BacklogRow { projectId: string; openOrdered: number; blockingBackorder: number; notOrdered: number }
+export interface BacklogRow { scope: 'Site'; openOrdered: number; blockingBackorder: number; notOrdered: number }
+export interface LocationBar { location: string; label: string; isometrics: number }
 export interface MtoDashboard {
-  phaseId: string; today: string;
-  board: BoardRow[];
-  kpis: { startable: number; started: number; inScope: number; partial: number; blocked: number; blockingQuantity: number; blockingIsometrics: number; notOrderedMaterials: number; notOrderedIsometrics: number; freePoolMaterials: number };
+  phaseId: string; today: string; filters: DashboardFilters;
+  board: BoardRow[]; materials: MaterialRow[];
+  kpis: { startable: number; started: number; inScope: number; partial: number; blocked: number; reserved: number; blockingQuantity: number; blockingIsometrics: number; notOrderedMaterials: number; notOrderedIsometrics: number; freePoolMaterials: number; openOrdered: number };
   chips: { maxStartable: number; freePoolMaterials: number; ordered: number; received: number; openOrdered: number; blockingBackorder: number; notOrdered: number; aging: Record<AgingBucket, number>; noLogisticsUpdate: number };
   signals: Record<LogisticsSignal, number>;
+  locations: LocationBar[];
   backlog: BacklogRow[];
   focus: { startable: BoardRow[]; blocked: BoardRow[]; materials: HotMaterial[] };
 }
@@ -226,103 +299,163 @@ export function hottestMaterials(board: BoardRow[], size = FOCUS_SIZE): HotMater
     group.isos.add(row.isoId); group.shortage = round(group.shortage + line.shortage); group.blockingBackorder = round(group.blockingBackorder + line.blockingBackorder); group.notOrdered = round(group.notOrdered + line.notOrdered);
     groups.set(line.identity, group);
   }
-  return [...groups.values()].map(({ isos, ...group }) => ({ ...group, isometrics: isos.size })).sort((a, b) => b.isometrics - a.isometrics || b.shortage - a.shortage || a.materialNo.localeCompare(b.materialNo, 'en', { numeric: true })).slice(0, size);
+  return [...groups.values()].map(({ isos, ...group }) => ({ ...group, isometrics: isos.size })).sort((a, b) => b.isometrics - a.isometrics || b.shortage - a.shortage || byNumber(a.materialNo, b.materialNo)).slice(0, size);
 }
 
-/** Whether a board row belongs on a tab. AGING lists isometrics aged 15 days or more. */
+/** Counted as blocked: not started and short of something (reference "Blocked isometrics 2": 0001 Partial and 00032). */
+export const isBlocked = (row: BoardRow) => row.readiness !== 'STARTED' && row.shortage > 0;
+/** Whether a board row belongs on a quick filter. The Blocked filter shows the isometrics the Blocked card counts; Aging lists 15+ days. */
 export function boardTabMatches(row: BoardRow, tab: BoardTab): boolean {
   switch (tab) {
-    case 'ALL': return true;
-    case 'STARTABLE': case 'PARTIAL': case 'BLOCKED': return row.readiness === tab;
-    case 'OPEN ORDERED': return row.openOrdered > 0;
-    case 'NOT ORDERED': return row.notOrdered > 0;
-    case 'AT SERVICE': return row.signal === 'At service';
-    case 'AT LAYDOWN': return row.signal === 'At laydown';
-    case 'AGING': return row.aging === '15+ days';
+    case 'All': return true;
+    case 'Startable': return row.readiness === 'STARTABLE';
+    case 'Partial': return row.readiness === 'PARTIAL';
+    case 'Blocked': return isBlocked(row);
+    case 'Open ordered': return row.openOrdered > 0;
+    case 'Not ordered': return row.notOrdered > 0;
+    case 'At service': return row.signal === 'At service';
+    case 'At laydown': return row.signal === 'At laydown';
+    case 'Aging': return row.aging === '15+ days';
   }
 }
 export const boardCounts = (board: BoardRow[]) => Object.fromEntries(BOARD_TABS.map(tab => [tab, board.filter(row => boardTabMatches(row, tab)).length])) as Record<BoardTab, number>;
 /** A page of the board: its rows and the page number kept inside the range. */
-export function boardPage(board: BoardRow[], page: number, size = BOARD_PAGE_SIZE) {
+export function boardPage<T>(board: T[], page: number, size: number = BOARD_PAGE_SIZE) {
   const pages = Math.max(1, Math.ceil(board.length / size)), current = Math.min(Math.max(0, page), pages - 1);
   return { items: board.slice(current * size, current * size + size), page: current, pages, total: board.length };
+}
+/** "8138678259 (16), 7430052832 (12)": a material cell of the board. */
+export const materialList = (items: MaterialQuantity[], limit = items.length) => items.slice(0, limit).map(item => `${item.materialNo} (${item.quantity})`).join(', ');
+
+/**
+ * UNVERIFIED (the reference's hidden "Exception score" column is not in the capture): the board's first order, highest
+ * first. Score = not ordered × 2 + blocking backorder + 1 when aged 15 days or more; ties by ISO number.
+ */
+export const exceptionScore = (row: Pick<BoardRow, 'notOrdered' | 'blockingBackorder' | 'aging'>) => round(row.notOrdered * 2 + row.blockingBackorder + (row.aging === '15+ days' ? 1 : 0));
+
+/**
+ * UNVERIFIED for spool and supplier (the reference names the parameters, not their rule): which requirement lines a
+ * server-side filter keeps. Project: lines of isometrics of that project. Spool: lines of the spool's isometric.
+ * Supplier: lines with an order line on an order of that supplier (by requirement, else by isometric and material).
+ */
+function serverFilterEntries(rows: Rows, entries: Entry[], filters: DashboardFilters): Entry[] {
+  let kept = entries;
+  if (filters.projectId) kept = kept.filter(entry => text(entry.iso.projectId) === filters.projectId);
+  if (filters.spoolId) { const isoId = text(active(rows, 'spools').find(row => row.id === filters.spoolId)?.isoId); kept = kept.filter(entry => entry.iso.id === isoId); }
+  if (filters.supplierId) {
+    const orders = new Set(active(rows, 'orders').filter(order => order.status !== 'Cancelled' && text(order.supplierId) === filters.supplierId).map(order => order.id));
+    const lines = active(rows, 'order_lines').filter(line => orders.has(text(line.orderId)));
+    kept = kept.filter(entry => lines.some(line => line.requirementId ? line.requirementId === entry.requirement.id : line.isoId === entry.iso.id && materialIdentity(line) === entry.identity));
+  }
+  return kept;
 }
 
 /**
  * The whole dashboard for the rows in view. `phaseId` narrows the requirement lines to one operation phase (empty =
- * all); `today` (YYYY-MM-DD) is the day aging is measured to. Isometrics without a requirement in scope are not listed.
+ * all); project / spool / supplier are the deep-link filters; `today` (YYYY-MM-DD) is the day aging is measured to.
+ * Isometrics without a requirement in scope are not listed.
  */
-export function mtoDashboard(rows: Rows, options: { phaseId?: string; today?: string } = {}): MtoDashboard {
-  const phaseId = text(options.phaseId), today = day(options.today) || new Date().toISOString().slice(0, 10);
+export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { today?: string } = {}): MtoDashboard {
+  const filters: DashboardFilters = { phaseId: text(options.phaseId), projectId: text(options.projectId), spoolId: text(options.spoolId), supplierId: text(options.supplierId) };
+  const phaseId = filters.phaseId, today = day(options.today) || new Date().toISOString().slice(0, 10);
   const isos = new Map(active(rows, 'isometrics').map(iso => [iso.id, iso]));
-  const entries: Entry[] = requirementExecution(rows).filter(entry => entry.required > 0 && isos.has(entry.iso.id) && (!phaseId || text(entry.requirement.phaseId) === phaseId))
-    .map(entry => ({ requirement: entry.requirement, iso: entry.iso, material: entry.material, identity: entry.identity, required: entry.required, picked: entry.picked }));
+  // Picked = taken pick lists only; what is on a pick list not taken yet is the line's own claim (below).
+  const taken = { ...rows, picklists: active(rows, 'picklists').filter(isTaken) };
+  const entries = serverFilterEntries(rows, requirementExecution(taken).filter(entry => entry.required > 0 && isos.has(entry.iso.id) && (!phaseId || text(entry.requirement.phaseId) === phaseId))
+    .map(entry => ({ requirement: entry.requirement, iso: entry.iso, material: entry.material, identity: entry.identity, pool: poolKey(isoSiteId(rows, entry.iso), entry.identity), required: entry.required, picked: entry.picked })), filters);
   const reservations = active(rows, 'reservations').filter(row => row.status === 'Reserved');
-  const reservedFor = (requirementId: string) => reservations.filter(row => row.requirementId === requirementId).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const claims = active(rows, 'picklists').filter(row => !isTaken(row));
+  const sumFor = (list: Row[]) => (requirementId: string) => list.filter(row => row.requirementId === requirementId).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+  const reservedFor = sumFor(reservations), claimedFor = sumFor(claims);
   const pools = freePoolByMaterial(rows);
   const started = new Set(active(rows, 'picklists').map(row => text(row.isoId)));
   const projectOf = (isoId: string) => text(isos.get(isoId)?.projectId);
-  const lines = allocateCoverage(entries, reservedFor, pools);
+  const lines = allocateCoverage(entries, reservedFor, claimedFor, pools);
   allocateOpenOrders(rows, lines, projectOf);
 
-  // Oldest open order date per isometric, from order lines that name the requirement or the isometric.
+  // Oldest open order date per isometric, from order lines for its lines in scope (by requirement, or by isometric and material).
   const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
-  const requirementIso = new Map(entries.map(entry => [entry.requirement.id, entry.iso.id]));
+  const scopeRequirements = new Map(entries.map(entry => [entry.requirement.id, entry.iso.id]));
+  const scopeIsoMaterials = new Set(entries.map(entry => `${entry.iso.id}|${entry.identity}`));
   const oldestOpen = new Map<string, string>();
   for (const line of active(rows, 'order_lines')) {
     const order = orders.get(text(line.orderId)); if (!order || Number(line.quantity || 0) - Number(line.received || 0) <= 0) continue;
-    const isoId = text(line.isoId) || requirementIso.get(text(line.requirementId)) || ''; if (!isoId) continue;
+    if (filters.supplierId && text(order.supplierId) !== filters.supplierId) continue;
+    const isoId = line.requirementId ? scopeRequirements.get(text(line.requirementId)) || '' : scopeIsoMaterials.has(`${text(line.isoId)}|${materialIdentity(line)}`) ? text(line.isoId) : '';
+    if (!isoId) continue;
     const date = day(order.date); if (date && (!oldestOpen.get(isoId) || date < oldestOpen.get(isoId)!)) oldestOpen.set(isoId, date);
   }
 
+  const materialsOf = (own: ScopeLine[], pick: (line: ScopeLine) => number) => {
+    const byMaterial = new Map<string, MaterialQuantity>();
+    for (const line of own.filter(item => pick(item) > 0)) { const item = byMaterial.get(line.identity) || { materialNo: text(line.material.materialNo) || 'Unavailable material', description: text(line.material.description), quantity: 0 }; item.quantity = round(item.quantity + pick(line)); byMaterial.set(line.identity, item); }
+    return [...byMaterial.values()];
+  };
   const board: BoardRow[] = [...new Set(entries.map(entry => entry.iso))].map(iso => {
     const own = lines.filter(line => line.isoId === iso.id);
     const required = round(own.reduce((sum, line) => sum + line.required, 0)), covered = round(own.reduce((sum, line) => sum + line.covered, 0));
-    const shortageLines = own.filter(line => line.shortage > 0);
-    const logistics = logisticsSignalOf(rows, iso.id), ageDays = agingOf(logistics.date, oldestOpen.get(iso.id) || '', today);
-    const byMaterial = new Map<string, ShortageMaterial>();
-    for (const line of shortageLines) { const item = byMaterial.get(line.identity) || { materialNo: text(line.material.materialNo) || 'Unavailable material', description: text(line.material.description), quantity: 0 }; item.quantity = round(item.quantity + line.shortage); byMaterial.set(line.identity, item); }
-    const blocking = round(own.reduce((sum, line) => sum + line.blockingBackorder, 0));
+    const fact = logisticsSignalOf(rows, iso.id, started.has(iso.id)), aging = agingOf(fact, oldestOpen.get(iso.id) || '', today);
+    const blockingBackorder = round(own.reduce((sum, line) => sum + line.blockingBackorder, 0)), notOrdered = round(own.reduce((sum, line) => sum + line.notOrdered, 0));
+    const bucket = agingBucket(aging.ageDays);
     return {
       isoId: iso.id, isoNo: text(iso.isoNo), projectId: text(iso.projectId), priority: priorityLabel(iso.priority),
-      readiness: readinessOf({ required, covered, started: started.has(iso.id) }), coveredLines: own.filter(line => line.covered >= line.required).length, totalLines: own.length, required, covered,
-      shortage: round(required - covered), shortageMaterials: [...byMaterial.values()].sort((a, b) => b.quantity - a.quantity || a.materialNo.localeCompare(b.materialNo, 'en', { numeric: true })),
-      blockingBackorder: blocking, notOrdered: round(own.reduce((sum, line) => sum + line.notOrdered, 0)),
-      openOrdered: round(own.reduce((sum, line) => sum + line.openLinked + line.openExtra, 0)),
-      signal: logistics.signal, lastEvent: logistics.date, ageDays, aging: agingBucket(ageDays), lines: own,
+      readiness: readinessOf({ required, covered, started: started.has(iso.id) }), required, covered, shortage: round(required - covered),
+      shortageMaterials: materialsOf(own, line => line.shortage).sort((a, b) => b.quantity - a.quantity || byNumber(a.materialNo, b.materialNo)),
+      backorderMaterials: materialsOf(own, line => line.blockingBackorder).sort((a, b) => byNumber(a.materialNo, b.materialNo)),
+      blockingBackorder, notOrdered, openOrdered: round(own.reduce((sum, line) => sum + line.openLinked + line.openExtra, 0)),
+      signal: fact.signal, location: fact.location, lastEvent: fact.date, ageDays: aging.ageDays, aging: bucket, logistics: aging.text,
+      exceptionScore: exceptionScore({ notOrdered, blockingBackorder, aging: bucket }), lines: own,
     };
-  }).sort((a, b) => priorityRank(isos.get(a.isoId)!) - priorityRank(isos.get(b.isoId)!) || byIso(isos.get(a.isoId)!, isos.get(b.isoId)!));
+  }).sort((a, b) => b.exceptionScore - a.exceptionScore || byIso(isos.get(a.isoId)!, isos.get(b.isoId)!));
 
   const count = (readiness: Readiness) => board.filter(row => row.readiness === readiness).length;
   const sum = (pick: (row: BoardRow) => number) => round(board.reduce((total, row) => total + pick(row), 0));
-  const notOrderedMaterials = new Set(board.flatMap(row => row.lines.filter(line => line.notOrdered > 0).map(line => line.identity)));
-  const freePoolMaterials = [...pools.values()].filter(pool => pool.free > 0).length;
+  const notOrderedMaterials = new Set(lines.filter(line => line.notOrdered > 0).map(line => line.identity));
+  // Free pool materials: distinct materials of the lines in scope with a positive free pool (reference Shop 5 of 7 in stock).
+  const freePoolMaterials = new Set(lines.filter(line => (pools.get(line.pool)?.free ?? 0) > 0).map(line => line.pool)).size;
 
-  // Order totals over the lines of the isometrics (and, in a phase scope, the materials) in view.
-  const scopeLines = orderLinesInScope(rows, entries, projectOf);
-  const ordered = scopeLines.reduce((sum, line) => sum + line.ordered, 0), received = scopeLines.reduce((sum, line) => sum + line.received, 0);
-  const openFor = (projectId?: string) => round(scopeLines.filter(line => projectId === undefined || line.projectId === projectId).reduce((sum, line) => sum + line.open, 0));
+  // Order totals per material in scope, over all its order lines.
+  const identities = new Set(lines.map(line => line.identity));
+  const scopeOrders = orderLinesInScope(rows, identities, filters);
+  const ordered = round(scopeOrders.reduce((total, line) => total + line.ordered, 0)), received = round(scopeOrders.reduce((total, line) => total + line.received, 0));
+  const openOrdered = round(scopeOrders.reduce((total, line) => total + line.open, 0));
   const aging = Object.fromEntries(AGING_BUCKETS.map(bucket => [bucket, board.filter(row => row.aging === bucket).length])) as Record<AgingBucket, number>;
   const signals = Object.fromEntries(SIGNALS.map(signal => [signal, board.filter(row => row.signal === signal).length])) as Record<LogisticsSignal, number>;
 
-  const projects = [...new Set([...board.map(row => row.projectId), ...scopeLines.filter(line => line.open > 0).map(line => line.projectId)])];
-  const backlog = projects.map(projectId => { const own = board.filter(row => row.projectId === projectId); return { projectId, openOrdered: openFor(projectId), blockingBackorder: round(own.reduce((s, r) => s + r.blockingBackorder, 0)), notOrdered: round(own.reduce((s, r) => s + r.notOrdered, 0)) }; });
+  // Isometrics by logistics signal: one bar per current location, then Not sent, then Materials issued.
+  const placeRank = (row: BoardRow) => row.signal === 'Started' ? 2 : row.signal === 'Not-sent' ? 1 : 0;
+  const locations: LocationBar[] = [];
+  for (const row of [...board].sort((a, b) => placeRank(a) - placeRank(b) || a.location.localeCompare(b.location))) {
+    const bar = locations.find(item => item.location === row.location);
+    if (bar) bar.isometrics += 1; else locations.push({ location: row.location, label: chartLabel(row.location), isometrics: 1 });
+  }
 
+  // The Open ordered view: one row per material in scope with an open order quantity.
+  const openByMaterial = new Map<string, number>();
+  for (const line of scopeOrders) if (line.open > 0) openByMaterial.set(line.identity, round((openByMaterial.get(line.identity) || 0) + line.open));
+  const materials: MaterialRow[] = [...openByMaterial].map(([identity, open]) => {
+    const own = lines.filter(line => line.identity === identity), material = own[0]?.material;
+    return { identity, materialNo: text(material?.materialNo) || 'Unavailable material', description: text(material?.description), shortage: round(own.reduce((s, line) => s + line.shortage, 0)), openOrdered: open, notOrdered: round(own.reduce((s, line) => s + line.notOrdered, 0)) };
+  }).sort((a, b) => byNumber(a.materialNo, b.materialNo));
+
+  const blockingQuantity = sum(row => row.blockingBackorder), notOrderedTotal = sum(row => row.notOrdered);
   return {
-    phaseId, today, board,
-    kpis: { startable: count('STARTABLE'), started: count('STARTED'), inScope: board.length, partial: count('PARTIAL'), blocked: count('BLOCKED'), blockingQuantity: sum(row => row.blockingBackorder), blockingIsometrics: board.filter(row => row.blockingBackorder > 0).length, notOrderedMaterials: notOrderedMaterials.size, notOrderedIsometrics: board.filter(row => row.notOrdered > 0).length, freePoolMaterials },
-    chips: { maxStartable: maxStartable(entries, reservedFor, pools, started), freePoolMaterials, ordered: round(ordered), received: round(received), openOrdered: openFor(), blockingBackorder: sum(row => row.blockingBackorder), notOrdered: sum(row => row.notOrdered), aging, noLogisticsUpdate: board.filter(row => row.signal === 'Not-sent').length },
-    signals, backlog,
+    phaseId, today, filters, board, materials,
+    kpis: { startable: count('STARTABLE'), started: count('STARTED'), inScope: board.length, partial: count('PARTIAL'), blocked: board.filter(isBlocked).length, reserved: round(lines.reduce((total, line) => total + line.reserved, 0)), blockingQuantity, blockingIsometrics: board.filter(row => row.blockingBackorder > 0).length, notOrderedMaterials: notOrderedMaterials.size, notOrderedIsometrics: board.filter(row => row.notOrdered > 0).length, freePoolMaterials, openOrdered },
+    chips: { maxStartable: maxStartable(entries, reservedFor, claimedFor, pools), freePoolMaterials, ordered, received, openOrdered, blockingBackorder: blockingQuantity, notOrdered: notOrderedTotal, aging, noLogisticsUpdate: board.filter(row => row.ageDays === null).length },
+    signals, locations,
+    backlog: board.length || openOrdered ? [{ scope: 'Site', openOrdered, blockingBackorder: blockingQuantity, notOrdered: notOrderedTotal }] : [],
     focus: {
-      startable: board.filter(row => row.readiness === 'STARTABLE').slice(0, FOCUS_SIZE),
-      blocked: board.filter(row => row.readiness === 'BLOCKED').sort((a, b) => b.shortage - a.shortage).slice(0, FOCUS_SIZE),
+      startable: board.filter(row => row.readiness === 'STARTABLE').sort((a, b) => priorityRank(isos.get(a.isoId)!) - priorityRank(isos.get(b.isoId)!) || byIso(isos.get(a.isoId)!, isos.get(b.isoId)!)).slice(0, FOCUS_SIZE),
+      blocked: board.filter(isBlocked).sort((a, b) => b.shortage - a.shortage).slice(0, FOCUS_SIZE),
       materials: hottestMaterials(board),
     },
   };
 }
 
 /** Search text of a board row: project name is added by the caller (it lives in another collection). */
-export const boardSearchText = (row: BoardRow) => [row.isoNo, row.readiness, row.signal, row.priority, ...row.shortageMaterials.map(item => `${item.materialNo} ${item.description}`)].join(' ').toLowerCase();
+export const boardSearchText = (row: BoardRow) => [row.isoNo, READINESS_LABEL[row.readiness], SIGNAL_LABEL[row.signal], row.logistics, row.priority, ...row.shortageMaterials.map(item => `${item.materialNo} ${item.description}`)].join(' ').toLowerCase();
+export const materialSearchText = (row: MaterialRow) => `${row.materialNo} ${row.description}`.toLowerCase();
 
 // ----- Material revisions report ------------------------------------------------------------------------------------
 
