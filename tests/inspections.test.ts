@@ -640,7 +640,8 @@ test('VT upload: A and NA are saved weld by weld, the PDF closes the report only
   assert.throws(() => rules.run('visual-inspection', { op: 'marks', reportId: report.id, date: '2026-10-30', accepted: ['weld-2'] }), /not on this report/);
   rules.run('visual-inspection', { op: 'marks', reportId: report.id, date: '2026-10-30', accepted: [ids[0]], notAccepted: [ids[1]] });
   const results = () => store.list('inspection_results');
-  assert.deepEqual([...vtMarks(report, results())], [[ids[0], 'Accepted'], [ids[1], 'Rejected']], 'NA is stored as Rejected');
+  // Results created in the same millisecond come back in either order, so the marks are compared by weld.
+  assert.deepEqual([...vtMarks(report, results())].sort(), [[ids[0], 'Accepted'], [ids[1], 'Rejected']].sort(), 'NA is stored as Rejected');
   assert.deepEqual(vtOpenWeldIds(report, results()), [ids[2]]);
   assert.equal(vtOpenReports(store.list('visual_reports'), results(), 'iso-1').length, 1, 'the report still has an open weld');
   assert.throws(() => rules.run('visual-inspection', { op: 'upload', reportId: report.id }), /Each weld must have A \(accepted\) or NA \(not accepted\) before upload\. Missing: W\d+/);
