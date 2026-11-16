@@ -2,6 +2,8 @@ import type { Field, Row } from './types.ts';
 import { COMPLETION_FIELDS, isoBlockers, newest, phaseCompleted, type BlockerKey } from './iso-status.ts';
 import { RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { punchBlocking, punchKind } from './punch.ts';
+import { itpLatest } from './itps.ts';
+import { priorityLabel } from './priority.ts';
 
 /**
  * Prefab and Field release, Reopen, release documents and field work packages.
@@ -37,13 +39,15 @@ export const RELEASE_EXTRA_FIELDS: Field[] = [
   releaseField('docPrefix', 'Document prefix'),
   releaseField('docDrawingRule', 'Release doc drawing no rule'),
   releaseField('signatureTitles', 'Signature block titles', { type: 'textarea' }),
+  releaseField('itp', 'ITP of the release document'),
+  releaseField('itpRev', 'ITP revision of the release document'),
   releaseField('reopenedAt', 'Reopened at', { section: 'Reopened' }),
   releaseField('reopenedBy', 'Reopened by', { section: 'Reopened' }),
   releaseField('reopenReason', 'Reason for reopening', { type: 'textarea', section: 'Reopened' }),
 ];
 /** Fields the hosted profile delivers per action (see `availabilityFor`). */
 export const RELEASE_ACTIONS: Record<string, string[]> = {
-  release: ['type', 'isoIds', 'reportNo', 'engineerId', 'signatureId', 'date', 'note'],
+  release: ['type', 'isoIds', 'itp', 'reportNo', 'engineerId', 'signatureId', 'date', 'note'],
   'complete-phase': ['isoId', 'type'],
   'reopen-release': ['isoId', 'type', 'reason', 'date'],
   'assign-fwp': ['isoIds', 'fieldPackageId'],
@@ -170,31 +174,95 @@ export function phaseState(type: ReleasePhase, input: ReleaseCheckInput): PhaseS
 
 // ----- the release pages ---------------------------------------------------------------------------------------
 
-export interface ReleaseListRow { iso: Row; project?: Row; spools: string; release?: Row; check: ReleaseCheck; }
-export interface ReleaseListFilters { /** 'hide' (default): only isometrics that are not released; 'show': released ones too. */ show?: 'hide' | 'show'; projectId?: string; itpNo?: string; }
+export interface ReleaseListRow { iso: Row; project?: Row; spools: string; release?: Row; check: ReleaseCheck; /** A box can be ticked only once one ITP is chosen in the filter and the isometric is not released ("Choose ITP" until then). */ selectable: boolean; }
+export interface ReleaseListFilters { /** 'hide' (default): only isometrics that are not released; 'show': released ones too. */ show?: 'hide' | 'show'; projectId?: string; /** The chosen ITP No: matched exactly against the phase's ITP slot (Prefab: ITP No, Field: ITP No 2). Empty = All. */ itpNo?: string; }
 export interface ReleaseListSource { isometrics: Row[]; projects: Row[]; spools?: Row[]; welds: Row[]; weldTypes: Row[]; results: Row[]; releases?: Row[] | null; punch?: Row[] | null; }
-const isoOrder = (a: ReleaseListRow, b: ReleaseListRow) => text(a.iso.isoNo).localeCompare(text(b.iso.isoNo), 'en', { numeric: true });
+/** The isometric field that holds the ITP of a phase: Prefab uses ITP No, Field uses ITP No 2 (reference: the inline field release names "ITP 2"). */
+export const RELEASE_ITP_SLOT: Record<ReleasePhase, 'itpNo' | 'itpNo2'> = { Prefab: 'itpNo', Field: 'itpNo2' };
+/** Tooltips of the reference for a phase that cannot be released without its ITP. */
+export const ITP_MISSING: Record<ReleasePhase, string> = { Prefab: 'ITP number is missing — enter it before prefab release.', Field: 'ITP 2 is missing — enter it before field release.' };
+export const releaseItpOf = (iso: Row, type: ReleasePhase) => text(iso[RELEASE_ITP_SLOT[type]]);
+/** Page lengths of the release lists (reference DataTables): 10 … 500 and ALL (0), default 1000. */
+export const RELEASE_PAGE_LENGTHS = [10, 20, 50, 100, 500, 0] as const;
+export const RELEASE_DEFAULT_PAGE_LENGTH = 1000;
+/** Priority column order of the release lists: Prio 1 first, no priority last. */
+const priorityRank = (iso: Row) => { const match = /^Prio (\d+)$/.exec(priorityLabel(iso.priority)); return match ? Number(match[1]) : Number.POSITIVE_INFINITY; };
+const priorityOrder = (a: ReleaseListRow, b: ReleaseListRow) => { const left = priorityRank(a.iso), right = priorityRank(b.iso); return (left === right ? 0 : left < right ? -1 : 1) || text(a.iso.isoNo).localeCompare(text(b.iso.isoNo), 'en', { numeric: true }); };
 
 /**
  * The rows of the Prefab or Field release page for the isometrics given (the pages pass those of the active main
  * project): only isometrics whose phase is completed; "Hide released" (default) also leaves out those that already
- * have their release document.
+ * have their release document. The ITP filter is the exact ITP of the phase's slot; without one the rows are not
+ * selectable ("Choose ITP"). Default order: Priority ascending, then ISO number.
  */
 export function releaseListRows(type: ReleasePhase, source: ReleaseListSource, filters: ReleaseListFilters = {}): ReleaseListRow[] {
   const projects = new Map(source.projects.map(project => [project.id, project]));
-  const itp = text(filters.itpNo).toLowerCase();
-  return live(source.isometrics).filter(iso => phaseCompleted(iso, type, source.releases) && (!filters.projectId || iso.projectId === filters.projectId) && (!itp || [iso.itpNo, iso.itpNo2].some(value => text(value).toLowerCase().includes(itp)))).map(iso => {
+  const itp = text(filters.itpNo);
+  return live(source.isometrics).filter(iso => phaseCompleted(iso, type, source.releases) && (!filters.projectId || iso.projectId === filters.projectId) && (!itp || releaseItpOf(iso, type) === itp)).map(iso => {
     const release = activeRelease(source.releases, iso.id, type);
     const spools = live(source.spools).filter(spool => spool.isoId === iso.id).map(spool => text(spool.name)).filter(Boolean).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).join(', ');
-    return { iso, project: projects.get(String(iso.projectId)), spools, release, check: releaseCheck(type, { iso, welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, punch: source.punch }) };
-  }).filter(row => filters.show === 'show' || !row.release).sort(isoOrder);
+    return { iso, project: projects.get(String(iso.projectId)), spools, release, selectable: Boolean(itp) && !release, check: releaseCheck(type, { iso, welds: source.welds, weldTypes: source.weldTypes, results: source.results, releases: source.releases, punch: source.punch }) };
+  }).filter(row => filters.show === 'show' || !row.release).sort(priorityOrder);
 }
 
-export interface ArchiveFilters { from?: string; to?: string; type?: string; }
-/** Releases of the Request archive, newest first, optionally limited by an inclusive date range (YYYY-MM-DD) and a release type. */
-export function releaseArchiveRows(releases: Row[], filters: ArchiveFilters = {}): Row[] {
-  const day = (row: Row) => text(row.date || row._createdAt).slice(0, 10);
-  return live(releases).filter(row => (!filters.from || day(row) >= filters.from) && (!filters.to || day(row) <= filters.to) && (!filters.type || row.type === filters.type)).sort((a, b) => day(b).localeCompare(day(a)) || text(b._createdAt).localeCompare(text(a._createdAt)) || text(b.id).localeCompare(text(a.id)));
+export interface ReleaseItpOption { value: string; label: string; }
+/**
+ * The ITP No choices of the release filter: the active ITPs of the catalog as "<ITP No> rev.<n>", plus any ITP number that
+ * a listed isometric holds in the phase's slot without a catalog entry (older, free-text numbers stay releasable).
+ */
+export function releaseItpOptions(type: ReleasePhase, itps: Row[] | undefined, attachments: Row[] | undefined, isometrics: Row[] | undefined): ReleaseItpOption[] {
+  const options = live(itps).filter(itp => itp.active !== false && text(itp.number)).map(itp => { const rev = itpLatest(itp, attachments).revNo; return { value: text(itp.number), label: `${text(itp.number)}${rev ? ` rev.${rev}` : ''}` }; });
+  const known = new Set(options.map(option => option.value));
+  for (const iso of live(isometrics)) { const value = releaseItpOf(iso, type); if (value && !known.has(value)) { known.add(value); options.push({ value, label: value }); } }
+  return options.sort((a, b) => a.label.localeCompare(b.label, 'en', { numeric: true }));
+}
+/** "<ITP No> rev.<n>" of an ITP number as the catalog knows it (the revision stored on the release when it was made wins). */
+export function releaseItpLabel(itp: string, itps: Row[] | undefined, attachments: Row[] | undefined, storedRev = ''): string {
+  const entry = live(itps).find(row => text(row.number) === itp);
+  const rev = text(storedRev) || (entry ? itpLatest(entry, attachments).revNo : '');
+  return `${itp}${rev ? ` rev.${rev}` : ''}`;
+}
+
+// ----- release batches and their archive ----------------------------------------------------------------------------
+
+/** The ITP of a release record: stored when it was made; older records take their isometric's ITP of that phase. */
+export const releaseItpOfRecord = (release: Row, iso?: Row) => text(release.itp) || (iso && (release.type === 'Prefab' || release.type === 'Field') ? releaseItpOf(iso, release.type as ReleasePhase) : '');
+/** One release document = the live release records of a phase that share their release number and report number (one "Release selected"). */
+export const releaseBatchOf = (releases: Row[] | undefined, release: Row): Row[] => live(releases).filter(row => row.type === release.type && text(row.number) === text(release.number) && text(row.reportNo) === text(release.reportNo));
+/** Running number of a main project for the file names (S1, S2 …): its position by creation. Archived sites keep theirs. */
+export const siteSequence = (sites: Row[] | undefined, siteId: string) => Math.max(1, [...(sites || [])].sort((a, b) => text(a._createdAt).localeCompare(text(b._createdAt)) || text(a.id).localeCompare(text(b.id))).findIndex(site => site.id === siteId) + 1);
+/** Archive file name of a release document, after the vendor's pattern: date_S<site>_<report no>_<ITP> rev.<n>_Release.pdf */
+export function releaseFileName(input: { date: unknown; site: number; reportNo: string; itpLabel: string }) {
+  const date = text(input.date).slice(0, 10).replaceAll('-', '') || '00000000';
+  return `${date}_S${input.site}_${text(input.reportNo)}_${text(input.itpLabel)}_Release.pdf`.replace(/[\\/:*?"<>|\r\n]+/g, '-');
+}
+/** The next automatic report number of a main project and phase: 5 digits, counting the numeric ones only (older free-text numbers are ignored). */
+export function nextReportNo(releases: Row[] | undefined, type: string, inScope: (release: Row) => boolean): string {
+  const highest = (releases || []).filter(row => row.type === type && inScope(row) && /^\d{1,9}$/.test(text(row.reportNo))).reduce((top, row) => Math.max(top, Number(text(row.reportNo))), 0);
+  return String(highest + 1).padStart(5, '0');
+}
+/** Document type of the signed copies uploaded to a release document (attachments of the release record). */
+export const SIGNED_RELEASE_DOCUMENT = 'Signed release';
+/** Signed documents attached to a release document (any record of its batch), newest first. */
+export const signedReleaseFiles = (attachments: Row[] | undefined, batch: Row[]) => live(attachments).filter(file => file.entityType === 'releases' && file.documentType === SIGNED_RELEASE_DOCUMENT && batch.some(row => row.id === file.entityId)).sort((a, b) => text(b._createdAt).localeCompare(text(a._createdAt)));
+
+export interface ReleaseArchiveRow { key: string; reportNo: string; releases: Row[]; itp: string; itpLabel: string; fileName: string; signed: Row[]; }
+export interface ReleaseArchiveContext { isometrics: Row[]; projects: Row[]; sites: Row[]; itps?: Row[]; attachments?: Row[]; }
+/**
+ * The Release archive of a release page: one row per generated release document (batch) of that phase, sorted by file
+ * name. A document stays in the archive after a Reopen of its isometrics (the record keeps its status); `signed` are the
+ * uploaded signed copies.
+ */
+export function releaseArchiveRows(releases: Row[] | undefined, type: ReleasePhase, context: ReleaseArchiveContext): ReleaseArchiveRow[] {
+  const groups = new Map<string, Row[]>();
+  for (const release of live(releases).filter(row => row.type === type)) { const key = `${text(release.number)}|${text(release.reportNo)}`; groups.set(key, [...(groups.get(key) || []), release]); }
+  return [...groups.entries()].map(([key, batch]) => {
+    const first = [...batch].sort((a, b) => text(a._createdAt).localeCompare(text(b._createdAt)) || text(a.id).localeCompare(text(b.id)))[0];
+    const iso = context.isometrics.find(row => row.id === first.isoId), project = context.projects.find(row => row.id === iso?.projectId);
+    const itp = releaseItpOfRecord(first, iso), itpLabel = releaseItpLabel(itp, context.itps, context.attachments, text(first.itpRev));
+    return { key, reportNo: text(first.reportNo), releases: batch, itp, itpLabel, signed: signedReleaseFiles(context.attachments, batch),
+      fileName: releaseFileName({ date: first.date || first._createdAt, site: siteSequence(context.sites, String(project?.siteId ?? '')), reportNo: text(first.reportNo), itpLabel }) };
+  }).sort((a, b) => a.fileName.localeCompare(b.fileName, 'en', { numeric: true }));
 }
 
 // ----- release documents ---------------------------------------------------------------------------------------

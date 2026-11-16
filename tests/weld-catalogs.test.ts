@@ -109,7 +109,8 @@ test('every catalog carries the capture\'s labels, columns and options and is de
   assert.equal(resource('ndt_defect_codes').fields.find(f => f.name === 'group')?.options?.length, 6);
   for (const key of WELD_CATALOG_RESOURCES) {
     assert.ok(hosted.navigation.includes(key), key); assert.ok(resource(key).columns.length, key);
-    assert.ok(PILOT_MAP.weld.groups.some(group => group.items.some(item => item.resource === key)), `menu item for ${key}`);
+    // Weld process is hidden in the reference menu (shell-general-025): its page stays reachable by route, without a menu item.
+    if (key !== 'weld_processes') assert.ok(PILOT_MAP.weld.groups.some(group => group.items.some(item => item.resource === key)), `menu item for ${key}`);
   }
   assert.deepEqual(PILOT_MAP.weld.groups.find(g => g.title === 'NDT data')!.items.map(i => i.label), ['NDT process groups', 'NDT process', 'Defect codes', 'NDT locations', 'PWHT process', 'PWHT locations']);
   assert.ok(!hosted.navigation.includes('catalog_sites') && hosted.resources.catalog_sites, 'availability links are data, not a page');

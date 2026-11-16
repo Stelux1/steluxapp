@@ -3,7 +3,7 @@ import { lislValues } from './lisl.ts';
 import { printDate, type LabelValueItem } from './pdf-lisl.ts';
 import { currentRevision } from './revisions.ts';
 import { inspectionCellState, latestResult, locationField, processField, NDT_ROUNDS, type CellStatus, type InspectionKind } from './inspections.ts';
-import { PHASE_LOCATION, RELEASE_PHASES, releaseDocumentNumber, signatureTitlesOf, weldPhase, type ReleasePhase, type SignatureTitle } from './releases.ts';
+import { PHASE_LOCATION, RELEASE_PHASES, releaseBatchOf, releaseDocumentNumber, releaseItpLabel, releaseItpOfRecord, signatureTitlesOf, weldPhase, type ReleasePhase, type SignatureTitle } from './releases.ts';
 import { punchCounts, punchStatus, withPunchPhases } from './punch.ts';
 import { HYDROTEST_DOCUMENT_TYPES, HYDROTEST_REQUEST_RESOURCE, SPOOL_COLUMNS, isPdfName, spoolFacts, spoolsOfSystem, storedList } from './hydrotest.ts';
 import { lineIsoIds, materialIdentity, materialRecord, orderProjectIds } from './materials.ts';
@@ -197,7 +197,6 @@ export function weldInspectionState(weld: Row, kind: InspectionKind, rows: Rows)
   const report = types.map(type => latestResult(rows.inspection_results, weld.id, type)).filter(Boolean).map(result => text(result!.reportNo)).filter(Boolean).join(', ');
   return [STATE_LABELS[state.status], report];
 }
-export interface ReleaseWeldLine { line: WeldLine; ndtPre: [string, string]; ndt: [string, string]; pwht: [string, string] }
 export interface PunchSummaryLine { label: string; open: number; finished: number }
 export interface PunchSummary { lines: PunchSummaryLine[]; overdue: number; blocking: number; passed: number; removed: number }
 /** Punch summary of one isometric: open and finished by type, overdue, blocking (open A / B), passed and removed. */
@@ -208,33 +207,47 @@ export function punchSummary(items: Row[], today?: string): PunchSummary {
     overdue: counts.overdue, blocking: counts.blocking, passed: mine.filter(row => punchStatus(row) === 'Passed').length, removed: mine.filter(row => punchStatus(row) === 'Removed').length,
   };
 }
+/** One row of the release note: an isometric of the batch. */
+export interface ReleaseNoteLine { iso: Row; itp: string; spools: string; systemMedium: string; docNo: string; revision: string }
 export interface ReleaseDocumentModel {
-  release: Row; type: ReleasePhase; iso: Row; context: ProjectContext; docNo: string; revision: string; engineer?: Row;
-  welds: ReleaseWeldLine[]; /** Null while the account cannot read punch items. */ punch: PunchSummary | null; reopened: boolean;
+  /** The release record the document was asked for (any record of the batch). */
+  release: Row; type: ReleasePhase;
+  /** The first isometric of the batch the account may see. */
+  iso: Row; context: ProjectContext; docNo: string; revision: string; engineer?: Row;
+  reportNo: string; itp: string; itpLabel: string; lines: ReleaseNoteLine[]; reopened: boolean;
 }
 /**
- * The release document of one release record: the welds of the phase (Prefab: shop welds, Field: field welds) with their
- * final NDT state, and the punch summary of the isometric. The document number is the one stored on the release when it
- * was made (main project's prefix and drawing-number rule); an older release without it takes the current Document
- * settings. The six signature titles belong to the Pressure Test Plan, not to this document (one "Released by" box). Null when the release is unknown, not Prefab or Field, or its isometric is not visible.
+ * The release note of one release document: every isometric released together (the release records of the phase that share
+ * their release number and report number) as one row, for the ITP of the document. Rows are the isometrics the account
+ * may see. The document number of a row is the one stored on its release when it was made (main project's prefix and
+ * drawing-number rule); an older release without it takes the current Document settings. Null when the release is
+ * unknown, not Prefab or Field, or none of its isometrics is visible.
  */
-export function releaseDocumentModel(rows: Rows, releaseId: string, isoIds: Set<string>, today?: string): ReleaseDocumentModel | null {
+export function releaseDocumentModel(rows: Rows, releaseId: string, isoIds: Set<string>, _today?: string): ReleaseDocumentModel | null {
   const release = live(rows.releases).find(row => row.id === releaseId);
   if (!release || !(RELEASE_PHASES as readonly string[]).includes(text(release.type)) || !isoIds.has(text(release.isoId))) return null;
-  const iso = find(rows, 'isometrics', release.isoId);
-  if (!iso) return null;
-  const type = release.type as ReleasePhase, context = projectContext(rows, [iso]);
-  const weldTypes = live(rows.weld_types);
-  const welds = sortWeldLines(live(rows.welds).filter(weld => weld.isoId === iso.id && weldPhase(weld, weldTypes) === PHASE_LOCATION[type]).map(weld => weldLine(weld, rows)))
-    .map((line): ReleaseWeldLine => ({ line, ndtPre: weldInspectionState(line.weld, 'NDT PRE', rows), ndt: weldInspectionState(line.weld, 'NDT', rows), pwht: weldInspectionState(line.weld, 'PWHT', rows) }));
+  const type = release.type as ReleasePhase;
+  const batch = releaseBatchOf(rows.releases, release).filter(row => isoIds.has(text(row.isoId)));
+  const entries = batch.map(row => ({ row, iso: find(rows, 'isometrics', row.isoId) })).filter((entry): entry is { row: Row; iso: Row } => Boolean(entry.iso));
+  const first = entries.find(entry => entry.row.id === release.id) ?? entries[0];
+  if (!first) return null;
+  const context = projectContext(rows, entries.map(entry => entry.iso));
+  const itp = releaseItpOfRecord(release, first.iso), itpLabel = releaseItpLabel(itp, rows.itps, rows.attachments, text(release.itpRev));
+  const systems = new Map(live(rows.test_systems).map(row => [row.id, row]));
+  const lines = entries.map(({ row, iso }): ReleaseNoteLine => ({
+    iso, itp: itpLabel, spools: live(rows.spools).filter(spool => spool.isoId === iso.id).map(spool => text(spool.name)).filter(Boolean).sort(naturalCompare).join(', '),
+    systemMedium: [text(systems.get(String(iso.testSystemId))?.name), text(iso.testMedium)].filter(Boolean).join(' / '),
+    docNo: text(row.docNo) || releaseDocumentNumber(context.site, iso), revision: currentRevision(rows, iso.id),
+  })).sort((a, b) => naturalCompare(text(a.iso.isoNo), text(b.iso.isoNo)));
   return {
-    release, type, iso, context, docNo: text(release.docNo) || releaseDocumentNumber(context.site, iso), revision: currentRevision(rows, iso.id),
-    engineer: find(rows, 'qa_engineers', release.engineerId), welds, punch: rows.punchlists ? punchSummary(live(rows.punchlists).filter(row => row.isoId === iso.id), today) : null,
-    reopened: release.status === 'Reopened',
+    release, type, iso: first.iso, context, docNo: text(first.row.docNo) || releaseDocumentNumber(context.site, first.iso), revision: currentRevision(rows, first.iso.id),
+    engineer: find(rows, 'qa_engineers', release.engineerId), reportNo: text(release.reportNo), itp, itpLabel, lines, reopened: release.status === 'Reopened',
   };
 }
-export const RELEASE_COLUMNS = ['Weld no.', 'Type', 'Dia.', 'Welder', 'Weld date', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT'];
-export const releaseRowCells = (entry: ReleaseWeldLine) => [entry.line.weldNo, entry.line.type, entry.line.diameter, entry.line.welder, entry.line.date, entry.ndtPre, entry.ndt, entry.pwht];
+export const RELEASE_COLUMNS = ['ITP number', 'Spools', 'System / Medium', 'Doc. Number / Drg. Number', 'Rev.'];
+export const releaseRowCells = (line: ReleaseNoteLine) => [line.itp, line.spools, line.systemMedium, line.docNo, line.revision];
+/** Titles of the three signature boxes of the release note (reference manual: contractor / supplier QA/QC, client, notified body). */
+export const RELEASE_SIGNATURES = ['Contractor / Supplier QA/QC', 'Client', 'Notified body (NoBo)'];
 
 // ----- hydrotest release (Pressure Test Plan) -------------------------------------------------------------------------------
 

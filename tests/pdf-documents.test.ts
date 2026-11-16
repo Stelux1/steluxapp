@@ -8,12 +8,12 @@ import { Store, SYSTEM } from '../server/store.ts';
 import { seed, seedCompanySample, seedInspectionSamples } from '../server/seed.ts';
 import { seedMtoLogistics } from '../server/mto-logistics.ts';
 import { createApp } from '../server/http.ts';
+import { runAction } from '../server/workflows.ts';
 import { passwordHash } from '../server/auth.ts';
 import { HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import { inspectionCellState, REQUEST_DOCUMENT } from '../shared/inspections.ts';
 import { pickListReports, requestOf, SERVICE_REQUEST_COLUMNS, serviceRequestDocumentData, serviceRequestFileBase, siteNumber, tracingFlag } from '../shared/mto-logistics.ts';
-import { runAction } from '../server/workflows.ts';
 import { documentStorage } from '../server/documents.ts';
 import { buildServiceRequestDocuments } from '../server/service-requests.ts';
 import { coatingReleasePdf, serviceRequestPdf } from '../server/pdf/service-request.ts';
@@ -217,38 +217,51 @@ test('the engineer signature is found through the matching user, else not at all
 
 const releaseOf = (store: Store, isoId: string, type: string) => store.list('releases').find(row => row.isoId === isoId && row.type === type && row.status !== 'Reopened')!;
 
-test('Prefab and Field release: document number, isometric box, welds of the phase with their NDT state, punch summary, one Released by box', async t => {
+test('Prefab and Field release note: Report No, Project, ITP no., one row per isometric of the release, three signature boxes', async t => {
   const f = await fixture(t);
   const prefab = releaseOf(f.store, 'iso-3', 'Prefab'), field = releaseOf(f.store, 'iso-3', 'Field');
   const text = await get(f, `prefab-release?releaseId=${prefab.id}`);
-  for (const label of ['Prefab release', 'Document DWG-2403-STX-CW-003', 'Document no.', 'Release no.', 'Report no.', 'PFR-002', 'Release date', 'Drawing no.', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT', 'Punch summary', 'Pre-punch', 'Punch', 'Open', 'Finished', 'Accepted', 'RT-2026-003']) assert.ok(text.includes(label), label);
-  assert.ok(text.some(line => line.startsWith('Welds - shop')));
+  for (const label of ['Prefab Release note', 'Report No', 'PFR-002', 'Project', 'ITP no.', 'ITP-01 rev.2', 'Release date', 'ITP number', 'Spools', 'System / Medium', 'Doc. Number / Drg. Number', 'Rev.', 'DWG-2403-STX-CW-003', 'Contractor / Supplier QA/QC', 'Client', 'Notified body (NoBo)']) assert.ok(text.includes(label), label);
+  assert.ok(!text.some(line => line.startsWith('Welds - shop')) && !text.includes('Punch summary'), 'the note lists isometrics, not welds or punch items');
   const site = f.store.get('sites', 'site-north');
-  // The six signature titles label the Pressure Test Plan, not the release document.
+  // The six signature titles label the Pressure Test Plan, not the release note.
   for (const name of ['signSubQaqc', 'signSubConstruction', 'signPrincipalUi', 'signContractorQaqc', 'signContractorConstruction', 'signNobo']) if (site[name]) assert.ok(!text.includes(String(site[name])), String(site[name]));
-  assert.ok(text.includes('Released by'));
-  const welds = f.store.list('welds').filter(row => row.isoId === 'iso-3'), location = (weld: Row) => String(f.store.get('weld_types', String(weld.typeId)).location);
-  for (const weld of welds.filter(weld => location(weld) === 'Shop')) assert.ok(text.includes(String(weld.weldNo)), `shop ${weld.weldNo}`);
-  for (const weld of welds.filter(weld => location(weld) === 'Field')) assert.ok(!text.includes(String(weld.weldNo)), `no field ${weld.weldNo} on the prefab release`);
   const fieldText = await get(f, `field-release?releaseId=${field.id}`);
-  assert.ok(fieldText.includes('Field release') && fieldText.some(line => line.startsWith('Welds - field')) && fieldText.includes('FLR-001'));
-  for (const weld of welds.filter(weld => location(weld) === 'Field')) assert.ok(fieldText.includes(String(weld.weldNo)));
+  assert.ok(fieldText.includes('Field Release note') && fieldText.includes('FLR-001'));
   assert.equal((await f.admin.request(`/pdf/field-release?releaseId=${prefab.id}`, { pilot: 'weld' })).status, 422, 'a prefab release is not printed as a field release');
   const hydro = f.store.list('releases').find(row => row.type === 'Hydrotest')!;
   assert.equal((await f.admin.request(`/pdf/prefab-release?releaseId=${hydro.id}`, { pilot: 'weld' })).status, 404);
   assert.equal((await f.admin.request('/pdf/prefab-release?releaseId=missing', { pilot: 'weld' })).status, 404);
 });
 
-test('a release keeps the numbering and signature titles it was made with; a reopened release says so; the signature goes in one block', async t => {
+test('one release of three isometrics of one ITP is one note with three rows and three signature boxes; the next report number follows', async t => {
+  const f = await fixture(t);
+  const made = runAction(f.store, 'release', { type: 'Prefab', isoIds: ['iso-1', 'iso-2', 'iso-4'], itp: 'ITP-NOTE', date: '2026-11-03' }, SYSTEM).records!;
+  assert.deepEqual([new Set(made.map(row => row.reportNo)).size, made.every(row => row.itp === 'ITP-NOTE')], [1, true]);
+  const rows = rowsOf(f.store), isoIds = allIsos(rows), company = { company: companyFromRow(rows.company_data[0])!, logo: PNG };
+  const model = releaseDocumentModel(rows, made[0].id, isoIds)!;
+  assert.equal(model.lines.length, 3); assert.equal(model.reportNo, made[0].reportNo); assert.equal(model.itpLabel, 'ITP-NOTE');
+  assert.deepEqual(model.lines.map(line => line.docNo), made.map(row => String(row.docNo)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).sort((a, b) => model.lines.findIndex(line => line.docNo === a) - model.lines.findIndex(line => line.docNo === b)));
+  const note = await releasePdf({ model, company, generatedAt: NOW, rows, signature: null });
+  assertLayout(note.layout, 'release note', { rowsMinimum: 3 });
+  const printed = note.layout.pages.flatMap(page => page.texts.map(item => item.text));
+  for (const title of ['Contractor / Supplier QA/QC', 'Notified body (NoBo)']) assert.equal(printed.filter(item => item === title).length, 1, title);
+  assert.equal(printed.filter(item => item === 'Client').length, 2, 'the Client of the header and the Client signature box');
+  assert.equal(printed.filter(item => item === 'Name').length, 3, 'three signature boxes');
+  const next = runAction(f.store, 'release', { type: 'Prefab', isoIds: ['iso-5'], itp: 'ITP-NOTE' }, SYSTEM).records![0];
+  assert.notEqual(next.reportNo, made[0].reportNo);
+});
+
+test('a release keeps the numbering it was made with; a reopened release says so; the signature goes in the first box', async t => {
   const f = await fixture(t);
   const release = releaseOf(f.store, 'iso-3', 'Prefab');
   const site = f.store.get('sites', 'site-north');
   f.store.update('sites', site.id, { prefix: 'ZZZ', releaseDocDrawing: 'Prefix + iso', signNobo: 'Changed after the release' }, site._version, SYSTEM);
   const text = await get(f, `prefab-release?releaseId=${release.id}`);
-  assert.ok(text.includes('Document DWG-2403-STX-CW-003') && !text.includes('Changed after the release'), 'stored numbering and titles');
+  assert.ok(text.includes('DWG-2403-STX-CW-003') && !text.includes('ZZZ-STX-CW-003') && !text.includes('Changed after the release'), 'stored numbering, no signature titles');
   const reopened = f.store.list('releases').find(row => row.status === 'Reopened')!;
   const reopenedText = await get(f, `prefab-release?releaseId=${reopened.id}`);
-  assert.ok(reopenedText.some(line => line.includes('reopened')) && reopenedText.includes('Status'));
+  assert.ok(reopenedText.some(line => /reopened/i.test(line)) && reopenedText.includes('Status'));
   assert.ok(!hasImage(await pdf(await f.admin.request(`/pdf/prefab-release?releaseId=${release.id}`, { pilot: 'weld' }))));
   const me = f.store.list('users').find(user => user.email === 'pdf-docs-admin@example.test')!;
   const created = await f.admin.request('/records/signatures', { method: 'POST', pilot: 'weld', data: { name: 'Pdf admin', userId: me.id, kind: 'Full signature', nameUnder: true } });
@@ -258,9 +271,9 @@ test('a release keeps the numbering and signature titles it was made with; a reo
   const signed = await pdf(await f.admin.request(`/pdf/prefab-release?releaseId=${release.id}`, { pilot: 'weld' }));
   assert.ok(hasImage(signed), 'the signature image of the releasing signer');
   assert.ok((await textOf(signed)).includes('Pdf admin'), 'name under the signature');
-  // The six signature titles belong to the Pressure Test Plan: the release document has one "Released by" box.
+  // The six signature titles belong to the Pressure Test Plan: the release note has its three boxes.
   const titles = await textOf(signed);
-  assert.ok(titles.includes('Released by') && !titles.includes('QA/QC Manager'), 'no signature titles on the release document');
+  assert.ok(titles.includes('Contractor / Supplier QA/QC') && !titles.includes('QA/QC Manager'), 'no signature titles on the release document');
 });
 
 test('release document number without stored data follows the main project settings', () => {
@@ -269,7 +282,7 @@ test('release document number without stored data follows the main project setti
   const model = releaseDocumentModel(rows, 'r1', new Set(['i1']))!;
   assert.equal(model.docNo, 'AB-ISO-7');
   assert.ok(!('signatureTitles' in model), 'the release document carries no signature titles');
-  assert.equal(model.punch, null, 'without punch rows there is no punch summary');
+  assert.deepEqual(model.lines.map(line => [line.docNo, line.itp, line.spools]), [['AB-ISO-7', '', '']], 'an older release without stored data and without an ITP');
   assert.equal(releaseDocumentModel(rows, 'r1', new Set()), null, 'an isometric outside the pilot');
 });
 

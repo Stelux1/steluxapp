@@ -18,7 +18,7 @@ import { canAction } from '../shared/permissions.ts';
 import { ACTIONS } from '../shared/actions.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import {
-  activeRelease, csvCell, fwpAccepts, fwpListRows, phaseState, punchBlocksRelease, releaseArchiveRows, releaseCheck, releaseDocumentData, releaseDocumentNumber, releaseListRows,
+  ITP_MISSING, RELEASE_DEFAULT_PAGE_LENGTH, RELEASE_PAGE_LENGTHS, activeRelease, csvCell, fwpAccepts, fwpListRows, nextReportNo, phaseState, punchBlocksRelease, releaseArchiveRows, releaseBatchOf, releaseCheck, releaseDocumentData, releaseDocumentNumber, releaseFileName, releaseItpOptions, releaseListRows, siteSequence,
   signatureTitlesOf, storedSignatureTitles, toCsv, weldLocked, weldLockReason, weldPhase,
 } from '../shared/releases.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -162,33 +162,67 @@ test('a reopened release no longer counts for the isometric blockers or the list
 
 // ----- the release pages -----------------------------------------------------------------------------------------
 
-test('release list: only isometrics whose phase is completed; released ones only with Show released; filters by project and ITP', () => {
-  const done = { prefabCompletedAt: '2026-11-02T08:00:00.000Z' };
-  const isometrics = [row('a', { isoNo: 'CW-010', projectId: 'p1', itpNo: 'ITP-01', ...done }), row('b', { isoNo: 'CW-002', projectId: 'p2', itpNo2: 'ITP-NDT-07', ...done }), row('c', { isoNo: 'CW-003', projectId: 'p1', itpNo: 'itp-02' }), row('d', { isoNo: 'CW-004', projectId: 'p1' })];
+test('release list: only completed isometrics; the ITP filter is the exact ITP of the phase slot; rows are selectable only once an ITP is chosen; ordered by priority', () => {
+  const done = { prefabCompletedAt: '2026-11-02T08:00:00.000Z' }, fieldDone = { fieldCompletedAt: '2026-11-02T08:00:00.000Z' };
+  const isometrics = [row('a', { isoNo: 'CW-010', projectId: 'p1', itpNo: 'ITP-01', priority: 'Prio 3', ...done }), row('b', { isoNo: 'CW-002', projectId: 'p2', itpNo2: 'ITP-NDT-07', itpNo: '222222', priority: 'Prio 1', ...done, ...fieldDone }), row('c', { isoNo: 'CW-003', projectId: 'p1', itpNo: 'ITP-02', ...done }), row('d', { isoNo: 'CW-004', projectId: 'p1' }),
+    row('e', { isoNo: 'CW-001', projectId: 'p1', itpNo: 'ITP-01', priority: 'High', ...done }), row('f', { isoNo: 'CW-005', projectId: 'p1', itpNo: '222222', itpNo2: '', ...fieldDone })];
   const source = { isometrics, projects: [row('p1', { internnumber: 'STX-1' }), row('p2')], spools: [row('s1', { isoId: 'a', name: 'SP-10' }), row('s2', { isoId: 'a', name: 'SP-2' }), row('s3', { isoId: 'a', name: 'SP-X', _archived: true })],
-    welds: [weld('wa', { isoId: 'a' }), weld('wb', { isoId: 'b' }), weld('wc', { isoId: 'c' }), weld('wd', { isoId: 'd' })], weldTypes, results: [], releases: [row('r', { isoId: 'c', type: 'Prefab' }), row('r2', { isoId: 'b', type: 'Field' })] };
+    welds: [weld('wa', { isoId: 'a' }), weld('wb', { isoId: 'b' }), weld('wc', { isoId: 'c' }), weld('wd', { isoId: 'd' })], weldTypes, results: [], releases: [row('r', { isoId: 'c', type: 'Prefab' })] };
   const list = (filters = {}) => releaseListRows('Prefab', source, filters);
-  // d is ready but not completed: never listed (reference: 1 of 235 isometrics, the one 'Prefab completed').
-  assert.deepEqual(list().map(entry => entry.iso.isoNo), ['CW-002', 'CW-010'], 'natural order, released CW-003 hidden');
-  assert.deepEqual(list({ show: 'show' }).map(entry => entry.iso.isoNo), ['CW-002', 'CW-003', 'CW-010'], 'CW-004 is not completed, also with Show released');
+  // d is ready but not completed: never listed. Order: Prio 1 (b), Prio 2 (e: High), Prio 3 (a), no priority last; the released c is hidden.
+  assert.deepEqual(list().map(entry => entry.iso.isoNo), ['CW-002', 'CW-001', 'CW-010'], 'by priority, the released CW-003 hidden');
+  assert.deepEqual(list({ show: 'show' }).map(entry => entry.iso.isoNo), ['CW-002', 'CW-001', 'CW-010', 'CW-003'], 'CW-004 is not completed, also with Show released');
   assert.equal(list({ show: 'show' }).find(entry => entry.iso.id === 'c')?.release?.id, 'r');
-  assert.deepEqual(list({ projectId: 'p1', show: 'show' }).map(entry => entry.iso.isoNo), ['CW-003', 'CW-010']);
-  assert.deepEqual(list({ itpNo: 'ITP-NDT' }).map(entry => entry.iso.isoNo), ['CW-002'], 'ITP No 2 is searched too');
-  assert.deepEqual(list({ itpNo: 'itp-02', show: 'show' }).map(entry => entry.iso.isoNo), ['CW-003'], 'case-insensitive');
+  assert.deepEqual(list({ projectId: 'p1', show: 'show' }).map(entry => entry.iso.isoNo), ['CW-001', 'CW-010', 'CW-003']);
+  // Choose ITP: without an ITP no row is selectable; with one, the exact ITP of the Prefab slot (ITP No) is listed and selectable.
+  assert.ok(list().every(entry => !entry.selectable), 'Choose ITP');
+  assert.deepEqual(list({ itpNo: 'ITP-01' }).map(entry => [entry.iso.isoNo, entry.selectable]), [['CW-001', true], ['CW-010', true]]);
+  assert.deepEqual(list({ itpNo: 'ITP' }).map(entry => entry.iso.isoNo), [], 'exact, not a substring');
+  assert.deepEqual(list({ itpNo: 'itp-01' }).map(entry => entry.iso.isoNo), [], 'exact, also in case');
+  assert.deepEqual(list({ itpNo: 'ITP-NDT-07' }).map(entry => entry.iso.isoNo), [], 'the ITP No 2 slot does not answer the Prefab page');
+  assert.deepEqual(list({ itpNo: 'ITP-02', show: 'show' }).map(entry => [entry.iso.isoNo, entry.selectable]), [['CW-003', false]], 'a released isometric has no check box');
   const a = list().find(entry => entry.iso.id === 'a')!;
   assert.equal(a.spools, 'SP-2, SP-10'); assert.equal(a.project?.internnumber, 'STX-1');
-  // The Field page lists the Field completed ones: b by its release from before the two steps (hidden), nothing else.
-  assert.deepEqual(releaseListRows('Field', source).map(entry => entry.iso.isoNo), []);
-  assert.deepEqual(releaseListRows('Field', source, { show: 'show' }).map(entry => entry.iso.isoNo), ['CW-002']);
+  // The Field page reads ITP No 2: b is Field completed with ITP No 2 'ITP-NDT-07'; f is Field completed without one; an iso with ITP No '222222' only is absent.
+  const field = (filters = {}) => releaseListRows('Field', { ...source, isometrics: isometrics.map(iso => iso.id === 'f' ? { ...iso, itpNo2: '' } : iso) }, filters);
+  assert.deepEqual(field().map(entry => entry.iso.isoNo), ['CW-002', 'CW-005']);
+  assert.deepEqual(field({ itpNo: 'ITP-NDT-07' }).map(entry => [entry.iso.isoNo, entry.selectable]), [['CW-002', true]]);
+  assert.deepEqual(field({ itpNo: '222222' }).map(entry => entry.iso.isoNo), [], 'ITP No "222222" sits in the Prefab slot of b and f, so the Field filter finds nothing');
+  const slot2 = releaseListRows('Field', { ...source, isometrics: [row('g', { isoNo: 'CW-006', projectId: 'p1', itpNo: 'x', itpNo2: '222222', ...fieldDone }), row('h', { isoNo: 'CW-007', projectId: 'p1', itpNo: '222222', ...fieldDone })] }, { itpNo: '222222' });
+  assert.deepEqual(slot2.map(entry => entry.iso.isoNo), ['CW-006'], "releaseListRows('Field', …, {itpNo:'222222'}) returns only isometrics with itpNo2 '222222'");
+  // The list pages show 10 … 500 and ALL, 1000 by default.
+  assert.deepEqual([...RELEASE_PAGE_LENGTHS], [10, 20, 50, 100, 500, 0]); assert.equal(RELEASE_DEFAULT_PAGE_LENGTH, 1000);
 });
 
-test('request archive: inclusive date range, type, newest first, archived records left out', () => {
-  const releases = [row('a', { date: '2026-10-01', type: 'Prefab' }), row('b', { date: '2026-10-15', type: 'Field', _createdAt: '2026-10-15T09:00:00.000Z' }), row('c', { date: '2026-10-31', type: 'Prefab' }), row('d', { date: '2026-10-20', _archived: true }), row('e', { date: '', type: 'Hydrotest', _createdAt: '2026-10-16T08:00:00.000Z' })];
-  assert.deepEqual(releaseArchiveRows(releases).map(entry => entry.id), ['c', 'e', 'b', 'a']);
-  assert.deepEqual(releaseArchiveRows(releases, { from: '2026-10-15', to: '2026-10-31' }).map(entry => entry.id), ['c', 'e', 'b'], 'both ends are included; the creation day stands in for a missing date');
-  assert.deepEqual(releaseArchiveRows(releases, { to: '2026-10-14' }).map(entry => entry.id), ['a']);
-  assert.deepEqual(releaseArchiveRows(releases, { type: 'Field' }).map(entry => entry.id), ['b']);
-  assert.deepEqual(releaseArchiveRows(releases, { from: '2026-11-01' }), []);
+test('the ITP No choices of the release filter are the catalog entries with their revision, plus numbers the listed isometrics hold without an entry', () => {
+  const itps = [row('i1', { number: '200.026-BNI-ITP-101', revision: '1' }), row('i2', { number: 'ITP-OFF', active: false }), row('i3', { number: 'ITP-ARC', _archived: true }), row('i4', { number: 'ITP-NDT-07' })];
+  const attachments = [row('f1', { entityType: 'itps', entityId: 'i4', documentType: 'ITP revision', revNo: '3' })];
+  const isometrics = [row('a', { itpNo: '222222', itpNo2: 'ITP-NDT-07' }), row('b', { itpNo: '200.026-BNI-ITP-101' }), row('c', { itpNo: '', itpNo2: '' })];
+  assert.deepEqual(releaseItpOptions('Prefab', itps, attachments, isometrics), [{ value: '200.026-BNI-ITP-101', label: '200.026-BNI-ITP-101 rev.1' }, { value: '222222', label: '222222' }, { value: 'ITP-NDT-07', label: 'ITP-NDT-07 rev.3' }]);
+  assert.deepEqual(releaseItpOptions('Field', itps, attachments, isometrics).map(option => option.value), ['200.026-BNI-ITP-101', 'ITP-NDT-07']);
+});
+
+test('release archive: one row per generated release document of the page kind, sorted by file name, with the signed copies; the report number counts per main project and phase', () => {
+  const releases = [
+    row('a1', { type: 'Prefab', number: 'REL-1', reportNo: '00001', isoId: 'i1', itp: 'ITP-01', itpRev: '1', date: '2026-10-01' }), row('a2', { type: 'Prefab', number: 'REL-1', reportNo: '00001', isoId: 'i2', itp: 'ITP-01', itpRev: '1', date: '2026-10-01' }),
+    row('b1', { type: 'Prefab', number: 'REL-2', reportNo: '00002', isoId: 'i3', date: '2026-10-05', status: 'Reopened' }), row('c1', { type: 'Field', number: 'REL-3', reportNo: '00001', isoId: 'i1', itp: 'ITP-02', date: '2026-10-09' }),
+    row('d1', { type: 'Prefab', number: 'REL-4', reportNo: '00003', isoId: 'i1', date: '2026-10-10', _archived: true }), row('e1', { type: 'Hydrotest', number: 'HYDRO-1', reportNo: 'H1', isoId: 'i1' }),
+  ];
+  const attachments = [row('s1', { entityType: 'releases', entityId: 'a2', documentType: 'Signed release', name: 'signed.pdf' }), row('s2', { entityType: 'releases', entityId: 'a1', documentType: 'Signed release', name: 'gone.pdf', _archived: true }), row('s3', { entityType: 'revisions', entityId: 'a1', documentType: 'Signed release', name: 'other.pdf' })];
+  const context = { isometrics: [row('i1', { projectId: 'p1', itpNo: 'ITP-01' }), row('i2', { projectId: 'p1' }), row('i3', { projectId: 'p1', itpNo: 'ITP-LEGACY' })], projects: [row('p1', { siteId: 'site-2' })], sites: [row('site-1', { _createdAt: '2026-01-01T00:00:00.000Z' }), row('site-2', { _createdAt: '2026-02-01T00:00:00.000Z' })], itps: [row('x', { number: 'ITP-01', revision: '1' })], attachments };
+  const prefab = releaseArchiveRows(releases, 'Prefab', context);
+  assert.deepEqual(prefab.map(entry => [entry.reportNo, entry.releases.length, entry.itpLabel, entry.fileName]), [
+    ['00001', 2, 'ITP-01 rev.1', '20261001_S2_00001_ITP-01 rev.1_Release.pdf'], ['00002', 1, 'ITP-LEGACY', '20261005_S2_00002_ITP-LEGACY_Release.pdf']], 'one row per document; an older record takes its isometric ITP; a reopened one stays; archived and other kinds are left out');
+  assert.deepEqual(prefab[0].signed.map(file => file.id), ['s1'], 'only the live signed copies of the document');
+  assert.deepEqual(releaseArchiveRows(releases, 'Field', context).map(entry => entry.reportNo), ['00001']);
+  assert.deepEqual(releaseArchiveRows([], 'Field', context), []);
+  assert.equal(releaseBatchOf(releases, releases[0]).length, 2); assert.equal(releaseBatchOf(releases, releases[2]).length, 1);
+  assert.equal(siteSequence(context.sites, 'site-2'), 2); assert.equal(siteSequence(context.sites, 'missing'), 1);
+  assert.equal(releaseFileName({ date: '2021-08-03', site: 17, reportNo: '00001', itpLabel: '200.026-BNI-ITP-101 rev.1' }), '20210803_S17_00001_200.026-BNI-ITP-101 rev.1_Release.pdf');
+  // Report numbers: 5 digits, next after the highest numeric one of the phase in that main project; free-text numbers are ignored.
+  const inSite = (release: Row) => release.isoId !== 'foreign';
+  const numbered = [row('1', { type: 'Prefab', reportNo: '00007', isoId: 'x' }), row('2', { type: 'Prefab', reportNo: 'PFR-900', isoId: 'x' }), row('3', { type: 'Field', reportNo: '00020', isoId: 'x' }), row('4', { type: 'Prefab', reportNo: '00099', isoId: 'foreign' })];
+  assert.equal(nextReportNo(numbered, 'Prefab', inSite), '00008'); assert.equal(nextReportNo(numbered, 'Field', inSite), '00021'); assert.equal(nextReportNo([], 'Prefab', inSite), '00001'); assert.equal(nextReportNo(numbered, 'Hydrotest', inSite), '00001');
 });
 
 // ----- the release document --------------------------------------------------------------------------------------
@@ -244,11 +278,13 @@ test('CSV export quotes cells and neutralises spreadsheet formulas', () => {
 
 // ----- menu, resource and action definitions ------------------------------------------------------------------
 
-test('the Weld Pilot Releases menu lists Prefab release, Field release, FWP, hydrotest, request archive, punch and flanges; MTO has none of the release pages', () => {
+test('the Weld Pilot Releases menu lists Prefab release, Field release, Assign Iso to FWP (opening its assign tab), hydrotest, punch and flanges; no Request archive; MTO has none of the release pages', () => {
   const group = PILOT_MAP.weld.groups.find(entry => entry.title === 'Releases')!;
-  assert.deepEqual(group.items.map(item => item.label), ['Prefab release', 'Field release', 'Assign Iso to FWP', 'Hydrotest release', 'Request archive', 'Punch lists', 'Flange Management']);
+  assert.deepEqual(group.items.map(item => item.label), ['Prefab release', 'Field release', 'Assign Iso to FWP', 'Hydrotest release', 'Punch lists', 'Flange Management']);
   assert.deepEqual(group.items.slice(0, 2).map(item => item.path), ['/welding/releases?view=prefab', '/welding/releases?view=field']);
-  assert.equal(group.items.find(item => item.label === 'Request archive')?.path, '/welding/releases?view=archive');
+  assert.equal(group.items.find(item => item.label === 'Assign Iso to FWP')?.path, '/welding/field_packages?tab=assign');
+  assert.ok(!PILOT_MAP.weld.groups.flatMap(entry => entry.items).some(item => item.label === 'Request archive'), 'the reference hides the Request archive in the Weld Pilot');
+  assert.ok(PILOT_MAP.mto.groups.flatMap(entry => entry.items).some(item => item.label === 'Request archive' && item.resource === 'service_requests'), 'the service request archive stays in MTO Pilot');
   assert.ok(!PILOT_MAP.mto.groups.some(entry => entry.items.some(item => item.path?.includes('/welding/releases'))));
 });
 
@@ -257,7 +293,8 @@ test('the hosted profile delivers the release pages, records and actions with ex
   assert.ok(hosted.features.includes('releases'));
   for (const name of ['status', 'releasedBy', 'releasedAt', 'docNo', 'docPrefix', 'docDrawingRule', 'signatureTitles', 'reopenedAt', 'reopenedBy', 'reopenReason', 'isoId', 'type']) assert.ok(hosted.resources.releases.includes(name), name);
   assert.ok(hosted.resources.field_packages.includes('name') && hosted.navigation.includes('releases') && hosted.navigation.includes('field_packages'));
-  assert.deepEqual(hosted.actions.release, ['type', 'isoIds', 'reportNo', 'engineerId', 'signatureId', 'date', 'note']);
+  assert.deepEqual(hosted.actions.release, ['type', 'isoIds', 'itp', 'reportNo', 'engineerId', 'signatureId', 'date', 'note']);
+  for (const name of ['itp', 'itpRev']) assert.ok(hosted.resources.releases.includes(name), name);
   assert.deepEqual(hosted.actions['reopen-release'], ['isoId', 'type', 'reason', 'date']);
   assert.deepEqual(hosted.actions['complete-phase'], ['isoId', 'type']);
   for (const name of ['prefabCompletedAt', 'prefabCompletedBy', 'fieldCompletedAt', 'fieldCompletedBy']) assert.ok(hosted.resources.isometrics.includes(name) && RESOURCE_MAP.isometrics.fields.find(field => field.name === name)?.hidden, name);
@@ -301,7 +338,7 @@ function fixture(t: { after: (fn: () => void) => void }) {
 }
 /** An isometric of project-cooling whose shop welds are welded and accepted, and a field weld that is still open. */
 function readyIso(store: Store, id = 'iso-ready', isoNo = 'STX-CW-901') {
-  store.create('isometrics', { isoNo, projectId: 'project-cooling', drawingNo: 'DWG-2499', pipingClass: 'CS150' }, SYSTEM, id);
+  store.create('isometrics', { isoNo, projectId: 'project-cooling', drawingNo: 'DWG-2499', pipingClass: 'CS150', itpNo: 'ITP-900', itpNo2: 'ITP-NDT-900' }, SYSTEM, id);
   const make = (weldNo: string, typeId: string, extra: Record<string, unknown> = {}) => store.create('welds', { weldNo, isoId: id, typeId, welder1Id: 'welder-1', wpsId: 'wps-1', diameterId: 'diameter-9', lengthMode: 'Diameter', date: '2026-10-20', datefit: '2026-10-19', chargeNo1: 'H-1042', chargeNo2: 'H-1042', ...extra }, SYSTEM);
   const shop = make('W901', 'weld-type-1', { ndoReq: true }), field = make('W902', 'weld-type-0');
   const request = runAction(store, 'inspection-request', { weldIds: [shop.id], type: 'NDT', processId: 'ndt-0', locationId: 'ndt-shop', date: '2026-10-21' }, SYSTEM).records![0];
@@ -382,6 +419,68 @@ test('releasing: only completed isometrics, with who, when, the document numberi
   assert.equal(runAction(store, 'release', releaseData([id], 'Field', { reportNo: 'FLR-900' }), actor).records![0].type, 'Field');
   assert.equal(runAction(store, 'release', releaseData([id], 'Hydrotest', { reportNo: 'HTR-900' }), actor).records![0].type, 'Hydrotest');
   assert.equal(runAction(store, 'release', releaseData(['iso-1']), SYSTEM).records!.length, 1);
+});
+
+test('Release selected: no report number is asked, it is numbered per main project and phase (00001, 00002 …); one document per ITP', t => {
+  const store = fixture(t);
+  const a = readyIso(store, 'iso-a', 'STX-CW-911'), b = readyIso(store, 'iso-b', 'STX-CW-912'), c = readyIso(store, 'iso-c', 'STX-CW-913');
+  store.update('isometrics', 'iso-c', { itpNo: 'ITP-901' }, store.get('isometrics', 'iso-c')._version, SYSTEM);
+  store.create('itps', { number: 'ITP-900', revision: '2' }, SYSTEM);
+  for (const iso of [a, b, c]) { complete(store, iso.id); complete(store, iso.id, 'Field'); }
+  const request = (isoIds: string[], extra: Record<string, unknown> = {}) => runAction(store, 'release', { type: 'Prefab', isoIds, itp: 'ITP-900', ...extra }, actor).records!;
+  // Two isometrics of one ITP: one document (one number, one report number, one ITP), one record per isometric.
+  const first = request([a.id, b.id]);
+  assert.deepEqual(first.map(record => [record.reportNo, record.itp, record.itpRev, record.status]), [['00001', 'ITP-900', '2', 'Released'], ['00001', 'ITP-900', '2', 'Released']]);
+  assert.equal(new Set(first.map(record => record.number)).size, 1);
+  assert.equal(releaseBatchOf(store.list('releases'), first[0]).length, 2);
+  // Another ITP in the same request is refused as a whole; nothing is released.
+  let error = refusal(() => request([c.id], {})); assert.equal(error.status, 422); assert.match(error.message, /STX-CW-913: ITP No is ITP-901, not the chosen ITP ITP-900/);
+  assert.equal(store.list('releases').filter(record => record.isoId === c.id).length, 0);
+  // Without a chosen ITP the checked isometrics must share one; with the ITP of one of them the other is refused.
+  store.update('isometrics', 'iso-c', { itpNo: 'ITP-900' }, store.get('isometrics', 'iso-c')._version, SYSTEM);
+  store.update('isometrics', 'iso-b', { itpNo: 'ITP-901' }, store.get('isometrics', 'iso-b')._version, SYSTEM);
+  const second = runAction(store, 'release', { type: 'Field', isoIds: [a.id, c.id] }, actor).records!;
+  assert.deepEqual(second.map(record => [record.reportNo, record.itp, record.itpRev]), [['00001', 'ITP-NDT-900', ''], ['00001', 'ITP-NDT-900', '']], 'Field has its own numbering and takes ITP No 2');
+  store.update('isometrics', 'iso-c', { itpNo: 'ITP-901', itpNo2: 'ITP-NDT-901' }, store.get('isometrics', 'iso-c')._version, SYSTEM);
+  assert.equal(request([c.id], { itp: 'ITP-901' }).length, 1);
+});
+
+test('Release selected: the next document of a phase gets the next report number; mixed ITPs without a chosen ITP are refused', t => {
+  const store = fixture(t);
+  const a = readyIso(store, 'iso-a', 'STX-CW-911'), b = readyIso(store, 'iso-b', 'STX-CW-912');
+  store.update('isometrics', 'iso-b', { itpNo: 'ITP-901' }, store.get('isometrics', 'iso-b')._version, SYSTEM);
+  complete(store, a.id); complete(store, b.id);
+  const error = refusal(() => runAction(store, 'release', { type: 'Prefab', isoIds: [a.id, b.id] }, actor));
+  assert.equal(error.status, 422); assert.match(error.message, /Choose one ITP first/); assert.equal(store.list('releases').filter(record => record.isoId === a.id || record.isoId === b.id).length, 0, 'nothing was released');
+  const one = runAction(store, 'release', { type: 'Prefab', isoIds: [a.id] }, actor).records![0], two = runAction(store, 'release', { type: 'Prefab', isoIds: [b.id], itp: 'ITP-901' }, actor).records![0];
+  assert.deepEqual([one.reportNo, two.reportNo], ['00001', '00002']);
+  assert.notEqual(one.number, two.number);
+  // A report number sent by an import is kept; the numbering continues after the highest numeric one.
+  const c = readyIso(store, 'iso-c', 'STX-CW-913'); complete(store, c.id);
+  assert.equal(runAction(store, 'release', { type: 'Prefab', isoIds: [c.id], reportNo: '00040' }, actor).records![0].reportNo, '00040');
+});
+
+test('a phase without its ITP cannot be released: Prefab needs ITP No, Field needs ITP No 2 (the captured wording)', t => {
+  const store = fixture(t); const { id } = readyIso(store);
+  store.update('isometrics', id, { itpNo2: '' }, store.get('isometrics', id)._version, SYSTEM);
+  complete(store, id); complete(store, id, 'Field');
+  const field = refusal(() => runAction(store, 'release', { type: 'Field', isoIds: [id] }, actor));
+  assert.equal(field.status, 422); assert.match(field.message, /ITP 2 is missing — enter it before field release\./); assert.equal(ITP_MISSING.Field, 'ITP 2 is missing — enter it before field release.');
+  store.update('isometrics', id, { itpNo: '' }, store.get('isometrics', id)._version, SYSTEM);
+  assert.match(refusal(() => runAction(store, 'release', { type: 'Prefab', isoIds: [id] }, actor)).message, /ITP number is missing — enter it before prefab release\./);
+  assert.equal(store.list('releases').filter(record => record.isoId === id).length, 0, 'nothing was released');
+});
+
+test('Create release doc on the isometric: one isometric, the ITP named, automatic report number; it marks the isometric released', t => {
+  const store = fixture(t); const { id } = readyIso(store);
+  complete(store, id); complete(store, id, 'Field');
+  const before = store.list('releases').length;
+  const record = runAction(store, 'release', { type: 'Field', isoIds: [id], itp: 'ITP-NDT-900' }, actor).records![0];
+  assert.deepEqual([record.type, record.reportNo, record.itp, record.isoId, record.status], ['Field', '00001', 'ITP-NDT-900', id, 'Released']);
+  assert.equal(store.list('releases').length, before + 1);
+  const input = { iso: store.get('isometrics', id), welds: store.list('welds').filter(weld => weld.isoId === id), weldTypes: store.list('weld_types'), results: store.list('inspection_results'), releases: store.list('releases'), punch: [] as Row[] };
+  assert.equal(phaseState('Field', input).state, 'released'); assert.equal(phaseState('Prefab', input).state, 'completed', 'Prefab is not released by the Field document');
+  assert.match(refusal(() => runAction(store, 'release', { type: 'Field', isoIds: [id], itp: 'ITP-NDT-900' }, actor)).message, /Field is already released/);
 });
 
 test('a rejected weld holds Prefab complete until its repair has an accepted result', t => {
@@ -487,7 +586,8 @@ async function http(t: { after: (fn: () => Promise<void>) => void }) {
     const user = store.create('users', { name, email, active: true, profileId: 'profile-viewer', ...({} as object) });
     store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(PASSWORD));
     const request = async (path: string, method = 'GET', data?: unknown, pilot?: string) => {
-      const response = await fetch(`${origin}/api${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Stelux-Request': '1', Origin: origin, ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) });
+      const form = typeof FormData !== 'undefined' && data instanceof FormData;
+      const response = await fetch(`${origin}/api${path}`, { method, headers: { ...(form ? {} : { 'Content-Type': 'application/json' }), 'X-Stelux-Request': '1', Origin: origin, ...(pilot ? { 'X-Stelux-Pilot': pilot } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : form ? data as FormData : JSON.stringify(data) });
       if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0];
       return response;
     };
@@ -571,4 +671,27 @@ test('over HTTP: the matrix areas decide who may release prefab, release field o
   assert.equal((await a.request('/actions/release', 'POST', releaseData([id]), 'weld')).status, 201);
   assert.equal((await a.request('/actions/reopen-release', 'POST', { isoId: id, type: 'Field', reason: 'No field release exists' }, 'weld')).status, 403);
   assert.equal((await a.request('/actions/reopen-release', 'POST', { isoId: id, type: 'Prefab', reason: 'Re-check' }, 'weld')).status, 201);
+});
+
+test('over HTTP: signed release documents are PDF attachments of the release; other files and read-only accounts are refused', async t => {
+  const f = await http(t); const { id } = readyIso(f.store); complete(f.store, id);
+  const full = f.profile('Signed full', { generalPermission: 'Read & write', materialsPermission: 'No access', weldingPermission: 'Administration' });
+  const readOnly = f.profile('Signed read', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'Read only' });
+  const owner = f.client('signed-owner@example.test', 'Mila Kovač'), viewer = f.client('signed-viewer@example.test');
+  f.store.update('users', owner.user.id, { weldEnabled: true, weldProfileId: full, mtoEnabled: false }, owner.user._version, SYSTEM);
+  f.store.update('users', viewer.user.id, { weldEnabled: true, weldProfileId: readOnly, mtoEnabled: false }, viewer.user._version, SYSTEM);
+  await owner.login(); await viewer.login();
+  const released = await owner.request('/actions/release', 'POST', { type: 'Prefab', isoIds: [id] }, 'weld'); assert.equal(released.status, 201);
+  const record = (await released.json()).records[0]; assert.equal(record.reportNo, '00001');
+  const upload = (account: typeof owner, name: string, type: string) => { const body = new FormData(); body.set('file', new Blob(['%PDF-1.4 signed'], { type }), name); body.set('entityType', 'releases'); body.set('entityId', record.id); body.set('documentType', 'Signed release'); return account.request('/files', 'POST', body, 'weld'); };
+  const ok = await upload(owner, 'signed-00001.pdf', 'application/pdf'); assert.equal(ok.status, 201);
+  assert.deepEqual([f.store.list('attachments').filter(file => file.entityType === 'releases').map(file => [file.entityId, file.documentType, file.name])], [[[record.id, 'Signed release', 'signed-00001.pdf']]]);
+  const wrong = await upload(owner, 'scan.png', 'image/png'); assert.equal(wrong.status, 422); assert.match((await wrong.json()).error, /Only PDF files are allowed/);
+  assert.equal((await upload(viewer, 'signed.pdf', 'application/pdf')).status, 403, 'a read-only profile cannot attach');
+  assert.equal(f.store.list('attachments').filter(file => file.entityType === 'releases').length, 1);
+  // The release number, ITP and the signed copy are what the archive page reads.
+  const data = await (await owner.request('/bootstrap', 'GET', undefined, 'weld')).json();
+  const archive = releaseArchiveRows(data.rows.releases, 'Prefab', { isometrics: data.rows.isometrics, projects: data.rows.projects, sites: data.rows.sites, itps: data.rows.itps, attachments: data.rows.attachments });
+  assert.deepEqual(archive.filter(entry => entry.reportNo === '00001').map(entry => [entry.reportNo, entry.itp, entry.signed.length]), [['00001', 'ITP-900', 1]]);
+  assert.ok(archive.some(entry => entry.reportNo === 'PFR-002' && entry.itp === 'ITP-01'), 'a release made before the ITP was stored takes the ITP of its isometric');
 });

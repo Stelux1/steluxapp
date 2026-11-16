@@ -478,6 +478,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);
       if (pilots && key === 'wps' && !/\.pdf$/i.test(name)) throw new AppError(422, 'Choose a PDF file for the WPS document.');
+      if (pilots && key === 'releases' && !/\.pdf$/i.test(name)) throw new AppError(422, 'Only PDF files are allowed for signed release documents.');
       // A new signature image replaces the current one; earlier images stay as attachments (history).
       const signature = pilots && key === 'signatures';
       if (signature || pilots && key === 'company_data') assertSignatureImage(req.file);
