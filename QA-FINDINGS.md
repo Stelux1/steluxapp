@@ -1,15 +1,43 @@
 # QA findings
 
 
+## 2026-11-16 — Fixes of review findings 1–3, and the collapsible menu
+
+Scope: the three open findings of the review below, plus one addition asked for by the product owner (the left menu can be collapsed to icons).
+
+### Closed
+
+- **Finding 1 (test system name across main projects).** The summary label `testSystemName` is produced only for a test system of the isometric's own project or of no project (`shared/iso-summary.ts`). Every write now follows the rule of the hydrotest move action (`server/store.ts`): an isometric takes only a test system of its own project or a shared one (on create, on a changed test system and on a changed project), and a test system that holds isometrics (deleted ones included, so a restore cannot bring the mismatch back) cannot be handed to another project. The isometric form offers only those test systems. Test: `tests/release-review.test.ts` (plain update, create and project move refused with the field named; a link written below the rules is named to nobody; a shared system is named).
+- **Finding 2 (link to a record the account cannot read).** A relation field that names a record not linked yet needs view access to that record (`links` in `server/release-access.ts`, called by the create, update and bulk routes). This covers every relation (PQRs of a WPS, including the primary PQR field, projects of an ITP, WPS, certificate or wire, main projects and customs of a welder, main projects of an account), not only the reported one. Links already there may stay or be removed. Test: a WPS editor without PQR rights gets 403 on create, update and the primary PQR field; with view access to PQRs the same request links.
+- **Finding 3 (new attribute value without the add right).** A text that names no existing value adds one to the catalog only when the account has the add right there (`Actor.canAdd`, asked in `server/store.ts` at the point of creation, so every route is covered). Otherwise the request is refused with 403 and the field named; existing values are still chosen by name or id with the edit right alone. Test: Edit without Add is refused and nothing is added; Edit with Add and module-level "Read & write" add as before.
+
+Each of the three tests fails without its fix (checked by taking the fixes out and running the file).
+
+### Added
+
+- **Menu collapsed to icons** (`client/App.tsx`, `client/pilot.tsx`, `client/nav-collapse.css`, group icons in `shared/pilots.ts`). Client only; no request, permission or data changes. Checked in the browser on the local sample workspace at 1440 × 900, 1280 × 620 and 375 × 812: collapse and expand, the choice kept after a reload, group panels in both pilots (the last group stays on screen), Escape and outside click, the "Iso overview" and "Change password" entries from a panel, and the narrow-screen drawer (always full, no toggle).
+
+### Review of this change
+
+An independent read-only review of the server diff before the deploy: pass with notes, nothing blocking. Its one finding (a deleted isometric let a test system change project, and a later restore brought the mismatch back) is closed above. Its two notes are intended behaviour: moving an isometric to another project asks the user to clear or change the test system first (the field is named), and bulk project edit fails the whole batch the same way.
+
+### Not checked
+
+- CSV import (closed in the hosted profile) does not ask for view access to linked records; the rule of finding 2 applies to the create, update and bulk routes.
+- The collapsed menu was not checked in Safari or Firefox.
+
+Verify (`npm run typecheck && npm test && npm run build:local && STELUX_RELEASE_PROFILE=welding-workspace npx vite build`, then `npm run build:server` and `npm run build`) passed before the commit: 522 tests, 514 pass, 0 fail, 8 skipped (PostgreSQL).
+
+
 ## 2026-11-16 — Review of the follow-up fixes and rollout check (after the release review)
 
 Scope: the 13 commits after `abb366b` (follow-up fixes, PQR delivery, Iso overview, demo project script). Read-only review with HTTP probes, plus a rehearsal of the hosted update on a copy of the hosted database.
 
 ### Findings, by severity
 
-1. Low–Medium, open. `testSystemName` in the isometric summary follows `iso.testSystemId` without checking the test system against the caller's project site access or the isometric's project (`shared/iso-summary.ts:100`, `server/iso-summary.ts:23`). Scenario: an account that may edit isometrics on all main projects sets, with a plain record update, a North isometric's test system to a Riverside one; an account limited to North then sees that one name. The plain update also skips the same-project rule of the hydrotest move action (`server/hydrotest.ts:28`); that part is older than this diff. Fix: produce the label only for a test system inside the caller's site scope that has the isometric's project or none, and apply the same-project rule to `testSystemId` on plain isometric writes.
-2. Low, open. A WPS editor without PQR rights can link a PQR by id (`shared/release.ts:169`, `server/store.ts` `syncRelations`): the link is written, the PQR itself is not readable. Fix: require PQR read access for each linked id.
-3. Low, open. Typing a new attribute value while editing a PQR creates a `qualification_options` record without the Add right (`server/store.ts:166`); only detailed profiles with Edit and without Add are affected.
+1. Low–Medium, fixed (see the section above). `testSystemName` in the isometric summary follows `iso.testSystemId` without checking the test system against the caller's project site access or the isometric's project (`shared/iso-summary.ts:100`, `server/iso-summary.ts:23`). Scenario: an account that may edit isometrics on all main projects sets, with a plain record update, a North isometric's test system to a Riverside one; an account limited to North then sees that one name. The plain update also skips the same-project rule of the hydrotest move action (`server/hydrotest.ts:28`); that part is older than this diff. Fix: produce the label only for a test system inside the caller's site scope that has the isometric's project or none, and apply the same-project rule to `testSystemId` on plain isometric writes.
+2. Low, fixed (see the section above). A WPS editor without PQR rights can link a PQR by id (`shared/release.ts:169`, `server/store.ts` `syncRelations`): the link is written, the PQR itself is not readable. Fix: require PQR read access for each linked id.
+3. Low, fixed (see the section above). Typing a new attribute value while editing a PQR creates a `qualification_options` record without the Add right (`server/store.ts:166`); only detailed profiles with Edit and without Add are affected.
 4. Info. Visual inspection results are not locked after a release (unchanged by this diff).
 5. Info. The engineer on the Visual inspection report is matched at print time from the current QA/QC engineer record; a signature is still printed only over results its owner recorded.
 
@@ -24,7 +52,7 @@ Scope: the 13 commits after `abb366b` (follow-up fixes, PQR delivery, Iso overvi
 
 ### Verdict
 
-Pass with notes. Nothing blocks the deployment; findings 1–3 are follow-up work.
+Pass with notes. Nothing blocks the deployment; findings 1–3 were follow-up work and are fixed (section above).
 
 ## Follow-up fixes (2026-11-16)
 

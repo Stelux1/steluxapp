@@ -12,7 +12,7 @@ Only the logged-in live app is available. The user confirmed that there is no so
 
 Inside a pilot the other pilot's records are refused (hosted profile). Exactly two places cross that boundary on purpose, each in one named server function with tests in `tests/access.test.ts`:
 
-1. **Isometric summary** (`isoSummariesFor` in `server/iso-summary.ts`): per visible isometric, progress, quality, blocker counts per group, list flags, KPI facts, Material status %, the MTO progress budgets, punch counts and the hydrotest state, computed from every record (welds, results, releases, punch items, test systems and hydrotest requests, material lines with their orders, stock and pick lists), delivered with the workspace data in both pilots. Aggregates only, never a weld, result, welder or material line, with one label as the exception (decision 2026-11-16 follow-up): `testSystemName`, the name of the isometric's own test system, so the MTO Pilot header shows the Test system like Weld Pilot (MTO Pilot reads no test systems). It is given only for the isometrics the caller may read in its pilot (the same set that gets a summary); no other field of the test system is carried.
+1. **Isometric summary** (`isoSummariesFor` in `server/iso-summary.ts`): per visible isometric, progress, quality, blocker counts per group, list flags, KPI facts, Material status %, the MTO progress budgets, punch counts and the hydrotest state, computed from every record (welds, results, releases, punch items, test systems and hydrotest requests, material lines with their orders, stock and pick lists), delivered with the workspace data in both pilots. Aggregates only, never a weld, result, welder or material line, with one label as the exception (decision 2026-11-16 follow-up): `testSystemName`, the name of the isometric's own test system, so the MTO Pilot header shows the Test system like Weld Pilot (MTO Pilot reads no test systems). It is given only for the isometrics the caller may read in its pilot (the same set that gets a summary), and only when the test system belongs to the isometric's own project or to no project (shared), so a link to another project's test system never shows that project's name; no other field of the test system is carried.
 2. **Copy isometrics parts** (`copyParts` in `server/release-access.ts`): welds, materials and calculations are each checked with the account's profile in the pilot that owns them, and with the account's project site access in that pilot (`assertCopyInScope` in `server/site-scope.ts`).
 
 ## Observed source behavior
@@ -162,6 +162,11 @@ Code: `shared/pdf-documents.ts` and `shared/pdf-lists.ts` (what is printed), `se
 | Pick list | built | Per report number: project / isometric, report no., date, taken, lines with group, material no., description, DIA, LBS/SCH, quantity, UOM, storehouse, "Taken by" signature box. |
 
 Database: no new table, column or index. The operational access keys are listed in the hosted profile's `availability.reports` without columns.
+
+## Own additions (not in the reference)
+
+- **Menu collapsed to icons** (both pilots, screens wider than 760 px): a round arrow button on the right edge of the left menu reduces it to one icon per menu group and gives its width to the page; a group then opens as a panel beside the icons, and a group of one page (Start → Dashboard) opens that page directly. The open main project moves into the top bar's breadcrumb while the menu is collapsed. The choice is kept per browser. The reference instead offers layout themes under "Change theme" (not built).
+- **Same-project rule for test systems on every write**: the reference was not probed for this (no source writes). Here an isometric takes only a test system of its own project or a shared one, and a test system that holds isometrics cannot be handed to another project.
 
 ## Remaining implementation and comparison work
 
