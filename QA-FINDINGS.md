@@ -1,5 +1,31 @@
 # QA findings
 
+
+## 2026-11-16 — Review of the follow-up fixes and rollout check (after the release review)
+
+Scope: the 13 commits after `abb366b` (follow-up fixes, PQR delivery, Iso overview, demo project script). Read-only review with HTTP probes, plus a rehearsal of the hosted update on a copy of the hosted database.
+
+### Findings, by severity
+
+1. Low–Medium, open. `testSystemName` in the isometric summary follows `iso.testSystemId` without checking the test system against the caller's project site access or the isometric's project (`shared/iso-summary.ts:100`, `server/iso-summary.ts:23`). Scenario: an account that may edit isometrics on all main projects sets, with a plain record update, a North isometric's test system to a Riverside one; an account limited to North then sees that one name. The plain update also skips the same-project rule of the hydrotest move action (`server/hydrotest.ts:28`); that part is older than this diff. Fix: produce the label only for a test system inside the caller's site scope that has the isometric's project or none, and apply the same-project rule to `testSystemId` on plain isometric writes.
+2. Low, open. A WPS editor without PQR rights can link a PQR by id (`shared/release.ts:169`, `server/store.ts` `syncRelations`): the link is written, the PQR itself is not readable. Fix: require PQR read access for each linked id.
+3. Low, open. Typing a new attribute value while editing a PQR creates a `qualification_options` record without the Add right (`server/store.ts:166`); only detailed profiles with Edit and without Add are affected.
+4. Info. Visual inspection results are not locked after a release (unchanged by this diff).
+5. Info. The engineer on the Visual inspection report is matched at print time from the current QA/QC engineer record; a signature is still printed only over results its owner recorded.
+
+### Verified clean
+
+- PQR, attribute values and WPS–PQR links: refused in MTO Pilot and for accounts without Weld Pilot access; read-only profiles cannot write; link records cannot be posted directly.
+- Visual inspection hub: unknown or duplicate welds, free-text results and empty reports are refused; a weld outside the account's project sites with a choice is refused and nothing is written.
+- Visual report signature: the recording account comes from the audit trail (session actor, never client input); sample and demo rows never print a signature.
+- Iso overview, wording and release dialog changes are client-side only.
+- `server/demo-project.ts` is a command only (no route, not imported by a server entry point), refuses SQLite and unprepared schemas, runs dry by default, inserts `demo-` records and a marker in one transaction and changes no existing row.
+- Hosted update rehearsed on a copy loaded with the hosted backup of 2026-11-16: 20 of 20 steps pass (13 tables, 62 reference columns, 9 unique indexes added; all 80 existing tables identical). Over that copy, with a test administrator: sign-in, the selector, 46 Weld Pilot and 35 MTO Pilot menu pages, PQR, Iso overview, the Visual inspection dialog, and every isometric PDF for three existing and four demo isometrics.
+
+### Verdict
+
+Pass with notes. Nothing blocks the deployment; findings 1–3 are follow-up work.
+
 ## Follow-up fixes (2026-11-16)
 
 Fixes for the open items of the three sections below, plus two menu items. No browser or dev server was used; each fix has an automated check. Verify (`npm run typecheck && npm test && npm run build:local && STELUX_RELEASE_PROFILE=welding-workspace npx vite build`) passed before every commit: 516 tests, 508 pass, 0 fail, 8 skipped (PostgreSQL). `shared/resources.ts` and `server/hosted-schema.ts` are unchanged.
