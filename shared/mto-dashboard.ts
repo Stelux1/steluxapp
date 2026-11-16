@@ -1,7 +1,7 @@
 import type { Row } from './types.ts';
 import { lineRequirementIds, materialIdentity, materialRecord, requirementExecution } from './materials.ts';
 import { priorityLabel } from './priority.ts';
-import { freePool as sitePools, isTaken, poolKey, spoolLocation } from './mto-logistics.ts';
+import { freePool as sitePools, pickClaims, pickIssued, poolKey, spoolLocation } from './mto-logistics.ts';
 import { isoSiteId } from './mto-stock.ts';
 
 /**
@@ -364,12 +364,13 @@ export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { 
   const filters: DashboardFilters = { phaseId: text(options.phaseId), projectId: text(options.projectId), spoolId: text(options.spoolId), supplierId: text(options.supplierId) };
   const phaseId = filters.phaseId, today = day(options.today) || new Date().toISOString().slice(0, 10);
   const isos = new Map(active(rows, 'isometrics').map(iso => [iso.id, iso]));
-  // Picked = taken pick lists only; what is on a pick list not taken yet is the line's own claim (below).
-  const taken = { ...rows, picklists: active(rows, 'picklists').filter(isTaken) };
+  // Picked = the pick-list lines whose stock has left the inventory (taken, or issued at Start: w3-mto-execution's rule,
+  // shared/materials.ts pickIssued); a line written before Start and not taken yet is the line's own claim (below).
+  const taken = { ...rows, picklists: active(rows, 'picklists').filter(pickIssued) };
   const entries = serverFilterEntries(rows, requirementExecution(taken).filter(entry => entry.required > 0 && isos.has(entry.iso.id) && (!phaseId || text(entry.requirement.phaseId) === phaseId))
     .map(entry => ({ requirement: entry.requirement, iso: entry.iso, material: entry.material, identity: entry.identity, pool: poolKey(isoSiteId(rows, entry.iso), entry.identity), required: entry.required, picked: entry.picked })), filters);
   const reservations = active(rows, 'reservations').filter(row => row.status === 'Reserved');
-  const claims = active(rows, 'picklists').filter(row => !isTaken(row));
+  const claims = active(rows, 'picklists').filter(pickClaims);
   const sumFor = (list: Row[]) => (requirementId: string) => list.filter(row => row.requirementId === requirementId).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const reservedFor = sumFor(reservations), claimedFor = sumFor(claims);
   const pools = freePoolByMaterial(rows);

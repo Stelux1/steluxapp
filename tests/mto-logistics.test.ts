@@ -758,3 +758,19 @@ test('mto-logistics-005: read-only accounts may print but not sign or upload, an
   const material = f.store.list('service_requests').find(row => row.requirementId)!;
   assert.equal((await f.request(`/api/service-requests/${material.id}/document/service-request`)).status, 404, 'material requests have no spool documents');
 });
+
+// ----- wave 3 integration: the MTO dashboard reads a started pick list with the execution rule -----------------------------
+test('after Start the MTO dashboard counts the issued lines as Picked (10 and 3), no claim, and the metre left stays in the free pool', async t => {
+  const { mtoDashboard } = await import('../shared/mto-dashboard.ts');
+  const store = execution(t);
+  runAction(store, 'start-iso', { isoId: 'iso-exe', phaseId: 'phase-0', date: day, note: 'Shop week 47' }, actor);
+  const model = mtoDashboard(rowsOf(store), { today: day, phaseId: '' });
+  const item = model.board.find(row => row.isoId === 'iso-exe')!;
+  assert.equal(item.readiness, 'STARTED');
+  const figures = (requirementId: string) => { const line = item.lines.find(entry => entry.requirementId === requirementId)!; return [line.picked, line.claimed, line.covered, line.shortage]; };
+  assert.deepEqual([figures('req-a-pipe'), figures('req-b-bolt')], [[10, 0, 10, 0], [3, 0, 3, 1]], 'Picked as the Materials panel shows it (requirementExecution); nothing claimed twice');
+  // A second isometric's line of pipe is covered by the one metre left in North's inventory.
+  store.create('iso_materials', { isoId: 'iso-9', materialId: PIPE, quantity: 2, phaseId: 'phase-0' }, actor, 'req-exe-other');
+  const other = mtoDashboard(rowsOf(store), { today: day, phaseId: '' }).board.find(row => row.isoId === 'iso-9')!.lines.find(line => line.requirementId === 'req-exe-other')!;
+  assert.deepEqual([other.covered, other.shortage], [1, 1]);
+});
