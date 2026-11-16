@@ -17,6 +17,7 @@ import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/typ
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, enablementErrors } from './weld-catalogs.ts';
+import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 
 export class AppError extends Error {
@@ -274,6 +275,7 @@ export class Store {
       const row = this.get(key, id, true);
       if (row._version !== version) throw new AppError(409, 'This record changed. Refresh and try again.');
       this.guardTestSystem(key, row);
+      if (this.hostedRules && key === 'roles' && isWelderRole(row) && !row._archived) throw new AppError(422, 'The Welder role cannot be deleted.');
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       if (!row._archived) {
         if (key === 'articles' && this.list('rentals').some(r => r.articleId === id && Number(r.quantity) > Number(r.returned) && r.status !== 'Consumed')) throw new AppError(409, 'Return outstanding rentals before archiving this article.');

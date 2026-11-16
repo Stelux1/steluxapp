@@ -1,3 +1,4 @@
+import { welderOptionLabel } from '../shared/welder-data.ts';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type InvalidEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { X, ChevronDown, Check, Search, FileText, ArrowUpRight, AlertCircle } from 'lucide-react';
@@ -164,7 +165,7 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
   // Isometric selects (e.g. punch Add item → ISO) list the isometrics by number in natural order.
   if (field.ref === 'isometrics') options = [...options].sort((a, b) => String(a.isoNo ?? '').localeCompare(String(b.isoNo ?? ''), 'en', { numeric: true }));
   if (field.name === 'orderId') options = options.filter(r => ['Pending', 'Partially received'].includes(String(r.status)));
-  const refLabel = (r: Row) => { let name = label(field.ref!, r.id); if (field.ref === 'calculation_norms') name += ` · ${r.uom} · ${r.hoursPerUnit} h/unit`; if (field.ref === 'welds'||field.ref==='iso_materials') name += ` · ${label('isometrics', r.isoId)}`; if (field.ref === 'iso_materials') name += ` · ${r.quantity} ${r.materialId ? rows.materials?.find(material => material.id === r.materialId)?.uom || '' : r.uom || ''}${r.chargeNo ? ` · ${r.chargeNo}` : ''}`; if (field.ref === 'inspection_requests') name += ` · ${label('welds', r.weldId)} · ${r.status}`; if (field.ref === 'rentals') name += ` · ${label('articles', r.articleId)} · ${Number(r.quantity) - Number(r.returned)} outstanding`; return name; };
+  const refLabel = (r: Row) => { let name = field.refDisplay === 'numberName' ? welderOptionLabel(r) : label(field.ref!, r.id); if (field.ref === 'calculation_norms') name += ` · ${r.uom} · ${r.hoursPerUnit} h/unit`; if (field.ref === 'welds'||field.ref==='iso_materials') name += ` · ${label('isometrics', r.isoId)}`; if (field.ref === 'iso_materials') name += ` · ${r.quantity} ${r.materialId ? rows.materials?.find(material => material.id === r.materialId)?.uom || '' : r.uom || ''}${r.chargeNo ? ` · ${r.chargeNo}` : ''}`; if (field.ref === 'inspection_requests') name += ` · ${label('welds', r.weldId)} · ${r.status}`; if (field.ref === 'rentals') name += ` · ${label('articles', r.articleId)} · ${Number(r.quantity) - Number(r.returned)} outstanding`; return name; };
   if (field.showIf && values[field.showIf[0]] !== field.showIf[1]) return null;
   if (field.name === 'ndtpercent' && !values.ndoReq) return null;
   const common = { id, name: field.name, required: field.required, disabled: field.readonly, 'aria-invalid': Boolean(error), 'aria-describedby': error ? `${id}-error` : undefined };

@@ -11,7 +11,7 @@ import { passwordHash } from '../server/auth.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { PILOT_MAP, pilotItemResources } from '../shared/pilots.ts';
-import { ASME_P_NUMBERS, CERTIFICATE_MANDATORY, ISO_15608_GROUPS, NO_WELDER_FILTER, certificateMandatoryErrors, certificatesForProject, expiringQualifications, filterWelders, isoAsmeLabel, linkedToProject, nextIndexNumber, rangeErrors, welderTab, welderTabCounts } from '../shared/welder-data.ts';
+import { ASME_P_NUMBERS, WELDER_PAGE_SIZES, DEFAULT_WELDER_PAGE_SIZE, activeText, defaultWelderSite, isWelderRole, orderFormFields, roleText, welderOnSite, welderOptionLabel, CERTIFICATE_MANDATORY, ISO_15608_GROUPS, NO_WELDER_FILTER, certificateMandatoryErrors, certificatesForProject, expiringQualifications, filterWelders, isoAsmeLabel, linkedToProject, nextIndexNumber, rangeErrors, welderTab, welderTabCounts } from '../shared/welder-data.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
@@ -35,15 +35,19 @@ test('expire warnings list expired and soon-expiring qualifications, earliest fi
       row('q-deleted-welder', { name: 'WQ-9', welderId: 'w4', expiresAt: '2026-01-01' }),
     ],
   };
-  const list = expiringQualifications(rows, TODAY, 30);
+  const list = expiringQualifications(rows, TODAY);
   assert.deepEqual(list.map(item => item.id), ['q-expired', 'q-today', 'q-soon', 'q-edge']);
   assert.deepEqual(list.map(item => item.message), ['Expired', 'Expires today', 'Expires in 1 day', 'Expires in 30 days']);
   assert.deepEqual(list.map(item => item.status), ['expired', 'expiring', 'expiring', 'expiring']);
   assert.equal(list[0].welder, 'W-001 | Alex Taylor'); assert.equal(list[0].welderId, 'w1');
   assert.equal(list[0].qualification, 'WQ-1 | W01 | 141 — TIG | ISO 9606-1');
-  // The window is configurable: a wider one adds the far entry, 0 days keeps only what is due or past due.
-  assert.deepEqual(expiringQualifications(rows, TODAY, 31).map(item => item.id), ['q-expired', 'q-today', 'q-soon', 'q-edge', 'q-far']);
-  assert.deepEqual(expiringQualifications(rows, TODAY, 0).map(item => item.id), ['q-expired', 'q-today']);
+  // Nothing is listed outside its own notify days, and nothing with notifications off.
+  const own = (extra: Record<string, unknown>) => expiringQualifications({ ...rows, welder_certificates: [row('x', { name: 'WQ-X', welderId: 'w1', expiresAt: '2026-12-06', ...extra })] }, TODAY).map(item => item.id);
+  assert.deepEqual(own({ notifyDays: 10 }), [], 'expires in 20 days, notify 10');
+  assert.deepEqual(own({ notifyDays: 30 }), ['x']);
+  assert.deepEqual(own({ notifyDays: 30, notify: false }), []);
+  assert.deepEqual(own({ notifyDays: 10, expiresAt: '2025-01-01' }), ['x'], 'expired entries are always listed');
+  assert.deepEqual(own({ expiresAt: '2026-12-16' }), ['x'], 'no notify days of its own: 30');
 });
 
 test('filter welders matches one valid qualification against every chosen value', () => {
@@ -156,7 +160,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
     assert.equal((await request('/api/auth/login', 'POST', { email: user.email, password })).status, 200);
   };
-  return { store, request, signIn, usePilot: (key: string) => { pilot = key; }, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Welder admin', email: 'welder-admin@example.test', password })).status, 201) };
+  return { store, request, origin, cookie: () => cookie, signIn, usePilot: (key: string) => { pilot = key; }, setup: async () => assert.equal((await request('/api/auth/setup', 'POST', { name: 'Welder admin', email: 'welder-admin@example.test', password })).status, 201) };
 }
 const json = async (response: Response) => response.json() as Promise<Record<string, any>>;
 
@@ -261,4 +265,105 @@ test('pilot boundary: welder data stays in Weld Pilot, shared catalogs open in b
   assert.equal((await f.request('/api/records/welders/welder-1/archive', 'POST', { _version: 1 })).status, 403);
   await f.signIn('Materials only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });
   assert.equal((await f.request('/api/records/welders')).status, 403, 'not enabled for Weld Pilot');
+});
+
+test('expire warning lines read like the reference: one line, welder number, "Custom - <custom>", dd.mm.yyyy, status', () => {
+  const rows = {
+    welders: [row('w1', { number: 'W01', name: 'Alex Taylor', status: 'Active' })],
+    welder_customs_catalog: [row('c1', { name: '141|FM1-FM2|ISO9606-1', abbreviation: '141|FM1-FM2|ISO9606-1' })],
+    welder_certificates: [
+      row('q1', { name: 'WQ-1', welderId: 'w1', customId: 'c1', expiresAt: '2024-04-04' }),
+      row('q2', { name: 'Summary list', welderId: 'w1', isDocument: true, expiresAt: '2026-01-07' }),
+      row('q3', { name: 'WQ-1', welderId: 'w1', customId: 'c1', expiresAt: '2024-04-04' }),
+    ],
+  };
+  const list = expiringQualifications(rows, TODAY);
+  assert.equal(list[0].text, 'W01 Custom - 141|FM1-FM2|ISO9606-1 · 04.04.2024 Expired');
+  assert.equal(list.length, 3, 'duplicates are listed as they are');
+  assert.ok(list.some(item => item.text === 'W01 Summary list · 07.01.2026 Expired'), 'an expired document is warned about like a qualification');
+});
+
+test('welders list helpers: Yes / No, role abbreviation, page sizes, project scope and option text', () => {
+  assert.equal(activeText(row('a', { status: 'Active' })), 'Yes'); assert.equal(activeText(row('b', { status: 'Inactive' })), 'No');
+  assert.deepEqual(WELDER_PAGE_SIZES, [10, 25, 50, 100]); assert.equal(DEFAULT_WELDER_PAGE_SIZE, 25);
+  assert.equal(roleText(row('r', { name: 'Welder', abbreviation: 'WE' })), 'WE'); assert.equal(roleText(row('r', { name: 'Welder' })), 'Welder'); assert.equal(roleText(undefined), '');
+  assert.equal(defaultWelderSite('site-north'), 'site-north'); assert.equal(defaultWelderSite(''), '');
+  const welder = row('w', { globallyDeployable: false }), global = row('g', { globallyDeployable: true });
+  assert.equal(welderOnSite(welder, ['site-river'], 'site-north'), false, 'a welder of another project is not listed');
+  assert.equal(welderOnSite(welder, ['site-north'], 'site-north'), true); assert.equal(welderOnSite(global, [], 'site-north'), true); assert.equal(welderOnSite(welder, [], ''), true, 'All');
+  assert.equal(welderOptionLabel(row('w', { number: 'W-001', name: 'Alex Taylor' })), 'W-001 Alex Taylor'); assert.equal(welderOptionLabel(row('w', { number: 'W-002', name: '' })), 'W-002');
+  assert.equal(isWelderRole(row('r', { name: 'Welder' })), true); assert.equal(isWelderRole(row('r', { name: 'Welding foreman' })), false);
+});
+
+test('hosted Add welder form: reference order, Welder 1 / 2 only for a combination, no Role, placeholders', () => {
+  const view = projectResource(hosted, RESOURCE_MAP.welders);
+  const names = view.fields.filter(field => !field.hidden).map(field => field.name);
+  const wanted = ['number', 'name', 'welderCode', 'address', 'zip', 'residence', 'phone', 'email', 'status', 'companyId', 'welder1Id', 'welder2Id', 'dob', 'currentlyOn', 'globallyDeployable', 'combination'];
+  assert.deepEqual(names.filter(name => wanted.includes(name)), wanted);
+  assert.ok(!names.includes('roleId'), 'no Role field');
+  for (const name of ['welder1Id', 'welder2Id']) assert.deepEqual(view.fields.find(field => field.name === name)?.showIf, ['combination', true]);
+  assert.equal(view.fields.find(field => field.name === 'welder1Id')?.blank, '--------'); assert.equal(view.fields.find(field => field.name === 'companyId')?.blank, '---- Without company ----');
+  assert.ok(view.fields.every(field => !field.section), 'one flat list');
+  // Relation fields join the same order: Active on projects sits before Globally deployable and Combination.
+  const order = orderFormFields('welders', [{ name: 'globallyDeployable' }, { name: 'combination' }, { name: 'siteIds' }, { name: 'currentlyOn' }, { name: 'description' }, { name: 'customIds' }]).map(field => field.name);
+  assert.deepEqual(order, ['currentlyOn', 'siteIds', 'globallyDeployable', 'combination', 'description', 'customIds']);
+  // Other profiles keep the shared form.
+  assert.equal(RESOURCE_MAP.welders.fields.find(field => field.name === 'roleId')?.hidden, undefined);
+});
+
+test('Add welder custom opens with 0.00 ranges and 0.00 to 0.00 means no range', () => {
+  const view = projectResource(hosted, RESOURCE_MAP.welder_customs_catalog);
+  for (const name of ['diameterFrom', 'diameterTo', 'wtFrom', 'wtTo']) assert.equal(view.fields.find(field => field.name === name)?.default, '0.00', name);
+  assert.equal(RESOURCE_MAP.welder_customs_catalog.fields.find(field => field.name === 'diameterFrom')?.default, undefined, 'other profiles unchanged');
+  const welders = [row('w1')];
+  const rows = { diameters: [row('d-2', { size: 60.3 })], welder_customs_catalog: [row('c0', { diameterFrom: '0.00', diameterTo: '0.00', wtFrom: '0.00', wtTo: '0.00' })], welder_certificates: [row('a', { welderId: 'w1', customId: 'c0', expiresAt: '2027-05-01' })] };
+  assert.deepEqual(filterWelders(welders, rows, { ...NO_WELDER_FILTER, diameterId: 'd-2' }, TODAY).map(item => item.id), [], 'a custom without a range states none: it does not qualify any diameter');
+  const withOwnRange = { ...rows, welder_certificates: [row('a', { welderId: 'w1', customId: 'c0', diameterFrom: 21.3, diameterTo: 168.3, expiresAt: '2027-05-01' })] };
+  assert.deepEqual(filterWelders(welders, withOwnRange, { ...NO_WELDER_FILTER, diameterId: 'd-2' }, TODAY).map(item => item.id), ['w1'], 'the qualification keeps its own range when the custom states none');
+  const range = { ...rows, welder_customs_catalog: [row('c0', { diameterFrom: '21.3', diameterTo: '168.3', wtFrom: '0.00', wtTo: '0.00' })] };
+  assert.deepEqual(filterWelders(welders, range, { ...NO_WELDER_FILTER, diameterId: 'd-2' }, TODAY).map(item => item.id), ['w1']);
+  assert.deepEqual(rangeErrors({ diameterFrom: '0.00', diameterTo: '0.00' }, [['diameterFrom', 'diameterTo', 'Diameter']]), {});
+});
+
+test('hosted welders: new welder gets the Welder role, Welder role cannot be deleted, deactivate by status, sample data', async t => {
+  const f = await fixture(t); await f.setup();
+  const data = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
+  const welderRole = data.rows.roles.find(role => role.name === 'Welder')!;
+  assert.equal(welderRole.abbreviation, 'WE');
+  // Sample customs are named like the reference's: no welder code, no "Custom -", abbreviation equals name.
+  for (const custom of data.rows.welder_customs_catalog) { assert.doesNotMatch(String(custom.name), /^W\d|Custom -/); assert.equal(custom.abbreviation, custom.name); }
+  let response = await f.request('/api/records/welders', 'POST', { number: 'W-200', name: 'No Role' }); assert.equal(response.status, 201);
+  const created = (await json(response)).record; assert.equal(created.roleId, welderRole.id);
+  // Welder 1 / Welder 2 belong to a combination only.
+  response = await f.request('/api/records/welders', 'POST', { number: 'W-201', name: 'Single', combination: false, welder1Id: created.id }); assert.equal(response.status, 201);
+  assert.equal((await json(response)).record.welder1Id, '');
+  response = await f.request('/api/records/welders', 'POST', { number: 'W-202', name: 'Pair', combination: true, welder1Id: created.id }); assert.equal(response.status, 201);
+  assert.equal((await json(response)).record.welder1Id, created.id);
+  // Deactivate / Activate is an ordinary update of the status.
+  response = await f.request(`/api/records/welders/${created.id}`, 'PUT', { status: 'Inactive', _version: created._version }); assert.equal(response.status, 200);
+  const inactive = (await json(response)).record; assert.equal(welderTab(inactive), 'inactive');
+  response = await f.request(`/api/records/welders/${created.id}`, 'PUT', { status: 'Active', _version: inactive._version }); assert.equal(welderTab((await json(response)).record), 'active');
+  // The Welder role is not deletable; another role is.
+  response = await f.request(`/api/records/roles/${welderRole.id}/archive`, 'POST', { _version: welderRole._version }); assert.equal(response.status, 422); assert.match((await json(response)).error || (await json(response)).message || '', /Welder role/);
+  const other = (await json(await f.request('/api/records/roles', 'POST', { name: 'Inspector', abbreviation: 'INS' }))).record;
+  assert.equal((await f.request(`/api/records/roles/${other.id}/archive`, 'POST', { _version: other._version })).status, 200);
+});
+
+test('qualifications and documents carry their own Notify (days) and notification switch; photo is stored as a welder file', async t => {
+  const f = await fixture(t); await f.setup();
+  const view = projectResource(hosted, RESOURCE_MAP.welder_certificates);
+  for (const name of ['notifyDays', 'notify']) assert.ok(view.fields.find(field => field.name === name && !field.hidden), name);
+  assert.equal(view.fields.find(field => field.name === 'notifyDays')?.label, 'Notify (days)');
+  assert.deepEqual(view.fields.find(field => field.name === 'customId')?.showIf, ['isDocument', false], 'a document has no qualification fields');
+  const data = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
+  assert.ok(data.rows.welder_certificates.some(item => item.isDocument === true && item.name === 'Summary list'), 'sample document');
+  const response = await f.request('/api/records/welder_certificates', 'POST', { name: 'Medical certificate', welderId: 'welder-1', isDocument: true, expiresAt: '2030-01-01', notifyDays: 10 });
+  assert.equal(response.status, 201); const record = (await json(response)).record; assert.equal(record.notify, true); assert.equal(record.notifyDays, 10);
+  assert.equal((await f.request(`/api/records/welder_certificates/${record.id}`, 'PUT', { notify: false, _version: record._version })).status, 200);
+  // Photo: stored through /files with documentType 'Photo' on the welder.
+  const body = new FormData(); body.set('file', new Blob(['png'], { type: 'image/png' }), 'photo.png'); body.set('entityType', 'welders'); body.set('entityId', 'welder-1'); body.set('documentType', 'Photo');
+  const upload = await fetch(f.origin + '/api/files', { method: 'POST', body, headers: { 'X-Stelux-Request': '1', 'X-Stelux-Pilot': 'weld', Origin: f.origin, Cookie: f.cookie() } });
+  assert.equal(upload.status, 201);
+  const after = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
+  assert.equal(after.rows.attachments.filter(file => file.entityType === 'welders' && file.entityId === 'welder-1' && file.documentType === 'Photo').length, 1);
 });

@@ -4,7 +4,7 @@ import { LISL_COLUMNS } from './lisl.ts';
 import { PILOT_ONLY_FIELDS, RESOURCE_MAP, RESOURCES } from './resources.ts';
 import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES } from './weld-catalogs.ts';
-import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField } from './welder-data.ts';
+import { HOSTED_COLUMNS, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, orderFormFields } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
@@ -238,7 +238,7 @@ export function projectResource(availability: Availability | undefined, resource
     ...resource, description: descriptions[resource.key] || resource.description,
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
-    fields: resource.fields.filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
+    fields: (pilots ? orderFormFields(resource.key, resource.fields) : resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? hostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
     }),

@@ -10,6 +10,8 @@ export interface Field {
   creatable?:boolean;refCategory?:string;
   /** Text of a select's empty option (default "Select <label>"). */
   blank?: string;
+  /** Options of a reference to welders read "<ID nr.> <Name>" (the reference's Welder 1 / Welder 2 lists). */
+  refDisplay?: 'numberName';
   /** Earlier CSV column headings (labels) that still import into this field. */
   aliases?: string[];
   /** Earlier stored values mapped to the option they now stand for (see shared/priority.ts). Never rewritten in bulk. */

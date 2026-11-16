@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useState, type FormEvent } from 'react';
 import { flangeInputErrors } from '../shared/flanges.ts';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { RESOURCE_MAP } from './catalog.ts';
@@ -11,6 +11,7 @@ import { api, post, ApiError, formatNumber, apiUrl } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Modal, FieldInput, revealInvalidField } from './components.tsx';
 import { PermissionProfileEditor } from './permission-profile-editor.tsx';
+import { orderFormFields } from '../shared/welder-data.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { enabledOnSite } from '../shared/weld-catalogs.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
@@ -19,10 +20,13 @@ import { PROGRESS_PHASES, progressTotals, progressWeights, validateProgressWeigh
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 export function RecordEditor(props:EditorProps){return props.resourceKey==='profiles'?<PermissionProfileEditor record={props.record} onClose={props.onClose}/>:<ResourceEditor {...props}/>;}
 function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorProps) {
-  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const editorFields=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];
+  const def = RESOURCE_MAP[resourceKey]; const { rows,user,refresh, notify, isoSummaries, canRecord } = useWorkspace();const enablement=useSiteEnablement(resourceKey);const unordered=[...def.fields,...relationFields(resourceKey),...(enablement.active?[enablementField(enablement.siteName)]:[])];const editorFields=user.availability?.features.includes('pilots')?orderFormFields(resourceKey,unordered):unordered;
   const [values, setValues] = useState<Record<string, unknown>>(() => ({...Object.fromEntries(def.fields.map(f => [f.name, f.type === 'password' ? '' : record?.[f.name] ?? defaults[f.name] ?? f.default ?? (f.type === 'checkbox' ? false : '')])),...Object.fromEntries((RELATIONS[resourceKey]||[]).map(r=>[r.field,record?relationIds(rows,r,record.id):defaults[r.field]||[]])),...(enablement.active?{enabledOnSite:record?enabledOnSite(resourceKey,record,enablement.siteId,rows):true}:{})}));
   const [error, setError] = useState(''); const [fields, setFields] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false);
-  const groups = [...new Set(editorFields.filter(f=>!f.hidden).map(f => f.section || 'Details'))];
+  const [photo, setPhoto] = useState<File | null>(null);
+  const withPhoto = resourceKey === 'welders' && Boolean(user.availability?.features.includes('pilots')) && canRecord('welders', 'import', record);
+  const shown = (f: { hidden?: boolean; showIf?: [string, unknown] }) => !f.hidden && (!f.showIf || values[f.showIf[0]] === f.showIf[1]);
+  const groups = [...new Set(editorFields.filter(shown).map(f => f.section || 'Details'))];
   // A long form is often scrolled past the message when it is saved: bring it back into view.
   useEffect(() => { if (error) document.querySelector('.modal-body > .alert.error')?.scrollIntoView({ block: 'nearest' }); }, [error, fields]);
   async function submit(e: FormEvent) {
@@ -35,7 +39,9 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
       const field=def.fields.find(f=>f.name===name); const relation=(RELATIONS[resourceKey]||[]).find(r=>r.field===name);
       const previous=relation?relationIds(rows,relation,record.id):field?.type==='password'?'':record[name]??field?.default??(field?.type==='checkbox'?false:'');
       return JSON.stringify(value)!==JSON.stringify(previous);
-    })) : values; await api(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.active ? { enabledSiteId: enablement.siteId } : {}), ...(record ? { _version: record._version } : {}) }) }); await refresh(); notify(`${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
+    })) : values; const saved = await api<{ record: Row }>(`/records/${resourceKey}${record ? '/' + record.id : ''}`, { method: record ? 'PUT' : 'POST', body: JSON.stringify({ ...payload, ...(enablement.active ? { enabledSiteId: enablement.siteId } : {}), ...(record ? { _version: record._version } : {}) }) });
+      let photoError = ''; if (photo && withPhoto) { const body = new FormData(); body.set('file', photo); body.set('entityType', 'welders'); body.set('entityId', saved.record.id); body.set('documentType', 'Photo'); try { await api('/files', { method: 'POST', body }); } catch (e) { photoError = (e as Error).message; } }
+      await refresh(); notify(photoError ? `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}, but the photo was not attached: ${photoError}` : `${def.singular[0].toUpperCase() + def.singular.slice(1)} ${record ? 'updated' : 'created'}.`); onClose(); }
     catch (error) { setError((error as Error).message); setFields((error as ApiError).fields || {}); } finally { setBusy(false); }
   }
   function change(name: string, value: unknown) {
@@ -51,10 +57,11 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
         if (certificate?.materialId) next[`material${side}Id`] = certificate.materialId;
         if (certificate?.chargeNo) next[`chargeNo${side}`] = certificate.chargeNo;
       }
+      if (resourceKey === 'welders' && name === 'combination' && !value) { next.welder1Id = ''; next.welder2Id = ''; }
       return next;
     });
   }
-  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => !f.hidden&&(f.section || 'Details') === group).map(f => <FieldInput key={f.name} field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  return <Modal title={`${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => shown(f)&&(f.section || 'Details') === group).length} fields</span></summary><div className="form-grid">{editorFields.filter(f => shown(f)&&(f.section || 'Details') === group).map(f => <Fragment key={f.name}><FieldInput field={f} value={values[f.name]} values={values} error={fields[f.name]} onChange={v => change(f.name, v)}/>{withPhoto && f.name === 'currentlyOn' && <div className="field full-width"><label htmlFor="welder-photo">Photo</label><input id="welder-photo" type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e => setPhoto(e.target.files?.[0] ?? null)}/><small className="field-hint">Shown on the welder card.</small></div>}</Fragment>)}</div>{resourceKey === 'sites' && group === 'Iso progress' && <ProgressTotals values={values}/>}</details>)}</div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
 }
 /** Running totals of the isometric progress weights: phases must reach 100 %, and so must each active phase. */
 function ProgressTotals({ values }: { values: Record<string, unknown> }) {

@@ -23,9 +23,8 @@ export const CERT_TYPES = ['2.1', '2.2', '3.1', '3.2'];
 export const WELD_POSITIONS = ['PA', 'PB', 'PC', 'PD', 'PE', 'PF', 'PG', 'H-L045', 'J-L045', '1G', '2G', '3G', '4G', '5G', '6G', '1F', '2F', '3F', '4F'];
 export const WELD_KINDS = ['BW', 'FW'];
 export const STANDARD_SYSTEMS = ['ASME', 'EN'];
-/** Days ahead in which a qualification counts as "expires soon"; the top bar lets the user pick another window. */
-export const DEFAULT_EXPIRE_WINDOW_DAYS = 30;
-export const EXPIRE_WINDOWS = [30, 60, 90];
+/** Notify days of a qualification or document that has none of its own. */
+export const DEFAULT_NOTIFY_DAYS = 30;
 
 // ---------------------------------------------------------------------------------------------------------
 // Registry data read by resources.ts / release.ts / permissions.ts / welding.ts.
@@ -52,7 +51,7 @@ export const WELDER_DATA_PAGES: Record<string, string[]> = {
 };
 /** Resources delivered without a menu page of their own. */
 export const WELDER_DATA_RECORDS: Record<string, string[]> = {
-  welder_certificates: names('name welderId certificateTypeId processId standard issuedAt expiresAt description customId wireId position weldKind system diameterFrom diameterTo thicknessFrom thicknessTo'),
+  welder_certificates: names('name welderId certificateTypeId processId standard issuedAt expiresAt description customId wireId position weldKind system diameterFrom diameterTo thicknessFrom thicknessTo notifyDays notify isDocument'),
   welder_sites: names('welderId siteId ownerArchived'),
   welder_customs: names('welderId customId ownerArchived'),
   certificate_projects: names('certificateId projectId ownerArchived'),
@@ -68,7 +67,7 @@ export const HOSTED_LABELS: Record<string, Record<string, string>> = {
   material_types: { name: 'Type of material' },
   welding_wires: { name: 'Index number', classification: 'Rod type', diameter: 'mm', certType: 'Certificate-type', description: 'Note' },
   certifications: { name: 'Attest number', chargeNo: 'Charge number', certType: 'Certificate-type', materialId: 'Material No', diameter: 'Diameter', description: 'Note' },
-  welder_certificates: { certificateTypeId: 'Certificate', processId: 'Weld process' },
+  welder_certificates: { name: 'Name', certificateTypeId: 'Certificate', processId: 'Weld process' },
   // Punch lists → Add item (capture of 2026-11-16): the category select is "Type", the isometric select "ISO".
   punchlists: { category: 'Type', isoId: 'ISO' },
   // MTO Pilot catalogs (captures mto.md → Logistic, weld-catalogs.md → Material supplier).
@@ -101,12 +100,43 @@ export const HOSTED_REQUIRED: Record<string, [string, string][]> = {
   diameters: [['size', 'Size in mm']],
   material_types: [['typeOfSteel', 'Type of steel']],
 };
+/** Qualification-only fields: a welder document ("Summary list") has none of them (see `isDocument`). */
+const QUALIFICATION_ONLY = names('certificateTypeId processId standard issuedAt customId wireId position weldKind system diameterFrom diameterTo thicknessFrom thicknessTo');
+/** Further changes of the hosted profile to a field of the shared definitions (reference defaults, placeholders, visibility). */
+export const HOSTED_FIELD_OVERRIDES: Record<string, Record<string, Partial<Field>>> = {
+  // Add welder: no Role (every welder gets the Welder role), Welder 1 / Welder 2 only while Combination is ticked.
+  welders: {
+    roleId: { hidden: true }, companyId: { blank: '---- Without company ----' },
+    welder1Id: { showIf: ['combination', true], blank: '--------', refDisplay: 'numberName' }, welder2Id: { showIf: ['combination', true], blank: '--------', refDisplay: 'numberName' },
+  },
+  // Add welder custom: the four range inputs open with 0.00 (0.00 to 0.00 means "no range", see `pick` in `effectiveRange`).
+  welder_customs_catalog: Object.fromEntries(['diameterFrom', 'diameterTo', 'wtFrom', 'wtTo'].map(name => [name, { default: '0.00' }])),
+  welder_certificates: { notifyDays: { label: 'Notify (days)' }, notify: { label: 'Notify before it expires' }, ...Object.fromEntries(QUALIFICATION_ONLY.map(name => [name, { showIf: ['isDocument', false] as [string, boolean] }])) },
+};
 /** The reference label, required flag and group of a field of the shared definitions as the hosted profile shows them. */
 export function hostedField(resource: string, field: Field): Field {
   const label = HOSTED_LABELS[resource]?.[field.name];
   const required = HOSTED_REQUIRED[resource]?.some(([name]) => name === field.name);
   const grouped = field.name === 'allProjects' ? { section: 'Links & availability' } : {};
-  return label || required || Object.keys(grouped).length ? { ...field, ...(label ? { label } : {}), ...(required ? { required: true } : {}), ...grouped } : field;
+  const override = HOSTED_FIELD_OVERRIDES[resource]?.[field.name];
+  if (!label && !required && !override && !Object.keys(grouped).length) return field;
+  const result: Field = { ...field, ...(label ? { label } : {}), ...(required ? { required: true } : {}), ...grouped, ...override };
+  return result;
+}
+
+/** Order of the Add / Edit welder form in the reference (names of fields and of the relation fields). The rest follows. */
+export const HOSTED_FORM_ORDER: Record<string, string[]> = {
+  welders: names('number name welderCode address zip residence phone email status companyId welder1Id welder2Id dob currentlyOn siteIds globallyDeployable combination'),
+};
+/**
+ * Put form fields (or relation fields) of the hosted profile in the reference order of a resource; fields it does not
+ * name keep their order after those it does. The reference form is one flat list, so the fields lose their sections.
+ */
+export function orderFormFields<T extends { name: string; section?: string }>(resource: string, fields: T[]): T[] {
+  const order = HOSTED_FORM_ORDER[resource];
+  if (!order) return fields;
+  const rank = (name: string) => { const index = order.indexOf(name); return index < 0 ? order.length : index; };
+  return fields.map((field, position) => ({ field, position })).sort((a, b) => rank(a.field.name) - rank(b.field.name) || a.position - b.position).map(({ field }) => { const { section: _section, ...flat } = field; return flat as T; });
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -151,10 +181,14 @@ export interface ExpireWarning {
   id: string; welderId: string; welder: string; qualification: string; expiresAt: string;
   /** Negative when expired. */
   days: number; status: 'expired' | 'expiring'; message: string;
+  /** The line of the top bar list: `W01 Custom - 141|FM1-FM2|ISO9606-1 · 04.04.2024 Expired`. */
+  text: string;
 }
 const DAY = 86_400_000;
 const dayNumber = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / DAY);
 export const todayIso = () => new Date().toISOString().slice(0, 10);
+/** dd.mm.yyyy, the date format of the warnings. */
+export const warningDate = (iso: string) => /^\d{4}-\d{2}-\d{2}/.test(iso) ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : iso;
 
 /** One line naming a qualification: custom or certificate type, process, standard (like `W01 Custom - 141|FM1-FM2|ISO9606-1/NEN3650`). */
 export function qualificationLabel(certificate: Row, lookups: { custom?: Row; type?: Row; process?: Row } = {}): string {
@@ -162,23 +196,34 @@ export function qualificationLabel(certificate: Row, lookups: { custom?: Row; ty
   return [text(certificate.name), first, text(lookups.process?.name), text(certificate.standard)].filter(Boolean).join(' | ');
 }
 export const expireMessage = (days: number) => days < 0 ? 'Expired' : days === 0 ? 'Expires today' : `Expires in ${days} ${days === 1 ? 'day' : 'days'}`;
+/** Days before the expiry from which a qualification or document is warned about (its own "Notify (days)", else 30). */
+export function notifyDays(certificate: Row): number {
+  const own = number(certificate.notifyDays);
+  return own === null || own < 0 ? DEFAULT_NOTIFY_DAYS : Math.floor(own);
+}
+/** Notifications are on unless the record says otherwise (records saved before the switch existed are on). */
+export const notificationsOn = (certificate: Row) => certificate.notify !== false;
+/** What the top bar calls a qualification or document: `Custom - <custom name>` for a qualification of a custom, else its own name. */
+export const warningName = (certificate: Row, custom?: Row) => custom ? `Custom - ${text(custom.name)}` : text(certificate.name);
 
 /**
- * Welder qualifications (welder certificates with an expiry date) that are expired or expire within
- * `windowDays` of `today`. Archived qualifications and archived or inactive welders are left out.
- * Sorted by expiry date, earliest first.
+ * Welder qualifications and documents (welder certificates with an expiry date) that are expired, or expire within
+ * their own "Notify (days)", while their notifications are on. Archived records and archived or inactive welders
+ * are left out. Sorted by expiry date, earliest first; nothing is merged, a duplicate is listed twice.
  */
-export function expiringQualifications(rows: { welders?: Row[]; welder_certificates?: Row[]; welder_customs_catalog?: Row[]; certificate_types?: Row[]; weld_processes?: Row[] }, today = todayIso(), windowDays = DEFAULT_EXPIRE_WINDOW_DAYS): ExpireWarning[] {
+export function expiringQualifications(rows: { welders?: Row[]; welder_certificates?: Row[]; welder_customs_catalog?: Row[]; certificate_types?: Row[]; weld_processes?: Row[] }, today = todayIso()): ExpireWarning[] {
   const welders = new Map((rows.welders || []).filter(row => !row._archived && row.status !== 'Inactive').map(row => [row.id, row]));
   const find = (list: Row[] | undefined, id: unknown) => (list || []).find(row => row.id === id);
-  const now = dayNumber(today), window = Math.max(0, Math.floor(windowDays));
+  const now = dayNumber(today);
   const result: ExpireWarning[] = [];
   for (const certificate of rows.welder_certificates || []) {
     const expiresAt = text(certificate.expiresAt), welder = welders.get(String(certificate.welderId));
-    if (certificate._archived || !welder || !/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)) continue;
+    if (certificate._archived || !welder || !notificationsOn(certificate) || !/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)) continue;
     const days = dayNumber(expiresAt) - now;
-    if (days > window) continue;
-    result.push({ id: certificate.id, welderId: welder.id, welder: [text(welder.number), text(welder.name)].filter(Boolean).join(' | '), qualification: qualificationLabel(certificate, { custom: find(rows.welder_customs_catalog, certificate.customId), type: find(rows.certificate_types, certificate.certificateTypeId), process: find(rows.weld_processes, certificate.processId) }), expiresAt, days, status: days < 0 ? 'expired' : 'expiring', message: expireMessage(days) });
+    if (days > notifyDays(certificate)) continue;
+    const message = expireMessage(days);
+    result.push({ id: certificate.id, welderId: welder.id, welder: [text(welder.number), text(welder.name)].filter(Boolean).join(' | '), qualification: qualificationLabel(certificate, { custom: find(rows.welder_customs_catalog, certificate.customId), type: find(rows.certificate_types, certificate.certificateTypeId), process: find(rows.weld_processes, certificate.processId) }), expiresAt, days, status: days < 0 ? 'expired' : 'expiring', message,
+      text: `${[text(welder.number), warningName(certificate, find(rows.welder_customs_catalog, certificate.customId))].filter(Boolean).join(' ')} · ${warningDate(expiresAt)} ${message}` });
   }
   return result.sort((a, b) => a.expiresAt.localeCompare(b.expiresAt) || a.welder.localeCompare(b.welder));
 }
@@ -190,9 +235,9 @@ export interface WelderQualificationFilter { wireId: string; processId: string; 
 export const NO_WELDER_FILTER: WelderQualificationFilter = { wireId: '', processId: '', diameterId: '', thickness: '', position: '', weldKind: '', system: '' };
 export const welderFilterCount = (filter: WelderQualificationFilter) => Object.values(filter).filter(value => text(value)).length;
 
-/** Effective range of a qualification: its own bounds, else those of its custom; null when neither states one. */
+/** Effective range of a qualification: its own bounds, else those of its custom; null when neither states one (0.00 to 0.00, the form's default, states none). */
 function effectiveRange(certificate: Row, custom: Row | undefined, own: [string, string], inherited: [string, string]): [number | null, number | null] | null {
-  const pick = (row: Row | undefined, [from, to]: [string, string]): [number | null, number | null] | null => { const pair: [number | null, number | null] = [number(row?.[from]), number(row?.[to])]; return pair[0] === null && pair[1] === null ? null : pair; };
+  const pick = (row: Row | undefined, [from, to]: [string, string]): [number | null, number | null] | null => { const pair: [number | null, number | null] = [number(row?.[from]), number(row?.[to])]; return pair[0] === null && pair[1] === null || pair[0] === 0 && pair[1] === 0 ? null : pair; };
   return pick(certificate, own) ?? pick(custom, inherited);
 }
 const inRange = (range: [number | null, number | null] | null, value: number) => range !== null && (range[0] === null || value >= range[0]) && (range[1] === null || value <= range[1]);
@@ -229,6 +274,22 @@ export function filterWelders(welders: Row[], rows: { welder_certificates?: Row[
 export type WelderTab = 'active' | 'inactive' | 'deleted';
 export const welderTab = (welder: Row): WelderTab => welder._archived ? 'deleted' : welder.status === 'Inactive' ? 'inactive' : 'active';
 export const welderTabCounts = (welders: Row[]): Record<WelderTab, number> => welders.reduce((counts, welder) => { counts[welderTab(welder)]++; return counts; }, { active: 0, inactive: 0, deleted: 0 });
+/** Rows per page of the Welders list (reference: 10, 25, 50, 100; 25 is the default). */
+export const WELDER_PAGE_SIZES = [10, 25, 50, 100];
+export const DEFAULT_WELDER_PAGE_SIZE = 25;
+/** "Active" column: Yes / No. */
+export const activeText = (welder: Row) => welder.status === 'Inactive' ? 'No' : 'Yes';
+/** "Role" column: the role's abbreviation, else its name. */
+export const roleText = (role?: Row) => text(role?.abbreviation) || text(role?.name);
+/** Welder 1 / Welder 2 options: `<ID nr.> <Name>`, the ID nr. alone when the welder has no name. */
+export const welderOptionLabel = (welder: Row) => [text(welder.number), text(welder.name)].filter(Boolean).join(' ');
+/** The welders list opens on the active main project (empty: all). */
+export const defaultWelderSite = (siteId: string | undefined) => siteId || '';
+/** A welder is on a main project when it is globally deployable or active on it; an empty project shows all welders. */
+export const welderOnSite = (welder: Row, linkedSiteIds: string[], siteId: string) => !siteId || welder.globallyDeployable === true || linkedSiteIds.includes(siteId);
+/** The Welder role (abbreviation WE) is the one role of WeldPilot; it cannot be deleted. */
+export const isWelderRole = (role: Row) => text(role.name).toLowerCase() === 'welder';
+
 
 // ---------------------------------------------------------------------------------------------------------
 // Material certificates
