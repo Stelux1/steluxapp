@@ -117,8 +117,10 @@ function ReleaseStatusCell({ entry, noun }: { entry: ReleaseListRow; noun: strin
 
 /** Release the checked isometrics of one phase. The server checks every isometric again and releases all of them or none. */
 function ReleaseDialog({ type, isometrics, onClose, onDone }: { type: ReleasePhase; isometrics: Row[]; onClose: () => void; onDone?: () => void }) {
-  const { refresh, notify } = useWorkspace();
+  const { refresh, notify, rows, user, hasFeature } = useWorkspace();
   const fields = ACTIONS.release.fields.filter(field => ['reportNo', 'engineerId', 'signatureId', 'date', 'note'].includes(field.name));
+  // The server takes only the releasing account's own signature (hosted rules), so only those are offered.
+  const ownSignatures = hasFeature('pilots') ? (rows.signatures || []).filter(row => row.userId === user.id).map(row => row.id) : undefined;
   const [values, setValues] = useState<Record<string, unknown>>({ reportNo: '', engineerId: '', signatureId: '', date: today(), note: '' });
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [problems, setProblems] = useState<Record<string, string>>({});
   async function submit(event: FormEvent) {
@@ -136,7 +138,7 @@ function ReleaseDialog({ type, isometrics, onClose, onDone }: { type: ReleasePha
     <form onSubmit={event => void submit(event)}><div className="modal-body">
       {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
       <ul className="release-iso-list" aria-label="Isometrics to release">{isometrics.map(iso => <li key={iso.id}>{text(iso.isoNo)}</li>)}</ul>
-      <div className="form-grid">{fields.map(field => <FieldInput key={field.name} field={field.name === 'reportNo' ? { ...field, required: true } : field} value={values[field.name]} values={values} error={problems[field.name]} onChange={value => setValues(old => ({ ...old, [field.name]: value }))}/>)}</div>
+      <div className="form-grid">{fields.map(field => <FieldInput key={field.name} field={field.name === 'reportNo' ? { ...field, required: true } : field} value={values[field.name]} values={values} error={problems[field.name]} allowedIds={field.name === 'signatureId' ? ownSignatures : undefined} onChange={value => setValues(old => ({ ...old, [field.name]: value }))}/>)}</div>
       <p className="iso-hint">The document number and the signature block titles come from the Document settings of the main project and are stored with each release.</p>
     </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy || !isometrics.length}>{busy && <Loader2 size={15} className="spin"/>}Release {isometrics.length === 1 ? 'isometric' : `${isometrics.length} isometrics`}</button></div></form>
   </Modal>;
