@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpDown, ChevronLeft, ChevronRight, FolderOpen, Pencil, Plus, Printer } from 'lucide-react';
+import { AlertCircle, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, FolderOpen, Loader2, Pencil, Plus, Printer, Upload } from 'lucide-react';
+import { IMPORT_FROM_SITE_TITLE } from '../shared/material-sites.ts';
+import { usePilot } from './pilot.tsx';
 import { SITE_DEFAULT_SORT, SITE_LIST_COLUMNS, SITE_PAGE_SIZES, siteListRows } from '../shared/site-list.ts';
 import { EMPTY_TABLE_TEXT, NO_MATCH_TEXT, entriesText } from '../shared/ui-texts.ts';
 import { NO_RIGHTS_TEXT } from '../shared/pilots.ts';
 import type { Row } from '../shared/types.ts';
 import { RESOURCE_MAP } from './catalog.ts';
-import { apiUrl } from './api.ts';
+import { apiUrl, post } from './api.ts';
 import { ArchiveRecordButton, ArchiveRecordDialog } from './archive-record.tsx';
-import { Badge, EmptyState, SearchInput, TableScroll } from './components.tsx';
+import { Badge, EmptyState, Modal, SearchInput, TableScroll } from './components.tsx';
 import { useWorkspace } from './context.tsx';
 import { RecordEditor } from './dialogs.tsx';
 
@@ -21,6 +23,7 @@ export function SitesPage() {
   const def = RESOURCE_MAP.sites;
   const [archived, setArchived] = useState(false), [query, setQuery] = useState(''), [size, setSize] = useState(SITE_PAGE_SIZES[1]), [page, setPage] = useState(0);
   const [sort, setSort] = useState(SITE_DEFAULT_SORT), [editor, setEditor] = useState<Row | 'new' | null>(null), [archiving, setArchiving] = useState<Row | null>(null);
+  const [importing, setImporting] = useState<Row | null>(null); const pilot = usePilot();
   const all = allRows.sites || [];
   const rows = useMemo(() => siteListRows(all, { archived, query, sort }), [all, archived, query, sort]);
   if (!canRecord('sites')) return <div className="page"><EmptyState title={NO_RIGHTS_TEXT} description="Ask an administrator to add the right to your permission profile."/></div>;
@@ -31,6 +34,8 @@ export function SitesPage() {
   const toggleSort = (field: string) => { setSort(old => ({ field, direction: old.field === field ? (old.direction === 1 ? -1 : 1) : 1 })); setPage(0); };
   // A limited account cannot add a main project: it would lie outside its access.
   const canAdd = canRecord('sites', 'insert') && !user.siteLimited;
+  // MTO Pilot: the row icon "Import Materials DB from another project site" (the same rights as Import material).
+  const canImportMaterials = pilot?.pilot.key === 'mto' && canRecord('materials', 'import') && canRecord('materials', 'insert');
   return <div className="page records-page sites-page">
     <div className="page-heading"><div><div className="eyebrow">GENERAL DATA</div><h1>{def.title}</h1><p>The main projects of your workspace. Open one to work in its projects.</p></div>
       <div className="heading-actions"><button type="button" className="btn" onClick={() => { setArchived(value => !value); setPage(0); }}>{archived ? 'Back to active sites' : 'Show archived sites'}</button>{canAdd && <button type="button" className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add project site</button>}</div></div>
@@ -53,6 +58,7 @@ export function SitesPage() {
             {!site._archived && <button type="button" className="icon-btn" aria-label={`Open projects of ${String(site.name)}`} title="Projects" onClick={() => open(site)}><FolderOpen size={16}/></button>}
             {!site._archived && canRecord('sites', 'edit', site) && <button type="button" className="icon-btn" aria-label={`Edit project site ${String(site.name)}`} title="Edit project site" onClick={() => setEditor(site)}><Pencil size={16}/></button>}
             <ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/>
+            {!site._archived && canImportMaterials && <button type="button" className="icon-btn" aria-label={`${IMPORT_FROM_SITE_TITLE}: ${String(site.name)}`} title={IMPORT_FROM_SITE_TITLE} onClick={() => setImporting(site)}><Upload size={16}/></button>}
           </span></td></tr>)}
           {!shown.length && <tr><td colSpan={SITE_LIST_COLUMNS.length + 1} className="empty-cell" role="status">{query.trim() ? NO_MATCH_TEXT : EMPTY_TABLE_TEXT}</td></tr>}
         </tbody></table></TableScroll>
@@ -61,5 +67,30 @@ export function SitesPage() {
     </div>
     {archiving && <ArchiveRecordDialog resourceKey="sites" record={archiving} onClose={() => setArchiving(null)}/>}
     {editor && <RecordEditor resourceKey="sites" record={editor === 'new' ? undefined : editor} onClose={() => setEditor(null)}/>}
+    {importing && <ImportMaterialsDialog site={importing} sites={all} onClose={() => setImporting(null)}/>}
   </div>;
+}
+
+/**
+ * MTO Pilot → Project sites → "Import Materials DB from another project site": every material of the chosen project site
+ * becomes available on this one (no copies); materials it already has stay as they are.
+ */
+function ImportMaterialsDialog({ site, sites, onClose }: { site: Row; sites: Row[]; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace(); const id = useId();
+  const sources = sites.filter(row => !row._archived && row.id !== site.id).sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }));
+  const [source, setSource] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError('');
+    if (!source) { setError('Choose the project site to import the material database from.'); return; }
+    setBusy(true);
+    try { const result = await post<{ linked: number }>('/material-sites/import', { siteId: site.id, sourceSiteId: source }); await refresh(); notify(`${result.linked} ${result.linked === 1 ? 'material is' : 'materials are'} now available on ${String(site.name)}.`); onClose(); }
+    catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
+  }
+  return <Modal title={IMPORT_FROM_SITE_TITLE} subtitle={String(site.name)} onClose={onClose}>
+    <form noValidate onSubmit={event => void submit(event)}><div className="modal-body">
+      {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+      {sources.length ? <div className="field"><label htmlFor={id}>Project site<span className="required"> *</span></label><div className="select-wrap"><select id={id} value={source} required onChange={event => setSource(event.target.value)}><option value="">Choose a project site</option>{sources.map(row => <option key={row.id} value={row.id}>{String(row.name)}</option>)}</select><ChevronDown size={14}/></div><small className="field-hint">Its materials become available on this project site too; nothing is copied.</small></div>
+        : <p role="status">There is no other project site to import from.</p>}
+    </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !sources.length}>{busy && <Loader2 size={15} className="spin"/>}Import</button></div></form>
+  </Modal>;
 }
