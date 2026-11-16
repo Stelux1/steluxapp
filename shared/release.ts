@@ -123,7 +123,7 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     deliverResource(availability, 'projects', ['weldPilot', 'mtoPilot']);
     // System menu: accounts with access per pilot, permission profiles (both for administrators only, see
     // canResource) and each user's own signatures.
-    for (const key of ['users', 'profiles', 'signatures']) deliverResource(availability, key);
+    for (const key of ['users', 'profiles', 'signatures', 'company_data']) deliverResource(availability, key);
     availability.features.push('project-planning', 'pilots');
   }
   if (profile === 'access-prototype') availability.features.push('local-access');
