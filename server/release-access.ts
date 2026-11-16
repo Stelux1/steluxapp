@@ -11,7 +11,8 @@ import { availableWps, RELATIONS, relationMatches } from '../shared/welding.ts';
 import { WPS_COPY_FIELDS } from '../shared/wps.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
 import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
-import { allowedSites, inSiteScope, isSiteRefusal } from './site-scope.ts';
+import { allowedSites, inSiteScope, isSiteRefusal, siteScopeFor } from './site-scope.ts';
+import { STANDARD_DOCUMENT_MESSAGE, isStandardAttachmentName } from '../shared/weld-catalogs.ts';
 
 const notFound = () => new AppError(404, 'This resource could not be found.');
 /** Refusal of a pilot the account may not enter (or of a workspace request without a pilot). The client returns to the selector. */
@@ -110,7 +111,11 @@ export function releaseAccess(store: Store, availability?: Availability) {
   /** Weld entry rules and the lock of completed phases for the plain record routes of the hosted profile. */
   function weldRecord(key: string, value: Record<string, unknown>, existing?: Row) { if (pilots && key === 'welds') assertWeldEntry(store, value, existing); }
   /** Deleting or bringing back a weld of a completed phase is refused too. */
-  function archive(key: string, row: Row) { if (pilots && key === 'welds') assertWeldUnlocked(store, row); }
+  function archive(key: string, row: Row) {
+    if (pilots && key === 'welds') assertWeldUnlocked(store, row);
+    // The documents the reference ships cannot be deleted.
+    if (pilots && key === 'attachment_names' && !row._archived && isStandardAttachmentName(row)) throw new AppError(422, STANDARD_DOCUMENT_MESSAGE);
+  }
   function audit(account: User, event: AuditEvent): AuditEvent | null {
     try {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
@@ -169,6 +174,20 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
     return [...output.values()];
   }
+  /**
+   * Accounts (other than `except`) that may see a record in a pilot: enabled there, allowed to read that kind of record, and
+   * with the record's main project in reach. Evaluated per account, so a notification is only ever written for an account
+   * that could open the record itself.
+   */
+  function recipients(key: string, row: Row, pilot: PilotKey, except?: string): string[] {
+    return store.list('users').filter(account => account.id !== except && account.active !== false).filter(account => {
+      try {
+        const member = inPilot(account.id, pilot);
+        if (!member || !canResource(member, key, 'show', row)) return false;
+        return siteScopeFor(store, account, pilot)?.allows(key, row) ?? true;
+      } catch { return false; }
+    }).map(account => account.id);
+  }
   /** Accounts the last-administrator check evaluates: with pilots, the account in every pilot it may enter; otherwise its profile as before. */
   const administrators = (id: string): User[] => pilots ? PILOT_KEYS.map(pilot => inPilot(id, pilot)).filter((account): account is User => Boolean(account)) : [publicUser(store, id)];
   /** Pilots profile: a signature record always belongs to the account writing it; one record per signature type. */
@@ -202,7 +221,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
     return output;
   }
-  return { user, resource, visible, record, input, complete, links, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts,
+  return { user, resource, visible, record, input, complete, links, weldRecord, archive, audit, project, present, pilotAccount, mainProjects, administrators, owner, copyParts, recipients,
     field: (key: string, name: string) => fieldAvailable(availability, key, name),
     result: (result: ReturnType<typeof import('./workflows.ts').runAction>) => ({ ...result, ...(result.record ? { record: project(result.resource!, result.record) } : {}), ...(result.records ? { records: result.records.map(row => project(result.resource!, row)) } : {}) }),
   };

@@ -52,7 +52,7 @@ export const WELD_CATALOG_COLUMNS: Record<string, string[]> = {
   pwht_locations: ['name'],
   qa_engineers: ['name', 'company', 'phone', 'email', 'stamp'],
   companies: ['name', 'address', 'phone', 'email'],
-  attachment_names: ['name', 'isoBook', 'hydrotest', 'position', 'sort'],
+  attachment_names: ['name', 'isoBook', 'hydrotest'],
 };
 /**
  * Fields the reference marks as required that the hosted profile enforces (client and server). The shared
@@ -65,10 +65,11 @@ export const HOSTED_REQUIRED: Record<string, string[]> = {
   pwht_processes: ['description'],
   qa_engineers: ['company'],
   companies: ['address'],
+  sites: ['address'],
 };
 const FIELD_LABELS: Record<string, Record<string, string>> = {
   weld_types: { location: 'Shop/Field', abbreviation: 'Abbreviation' }, coatings: { abbreviation: 'Abbreviation' }, ndt_processes: { description: 'Description' },
-  pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' },
+  pwht_processes: { description: 'Description' }, qa_engineers: { company: 'Company' }, companies: { address: 'Address' }, sites: { address: 'Address' },
 };
 /** Messages of the required fields a hosted write leaves empty, by field name. Empty when nothing is missing. */
 export function missingRequired(key: string, input: Record<string, unknown>, existing?: Row): Record<string, string> {
@@ -82,6 +83,12 @@ export function missingRequired(key: string, input: Record<string, unknown>, exi
 
 export const WELD_LOCATIONS = ['Shop', 'Field'];
 export const ATTACHMENT_POSITIONS = ['Before Isometric', 'After Isometric'];
+/** The hosted form of an attachment name (reference "Add Attachment name"): ISO Book ticked and "Before Isometric" to start with; the order is set by sorting, not typed. */
+export const CATALOG_FIELD_OVERRIDES: Record<string, Record<string, Partial<Field>>> = {
+  attachment_names: { isoBook: { default: true }, position: { default: ATTACHMENT_POSITIONS[0] }, sort: { hidden: true } },
+};
+/** The company data of the hosted profile: only what the reference form holds. */
+export const HOSTED_COMPANY_FIELDS = ['name', 'address', 'phone', 'email'];
 /** Groups of the defect codes (the reference offers six, "Crack" first). */
 export const DEFECT_GROUPS = ['Crack', 'Cavity', 'Inclusion', 'Fusion', 'Shape', 'Miscellaneous'];
 /** Stored group names of earlier releases and the group each one stands for now. */
@@ -128,11 +135,33 @@ export function selectableDefectCodes(rows: Rows, site: Record<string, unknown> 
     .sort((a, b) => String(a.code).localeCompare(String(b.code), 'en', { numeric: true }));
 }
 
-/** Attachment names in the order the ISO book and attachment lists use: before / after the isometric, then manual order, then name. */
+/** The two sorting modes of the Attachment names page (reference "Sorting: ISO book / Hydrotest"). */
+export const ATTACHMENT_SORT_MODES = ['iso-book', 'hydrotest'] as const;
+export type AttachmentSortMode = typeof ATTACHMENT_SORT_MODES[number];
+export const ATTACHMENT_SORT_LABELS: Record<AttachmentSortMode, string> = { 'iso-book': 'ISO book', hydrotest: 'Hydrotest' };
+const ORDER_FIELD: Record<AttachmentSortMode, string> = { 'iso-book': 'isoBookOrder', hydrotest: 'hydrotestOrder' };
+const FLAG_FIELD: Record<AttachmentSortMode, string> = { 'iso-book': 'isoBook', hydrotest: 'hydrotest' };
+export const attachmentOrderField = (mode: AttachmentSortMode) => ORDER_FIELD[mode];
+export const attachmentFlagField = (mode: AttachmentSortMode) => FLAG_FIELD[mode];
+/** Documents the reference ships and locks ("Standard documents cannot be deleted."). A row can also be flagged `standard`. */
+export const STANDARD_ATTACHMENT_NAMES = ['task sheet', 'itp documents'];
+export const STANDARD_DOCUMENT_MESSAGE = 'Standard documents cannot be deleted.';
+export const isStandardAttachmentName = (row: Partial<Row>) => row.standard === true || STANDARD_ATTACHMENT_NAMES.includes(String(row.name ?? '').trim().toLowerCase());
+const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+/**
+ * The order of the rows flagged for one mode: the saved order of that mode first (rows never sorted keep the older
+ * single "Sort order" until a new order is saved), then newest last, then by name. The two modes order independently.
+ */
+export function attachmentNamesInOrder(rows: Row[], mode: AttachmentSortMode): Row[] {
+  const live = rows.filter(row => !row._archived && row[FLAG_FIELD[mode]] === true);
+  const rank = (row: Row) => finite(row[ORDER_FIELD[mode]]) ?? finite(row.sort) ?? Number.MAX_SAFE_INTEGER;
+  return live.sort((a, b) => rank(a) - rank(b) || String(a._createdAt).localeCompare(String(b._createdAt)) || String(a.name).localeCompare(String(b.name), 'en', { numeric: true }));
+}
+/** Attachment names in the order the ISO book and attachment lists use: before / after the isometric, then the ISO book order, then name. */
 export function orderedAttachmentNames(rows: Row[]): Row[] {
   const place = (row: Row) => row.position === ATTACHMENT_POSITIONS[1] ? 1 : 0;
-  const sort = (row: Row) => typeof row.sort === 'number' && Number.isFinite(row.sort) ? row.sort : Number.MAX_SAFE_INTEGER;
-  return rows.filter(row => !row._archived).sort((a, b) => place(a) - place(b) || sort(a) - sort(b) || String(a.name).localeCompare(String(b.name), 'en', { numeric: true }));
+  const rank = (row: Row) => finite(row.isoBookOrder) ?? finite(row.sort) ?? Number.MAX_SAFE_INTEGER;
+  return rows.filter(row => !row._archived).sort((a, b) => place(a) - place(b) || rank(a) - rank(b) || String(a.name).localeCompare(String(b.name), 'en', { numeric: true }));
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -203,7 +232,7 @@ export function catalogField(resource: string, field: Field): Field {
     case 'ndt_locations': return field.name === 'name' ? { ...field, label: 'NDT location' } : field;
     case 'pwht_locations': return field.name === 'name' ? { ...field, label: 'PWHT location' } : field;
     case 'qa_engineers': return field.name === 'companyId' ? { ...field, hidden: true, required: false } : field.name === 'company' ? { ...field, hidden: false } : field;
-    default: return field;
+    default: { const override = CATALOG_FIELD_OVERRIDES[resource]?.[field.name]; return override ? { ...field, ...override } : field; }
   }
 }
 /** The page wording of a catalog in the hosted profile (title, add / edit / delete headings). */
@@ -221,4 +250,20 @@ export function pilotResource(resource: Resource, pilot: string | undefined): Re
   const hidden = pilot ? PILOT_HIDDEN_FIELDS[pilot]?.[resource.key] : undefined;
   if (!hidden) return resource;
   return { ...resource, fields: resource.fields.map(field => hidden.includes(field.name) ? { ...field, hidden: true, required: false } : field), columns: resource.columns.filter(name => !hidden.includes(name)) };
+}
+/**
+ * The order a saved sort produces: the ids sent come first, in that order, then the other rows of the mode keep their
+ * current order. Returns null when an id is not a row of that mode (unknown, archived, or not flagged) or repeats.
+ */
+export function reorderedAttachmentIds(rows: Row[], mode: AttachmentSortMode, ids: unknown): string[] | null {
+  const current = attachmentNamesInOrder(rows, mode).map(row => row.id);
+  if (!Array.isArray(ids) || !ids.length || new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string' || !current.includes(id))) return null;
+  return [...(ids as string[]), ...current.filter(id => !(ids as string[]).includes(id))];
+}
+/** `order` with the entry at `from` moved to position `to` (both clamped); the same array when nothing moves. */
+export function moveEntry<T>(order: T[], from: number, to: number): T[] {
+  const target = Math.max(0, Math.min(order.length - 1, to));
+  if (from < 0 || from >= order.length || from === target) return order;
+  const next = [...order]; const [entry] = next.splice(from, 1); next.splice(target, 0, entry);
+  return next;
 }

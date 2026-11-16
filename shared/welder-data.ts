@@ -98,8 +98,11 @@ export const HOSTED_COLUMN_LABELS: Record<string, Record<string, string>> = {
   welding_wires: { controlled: 'Ctrl.', accepted: 'Accp.' },
   certifications: { materialId: 'Material No', diameter: 'Dia.', controlled: 'Ctrl.', accepted: 'Accp.' },
 };
-/** Default order of a list in the hosted profile (a field name; ascending, numbers by value). The others sort by their display field. */
-export const HOSTED_DEFAULT_SORT: Record<string, string> = { diameters: 'sorting' };
+/**
+ * Default order of a list in the hosted profile, the reference's DataTable order (a field name; ascending, numbers by value):
+ * diameters by Sorting, companies by e-mail address, project sites by IRN Code. The others sort by their display field.
+ */
+export const HOSTED_DEFAULT_SORT: Record<string, string> = { diameters: 'sorting', companies: 'email', sites: 'irnCode' };
 /** The field a list sorts by first (ascending): the reference's default order in the hosted profile, else the resource's display field. */
 export const listDefaultSort = (resource: string, hosted: boolean, display: string) => (hosted && HOSTED_DEFAULT_SORT[resource]) || display;
 /** Fields of the shared definitions the hosted profile does not offer (stored values stay; the server no longer delivers them). */

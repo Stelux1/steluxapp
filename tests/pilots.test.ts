@@ -54,10 +54,10 @@ test('every menu item resolves to a real page and resource items use resourcePat
   for (const pilot of PILOTS) { const paths = pilot.groups.flatMap(group => group.items).map(pilotItemPath).filter(Boolean); assert.equal(new Set(paths).size, paths.length, pilot.key); }
   // Every page the hosted profile delivers today stays reachable from at least one menu.
   const listed = new Set(items.map(({ item }) => pilotItemPath(item)?.split('?')[0]));
-  // Calculation lines and cut list open inside "MTO & calculations"; project sites open as the main-project picker;
+  // Calculation lines and cut list open inside "MTO & calculations";
   // inspection requests open as the request archives of the NDT/PWHT Manager.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'sites', 'inspection_requests'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
-  assert.ok(listed.has('/workspace/main-projects')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
 });
 
 test('pilot membership keeps shared pages in both pilots and pilot pages in their own', () => {

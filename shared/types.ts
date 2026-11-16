@@ -26,6 +26,9 @@ export interface Field {
   intro?: string;
   /** Filled by the server when left empty: not offered in the add / edit form (hosted welding wire index number). */
   generated?: boolean;
+  /** A select shown as radio buttons (no empty option), each option with its short explanation from `optionHints`. */
+  control?: 'radio';
+  optionHints?: Record<string, string>;
 }
 export interface Resource {
   key: string; title: string; singular: string; module: Module; group: string;

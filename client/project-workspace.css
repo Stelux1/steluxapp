@@ -34,3 +34,22 @@
 /* A checkbox with a hint or an error stacks them under its label. */
 .checkbox-field:has(> small) { flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; padding-top: 6px; }
 .checkbox-field > small { margin-left: 26px; }
+
+/* General data → Project sites and Attachment names sorting. */
+.sites-toolbar { flex-wrap: wrap; }
+.sites-toolbar .page-size { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.sites-toolbar .page-size select { min-height: 34px; padding: 4px 8px; }
+.sites-toolbar .sites-export { display: flex; gap: 8px; margin-left: auto; }
+.sites-table td.empty-cell { text-align: center; color: var(--muted); padding: 22px 12px; }
+.site-options { display: inline-flex; gap: 4px; }
+.sort-list { list-style: none; margin: 0; padding: 0; }
+.sort-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: #fff; }
+.sort-row.dragging { opacity: .5; background: #fffde7; }
+.sort-row[draggable="true"] { cursor: grab; }
+.sort-handle { display: inline-flex; color: var(--muted); }
+.sort-name { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
+.sort-lock { display: inline-flex; margin-left: 8px; vertical-align: middle; color: var(--muted); }
+.sort-flags { display: inline-flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
+.sort-buttons { display: inline-flex; gap: 2px; }
+.sort-empty { padding: 22px 16px; text-align: center; color: var(--muted); }
+@media (max-width: 640px) { .sort-row { flex-wrap: wrap; } .sort-flags { order: 3; width: 100%; } }

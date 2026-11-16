@@ -28,6 +28,10 @@ import { documentStorage, type DocumentStorage } from './documents.ts';
 import { ENABLEMENT_INPUT, enablementKey } from '../shared/weld-catalogs.ts';
 import { FLAG_BULK_RESOURCES, flagBulkAllowed } from '../shared/welder-data.ts';
 import { withLegacyValues } from './welder-data.ts';
+import { addNotification, bellOf, markAllRead, markRead, type Viewer } from './notifications.ts';
+import { siteOfRecord } from './weld-catalogs.ts';
+import { companyForDocuments } from './pdf/company.ts';
+import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate.ts';
 import { reportWorkbook } from './report-export.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { registerIsoBookRoutes } from './pdf/iso-book-routes.ts';
@@ -114,7 +118,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
         else if (header !== undefined && query !== undefined && header !== query) throw pilotRefused();
         else if ((header ?? query) === undefined) {
           // Selector requests see identity, the pilots and the main projects (bootstrap only); everything else needs a pilot.
-          if (route !== 'GET /bootstrap') throw pilotRefused('Open Weld Pilot or MTO Pilot to continue.');
+          if (route !== 'GET /bootstrap' && route !== 'GET /company-logo') throw pilotRefused('Open Weld Pilot or MTO Pilot to continue.');
           (req as AuthRequest).user = access.present(id);
         } else { (req as AuthRequest).user = access.pilotAccount(id, header ?? query); scope = siteScopeFor(store, store.get('users', id), (req as AuthRequest).user.pilot!); }
       } catch (error) { return next(error); }
@@ -149,6 +153,39 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const extra = pilots && user.pilot ? { isoSummaries: rows.isometrics ? isoSummariesFor(store, availability, pilotIsometrics(rows.isometrics, user.pilot)) : {}, copyParts: access.copyParts(user.id) } : {};
     res.setHeader('Cache-Control', 'no-store'); res.json({ user, rows, activity, ...extra });
   });
+  // The company logo of Company data, for the application selector (any signed-in account: it is the workspace's own branding).
+  app.get('/api/company-logo', (_req, res) => {
+    const logo = pilots ? companyForDocuments(store, documents)?.logo : null;
+    if (!logo) throw new AppError(404, 'No company logo is saved.');
+    res.setHeader('Content-Type', logo.subarray(0, 4).toString('latin1') === '\x89PNG' ? 'image/png' : 'image/jpeg'); res.setHeader('Cache-Control', 'no-store'); res.send(logo);
+  });
+  // The bell (hosted profile): the signed-in account's own notifications in the current pilot, nothing else. Each route sees
+  // only what `visibleNotifications` lets this account and this main project scope see.
+  const viewer = (req: Request): Viewer => {
+    const user = (req as unknown as AuthRequest).user;
+    if (!pilots || !user.pilot) throw new AppError(404, 'This API endpoint does not exist.');
+    const reachable = (row: Row) => { if (!row.resource || !row.recordId) return true; try { return access.visible(user, String(row.resource), store.get(String(row.resource), row.recordId, true)); } catch { return false; } };
+    return { id: user.id, pilot: user.pilot, canSee: row => inSiteScope('notifications', row) && reachable(row) };
+  };
+  app.get('/api/notifications', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json(bellOf(store, viewer(req))); });
+  app.post('/api/notifications/read-all', (req, res) => { res.json(markAllRead(store, viewer(req))); });
+  app.post('/api/notifications/:id/read', (req, res) => { res.json(markRead(store, viewer(req), String(req.params.id))); });
+  /** Tell the other accounts that may open a new record about it. A notification never fails the action that caused it. */
+  function announce(actorId: string, key: string, result: ReturnType<typeof runAction>) {
+    try {
+      const order = key === 'transfer-order-create' ? result.record : undefined;
+      if (order) {
+        const site = String(order.siteId || '') || [order.toWarehouseId, order.fromWarehouseId].map(id => id ? String(store.get('warehouses', id, true).siteId || '') : '').find(Boolean) || '';
+        for (const userId of access.recipients('transfer_orders', order, 'mto', actorId)) addNotification(store, { userId, pilot: 'mto', kind: 'transfer-order', title: `New transfer order ${order.number}`, message: `${order.type} · ${order.priority} priority`, link: '/materials/transfer_orders', siteId: site, resource: 'transfer_orders', recordId: order.id });
+      }
+      const releases = key === 'release' ? result.records : undefined;
+      if (releases?.length) {
+        const first = releases[0], type = String(first.type);
+        const reached = releases.map(row => new Set(access.recipients('releases', row, 'weld', actorId))), everyone = [...reached[0]].filter(id => reached.every(set => set.has(id)));
+        for (const userId of everyone) addNotification(store, { userId, pilot: 'weld', kind: 'release', title: `${type} release ${first.number}`, message: `${releases.length} ${releases.length === 1 ? 'isometric' : 'isometrics'} · report ${first.reportNo}`, link: type === 'Hydrotest' ? '/welding/test_systems' : `/welding/releases?view=${type.toLowerCase()}`, siteId: siteOfRecord(store, 'releases', first), resource: 'releases', recordId: first.id });
+      }
+    } catch { /* the release or the order is saved either way */ }
+  }
   /** Isometrics of projects enabled in the pilot (default-deny: an isometric whose project is unknown is left out). */
   const pilotIsometrics = (isos: Row[], pilot: string) => { const projects = new Map(store.list('projects', true).map(row => [row.id, row])); return isos.filter(iso => { const project = projects.get(String(iso.projectId)); return Boolean(project) && projectInPilot(project!, pilot); }); };
   app.get('/api/records/:resource', (req, res) => { const resource = access.resource(String(req.params.resource));if(resource.key!=='attachments')checkResourcePermission(req,resource.key); res.json({ rows: readableRows(req, resource.key, req.query.archived === 'true') }); });
@@ -216,7 +253,10 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     checkActionPermission(req,action.key,permissionData);
     if(copyAcross)assertCopyInScope(store,store.get('users',(req as unknown as AuthRequest).user.id),req.body);
     if(copyAcross){const parts=access.copyParts((req as unknown as AuthRequest).user.id);for(const [part,rule] of Object.entries(parts))if(req.body[part]===true&&!rule.allowed)throw new AppError(403,rule.reason||'Your permission profile does not allow this action.');}
-    res.status(201).json(access.result(runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')) })));
+    if (pilots && action.key === 'duplicate-site') { const parts = duplicateParts(req.body.parts ?? []); if (parts) for (const resource of duplicateReadResources(parts)) checkResourcePermission(req, resource); }
+    const done = runAction(store, action.key, req.body, actorOf(req), { inspectionRules: Boolean(availability?.features.includes('inspections')) });
+    if (pilots) announce((req as unknown as AuthRequest).user.id, action.key, done);
+    res.status(201).json(access.result(done));
   });
   app.post('/api/bulk/:resource', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'edit');
