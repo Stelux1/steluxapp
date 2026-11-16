@@ -4,6 +4,7 @@ import { printDate } from '../../shared/pdf-lisl.ts';
 import { projectItems } from '../../shared/pdf-documents.ts';
 import { BLANK_PUNCH_COLUMNS, BLANK_PUNCH_ROWS, FLANGE_PDF_COLUMNS, PICKLIST_COLUMNS, blankPunchHeader, punchColumns, punchRowCells, type FlangeReportModel, type PickListModel, type PunchListModel } from '../../shared/pdf-lists.ts';
 import type { Row } from '../../shared/types.ts';
+import type { ReservedLine } from '../../shared/mto-logistics.ts';
 import { flangeAssetTag, flangePath, type FlangeItem } from '../../shared/flanges.ts';
 import { columns, lineHeight, spacer, type Block } from './engine.ts';
 import { DEFAULT_LABEL_GRID, LABEL_MARGIN, labelGeometry, type LabelGrid } from './weld-labels.ts';
@@ -90,6 +91,25 @@ export function flangeLabelsPdf(input: FlangeLabelsPdfInput) {
     rows.push(columns(Array.from({ length: grid.columns }, (_, c) => ({ block: chunk[c] ? flangeLabelBlock(chunk[c], flangeLabelLink(input.origin, chunk[c].row.id), geometry.labelWidth, geometry.labelHeight) : spacer(geometry.labelHeight), width: { fill: 1 } })), 0));
   }
   return renderBlocks({ page: { size: 'A4', orientation: 'portrait', margins: { top: LABEL_MARGIN, bottom: LABEL_MARGIN, left: LABEL_MARGIN, right: LABEL_MARGIN } }, title: 'Flange labels', generatedAt: input.generatedAt, blocks: rows });
+}
+
+export interface ReservedMaterialsPdfInput extends Common { lines: ReservedLine[]; grouped: boolean }
+/** Reserved materials (Isometric execution → Reserved materials → Print): per reservation, or one line per material when grouped. */
+export function reservedMaterialsPdf(input: ReservedMaterialsPdfInput) {
+  const { company, lines, grouped } = input;
+  const amount = (value: number) => String(Math.round(value * 1000) / 1000);
+  return renderOperational({
+    page: A4_PORTRAIT, title: 'Reserved materials', generatedAt: input.generatedAt,
+    async layout(pdf) {
+      const header = await documentHeader(pdf, { title: 'Reserved materials', subtitle: `${grouped ? 'Grouped by materials' : 'Per isometric'} - ${lines.length} line${lines.length === 1 ? '' : 's'}`, company, left: [] });
+      const table = grouped
+        ? plainTable(['Material no.', 'Description', 'Quantity', 'UOM'], [14, 40, 8, 6], lines.map(line => [line.materialNo, line.description, amount(line.quantity), line.uom]), { size: 7, headerSize: 7 })
+        : plainTable(['Project', 'ISO', 'Material no.', 'Description', 'Quantity', 'UOM'], [10, 9, 12, 31, 7, 5], lines.map(line => [line.project, line.isoNo, line.materialNo, line.description, amount(line.quantity), line.uom]), { size: 7, headerSize: 7 });
+      const steps: Step[] = [{ table }];
+      if (!lines.length) steps.push({ block: noteBlock('', 'No materials are reserved.'), before: 6 });
+      return { header, steps };
+    },
+  });
 }
 
 export interface PickListPdfInput extends Common { model: PickListModel }

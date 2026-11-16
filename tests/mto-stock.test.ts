@@ -385,15 +385,17 @@ test('Start makes one pick-list line per requirement from the site inventory, wi
   const s = fixture();
   const material = s.create('materials', { materialNo: 'PL-BOLT', description: 'Stud bolt set', materialGroup: 'Bolt', uom: 'SET' }, actor, 'material-pick');
   for (const [chargeNo, quantity] of [['A-1', 7], ['B-2', 5]] as const) run(s, 'stock-add', { siteId: 'site-north', materialId: material.id, chargeNo, quantity });
-  const first = s.create('iso_materials', { isoId: 'iso-3', materialId: material.id, quantity: 5, phaseId: 'phase-0' }, actor, 'req-pick-1');
-  s.create('iso_materials', { isoId: 'iso-3', materialId: material.id, quantity: 6, phaseId: 'phase-0' }, actor, 'req-pick-2');
-  const result = run(s, 'start-iso', { isoId: 'iso-3' });
+  // An isometric of its own in the same project (Start needs a Mat.status of 70 %): 11 of 11 covered.
+  s.create('isometrics', { isoNo: 'PL-01', projectId: s.get('isometrics', 'iso-3').projectId }, actor, 'iso-pick');
+  const first = s.create('iso_materials', { isoId: 'iso-pick', materialId: material.id, quantity: 5, phaseId: 'phase-0' }, actor, 'req-pick-1');
+  s.create('iso_materials', { isoId: 'iso-pick', materialId: material.id, quantity: 6, phaseId: 'phase-0' }, actor, 'req-pick-2');
+  const result = run(s, 'start-iso', { isoId: 'iso-pick' });
   const lines = ('records' in result ? result.records! : []).filter(row => row.materialId === material.id);
   assert.deepEqual(lines.map(row => [row.requirementId, row.quantity]), [[first.id, 5], ['req-pick-2', 6]], 'one line per requirement (5 and 6), not per charge');
   assert.ok(lines.every(row => row.warehouseId === '' && row.siteId === 'site-north' && /^\d{5}$/.test(String(row.reportNo))));
-  assert.equal(inv(s, first.id), 1, 'Inv. after Start: 12 on hand − 11 claimed = 1');
+  assert.equal(inv(s, first.id), 1, 'Inv. after Start: 12 on hand − 11 issued at Start = 1');
   run(s, 'take-picklist', { reportNo: String(lines[0].reportNo) });
-  // Taken in charge order: 5 from A-1, then 2 from A-1 and 4 from B-2; B-2 keeps 1.
+  // Issued at Start in charge order: 5 from A-1, then 2 from A-1 and 4 from B-2; B-2 keeps 1. Taking moves nothing more.
   assert.deepEqual(s.list('movements').filter(move => move.type === 'Issue' && move.materialId === material.id).map(move => [move.chargeNo, move.quantity]).sort(), [['A-1', -2], ['A-1', -5], ['B-2', -4]]);
   assert.equal(onSite(s, 'site-north', material.id), 1);
   assert.deepEqual(requirementExecution(all(s)).filter(entry => entry.material.id === material.id).map(entry => [entry.picked, entry.inventory]), [[5, 1], [6, 1]]);

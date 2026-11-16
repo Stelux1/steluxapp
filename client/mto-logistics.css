@@ -10,7 +10,21 @@
 .mto-status .progress.red > span { background: #c0392b; }
 .mto-page .execution-scope input[type="date"] { min-height: 40px; width: 100%; }
 .mto-page .table-toolbar { gap: 14px; flex-wrap: wrap; }
+.mto-page .execution-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 20px; }
+.mto-page .execution-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+.mto-page .execution-meta select { min-height: 32px; font-size: 11px; }
+.mto-page .execution-chips { display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap; padding: 0 20px 14px; }
+.mto-page .execution-chips > [role="group"] { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mto-page .execution-chips .field-label { font-size: 10px; color: var(--muted); margin-right: 2px; }
+.mto-page .execution-chips .btn[aria-pressed="true"] { border-color: var(--primary); }
+.mto-page .execution-status { display: flex; align-items: center; gap: 6px; }
+.mto-page .inline-field { display: flex; align-items: center; gap: 8px; margin: 0; }
+.mto-page .inline-field select { min-height: 34px; }
+.picklist-banner { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-blue); font-size: 11px; color: var(--muted); }
+.picklist-banner strong { color: var(--ink); font-weight: 500; }
+.picklist-banner .picklist-note { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
+  .mto-page .execution-head, .mto-page .execution-chips { padding-inline: 16px; }
   .mto-page .mto-alert { margin: 0 16px 12px; }
   .mto-page .mto-options { justify-content: flex-start; }
   .mto-status { min-width: 120px; }

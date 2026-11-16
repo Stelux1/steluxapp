@@ -6,13 +6,13 @@ import type { BookRun, PdfDocumentDefinition, PdfScopedDefinition } from './docu
 import { requestPdf, visualPdf } from './operational-requests.ts';
 import { releasePdf } from './operational-release.ts';
 import { hydrotestPdf } from './hydrotest-book.ts';
-import { blankPunchPdf, flangeLabelsPdf, flangePdf, pickListPdf, punchPdf } from './operational-lists.ts';
+import { blankPunchPdf, flangeLabelsPdf, flangePdf, pickListPdf, punchPdf, reservedMaterialsPdf } from './operational-lists.ts';
 import {
   REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
 } from '../../shared/pdf-documents.ts';
 import { flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../../shared/pdf-lists.ts';
 import { REQUEST_DOCUMENT } from '../../shared/inspections.ts';
-import { pickListReports } from '../../shared/mto-logistics.ts';
+import { pickListReports, reservedMaterials } from '../../shared/mto-logistics.ts';
 import type { Row } from '../../shared/types.ts';
 
 /**
@@ -174,7 +174,19 @@ const pickList: PdfScopedDefinition = {
   },
 };
 
+/** Reserved materials of the isometrics visible in the pilot (Isometric execution → Reserved materials); `grouped=1` sums them per material. */
+const reservedMaterialsDocument: PdfScopedDefinition = {
+  key: 'reserved-materials', title: 'Reserved materials', report: 'pdf-reserved-materials', scope: 'scoped',
+  async build({ store, documents, rows, isoIds, query, now }) {
+    const grouped = ['1', 'true', 'yes', 'on'].includes(String(query.grouped ?? '').toLowerCase());
+    const label = (resource: string, id: string) => String(rows[resource]?.find(row => row.id === id)?.internnumber ?? '');
+    const lines = reservedMaterials(rows, { grouped, isoIds: [...isoIds], label });
+    const { bytes } = await reservedMaterialsPdf({ lines, grouped, company: companyForDocuments(store, documents), generatedAt: now, rows });
+    return { bytes, fileName: `${isoDate(now)}-Reserved-materials` };
+  },
+};
+
 export const OPERATIONAL_DOCUMENTS: (PdfDocumentDefinition | PdfScopedDefinition)[] = [
   requestDefinition('ndt-request'), requestDefinition('ndt-pre-request'), requestDefinition('pwht-request'), visualReport,
-  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList,
+  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList, reservedMaterialsDocument,
 ];

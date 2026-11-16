@@ -84,16 +84,16 @@ test('MTO Pilot end to end: order, take in, transfer, reserve, start and take a 
   assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 6, 0], 'reserved: stock unchanged');
   assert.ok(state.rows.reservations.some(item => item.requirementId === requirementId && Number(item.quantity) === 6));
 
-  // 5. Start: one pick list, visible in the Pick List archive, not taken yet, so Picked stays 0.
+  // 5. Start: one pick list, visible in the Pick List archive, not taken yet; Start books the issue at once (delta-I3-R1), so Picked is 6.
   const started = await json<{ records: Row[] }>(await f.request('/api/actions/start-iso', 'POST', { isoId, date }));
   const pick = started.records.find(item => item.requirementId === requirementId); assert.ok(pick, 'the pick list carries the requirement');
   const reportNo = String(pick.reportNo); assert.match(reportNo, /^\d{5}$/); assert.equal(pick.taken, false); assert.equal(Number(pick.quantity), 6);
   state = await row();
-  assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 0, 0], 'started: claimed by the pick list (Inv. leaves it out), not issued');
+  assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 0, 6], 'started: issued from the inventory, Taken? No');
   const archive = await json<Row[] | { rows: Row[] }>(await f.request('/api/records/picklists'), 200);
   assert.ok((Array.isArray(archive) ? archive : archive.rows).some(item => item.reportNo === reportNo && item.taken === false), 'the pick list is in the archive');
 
-  // 6. Taken: the pick list issues the stock.
+  // 6. Taken: Confirm material take signs it off; the stock does not move again.
   await json(await f.request('/api/actions/take-picklist', 'POST', { reportNo, date }));
   state = await row();
   assert.deepEqual([state.ordered, state.inventory, state.picked], [true, 0, 6], 'taken: Picked 6, Inv. 0');

@@ -1,5 +1,6 @@
 import type { ActionDefinition, ActionField, Availability, PermissionVerb, Row } from './types.ts';
-import { materialIdentity, materialRecord, requirementExecution } from './materials.ts';
+import { materialIdentity, materialRecord, pickClaims, pickIssued, requirementExecution } from './materials.ts';
+import { priorityLabel } from './priority.ts';
 import { materialStatusPercent, type CoverageLine } from './mto-materials.ts';
 import { claimSiteId, isoSiteId, picksFromSite, siteStock } from './mto-stock.ts';
 
@@ -8,7 +9,11 @@ import { claimSiteId, isoSiteId, picksFromSite, siteStock } from './mto-stock.ts
  *
  * The reference rules behind Reserve, Start and the material status are not in the capture. Each guess is kept in
  * ONE named function below and listed in PARITY.md: `materialStatus`, `freePool`, `planReserve`, `planStart`,
- * `allocateStock`, `operationPhaseGroup`, `percentBand`, `spoolLocation`.
+ * `allocateStock`, `percentBand`, `spoolLocation`.
+ *
+ * Stock (delta-I3-R1): Start books the pick list's quantities out of the project site's Material inventory at once
+ * (pick lines `issued`, Taken? No); Confirm material take is a sign-off that moves no stock; Undo execution puts back
+ * exactly what Start took, charge by charge. Pick lists written before keep the old rule: they claim stock until taken.
  */
 
 /** Resources this flow adds (their tables are created by `npm run db:prepare:welding`, see shared/planning.ts). */
@@ -28,15 +33,34 @@ const byCreation = (a: Row, b: Row) => String(a._createdAt).localeCompare(String
 const ref = (name: string, label: string, resource: string, extra: Partial<ActionField> = {}): ActionField => ({ name, label, type: 'ref', ref: resource, required: true, ...extra });
 const dateField: ActionField = { name: 'date', label: 'Date', type: 'date', required: true };
 const noteField: ActionField = { name: 'note', label: 'Notes', type: 'textarea' };
+const reportField: ActionField = { name: 'reportNo', label: 'Report No.', type: 'text', required: true };
+/** The Note of a pick list (Start, Confirm material take and its edit): plain text, at most this long. */
+export const PICKLIST_NOTE_MAX = 2000;
+const pickNote: ActionField = { name: 'note', label: 'Note', type: 'textarea' };
 export const MTO_ACTION_DEFS: ActionDefinition[] = [
   { key: 'reserve-iso', title: 'Reserve materials', module: 'materials', description: 'Set aside the isometric’s still-uncovered quantities from the free stock so other isometrics cannot take them.', fields: [ref('isoId', 'Isometric', 'isometrics'), dateField, noteField], submit: 'Reserve' },
   { key: 'release-reservation', title: 'Release reservation', module: 'materials', description: 'Give reserved quantities back to the free stock.', fields: [ref('reservationIds', 'Reservations', 'reservations', { multiple: true }), dateField, noteField], submit: 'Release' },
-  { key: 'start-iso', title: 'Start isometric', module: 'materials', description: 'Create a pick list for the quantities that are available now and mark the isometric as started.', fields: [ref('isoId', 'Isometric', 'isometrics'), dateField, noteField], submit: 'Start' },
-  { key: 'take-picklist', title: 'Mark pick list as taken', module: 'materials', description: 'Issue the pick list’s materials from stock. Stock cannot become negative.', fields: [{ name: 'reportNo', label: 'Report No.', type: 'text', required: true }, dateField, noteField], submit: 'Mark as taken' },
+  { key: 'start-iso', title: 'Isometric execution', module: 'materials', description: 'You are about to start isometric. Are you sure?', fields: [ref('isoId', 'Isometric', 'isometrics'), { name: 'phaseId', label: 'Type', type: 'text', hidden: true }, dateField, pickNote], submit: 'Start' },
+  { key: 'take-picklist', title: 'Confirm material take', module: 'materials', description: 'Confirm that the materials of the pick list were taken.', fields: [reportField, dateField, pickNote], submit: 'Confirm' },
+  { key: 'picklist-note', title: 'Confirm material take', module: 'materials', description: 'Change the Note of the pick list. Stock does not change.', fields: [reportField, pickNote], submit: 'Confirm' },
+  { key: 'undo-iso-execution', title: 'Undo execution', module: 'materials', description: UNDO_EXECUTION_TEXT(), fields: [reportField], submit: 'Undo execution' },
 ];
 export const MTO_ACTION_KEYS = MTO_ACTION_DEFS.map(def => def.key);
 /** Permission area and verb of each action: "ISO execution" (area 20) allows view and add. */
-export const MTO_ACTION_SCOPES: Record<string, [string, PermissionVerb]> = Object.fromEntries(MTO_ACTION_KEYS.map(key => [key, ['20', 'insert'] as [string, PermissionVerb]]));
+export const MTO_ACTION_SCOPES: Record<string, [string, PermissionVerb]> = {
+  ...Object.fromEntries(MTO_ACTION_KEYS.map(key => [key, ['20', 'insert'] as [string, PermissionVerb]])),
+  // Service req. - Materials: Move to inventory needs the same right as Move to laydown (the action runs in server/workflows.ts).
+  'move-materials-inventory': ['local-material-logistics', 'edit'],
+};
+/** The confirmation of Undo execution, word for word as the reference. */
+function UNDO_EXECUTION_TEXT() { return 'This will reverse the pick list, release reservations and return materials to inventory if already issued. The isometric will appear on the execution board again. Continue?'; }
+export const UNDO_EXECUTION_CONFIRM = UNDO_EXECUTION_TEXT();
+/** The confirmation of Start (vendor manual 3-23). */
+export const START_CONFIRM = 'You are about to start isometric. Are you sure?';
+/** Start appears from this Mat.status on (vendor manual 3-23: "from 70 % completeness a start button appears"). */
+export const START_FROM_PERCENT = 70;
+/** Whether Start is offered for a Mat.status (and allowed by the server). */
+export const canStartAt = (percent: number | null | undefined) => typeof percent === 'number' && percent >= START_FROM_PERCENT;
 
 // ---- Delivery to the hosted profile --------------------------------------------------------------------------------
 
@@ -65,7 +89,11 @@ export function deliverMtoLogistics(availability: Availability, deliver: (availa
   mergeAction(availability, 'service', names('spoolIds companyId includeDrawings note'));
   mergeAction(availability, 'move-spools', names('spoolIds laydownId'));
   mergeAction(availability, 'move-materials', names('requirementIds laydownId'));
-  mergeAction(availability, 'service-materials', names('requirementIds companyId name date note'));
+  mergeAction(availability, 'move-materials-inventory', names('requirementIds'));
+  // Service request of materials: Company, Note and the selected materials; the name and the date are set by the server.
+  mergeAction(availability, 'service-materials', names('requirementIds companyId note'));
+  // Pick lists and movements are delivered with every field (shared/release.ts): the Note, Type, issued and returned
+  // flags of a pick list and the Pick List of a movement come with them.
   for (const def of MTO_ACTION_DEFS) mergeAction(availability, def.key, def.fields.map(field => field.name));
 }
 
@@ -78,15 +106,31 @@ export type StatusInput = CoverageLine;
  * isometric's own reservations, and picked includes untaken pick-list claims.
  */
 export const materialStatus = (lines: StatusInput[]): number | null => materialStatusPercent(lines);
-/** Pick-list lines are taken unless they say otherwise: lines issued directly before pick lists existed have no flag. */
+/** Pick-list lines are taken ("Taken? Yes") unless they say otherwise: lines issued directly before pick lists existed have no flag. */
 export const isTaken = (line: Row) => line.taken !== false;
+/** Stock state of a pick-list line, one rule for every reader (shared/materials.ts): issued (Picked) or still a claim on the inventory. */
+export { pickIssued, pickClaims };
 
-/** UNVERIFIED. The reference "Type" filter offers Shop / Field / Valves: an operation phase belongs to the group named in it. */
-export function operationPhaseGroup(name: unknown): 'Shop' | 'Field' | 'Valves' | '' {
-  const text = String(name || '').toLowerCase();
-  return /valve/.test(text) ? 'Valves' : /field/.test(text) ? 'Field' : /shop/.test(text) ? 'Shop' : '';
+/**
+ * The Type chips of Isometric execution: Shop, Field and Valves are three single operation phases (reference ids 1, 2
+ * and 5). With our own ids, each chip is the phase of exactly that name; a chip whose phase does not exist lists nothing.
+ */
+export const EXECUTION_TYPES = ['Shop', 'Field', 'Valves'] as const;
+export function executionTypePhaseId(rows: Record<string, Row[]>, type: string): string {
+  const wanted = type.trim().toLowerCase();
+  return active(rows, 'operation_phases').find(row => String(row.name ?? '').trim().toLowerCase() === wanted)?.id ?? '';
 }
 export const PERCENT_BANDS = ['100 %', '80–99 %', '70–79 %', '< 70 %'] as const;
+/** The % chips of Isometric execution and the range each sets (reference data-min / data-max). */
+export const PERCENT_CHIPS = [{ label: 'All', from: 0, to: 100 }, { label: '100%', from: 100, to: 100 }, { label: '80 – 99%', from: 80, to: 99 }, { label: '70 – 79%', from: 70, to: 79 }, { label: '< 70%', from: 0, to: 69 }] as const;
+/** The board opens on this range (reference: percentFrom=70, percentTo=100) while the "All" chip is shown active. */
+export const DEFAULT_PERCENT_RANGE = { from: 70, to: 100 } as const;
+/** Priority as the execution board writes it: "Prio-1", or "Prio not set" when empty. */
+export function executionPriority(value: unknown): string {
+  const option = priorityLabel(value);
+  const digits = option.match(/^Prio (\d+)$/)?.[1];
+  return digits ? `Prio-${digits}` : 'Prio not set';
+}
 /** The reference bands: 100 %, 80–99 %, 70–79 % and below 70 %. A status of "nothing required" falls in no band. */
 export function percentBand(percent: number | null): (typeof PERCENT_BANDS)[number] | '' {
   if (percent === null) return '';
@@ -105,7 +149,7 @@ const stockPools = (rows: Record<string, Row[]>) => {
   for (const row of active(rows, 'stock').filter(row => row.locationKind === 'site' && row.siteId)) { const value = pool(poolKey(String(row.siteId), materialIdentity(row))); value.stock = round(value.stock + Number(row.quantity)); }
   for (const row of active(rows, 'reservations').filter(row => row.status === 'Reserved')) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.reserved = round(value.reserved + Number(row.quantity)); }
   // Pick lists written before the site inventory existed take from a storehouse and claim nothing here.
-  for (const row of active(rows, 'picklists').filter(row => !isTaken(row) && picksFromSite(row))) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.claimed = round(value.claimed + Number(row.quantity)); }
+  for (const row of active(rows, 'picklists').filter(row => pickClaims(row) && picksFromSite(row))) { const value = pool(poolKey(claimSiteId(rows, row), materialIdentity(row))); value.claimed = round(value.claimed + Number(row.quantity)); }
   for (const value of pools.values()) value.free = round(value.stock - value.reserved - value.claimed);
   return pools;
 };
@@ -129,17 +173,18 @@ export interface IsoStatus { iso: Row; lines: StatusLine[]; percent: number | nu
  * handed to the isometric's lines of one material in creation order; percent = floor(Σ covered ÷ Σ Qty. × 100).
  * Open client questions (mto-iso-execution-R1): rounding, own pick-list credit, stock beyond the order, sharing.
  */
-export function isoStatuses(rows: Record<string, Row[]>, options: { group?: string; isoId?: string } = {}): Map<string, IsoStatus> {
-  const taken = { ...rows, picklists: active(rows, 'picklists').filter(isTaken) };
+export function isoStatuses(rows: Record<string, Row[]>, options: { phaseId?: string; isoId?: string } = {}): Map<string, IsoStatus> {
   const pools = stockPools(rows);
   const phases = new Map(active(rows, 'operation_phases').map(row => [row.id, String(row.name)]));
   const reservations = active(rows, 'reservations').filter(row => row.status === 'Reserved');
-  const claims = active(rows, 'picklists').filter(row => !isTaken(row));
+  const claims = active(rows, 'picklists').filter(pickClaims);
   const result = new Map<string, IsoStatus>();
-  const entries = requirementExecution(taken, options.isoId ? { isoId: options.isoId } : {});
+  // Picked (requirementExecution) counts the issued lines: taken, issued directly, or booked out at Start.
+  const entries = requirementExecution(rows, options.isoId ? { isoId: options.isoId } : {});
   for (const entry of entries) {
     const phase = phases.get(String(entry.requirement.phaseId)) || '';
-    if (options.group && operationPhaseGroup(phase) !== options.group) continue;
+    // A Type chip is one operation phase: only the lines of that phase count (delta-I3-001).
+    if (options.phaseId !== undefined && String(entry.requirement.phaseId || '') !== options.phaseId) continue;
     const status = result.get(entry.iso.id) || { iso: entry.iso, lines: [], percent: null };
     const own = (key: Row[]) => key.filter(row => row.isoId === entry.iso.id && materialIdentity(row) === entry.identity).reduce((sum, row) => sum + Number(row.quantity), 0);
     const key = poolKey(isoSiteId(rows, entry.iso), entry.identity), pool = pools.get(key);
@@ -182,7 +227,7 @@ export function planStart(rows: Record<string, Row[]>, isoId: string) {
  */
 export function allocateStock(rows: Record<string, Row[]>, siteId: string, identity: string, quantity: number) {
   const onHand = siteStock(rows, siteId, identity).reduce((sum, row) => sum + Number(row.quantity), 0);
-  const claimed = active(rows, 'picklists').filter(line => !isTaken(line) && picksFromSite(line) && materialIdentity(line) === identity && claimSiteId(rows, line) === siteId).reduce((sum, line) => sum + Number(line.quantity), 0);
+  const claimed = active(rows, 'picklists').filter(line => pickClaims(line) && picksFromSite(line) && materialIdentity(line) === identity && claimSiteId(rows, line) === siteId).reduce((sum, line) => sum + Number(line.quantity), 0);
   const room = Math.max(0, round(onHand - claimed));
   const take = round(Math.min(room, quantity));
   return { quantity: take, shortfall: round(quantity - take) };
@@ -190,7 +235,22 @@ export function allocateStock(rows: Record<string, Row[]>, siteId: string, ident
 
 // ---- Pick list archive ---------------------------------------------------------------------------------------------
 
-export interface PickListReport { reportNo: string; date: string; isoId: string; projectId: string; taken: boolean; lines: Row[] }
+export interface PickListReport {
+  reportNo: string; date: string; isoId: string; projectId: string; taken: boolean; lines: Row[];
+  /** Date and time of the pick list ("2026-11-16T07:44:00.000Z"), or the day when the time is not known. */
+  stamp: string;
+  /** The Note (Start, Confirm material take, edit), the Type it was started from ('' when none), and whether Start wrote it. */
+  note: string; phaseId: string; execution: boolean;
+}
+/**
+ * The time of a pick list: when its lines were written, if that was on the pick list's date (Start stamps both now);
+ * a pick list dated another day (a sample, or written before) shows the day only.
+ */
+export function pickListStamp(lines: Row[]): string {
+  const date = lines.map(line => String(line.date || '').slice(0, 10)).sort()[0] || '';
+  const created = lines.map(line => String(line._createdAt || '')).filter(Boolean).sort()[0] || '';
+  return created && created.slice(0, 10) === date ? created : date;
+}
 /** One report per report number (a line issued directly stands alone under its own number); newest first. */
 export function pickListReports(rows: Record<string, Row[]>, filters: { projectId?: string; from?: string; to?: string } = {}): PickListReport[] {
   const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
@@ -200,11 +260,73 @@ export function pickListReports(rows: Record<string, Row[]>, filters: { projectI
     const iso = isos.get(String(lines[0].isoId)); if (!iso) return [];
     const date = lines.map(line => String(line.date || '').slice(0, 10)).sort()[0] || '';
     if (filters.projectId && iso.projectId !== filters.projectId || filters.from && date < filters.from || filters.to && date > filters.to) return [];
-    return [{ reportNo, date, isoId: iso.id, projectId: String(iso.projectId), taken: lines.every(isTaken), lines: lines.sort(byCreation) }];
-  }).sort((a, b) => b.date.localeCompare(a.date) || b.reportNo.localeCompare(a.reportNo));
+    const sorted = lines.sort(byCreation);
+    return [{ reportNo, date, isoId: iso.id, projectId: String(iso.projectId), taken: lines.every(isTaken), lines: sorted, stamp: pickListStamp(sorted),
+      note: String(sorted.find(line => line.note)?.note ?? ''), phaseId: String(sorted.find(line => line.phaseId)?.phaseId ?? ''), execution: sorted.every(line => Boolean(line.reportNo)) }];
+  }).sort((a, b) => b.stamp.localeCompare(a.stamp) || b.reportNo.localeCompare(a.reportNo));
 }
+/** The five columns the Pick List archive exports (CSV, Excel, Print): Date, Report No., Project, ISO No, Taken?. */
+export const PICKLIST_ARCHIVE_COLUMNS = ['Date', 'Report No.', 'Project', 'ISO No', 'Taken?'] as const;
 /** An isometric counts as started once a pick list was created for it by Start (such lines carry a report number). */
 export const startedReports = (rows: Record<string, Row[]>, isoId: string) => [...new Set(active(rows, 'picklists').filter(line => line.isoId === isoId && line.reportNo).map(line => String(line.reportNo)))];
+/** The Types an isometric was started from: the phases of its execution pick lists (a pick list without a Type names none). */
+export const startedPhases = (rows: Record<string, Row[]>, isoId: string) => new Set(active(rows, 'picklists').filter(line => line.isoId === isoId && line.reportNo && line.phaseId).map(line => String(line.phaseId)));
+/**
+ * Why a pick list cannot be undone, or '' when it can. Undo reverses an execution pick list (one written by Start)
+ * that nobody confirmed as taken yet.
+ */
+export function undoRefusal(report: Pick<PickListReport, 'execution' | 'lines'>): string {
+  if (!report.execution) return 'Only a pick list made by Start in Isometric execution can be undone.';
+  if (report.lines.some(line => line.taken === true)) return 'This pick list is already taken. Its execution cannot be undone.';
+  if (report.lines.some(line => line.returned === true)) return 'Material of this pick list was moved back to the inventory. Its execution cannot be undone.';
+  return '';
+}
+
+// ---- Isometric execution board ---------------------------------------------------------------------------------
+
+export interface BoardFilters { phaseId: string; from: number; to: number; prio?: string }
+export interface BoardRow { iso: Row; status: IsoStatus; percent: number; priority: string }
+/**
+ * The isometrics on the execution board of one Type: those with lines of that phase whose Mat.status for that phase
+ * lies in the percent range, not started from that Type (Undo execution brings them back), optionally of one priority
+ * ("Prio-1"); highest Mat.status first. A Type whose phase does not exist lists nothing.
+ */
+export function executionBoard(rows: Record<string, Row[]>, filters: BoardFilters): BoardRow[] {
+  if (!filters.phaseId) return [];
+  const statuses = isoStatuses(rows, { phaseId: filters.phaseId });
+  return active(rows, 'isometrics').flatMap(iso => {
+    const status = statuses.get(iso.id); if (!status || status.percent === null) return [];
+    if (status.percent < filters.from || status.percent > filters.to) return [];
+    if (startedPhases(rows, iso.id).has(filters.phaseId)) return [];
+    const priority = executionPriority(iso.priority);
+    if (filters.prio && priority !== filters.prio) return [];
+    return [{ iso, status, percent: status.percent, priority }];
+  }).sort((a, b) => b.percent - a.percent || String(a.iso.isoNo).localeCompare(String(b.iso.isoNo), 'en', { numeric: true }));
+}
+/** The columns the board exports (CSV, Excel, Print): the first seven, as the reference. */
+export const EXECUTION_EXPORT_COLUMNS = ['Project', 'ISO', 'Piping class', 'Priority', 'Drawing no. 1', 'Chemical clean', 'Mat.status'] as const;
+
+// ---- Reserved materials (print) ----------------------------------------------------------------------------------
+
+export interface ReservedLine { project: string; isoNo: string; materialNo: string; description: string; quantity: number; uom: string }
+/**
+ * What "Reserved materials" prints: every active reservation of the given isometrics (all when none are given), one
+ * line per reservation, or one line per material with the quantities summed when grouped by materials.
+ */
+export function reservedMaterials(rows: Record<string, Row[]>, options: { grouped: boolean; isoIds?: string[]; label?: (resource: string, id: string) => string }): ReservedLine[] {
+  const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
+  const requirements = new Map(active(rows, 'iso_materials').map(row => [row.id, row]));
+  const label = options.label ?? ((_resource: string, id: string) => id);
+  const lines = active(rows, 'reservations').filter(row => row.status === 'Reserved' && isos.has(String(row.isoId)) && (!options.isoIds || options.isoIds.includes(String(row.isoId)))).map(row => {
+    const iso = isos.get(String(row.isoId))!; const requirement = requirements.get(String(row.requirementId)); const material = requirement ? materialRecord(rows, requirement) : materialRecord(rows, row);
+    return { identity: materialIdentity(row), line: { project: label('projects', String(iso.projectId)), isoNo: String(iso.isoNo ?? ''), materialNo: String(material?.materialNo ?? ''), description: String(material?.description ?? ''), quantity: round(Number(row.quantity)), uom: String(material?.uom ?? '') } };
+  });
+  const byMaterial = (a: ReservedLine, b: ReservedLine) => a.materialNo.localeCompare(b.materialNo, 'en', { numeric: true }) || a.project.localeCompare(b.project) || a.isoNo.localeCompare(b.isoNo, 'en', { numeric: true });
+  if (!options.grouped) return lines.map(item => item.line).sort((a, b) => a.project.localeCompare(b.project) || a.isoNo.localeCompare(b.isoNo, 'en', { numeric: true }) || a.materialNo.localeCompare(b.materialNo, 'en', { numeric: true }));
+  const groups = new Map<string, ReservedLine>();
+  for (const { identity, line } of lines) { const current = groups.get(identity); groups.set(identity, current ? { ...current, quantity: round(current.quantity + line.quantity), project: '', isoNo: '' } : { ...line, project: '', isoNo: '' }); }
+  return [...groups.values()].sort(byMaterial);
+}
 
 // ---- Logistics -----------------------------------------------------------------------------------------------------
 
@@ -279,6 +401,66 @@ export function laydownHistory(rows: Record<string, Row[]>, laydownId: string): 
     const spool = spools.get(String(move.spoolId)); const iso = spool && isos.get(String(spool.isoId)); if (!spool || !iso) return [];
     return [{ key: move.id, spool, iso, projectId: String(iso.projectId), treatments: spoolTreatments(iso), services: servicesOf(rows, spool.id), date: String(move.date) }];
   });
+}
+
+// ---- Service req. - Materials --------------------------------------------------------------------------------------
+
+/** The Material group options of the page: every group of the material database and the custom materials, A-Z. */
+export function materialGroups(rows: Record<string, Row[]>): string[] {
+  const groups = new Set([...active(rows, 'materials'), ...active(rows, 'custom_materials')].map(row => String(row.materialGroup ?? '').trim()).filter(Boolean));
+  return [...groups].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+/** The page opens on the group named SUPPORT (reference; any letter case), else on the first group A-Z; '' when there is none. Not remembered. */
+export function defaultMaterialGroup(rows: Record<string, Row[]>): string {
+  const groups = materialGroups(rows);
+  return groups.find(group => group === 'SUPPORT') ?? groups.find(group => group.toUpperCase() === 'SUPPORT') ?? groups[0] ?? '';
+}
+export interface MaterialServiceFilters { projectId?: string; group?: string; chemicalClean?: string; keyword?: string; currently?: string }
+export interface MaterialServiceRow {
+  requirement: Row; iso: Row; material: Row; projectId: string;
+  /** 'Laydown' / 'Service' with the laydown material or company, or nothing ("No update"). */
+  locationType: LocationType; locationId: string; openRequest?: Row;
+}
+/** "Currently on" of a material line: the laydown material or the service company, "No update" when it has none. */
+export const materialCurrentLabel = (entry: Pick<MaterialServiceRow, 'locationId' | 'locationType'>, label: (resource: string, id: string) => string) =>
+  entry.locationId ? label(entry.locationType === 'Service' ? 'service_companies' : 'material_laydowns', entry.locationId) : 'No update';
+/**
+ * The lines of Service req. - Materials: the material requirements of one Material group (the page's default when none
+ * is given), filtered by project, Chemical clean, Material No / description and Currently on ("Laydown:<id>",
+ * "Service:<id>"), sorted by Currently on (lines without a location first), then ISO and material.
+ */
+export function materialServiceRows(rows: Record<string, Row[]>, filters: MaterialServiceFilters, label: (resource: string, id: string) => string = (_r, id) => id): MaterialServiceRow[] {
+  const group = filters.group ?? defaultMaterialGroup(rows);
+  const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
+  const locations = new Map(active(rows, 'material_locations').map(row => [String(row.requirementId), row]));
+  const open = active(rows, 'service_requests').filter(row => row.requirementId && row.status !== 'Completed');
+  const list = active(rows, 'iso_materials').flatMap(requirement => {
+    const iso = isos.get(String(requirement.isoId)); const material = materialRecord(rows, requirement) || (requirement.customMaterial ? requirement : undefined);
+    if (!iso || !material || String(material.materialGroup ?? '').trim() !== group) return [];
+    if (filters.projectId && iso.projectId !== filters.projectId) return [];
+    const location = locations.get(requirement.id);
+    const locationType: LocationType = location?.companyId ? 'Service' : location?.laydownId ? 'Laydown' : '';
+    const locationId = String(location?.companyId || location?.laydownId || '');
+    if (filters.currently && `${locationType}:${locationId}` !== filters.currently) return [];
+    if (!contains(iso.chemicalClean, filters.chemicalClean)) return [];
+    if (filters.keyword && !contains(material.materialNo, filters.keyword) && !contains(material.description, filters.keyword)) return [];
+    return [{ requirement, iso, material, projectId: String(iso.projectId), locationType, locationId, openRequest: open.find(row => row.requirementId === requirement.id) }];
+  });
+  const place = (entry: MaterialServiceRow) => entry.locationId ? `${entry.locationType}: ${label(entry.locationType === 'Service' ? 'service_companies' : 'material_laydowns', entry.locationId)}` : '';
+  return list.sort((a, b) => place(a).localeCompare(place(b)) || String(a.iso.isoNo).localeCompare(String(b.iso.isoNo), 'en', { numeric: true }) || String(a.material.materialNo).localeCompare(String(b.material.materialNo), 'en', { numeric: true }));
+}
+export interface MaterialHistoryEntry { id: string; date: string; location: string; orderNo: string }
+/**
+ * Material history of one material line: its laydown moves, service requests and moves back to the inventory, newest
+ * first (Date | Location | Ord. No.). Ord. No. is the service request number of a service entry, empty otherwise.
+ */
+export function materialHistory(rows: Record<string, Row[]>, requirementId: string, label: (resource: string, id: string) => string = (_r, id) => id): MaterialHistoryEntry[] {
+  const requests = new Map(active(rows, 'service_requests').map(row => [row.id, row]));
+  return active(rows, 'material_location_events').filter(row => row.requirementId === requirementId).sort((a, b) => String(b.date).localeCompare(String(a.date)) || byCreation(b, a)).map(row => ({
+    id: row.id, date: String(row.date || ''),
+    location: row.companyId ? label('service_companies', String(row.companyId)) : row.laydownId ? label('material_laydowns', String(row.laydownId)) : row.type === 'Move to inventory' ? 'Inventory' : String(row.type || ''),
+    orderNo: row.requestId ? String(requests.get(String(row.requestId))?.number ?? '') : '',
+  }));
 }
 
 // ---- Requests ------------------------------------------------------------------------------------------------------

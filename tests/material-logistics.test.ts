@@ -32,7 +32,7 @@ test('catalog and custom material service requests retain names, links and histo
 });
 test('a failing selection rolls back material locations, requests, counters, and history atomically',t=>{
  const s=fixture(t),selected=requirements(s);runAction(s,'move-materials',{requirementIds:[selected[0]],laydownId:'material-rack'},actor);
- const before=snapshot(s);assert.throws(()=>runAction(s,'service-materials',{requirementIds:selected,companyId:'service-coating'},actor),/laydown before/);assert.equal(snapshot(s),before);
+ const before=snapshot(s);assert.throws(()=>runAction(s,'service-materials',{requirementIds:[...selected,'missing-requirement'],companyId:'service-coating'},actor),/could not be found/i);assert.equal(snapshot(s),before);
  assert.throws(()=>runAction(s,'move-materials',{requirementIds:[selected[0],'missing-requirement'],laydownId:'material-rack'},actor),/could not be found/i);assert.equal(snapshot(s),before);
  const result=runAction(s,'service-materials',{requirementIds:[selected[0]],companyId:'service-coating'},actor),open=snapshot(s);
  assert.throws(()=>runAction(s,'service-materials',{requirementIds:[selected[0]],companyId:'service-coating'},actor),/open service/);
