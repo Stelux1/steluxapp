@@ -9,9 +9,9 @@ import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { passwordHash } from '../server/auth.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
-import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
+import { availabilityFor, HOSTED_RELEASE_PROFILE, pageAvailable, projectResource } from '../shared/release.ts';
 import { PILOT_MAP, pilotItemResources } from '../shared/pilots.ts';
-import { ASME_P_NUMBERS, WELDER_PAGE_SIZES, DEFAULT_WELDER_PAGE_SIZE, activeText, defaultWelderSite, isWelderRole, hostedFieldOrder, roleText, welderOnSite, welderOptionLabel, CERTIFICATE_MANDATORY, ISO_15608_GROUPS, NO_WELDER_FILTER, certificateMandatoryErrors, certificatesForProject, expiringQualifications, filterWelders, isoAsmeLabel, linkedToProject, nextIndexNumber, rangeErrors, welderTab, welderTabCounts } from '../shared/welder-data.ts';
+import { ASME_P_NUMBERS, WELDER_PAGE_SIZES, DEFAULT_WELDER_PAGE_SIZE, activeText, defaultWelderSite, isWelderRole, hostedFieldOrder, roleText, welderOnSite, welderOptionLabel, CERTIFICATE_MANDATORY, ISO_15608_GROUPS, NO_WELDER_FILTER, certificateMandatoryErrors, certificatesForProject, expiringQualifications, filterWelders, welderFilterCount, type WelderCardFilter, isoAsmeLabel, linkedToProject, nextIndexNumber, rangeErrors, welderTab, welderTabCounts } from '../shared/welder-data.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
@@ -50,31 +50,19 @@ test('expire warnings list expired and soon-expiring qualifications, earliest fi
   assert.deepEqual(own({ expiresAt: '2026-12-16' }), ['x'], 'no notify days of its own: 30');
 });
 
-test('filter welders matches one valid qualification against every chosen value', () => {
+test('filter welders: a welder matches when one of his card lines carries the chosen value (exact name)', () => {
   const welders = [row('w1'), row('w2'), row('w3')];
-  const rows = {
-    diameters: [row('d-2', { size: 60.3 }), row('d-8', { size: 219.1 })],
-    welder_customs_catalog: [row('c1', { diameterFrom: '21.3', diameterTo: '168.3', wtFrom: '2', wtTo: '12' })],
-    welder_certificates: [
-      row('a', { welderId: 'w1', customId: 'c1', processId: 'p-tig', wireId: 'wire-1', position: 'PF', weldKind: 'BW', system: 'EN', expiresAt: '2027-05-01' }),
-      row('b', { welderId: 'w2', processId: 'p-tig', position: 'PA', weldKind: 'FW', system: 'EN', thicknessFrom: 3, thicknessTo: 20, diameterFrom: 100, expiresAt: '2027-05-01' }),
-      row('c', { welderId: 'w3', customId: 'c1', processId: 'p-tig', position: 'PF', weldKind: 'BW', system: 'EN', expiresAt: '2026-01-01' }),
-    ],
-  };
-  const ids = (filter: Partial<typeof NO_WELDER_FILTER>) => filterWelders(welders, rows, { ...NO_WELDER_FILTER, ...filter }, TODAY).map(item => item.id);
-  assert.deepEqual(ids({}), ['w1', 'w2', 'w3']);
-  assert.deepEqual(ids({ processId: 'p-tig' }), ['w1', 'w2'], 'an expired qualification does not count');
-  assert.deepEqual(ids({ position: 'PF' }), ['w1']);
-  assert.deepEqual(ids({ weldKind: 'FW', system: 'EN' }), ['w2']);
-  assert.deepEqual(ids({ wireId: 'wire-1' }), ['w1']);
-  // Diameter 60.3 is inside the custom's range for w1; w2 only states "from 100".
-  assert.deepEqual(ids({ diameterId: 'd-2' }), ['w1']);
-  assert.deepEqual(ids({ diameterId: 'd-8' }), ['w2']);
-  assert.deepEqual(ids({ thickness: '10' }), ['w1', 'w2']);
-  assert.deepEqual(ids({ thickness: '25' }), []);
-  // All values must hold on the same qualification.
-  assert.deepEqual(ids({ position: 'PF', weldKind: 'FW' }), []);
-  assert.deepEqual(ids({ diameterId: 'missing' }), []);
+  const options = [row('o-fm1', { list: 'wire', name: 'FM1' }), row('o-fm2', { list: 'wire', name: 'FM2' }), row('o-141', { list: 'process', name: '141' }), row('o-bw', { list: 'bw', name: 'BW' }), row('o-fw', { list: 'bw', name: 'FW' }), row('o-en', { list: 'asme', name: 'EN' })];
+  const line = (id: string, welderId: string, wireId: string, bwId: string, extra: Record<string, unknown> = {}) => row(id, { welderId, wireId, processId: 'o-141', bwId, asmeId: 'o-en', ...extra });
+  const rows = { weldercard_options: options, welder_card_lines: [line('a', 'w1', 'o-fm2', 'o-bw'), line('b', 'w2', 'o-fm1', 'o-fw'), line('c', 'w3', 'o-fm2', 'o-fw', { _archived: true })] };
+  const ids = (filter: Partial<WelderCardFilter>) => filterWelders(welders, rows, { ...NO_WELDER_FILTER, ...filter }).map(item => item.id);
+  assert.deepEqual(ids({}), ['w1', 'w2', 'w3'], 'no value chosen: nobody is filtered out');
+  assert.deepEqual(ids({ wire: 'FM2' }), ['w1'], 'only welders with a card line FM2 (an archived line does not count)');
+  assert.deepEqual(ids({ wire: 'FM1' }), ['w2']);
+  assert.deepEqual(ids({ wire: 'FM' }), [], 'exact, not a prefix');
+  assert.deepEqual(ids({ bw: 'FW', process: '141', asme: 'EN' }), ['w2']);
+  assert.deepEqual(ids({ wire: 'FM2', bw: 'FW' }), [], 'every chosen value must hold on the same line');
+  assert.equal(welderFilterCount({ ...NO_WELDER_FILTER, wire: 'FM2', bw: 'BW' }), 2);
 });
 
 test('welder tabs follow status and deletion', () => {
@@ -329,17 +317,10 @@ test('hosted Add welder form: reference order, Welder 1 / 2 only for a combinati
   assert.equal(RESOURCE_MAP.welders.fields.find(field => field.name === 'roleId')?.hidden, undefined);
 });
 
-test('Add welder custom opens with 0.00 ranges and 0.00 to 0.00 means no range', () => {
+test('Add welder custom opens with 0.00 ranges (0.00 to 0.00 is a valid range)', () => {
   const view = projectResource(hosted, RESOURCE_MAP.welder_customs_catalog);
   for (const name of ['diameterFrom', 'diameterTo', 'wtFrom', 'wtTo']) assert.equal(view.fields.find(field => field.name === name)?.default, '0.00', name);
   assert.equal(RESOURCE_MAP.welder_customs_catalog.fields.find(field => field.name === 'diameterFrom')?.default, undefined, 'other profiles unchanged');
-  const welders = [row('w1')];
-  const rows = { diameters: [row('d-2', { size: 60.3 })], welder_customs_catalog: [row('c0', { diameterFrom: '0.00', diameterTo: '0.00', wtFrom: '0.00', wtTo: '0.00' })], welder_certificates: [row('a', { welderId: 'w1', customId: 'c0', expiresAt: '2027-05-01' })] };
-  assert.deepEqual(filterWelders(welders, rows, { ...NO_WELDER_FILTER, diameterId: 'd-2' }, TODAY).map(item => item.id), [], 'a custom without a range states none: it does not qualify any diameter');
-  const withOwnRange = { ...rows, welder_certificates: [row('a', { welderId: 'w1', customId: 'c0', diameterFrom: 21.3, diameterTo: 168.3, expiresAt: '2027-05-01' })] };
-  assert.deepEqual(filterWelders(welders, withOwnRange, { ...NO_WELDER_FILTER, diameterId: 'd-2' }, TODAY).map(item => item.id), ['w1'], 'the qualification keeps its own range when the custom states none');
-  const range = { ...rows, welder_customs_catalog: [row('c0', { diameterFrom: '21.3', diameterTo: '168.3', wtFrom: '0.00', wtTo: '0.00' })] };
-  assert.deepEqual(filterWelders(welders, range, { ...NO_WELDER_FILTER, diameterId: 'd-2' }, TODAY).map(item => item.id), ['w1']);
   assert.deepEqual(rangeErrors({ diameterFrom: '0.00', diameterTo: '0.00' }, [['diameterFrom', 'diameterTo', 'Diameter']]), {});
 });
 
@@ -384,4 +365,159 @@ test('qualifications and documents carry their own Notify (days) and notificatio
   assert.equal(upload.status, 201);
   const after = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
   assert.equal(after.rows.attachments.filter(file => file.entityType === 'welders' && file.entityId === 'welder-1' && file.documentType === 'Photo').length, 1);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Wave 3: Weldercard settings, welder card, documents, Personnel data, wording of the welder dialogs
+// ---------------------------------------------------------------------------------------------------------
+import { CUSTOM_PREFIX, SUMMARY_LIST, WELDERCARD_LISTS, WELDERCARD_PATH, cardLineCells, cardOptions, customsOfWelder, documentNameOptions, documentWps, joinIds, joinWqNos, splitIds, splitWqNos, summaryListOf, welderCardLines, welderCardModel, welderDocuments, welderWqNumbers, wqNoOf } from '../shared/welder-data.ts';
+import { welderCardPdf } from '../server/pdf/welder-card.ts';
+
+test('weld-catalogs-welder-weld-004: the seven weldercard lists exist in the reference order with a required name and a description', async t => {
+  assert.deepEqual(WELDERCARD_LISTS.map(list => list.label), ['Welding wire', 'Weld process', 'Diameter', 'Pos', 'BW/FW', 'Thickness', 'ASME/EN']);
+  assert.deepEqual(RESOURCE_MAP.weldercard_options.fields.filter(field => field.required).map(field => field.name).sort(), ['list', 'name']);
+  assert.ok(RESOURCE_MAP.weldercard_options.fields.some(field => field.name === 'description'));
+  assert.ok(Object.hasOwn(hosted.resources, 'weldercard_options') && Object.hasOwn(hosted.resources, 'welder_card_lines'), 'the hosted profile delivers both');
+  assert.ok(pageAvailable(hosted, `/weld${WELDERCARD_PATH}`, RESOURCES), 'the settings page is delivered to the hosted profile');
+  const f = await fixture(t); await f.setup();
+  const data = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
+  const wires = cardOptions(data.rows.weldercard_options, 'wire');
+  assert.deepEqual(wires.map(option => option.name), ['FM1', 'FM2', 'FM3', 'FM4', 'FM5', 'FM6'], 'the sample values of the reference');
+  assert.equal(wires.find(option => option.name === 'FM2')?.description, 'CS (dekt ook FM1)');
+  let response = await f.request('/api/records/weldercard_options', 'POST', { list: 'wire', name: '' }); assert.equal(response.status, 422); assert.match((await json(response)).fields.name, /required/i);
+  response = await f.request('/api/records/weldercard_options', 'POST', { list: 'nonsense', name: 'X' }); assert.equal(response.status, 422);
+  response = await f.request('/api/records/weldercard_options', 'POST', { list: 'wire', name: 'FM7', description: 'Duplex' }); assert.equal(response.status, 201);
+  const created = (await json(response)).record;
+  assert.equal((await f.request('/api/records/weldercard_options', 'POST', { list: 'wire', name: 'FM7' })).status, 409, 'a name is unique within its list');
+  assert.equal((await f.request('/api/records/weldercard_options', 'POST', { list: 'process', name: 'FM7' })).status, 201, 'the same name may exist in another list');
+  response = await f.request(`/api/records/weldercard_options/${created.id}`, 'PUT', { description: 'Duplex steel', _version: created._version }); assert.equal(response.status, 200);
+  // Delete = archive underneath, also while a card line still uses the value (the line keeps showing it).
+  const line = await f.request('/api/records/welder_card_lines', 'POST', { welderId: 'welder-2', wireId: created.id, processId: 'weldercard-process-1', diameterId: 'weldercard-dia-1', thicknessId: 'weldercard-dikte-1', bwId: 'weldercard-bw-1', posId: 'weldercard-pos-1', asmeId: 'weldercard-asme-1' });
+  assert.equal(line.status, 201);
+  assert.equal((await f.request(`/api/records/weldercard_options/${created.id}/archive`, 'POST', { _version: 2 })).status, 200);
+  const after = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
+  assert.equal(cardLineCells(after.rows.welder_card_lines.find(item => item.welderId === 'welder-2')!, after.rows.weldercard_options)[0], 'FM7');
+  assert.ok(!cardOptions(after.rows.weldercard_options, 'wire').some(option => option.name === 'FM7'), 'the deleted value is no longer offered');
+});
+
+test('weld-catalogs-welder-weld-003: adding a card line FM2 / 141 / BW stores it on the welder and the welder card PDF lists it', async t => {
+  const f = await fixture(t); await f.setup();
+  const id = (list: string, name: string) => f.store.list('weldercard_options').find(option => option.list === list && option.name === name)!.id;
+  const input = { welderId: 'welder-2', wireId: id('wire', 'FM2'), processId: id('process', '141'), diameterId: id('dia', '21,30-42,60'), thicknessId: id('dikte', '3,00-22,00'), bwId: id('bw', 'BW'), posId: id('pos', 'PA,PC,PE,PF'), asmeId: id('asme', 'EN') };
+  let response = await f.request('/api/records/welder_card_lines', 'POST', { ...input, wireId: id('process', '141') });
+  assert.equal(response.status, 422); assert.match((await json(response)).fields.wireId, /Welding wire/, 'a value of another list is refused');
+  response = await f.request('/api/records/welder_card_lines', 'POST', { ...input, bwId: '' }); assert.equal(response.status, 422, 'every list needs a value');
+  response = await f.request('/api/records/welder_card_lines', 'POST', { ...input, wqNos: 'NOT-HIS-NUMBER' }); assert.equal(response.status, 422); assert.match((await json(response)).fields.wqNos, /this welder/);
+  const own = welderWqNumbers(f.store.list('welder_certificates'), 'welder-2');
+  assert.ok(own.length > 0, 'the sample welder has WQ numbers');
+  response = await f.request('/api/records/welder_card_lines', 'POST', { ...input, wqNos: own.join('\n') }); assert.equal(response.status, 201);
+  const line = (await json(response)).record;
+  assert.equal(line.welderId, 'welder-2'); assert.equal(line.wqNos, own.join('\n'));
+  const rows = { welders: f.store.list('welders'), welder_card_lines: f.store.list('welder_card_lines'), weldercard_options: f.store.list('weldercard_options') };
+  const model = welderCardModel(rows, 'welder-2')!;
+  assert.deepEqual(model.columns, ['#', 'Welding wire', 'Weld process', 'Diameter', 'Thickness', 'BW/FW', 'POS', 'ASME/EN', 'WQ No']);
+  assert.deepEqual(model.lines[0].cells.slice(0, 7), ['1', 'FM2', '141', '21,30-42,60', '3,00-22,00', 'BW', 'PA,PC,PE,PF']);
+  assert.match(model.heading, /^Welder ID Nr\.: .+ Name: Robin Lane$/);
+  const { bytes } = await welderCardPdf(rows, 'welder-2', new Date('2026-11-16T10:00:00Z'));
+  assert.equal(Buffer.from(bytes.slice(0, 5)).toString(), '%PDF-');
+  // The PDF is served to an account that may print welders, and only for a welder it can read.
+  const pdf = await f.request('/api/pdf/welder-card?welderId=welder-2'); assert.equal(pdf.status, 200); assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  assert.equal((await f.request('/api/pdf/welder-card?welderId=missing')).status, 404);
+  // The line goes away with a delete (archive underneath).
+  assert.equal((await f.request(`/api/records/welder_card_lines/${line.id}/archive`, 'POST', { _version: line._version })).status, 200);
+  assert.deepEqual(welderCardLines(f.store.list('welder_card_lines'), 'welder-2'), []);
+  // A read-only account neither adds nor deletes lines.
+  await f.signIn('Weld viewer', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'Read only' });
+  assert.equal((await f.request('/api/records/welder_card_lines', 'POST', { ...input, wqNos: own.join('\n') })).status, 403);
+  assert.equal((await f.request('/api/records/weldercard_options', 'POST', { list: 'wire', name: 'FM8' })).status, 403);
+  // Mto Pilot does not reach the welder card records.
+  f.usePilot('mto'); assert.equal((await f.request('/api/records/welder_card_lines')).status, 403); assert.equal((await f.request('/api/pdf/welder-card?welderId=welder-2')).status, 403);
+});
+
+test('welder card helpers: WQ numbers and ids are stored as one text each and read back without empties or repeats', () => {
+  assert.deepEqual(splitWqNos('A 1\n\n B 2 \nA 1'), ['A 1', 'B 2']); assert.equal(joinWqNos(['A 1', ' ', 'B 2', 'A 1']), 'A 1\nB 2');
+  assert.deepEqual(splitIds('w1, w2,,w1'), ['w1', 'w2']); assert.equal(joinIds(['w2', 'w1', 'w2']), 'w2,w1'); assert.deepEqual(splitIds(undefined), []);
+  const lines = [row('l2', { welderId: 'w1', _createdAt: '2026-02-01' }), row('l1', { welderId: 'w1', _createdAt: '2026-01-01' }), row('x', { welderId: 'w2' }), row('g', { welderId: 'w1', _archived: true })];
+  assert.deepEqual(welderCardLines(lines, 'w1').map(line => line.id), ['l1', 'l2'], 'oldest first, archived and other welders left out');
+});
+
+test('weld-catalogs-welder-weld-009: the document Name options are Summary list, then Custom - …, then Certificate - … in creation order', () => {
+  const customs = [row('c2', { name: 'GTAW|ASME', _createdAt: '2026-02-01' }), row('c1', { name: '141|FM1-FM2|ISO9606-1', _createdAt: '2026-01-01' }), row('c3', { name: 'gone', _archived: true })];
+  const certificates = [row('t1', { name: 'Ademlucht', _createdAt: '2026-01-01' }), row('t2', { name: 'Medical', _createdAt: '2026-03-01' })];
+  assert.deepEqual(documentNameOptions(customs, certificates), [SUMMARY_LIST, 'Custom - 141|FM1-FM2|ISO9606-1', 'Custom - GTAW|ASME', 'Certificate - Ademlucht', 'Certificate - Medical']);
+  assert.deepEqual(documentNameOptions([], []), ['Summary list']);
+});
+
+test('weld-catalogs-welder-weld-009: a document with WPS [A, B], expiring in 10 days with Notify 14 shows in Expire warnings; its bell off hides it', async t => {
+  const wps = [row('wps-a', { name: '11.015' }), row('wps-b', { name: '11.016 rv.1' })];
+  const welder = row('w1', { number: 'W01', name: 'Alex Taylor', status: 'Active' });
+  const document = row('d1', { name: 'Summary list', welderId: 'w1', isDocument: true, wpsIds: 'wps-b,wps-a', wqNo: 'ROT 2023.95697', expiresAt: '2026-11-26', notifyDays: 14, notify: true });
+  const warnings = (certificate: Row) => expiringQualifications({ welders: [welder], welder_certificates: [certificate] }, TODAY);
+  assert.deepEqual(warnings(document).map(item => item.id), ['d1']); assert.equal(warnings(document)[0].message, 'Expires in 10 days');
+  assert.deepEqual(warnings({ ...document, notify: false }).map(item => item.id), [], 'the bell off hides it');
+  assert.deepEqual(warnings({ ...document, notifyDays: 5 }).map(item => item.id), [], 'outside its own Notify days');
+  assert.deepEqual(warnings({ ...document, notifyDays: null, expiresAt: '2026-12-10' }).map(item => item.id), ['d1'], 'Notify (days) left empty counts as 30');
+  assert.deepEqual(documentWps(document, wps), ['11.015', '11.016 rv.1'], 'the WPS numbers read back sorted');
+  // The same through the server: both WPS are stored on the document, a WPS that does not exist is refused, and the bell is one update.
+  const f = await fixture(t); await f.setup();
+  const second = f.store.create('wps', { name: '11.016 rv.1', method: '141', definition: 'Second sample procedure', jointType: 'BW', allProjects: true, processId: 'process-0', standard: 'ISO 15609-1' });
+  const ids = joinIds(['wps-1', second.id]);
+  let response = await f.request('/api/records/welder_certificates', 'POST', { name: SUMMARY_LIST, welderId: 'welder-1', isDocument: true, wpsIds: ids, wqNo: 'ROT 1', note: 'checked', expiresAt: '2030-01-01', notifyDays: 14 });
+  assert.equal(response.status, 201); const stored = (await json(response)).record;
+  assert.equal(stored.wpsIds, ids); assert.equal(stored.wqNo, 'ROT 1'); assert.equal(stored.note, 'checked'); assert.equal(stored.notify, true);
+  response = await f.request('/api/records/welder_certificates', 'POST', { name: SUMMARY_LIST, welderId: 'welder-1', isDocument: true, wpsIds: 'no-such-wps' }); assert.equal(response.status, 422); assert.match((await json(response)).fields.wpsIds, /WPS/);
+  response = await f.request('/api/records/welder_certificates', 'POST', { name: SUMMARY_LIST, welderId: 'welder-1', isDocument: true, notifyDays: '' }); assert.equal(response.status, 201, 'Notify (days) may stay empty');
+  response = await f.request(`/api/records/welder_certificates/${stored.id}`, 'PUT', { notify: false, _version: stored._version }); assert.equal(response.status, 200); assert.equal((await json(response)).record.notify, false);
+});
+
+test('weld-catalogs-welder-weld-003: Personnel data lists the documents by expire date and links the Summary list only when there is one', () => {
+  const documents = [row('late', { name: 'Custom - B', welderId: 'w1', expiresAt: '2026-04-24', wqNo: 'ROT 2' }), row('none', { name: 'Certificate - X', welderId: 'w1', isDocument: true }), row('summary', { name: SUMMARY_LIST, welderId: 'w1', isDocument: true, expiresAt: '2026-01-07', wqNo: 'ROT 1' }), row('early', { name: 'Custom - A', welderId: 'w1', expiresAt: '2024-04-04' }), row('other', { name: 'Custom - Z', welderId: 'w2' }), row('gone', { name: 'Custom - Y', welderId: 'w1', _archived: true })];
+  const listed = welderDocuments(documents, 'w1');
+  assert.deepEqual(listed.map(item => item.id), ['early', 'summary', 'late', 'none'], 'by expire date ascending, without a date last; other welders and archived ones are left out');
+  assert.equal(summaryListOf(listed)?.id, 'summary');
+  assert.equal(summaryListOf(listed.filter(item => item.id !== 'summary')), undefined, 'no Summary list document: no link');
+  assert.deepEqual(welderWqNumbers(documents, 'w1'), ['ROT 1', 'ROT 2'], 'the WQ numbers sorted, each once');
+  assert.equal(wqNoOf(row('q', { name: 'WQ-2024-0412', welderId: 'w1' })), 'WQ-2024-0412', 'a qualification saved before has its certificate number as WQ number');
+  assert.equal(wqNoOf(row('d', { name: SUMMARY_LIST, isDocument: true })), '');
+});
+
+test('w1-left-8: the Customs column lists the customs named on the welder\'s documents, each once', () => {
+  const customs = [row('c1', { name: '141|FM1-FM2|ISO9606-1' })];
+  const certificates = [row('a', { welderId: 'w1', name: `${CUSTOM_PREFIX}141|FM1-FM2|ISO9606-1/NEN3650`, expiresAt: '2024-04-04' }), row('b', { welderId: 'w1', name: `${CUSTOM_PREFIX}GTAW|ASME`, expiresAt: '2026-01-27' }), row('c', { welderId: 'w1', name: `${CUSTOM_PREFIX}141|FM1-FM2|ISO9606-1/NEN3650`, expiresAt: '2026-04-04' }), row('d', { welderId: 'w1', name: SUMMARY_LIST, isDocument: true }), row('e', { welderId: 'w2', name: `${CUSTOM_PREFIX}Other` })];
+  assert.deepEqual(customsOfWelder(certificates, 'w1', customs), ['141|FM1-FM2|ISO9606-1/NEN3650', 'GTAW|ASME']);
+  assert.deepEqual(customsOfWelder(certificates, 'w3', customs), []);
+  // A qualification of before documents carried the name (a Custom link, a plain number) names its custom; the customIds links no longer decide.
+  assert.deepEqual(customsOfWelder([row('old', { welderId: 'w1', name: 'WQ-2024-0412', customId: 'c1' })], 'w1', customs), ['141|FM1-FM2|ISO9606-1']);
+});
+
+test('delta-I2a-001: Add Welder (Add / Cancel) and Edit personnel info (Update / Close) are the wording of the hosted welders resource', () => {
+  const view = projectResource(hosted, RESOURCE_MAP.welders);
+  assert.deepEqual(view.wording, { add: 'Add Welder', edit: 'Edit personnel info', remove: 'Delete', cancelEdit: 'Close' });
+  assert.equal(RESOURCE_MAP.welders.wording, undefined, 'other profiles keep their wording');
+  assert.equal(projectResource(undefined, RESOURCE_MAP.welders).wording, undefined);
+});
+
+test('delta-I2a-002: Edit personnel info has no Combination box (Welder 1 / 2 only for a combination welder); Active lists Inactive first in Add and Edit', () => {
+  const view = projectResource(hosted, RESOURCE_MAP.welders);
+  const names = (fields: { name: string; hidden?: boolean }[]) => fields.filter(field => !field.hidden).map(field => field.name);
+  assert.ok(names(hostedFieldOrder('welders', view.fields)).includes('combination'), 'Add keeps Combination');
+  const single = names(hostedFieldOrder('welders', view.fields, { combination: false }));
+  for (const name of ['combination', 'welder1Id', 'welder2Id']) assert.ok(!single.includes(name), `edit of a single welder: no ${name}`);
+  const pair = names(hostedFieldOrder('welders', view.fields, { combination: true }));
+  assert.ok(pair.includes('welder1Id') && pair.includes('welder2Id') && !pair.includes('combination'), 'a combination welder keeps Welder 1 / Welder 2 (read-only fallback)');
+  assert.deepEqual(names(hostedFieldOrder('welders', view.fields, {})).filter(name => ['status', 'companyId'].includes(name)), ['status', 'companyId'], 'the rest of the order is unchanged');
+  const status = view.fields.find(field => field.name === 'status')!;
+  assert.deepEqual(status.options, ['Inactive', 'Active']); assert.equal(status.default, 'Active');
+  assert.deepEqual(RESOURCE_MAP.welders.fields.find(field => field.name === 'status')!.options, ['Active', 'Inactive'], 'the stored values stay valid for the other profiles');
+});
+
+test('w1-left-7: Roles words its title and Add Role as the reference does; the Welder role has no delete (server refusal stays)', async t => {
+  const view = projectResource(hosted, RESOURCE_MAP.roles);
+  assert.equal(view.title, 'Roles'); assert.equal(view.wording?.add, 'Add Role');
+  const f = await fixture(t); await f.setup();
+  const welderRole = f.store.list('roles').find(role => isWelderRole(role))!;
+  const response = await f.request(`/api/records/roles/${welderRole.id}/archive`, 'POST', { _version: welderRole._version });
+  assert.equal(response.status, 422); assert.match((await json(response)).error || '', /Welder role cannot be deleted/);
+  // The list hides the delete action for exactly the rows the server refuses (client/records.tsx uses isWelderRole).
+  assert.equal(isWelderRole(welderRole), true); assert.equal(isWelderRole(row('r', { name: 'Welding inspector' })), false);
 });

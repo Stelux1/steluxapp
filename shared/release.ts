@@ -6,7 +6,7 @@ import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { CATALOG_SITES, HOSTED_COMPANY_FIELDS, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogField, catalogResource } from './weld-catalogs.ts';
 import { hostedSiteFields } from './site-settings.ts';
 import { itpHostedField } from './itps.ts';
-import { HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
+import { WELDERCARD_PATH, HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
 import { WELD_ENTRY_FIELDS } from './weld-entry.ts';
 import { deliverInspections, MANAGER_PATH } from './inspections.ts';
 import { RELEASE_ACTIONS } from './releases.ts';
@@ -267,6 +267,8 @@ export function projectResource(availability: Availability | undefined, resource
     // The MTO Pilot menu says "Storehouses" (reference wording); the page and its form follow it.
     ...(pilots && resource.key === 'warehouses' ? { title: 'Storehouses', singular: 'storehouse' } : {}),
     ...(pilots && resource.key === 'attachment_names' ? { singular: 'Attachment name' } : {}),
+    // Welders (capture weld__welder__welders*.txt): Add Welder (Add / Cancel), Edit personnel info (Update / Close).
+    ...(pilots && resource.key === 'welders' ? { wording: { add: 'Add Welder', edit: 'Edit personnel info', remove: 'Delete', cancelEdit: 'Close' } } : {}),
     fields: (pilots && resource.key === 'sites' ? hostedSiteFields : (list: Field[]) => list)(ordered(resource.fields).filter(f => fieldAvailable(availability, resource.key, f.name)).map(f => pilots && HOSTED_REQUIRED[resource.key]?.includes(f.name) ? { ...f, required: true } : f).map(f => pilots && PILOT_ONLY_FIELDS[resource.key]?.includes(f.name) ? { ...f, hidden: false } : pilots && resource.key === 'users' && f.name === 'email' ? { ...f, label: 'Username / email' } : pilots && resource.key === 'materials' && f.name === 'materialGroup' ? { ...f, required: true } : f).map(f => pilots ? catalogField(resource.key, hostedWeldDataField(resource.key, hostedField(resource.key, f))) : f).map(f => pilots ? itpHostedField(resource.key, f) : f).map(f => {
       const side = /^(?:pos|chargeNo)([12])$/.exec(f.name)?.[1];
       return projectField(availability, prototype && resource.key === 'welds' && side ? { ...f, section: `Material side ${side}` } : f);
@@ -312,6 +314,7 @@ function deliveredPage(availability: Availability, pathname: string, definitions
   if (Object.hasOwn(availability.resources, 'receipts') && PROCUREMENT_PATHS.includes(pathname)) return true;
   if (pathname === '/materials/materials-list' && availability.features.includes('pilots')) return true;
   if (pathname === MATERIAL_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('materials')) return true;
+  if (pathname === WELDERCARD_PATH && availability.features.includes('pilots') && Object.hasOwn(availability.resources, 'weldercard_options')) return true;
   if (pathname === PQR_IMPORT_PATH && availability.features.includes('pilots') && availability.navigation.includes('pqr')) return true;
   if (availability.features.includes('project-planning') && ['/materials/reports', '/materials/planning'].includes(pathname)) return true;
   if (availability.features.includes('pilots') && (MTO_LOGISTICS_PAGES.includes(pathname) || /^\/materials\/laydowns\/[^/]+$/.test(pathname))) return true;

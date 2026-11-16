@@ -47,6 +47,7 @@ const byCreated = (a: Row, b: Row) => a._createdAt.localeCompare(b._createdAt) |
  * with the reason; every other document of PDF_DOCUMENTS fills a part (a test holds the registry to this).
  */
 export const NOT_IN_BOOK: Record<string, string> = {
+  'welder-card': 'The welder card is printed from the Welders page; it is a welder document, not an isometric document.',
   'weld-cards': 'Weld cards are cut out and handed to the welders; the book has no Weld card part.',
   'weld-labels': 'Weld labels are stuck on the spools; the book\'s Flange labels part is a different label and is deferred.',
   'flange-labels': 'Flange labels are printed for the flanges ticked on the Flange Management page; the book\'s Flange labels part stays deferred.',

@@ -342,7 +342,7 @@ export class Store {
         if(this.hostedRules&&key==='welders')archiveWelderQualifications(this,id,actor);
         for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource).filter(l=>l[relation.ownerKey]===id)){const marked=this.update(relation.resource,link.id,{ownerArchived:true},link._version,actor);this.archive(relation.resource,marked.id,marked._version,actor);}
         // Hosted: a PQR attribute value can be removed from its dropdown while PQRs keep showing it (shared/wps.ts).
-        if (!(this.hostedRules && key === 'qualification_options')) for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
+        if (!(this.hostedRules && (key === 'qualification_options' || key === 'weldercard_options'))) for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
           const dependent = this.db.prepare(`SELECT id FROM ${table(resource.key)} WHERE "${f.name}"=? AND archived=0 LIMIT 1`).get(id);
           if (dependent) throw conflict(`This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
         }

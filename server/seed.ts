@@ -86,12 +86,24 @@ export function seed(store: Store) {
     add('welders', 'welder-6', { name: 'Noor Hendriks', number: 'W-006', welderCode: 'W03-140', companyId: 'company-north', roleId: 'role-welder', status: 'Active', globallyDeployable: false, description: 'Left the company.' });
     const welder6 = store.get('welders', 'welder-6'); store.archive('welders', welder6.id, welder6._version, SYSTEM);
     ['141', '111', '135', '136'].forEach((name, i) => add('weld_processes', `process-${i}`, { name }));
+    // Weldercard settings (capture weld__welder__weldercard-settings.txt and the welder card selects, weld__welder__welders__card.txt).
+    const cardValues: Record<string, [string, string?][]> = {
+      wire: [['FM1', 'CS'], ['FM2', 'CS (dekt ook FM1)'], ['FM3', 'CS (dekt ok FM2,FM1'], ['FM4', 'CS (dekt ook FM3,FM2,FM1)'], ['FM5', 'RVS'], ['FM6', 'Nikkel (dekt ook FM5)']],
+      process: [['135'], ['136'], ['141'], ['111'], ['141/111']],
+      dia: [['>21,1'], ['>44,45'], ['>30,16'], ['>16.7'], ['≥ 84,15'], ['≥ 500'], ['≥ 109,55'], ['≥ 16,00'], ['≥ 13,50'], ['21,30-42,60']],
+      dikte: [['3,00-22,00'], ['7,13-28,5'], ['≥ 3'], ['≥ 1,50'], ['2,00-20,40'], ['3,00-5,55']],
+      bw: [['BW'], ['FW'], ['TTS'], ['BW, FW']],
+      pos: [['PH'], ['H-L045'], ['BW:PA,PC,PF FW:PA,PB,PC,PF'], ['BW: PA,PC,PE,PF,H-L045 FW:PA,PB,PC,PD,PE,PF'], ['ALL EXCEPT PG(F)'], ['BW:PA,PC,PE,PF FW:PA,PB,PC,PD,PE,PF'], ['PA,PC,PE,PF'], ['PA,PF FW:PB'], ['BW:PA ; FW:PA,PB'], ['PA,PC,PE,PF FW:PB'], ['PA,PB,PC,PD,PE,PF,PH'], ['BW:PA,PF FW:PA,PB,PF']],
+      asme: [['EN'], ['ASME']],
+    };
+    for (const [list, values] of Object.entries(cardValues)) values.forEach(([name, description], i) => add('weldercard_options', `weldercard-${list}-${i + 1}`, { list, name, description: description ?? '' }));
     seedWeldCatalogs(store);
     // Qualifications relative to the day the sample workspace is created, so the expire warnings always have an expired and an expiring entry.
     const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
     [['welder-1', 'WQ-2024-0412', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -730, -12], ['welder-1', 'WQ-2025-0233', 'welder-certificate-type-1', 'welder-custom-2', 'process-1', 'NEN 3650', 'PA', 'BW', 'EN', -350, 18], ['welder-2', 'WQ-2025-0310', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -125, 240], ['welder-3', 'WQ-2025-0118', 'welder-certificate-type-2', 'welder-custom-4', 'process-0', 'ASME IX', '6G', 'BW', 'ASME', -40, 690], ['welder-4', 'WQ-2025-0377', 'welder-certificate-type-0', 'welder-custom-3', 'process-2', 'ISO 9606-1', 'PB', 'FW', 'EN', -356, 9], ['welder-5', 'WQ-2024-0105', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -800, -60], ['welder-4', 'WQ-2025-0378', 'welder-certificate-type-0', 'welder-custom-1', 'process-0', 'ISO 9606-1', 'PF', 'BW', 'EN', -356, 374]].forEach(([welderId, name, certificateTypeId, customId, processId, standard, position, weldKind, system, issued, expires], i) => add('welder_certificates', `welder-qualification-${i + 1}`, { name, welderId, certificateTypeId, customId, processId, standard, position, weldKind, system, issuedAt: inDays(Number(issued)), expiresAt: inDays(Number(expires)) }));
     // A welder document with its own expiry date and notify days (shown in Expire warnings like a qualification).
     add('welder_certificates', 'welder-document-1', { name: 'Summary list', welderId: 'welder-2', isDocument: true, expiresAt: inDays(-30), notifyDays: 30, notify: true, description: 'Welding summary list of the welder.' });
+    add('welder_card_lines', 'welder-card-line-1', { welderId: 'welder-1', wireId: 'weldercard-wire-2', processId: 'weldercard-process-3', diameterId: 'weldercard-dia-10', thicknessId: 'weldercard-dikte-1', bwId: 'weldercard-bw-1', posId: 'weldercard-pos-7', asmeId: 'weldercard-asme-1', wqNos: 'WQ-2024-0412' });
     [['1/2"', 21.3, 0.5, 66.9], ['3/4"', 26.7, 0.75, 83.8], ['1"', 33.4, 1, 104.9], ['1.1/4"', 42.2, 1.25, 132.5], ['1.1/2"', 48.3, 1.5, 151.7], ['2"', 60.3, 2, 189.3], ['2.1/2"', 73, 2.5, 229.2], ['3"', 88.9, 3, 279.1], ['4"', 114.3, 4, 358.9], ['6"', 168.3, 6, 528.5], ['8"', 219.1, 8, 688]].forEach(([diameter, size, sizeinch, outline], i) => add('diameters', `diameter-${i + 1}`, { diameter, size, sizeinch, outline, sorting: i + 1 }));
     // The rest of the reference diameter catalog (reducer pairs, mm sizes): only what the rows above do not already hold.
     loadDiameterCatalog(store);
