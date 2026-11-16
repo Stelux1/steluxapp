@@ -7,8 +7,10 @@ import { NDT_FORM_COLUMNS, COLUMN_TABLE } from '../shared/pdf-ndt-columns.ts';
 test('the Reports menu of the Weld isometric page lists the documents in the order of the reference', () => {
   assert.deepEqual(pdfEntries('weld', 'isometric').map(entry => entry.label), [
     'LISL Report', 'LISL Report (A3)', 'LISL Report [GU]', 'LISL Report [MV]', 'LISL Report [ISS]', 'LISL Report [WQ]', 'LISL Report [WQ ver 2]',
-    'LISL Report [GU Rev 2]', 'LISL Report [GU Rev 3]', 'Blank LISL template', 'Weld card', 'Weld labels', 'Punch list - blank',
+    'LISL Report [GU Rev 2]', 'LISL Report [GU Rev 3]', 'Blank LISL template', 'Weld card', 'Weld labels', 'Punch list - blank', "Welder's summary",
   ]);
+  // ISO Book follows Punch list - blank (a button of its own); entries that are not in the captured menu come after it.
+  assert.deepEqual(pdfEntries('weld', 'isometric').filter(entry => entry.extra).map(entry => entry.key), ['welders-summary']);
   assert.deepEqual(pdfEntries('mto', 'materials').map(entry => entry.label), ['MTO report']);
   assert.deepEqual(pdfEntries('mto', 'isometric'), [], 'MTO Pilot has no LISL menu');
   assert.deepEqual(pdfEntries('weld', 'certifications').map(entry => entry.label), ['Certification index']);

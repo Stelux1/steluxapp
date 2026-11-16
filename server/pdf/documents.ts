@@ -17,6 +17,8 @@ import { issModel, wqModel } from '../../shared/pdf-lisl-iss-wq.ts';
 import { OPERATIONAL_DOCUMENTS } from './operational-documents.ts';
 import { DEFAULT_LISL_OPTIONS, LISL_TYPES, lislModel, type LislOptions, type LislType } from '../../shared/pdf-lisl.ts';
 import type { Row, User } from '../../shared/types.ts';
+import { canReport, canResource } from '../../shared/permissions.ts';
+import { weldersSummaryDocument } from './welders-summary.ts';
 
 /**
  * Everything a document definition may use. `rows` are the records the account may read (already checked
@@ -50,6 +52,8 @@ export interface PdfResult {
 export interface PdfDocumentDefinition {
   key: string; title: string; report: string;
   scope?: 'isometric';
+  /** The ISO Book part this document fills (e.g. `pick-lists`); without it the book matches the document by its key. */
+  bookPart?: string;
   build(request: PdfRequest): Promise<PdfResult>;
 }
 /**
@@ -65,6 +69,13 @@ export interface PdfScopedRequest {
 /** A document that is not about one isometric from the query (`GET /api/pdf/:key?…` without `isoId`). `attachable`: `POST` also stores the file on `attachTo`. */
 export interface PdfScopedDefinition {
   key: string; title: string; report: string; scope: 'scoped'; attachable?: { documentType: string };
+  /** The ISO Book part this document fills; without it the book matches the document by its key. */
+  bookPart?: string;
+  /**
+   * The documents of this kind that belong in one isometric's ISO Book: one query per record (a request number, a
+   * release, a pick list), with a suffix for the contents. Without it the book builds the document once with `isoId`.
+   */
+  bookRuns?(rows: Record<string, Row[]>, iso: Row): BookRun[];
   build(request: PdfScopedRequest): Promise<PdfResult>;
 }
 
@@ -122,10 +133,18 @@ const lislWq = (key: string, title: string, version: WqVersion, suffix: string):
  */
 export interface PdfProjectDocumentDefinition {
   key: string; title: string; scope: 'project'; resource: string;
+  /** The ISO Book part this document fills; the book builds it for the isometric's project. */
+  bookPart?: string;
   build(request: PdfProjectRequest): Promise<PdfResult>;
 }
 
 export type AnyPdfDefinition = PdfDocumentDefinition | PdfScopedDefinition | PdfProjectDocumentDefinition;
+/** One build of a document inside an ISO Book. */
+export interface BookRun { suffix: string; query: Record<string, string> }
+
+/** The access rule of a document: the read right of its resource (project documents), else its report's export right. */
+export const canDocument = (user: User, definition: AnyPdfDefinition) =>
+  definition.scope === 'project' ? canResource(user, definition.resource, 'show') : canReport(user, definition.report, 'export');
 
 export const PDF_DOCUMENTS: AnyPdfDefinition[] = [
   lisl('lisl', 'LISL Report', 'a4', ''),
@@ -140,4 +159,5 @@ export const PDF_DOCUMENTS: AnyPdfDefinition[] = [
   lislWq('lisl-wq2', 'LISL Report [WQ ver 2]', 'v2', 'WQ-ver2'),
   weldCardsDocument, weldLabelsDocument, mtoReportDocument, certificationIndexDocument,
   ...OPERATIONAL_DOCUMENTS,
+  weldersSummaryDocument,
 ];

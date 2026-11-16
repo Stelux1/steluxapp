@@ -2,7 +2,7 @@ import { AppError, type Store } from '../store.ts';
 import type { documentStorage } from '../documents.ts';
 import { currentSignature } from '../signatures.ts';
 import { companyForDocuments } from './company.ts';
-import type { PdfDocumentDefinition, PdfScopedDefinition } from './documents.ts';
+import type { BookRun, PdfDocumentDefinition, PdfScopedDefinition } from './documents.ts';
 import { requestPdf, visualPdf } from './operational-requests.ts';
 import { hydrotestPdf, releasePdf } from './operational-release.ts';
 import { blankPunchPdf, flangePdf, pickListPdf, punchPdf } from './operational-lists.ts';
@@ -11,6 +11,7 @@ import {
 } from '../../shared/pdf-documents.ts';
 import { flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../../shared/pdf-lists.ts';
 import { REQUEST_DOCUMENT } from '../../shared/inspections.ts';
+import { pickListReports } from '../../shared/mto-logistics.ts';
 import type { Row } from '../../shared/types.ts';
 
 /**
@@ -44,8 +45,20 @@ function signatureOf(store: Store, documents: Documents, userId: string): { cont
   } catch { return null; }
 }
 
+/** ISO Book: the welds of one isometric, and one run per distinct value (sorted), each named after it. */
+const isoWeldIds = (rows: Record<string, Row[]>, iso: Row) => new Set((rows.welds || []).filter(weld => !weld._archived && weld.isoId === iso.id).map(weld => weld.id));
+const runsOf = (values: unknown[], name: string): BookRun[] => [...new Set(values.map(value => text(value)).filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).map(value => ({ suffix: ` ${value}`, query: { [name]: value } }));
+/** The ISO Book part of each request document (the part also takes the uploaded report files). */
+const REQUEST_BOOK_PART: Record<RequestDocumentKind, string> = { 'ndt-request': 'ndt', 'ndt-pre-request': 'ndt-pre', 'pwht-request': 'pwht' };
+
 const requestDefinition = (key: RequestDocumentKind): PdfScopedDefinition => ({
   key, title: REQUEST_DOCUMENTS[key].title, report: 'pdf-ndt-request', scope: 'scoped', attachable: { documentType: REQUEST_DOCUMENT },
+  bookPart: REQUEST_BOOK_PART[key],
+  bookRuns(rows, iso) {
+    const welds = isoWeldIds(rows, iso), types = REQUEST_DOCUMENTS[key].types;
+    return runsOf((rows.inspection_requests || []).filter(row => !row._archived && types.includes(text(row.type)) && row.status !== 'Cancelled' && welds.has(text(row.weldId))).map(row => row.number), 'requestNo');
+  },
   async build({ store, documents, rows, isoIds, query, now }) {
     const { options, error } = requestDocumentOptions(query);
     if (error) throw new AppError(422, error, { note: error });
@@ -57,7 +70,11 @@ const requestDefinition = (key: RequestDocumentKind): PdfScopedDefinition => ({
 });
 
 const visualReport: PdfScopedDefinition = {
-  key: 'visual-report', title: 'Visual inspection report', report: 'pdf-visual-report', scope: 'scoped',
+  key: 'visual-report', title: 'Visual inspection report', report: 'pdf-visual-report', scope: 'scoped', bookPart: 'visual-reports',
+  bookRuns(rows, iso) {
+    const welds = isoWeldIds(rows, iso);
+    return runsOf((rows.inspection_results || []).filter(row => !row._archived && row.type === 'VI' && welds.has(text(row.weldId))).map(row => row.reportNo), 'reportNo');
+  },
   async build({ store, documents, rows, isoIds, query, now }) {
     const model = visualReportModel(rows, query.reportNo ?? '', isoIds);
     if (!model) throw notFound('This visual inspection report');
@@ -68,7 +85,9 @@ const visualReport: PdfScopedDefinition = {
 };
 
 const releaseDefinition = (type: 'Prefab' | 'Field'): PdfScopedDefinition => ({
-  key: `${type.toLowerCase()}-release`, title: `${type} release`, report: 'pdf-release', scope: 'scoped',
+  key: `${type.toLowerCase()}-release`, title: `${type} release`, report: 'pdf-release', scope: 'scoped', bookPart: type === 'Prefab' ? 'prefab-release' : 'field-release',
+  bookRuns: (rows, iso) => (rows.releases || []).filter(row => !row._archived && row.isoId === iso.id && row.type === type)
+    .map(row => ({ suffix: text(row.docNo) ? ` ${text(row.docNo)}` : '', query: { releaseId: row.id } })),
   async build({ store, documents, rows, isoIds, query, now }) {
     const model = releaseDocumentModel(rows, query.releaseId ?? '', isoIds, isoDate(now));
     if (!model) throw notFound('This release');
@@ -92,7 +111,8 @@ const hydrotestRequest: PdfScopedDefinition = {
 };
 
 const punchList: PdfScopedDefinition = {
-  key: 'punch-list', title: 'Punch list', report: 'pdf-punch', scope: 'scoped',
+  key: 'punch-list', title: 'Punch list', report: 'pdf-punch', scope: 'scoped', bookPart: 'punch-list',
+  bookRuns: (rows, iso) => (rows.punchlists || []).some(row => !row._archived && row.isoId === iso.id) ? [{ suffix: '', query: { isoId: iso.id } }] : [],
   async build({ store, documents, rows, isoIds, projectIds, query, now }) {
     const { options, error } = punchListOptions(query);
     if (error) throw new AppError(422, error);
@@ -106,7 +126,7 @@ const punchList: PdfScopedDefinition = {
 
 /** Punch list - blank belongs to one isometric, so it uses the isometric path of the route. */
 const punchListBlank: PdfDocumentDefinition = {
-  key: 'punch-list-blank', title: 'Punch list - blank', report: 'pdf-punch',
+  key: 'punch-list-blank', title: 'Punch list - blank', report: 'pdf-punch', bookPart: 'punch-list-blank',
   async build({ store, documents, iso, rows, now }) {
     const { bytes } = await blankPunchPdf({ iso, company: companyForDocuments(store, documents), generatedAt: now, rows });
     return { bytes, fileName: `${isoDate(now)}-${projectNumber(rows, iso)}-Punch-list-blank-${safe(iso.isoNo, 'iso')}` };
@@ -114,7 +134,8 @@ const punchListBlank: PdfDocumentDefinition = {
 };
 
 const flangeReport: PdfScopedDefinition = {
-  key: 'flange-report', title: 'Flange report', report: 'pdf-flanges', scope: 'scoped',
+  key: 'flange-report', title: 'Flange report', report: 'pdf-flanges', scope: 'scoped', bookPart: 'flange-report',
+  bookRuns: (rows, iso) => (rows.flanges || []).some(row => !row._archived && row.isoId === iso.id) ? [{ suffix: '', query: { isoId: iso.id } }] : [],
   async build({ store, documents, rows, isoIds, projectIds, query, now }) {
     const { options, error } = flangeReportOptions(query);
     if (error) throw new AppError(422, error);
@@ -127,7 +148,8 @@ const flangeReport: PdfScopedDefinition = {
 };
 
 const pickList: PdfScopedDefinition = {
-  key: 'pick-list', title: 'Pick list', report: 'pdf-picklist', scope: 'scoped',
+  key: 'pick-list', title: 'Pick list', report: 'pdf-picklist', scope: 'scoped', bookPart: 'pick-lists',
+  bookRuns: (rows, iso) => runsOf(pickListReports({ ...rows, isometrics: (rows.isometrics || []).filter(row => row.id === iso.id) }).filter(report => report.isoId === iso.id).map(report => report.reportNo), 'reportNo'),
   async build({ store, documents, rows, isoIds, query, now }) {
     const model = pickListModel(rows, query.reportNo ?? '', isoIds);
     if (!model) throw notFound('This pick list');

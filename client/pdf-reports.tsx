@@ -6,17 +6,18 @@ import { ApiError, apiBlob, apiUrl } from './api.ts';
 import { Dropdown, Modal } from './components.tsx';
 import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
+import { IsoBookDialog } from './iso-book.tsx';
 
 type Option = 'type' | 'weldRecord' | 'signature' | 'welds' | 'perPage' | 'labelGrid' | 'phase' | 'project';
 export type PdfPilot = 'weld' | 'mto';
 /** Where an entry is offered: the Reports menu of the isometric page, the Certifications page or the materials of an isometric (MTO Pilot). */
 export type PdfPage = 'isometric' | 'certifications' | 'materials';
 /**
- * One entry of the Reports menu (the order of the reference: LISL Report, A3, [GU], [MV], [ISS], [WQ], [WQ ver 2], [GU Rev 2], [GU Rev 3], Blank LISL template, Weld card, Weld labels, Punch list - blank). Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
+ * One entry of the Reports menu (the order of the reference: LISL Report, A3, [GU], [MV], [ISS], [WQ], [WQ ver 2], [GU Rev 2], [GU Rev 3], Blank LISL template, Weld card, Weld labels, Punch list - blank, then ISO Book; `extra` entries such as Welder's summary follow it). Another document is one more entry: its server key (`/api/pdf/<key>`), label and dialog options.
  * `pilots` and `page` say where it belongs (default: the isometric page of Weld Pilot); `scope: 'project'` entries are about a
  * project instead of one isometric; `resource` is the resource whose read permission shows the entry instead of a report.
  */
-export interface PdfMenuItem { key: string; label: string; options: Option[]; /** Report whose access rule shows the entry. */ report: string; pilots?: PdfPilot[]; page?: PdfPage; scope?: 'isometric' | 'project'; resource?: string }
+export interface PdfMenuItem { key: string; label: string; options: Option[]; /** Report whose access rule shows the entry. */ report: string; pilots?: PdfPilot[]; page?: PdfPage; scope?: 'isometric' | 'project'; resource?: string; /** Not in the captured menu: listed after ISO Book. */ extra?: boolean }
 export const PDF_MENU: PdfMenuItem[] = [
   { key: 'lisl', label: 'LISL Report', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
   { key: 'lisl-a3', label: 'LISL Report (A3)', options: ['type', 'weldRecord', 'signature'], report: 'lisl' },
@@ -33,6 +34,7 @@ export const PDF_MENU: PdfMenuItem[] = [
   { key: 'punch-list-blank', label: 'Punch list - blank', options: [], report: 'pdf-punch', pilots: ['weld'], page: 'isometric' },
   { key: 'mto-report', label: 'MTO report', options: ['phase'], report: 'mto', pilots: ['mto'], page: 'materials' },
   { key: 'certification-index', label: 'Certification index', options: ['project'], report: '', resource: 'certifications', pilots: ['weld', 'mto'], page: 'certifications', scope: 'project' },
+  { key: 'welders-summary', label: "Welder's summary", options: [], report: 'wdi', pilots: ['weld'], page: 'isometric', extra: true },
 ];
 /** The entries that belong to a pilot and a page. */
 export const pdfEntries = (pilot: string | undefined, page: PdfPage) => PDF_MENU.filter(entry => (entry.pilots ?? ['weld']).includes(pilot as PdfPilot) && (entry.page ?? 'isometric') === page);
@@ -57,12 +59,13 @@ export function pdfQuery(item: PdfMenuItem, isoId: string, values: PdfValues) {
 /** "Reports" menu of the isometric page (Weld Pilot): opens a small options dialog, then generates the PDF. */
 export function PdfReportsMenu({ iso }: { iso: Row }) {
   const { canReadReport } = useWorkspace(); const pilot = usePilot();
-  const [item, setItem] = useState<PdfMenuItem | null>(null);
+  const [item, setItem] = useState<PdfMenuItem | null>(null), [book, setBook] = useState(false);
   const items = pdfEntries(pilot?.pilot.key, 'isometric').filter(entry => canReadReport(entry.report));
-  if (pilot?.pilot.key !== 'weld' || !items.length) return null;
+  if (pilot?.pilot.key !== 'weld') return null;
   return <>
-    <Dropdown label="Reports" trigger={<span className="btn"><FileText size={15}/>Reports<ChevronDown size={15}/></span>}>{items.map(entry => <button key={entry.key} onClick={() => setItem(entry)}>{entry.label}</button>)}</Dropdown>
+    <Dropdown label="Reports" trigger={<span className="btn"><FileText size={15}/>Reports<ChevronDown size={15}/></span>}>{items.filter(entry => !entry.extra).map(entry => <button key={entry.key} onClick={() => setItem(entry)}>{entry.label}</button>)}<button onClick={() => setBook(true)}>ISO Book</button>{items.filter(entry => entry.extra).map(entry => <button key={entry.key} onClick={() => setItem(entry)}>{entry.label}</button>)}</Dropdown>
     {item && <PdfDialog item={item} iso={iso} onClose={() => setItem(null)}/>}
+    {book && <IsoBookDialog isos={[iso]} onClose={() => setBook(false)}/>}
   </>;
 }
 
