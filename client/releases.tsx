@@ -9,10 +9,12 @@ import { RecordEditor } from './dialogs.tsx';
 import { PhaseDialog } from './iso-actions.tsx';
 import { ReleasePdfButton } from './pdf-documents.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
+import { exportTable, useTableRights } from './table-export.ts';
+import { areaVerb, releaseExportTable } from '../shared/export-tables.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import { priorityLabel } from '../shared/priority.ts';
 import {
-  COMPLETE_CONFIRM, ITP_MISSING, RELEASE_DEFAULT_PAGE_LENGTH, RELEASE_PAGE_LENGTHS, SIGNED_RELEASE_DOCUMENT, fwpAccepts, fwpListRows, phaseCompletion, phaseState, releaseArchiveRows, releaseItpOf, releaseItpOptions, releaseListRows, toCsv, PHASE_LOCATION,
+  COMPLETE_CONFIRM, ITP_MISSING, RELEASE_DEFAULT_PAGE_LENGTH, RELEASE_PAGE_LENGTHS, SIGNED_RELEASE_DOCUMENT, fwpAccepts, fwpListRows, phaseCompletion, phaseState, releaseArchiveRows, releaseItpOf, releaseItpOptions, releaseListRows, PHASE_LOCATION,
   type PhaseState, type ReleaseArchiveRow, type ReleaseCheckInput, type ReleaseListRow, type ReleasePhase,
 } from '../shared/releases.ts';
 import type { Row } from '../shared/types.ts';
@@ -25,13 +27,9 @@ const saveBlob = (name: string, blob: Blob) => {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a'); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 60_000);
 };
-/** Saves rows as a spreadsheet-friendly CSV (UTF-8 with a byte order mark so Excel reads the characters). */
-function downloadCsv(name: string, header: string[], lines: unknown[][]) { saveBlob(name, new Blob(['﻿', toCsv(header, lines)], { type: 'text/csv;charset=utf-8' })); }
-const escapeHtml = (value: unknown) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-/** Saves rows as a sheet Excel opens (an HTML table with the .xls type; no spreadsheet library is needed). */
-function downloadExcel(name: string, header: string[], lines: unknown[][]) {
-  const table = `<table><thead><tr>${header.map(cell => `<th>${escapeHtml(cell)}</th>`).join('')}</tr></thead><tbody>${lines.map(line => `<tr>${line.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  saveBlob(name, new Blob([`<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>${table}</body></html>`], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+/** CSV or Excel of a table of this page: the server writes the file and checks the Export right of the table's area (shared/export-tables.ts). */
+function sendTable(table: string, format: 'csv' | 'xlsx', name: string, header: string[], lines: unknown[][], fail: (message: string) => void) {
+  void exportTable(table, format, header, lines, name).catch(problem => fail((problem as Error).message || 'The file could not be created.'));
 }
 
 /** "Showing 1 to 25 of 140 entries" with page buttons; `size` 0 shows everything on one page. */
@@ -89,7 +87,7 @@ export function ReleasesPage() {
 }
 
 function ReleaseList({ type }: { type: ReleasePhase }) {
-  const { rows, label, canRun, canRecord, refresh, notify } = useWorkspace(); const source = useReleaseSource();
+  const { rows, label, canRun, canRecord, refresh, notify } = useWorkspace(); const source = useReleaseSource(); const { canExport, canPrint } = useTableRights();
   const [show, setShow] = useState<'hide' | 'show'>('hide'), [projectId, setProjectId] = useState(''), [itpNo, setItpNo] = useState(''), [query, setQuery] = useState('');
   const [length, setLength] = useState<number>(RELEASE_DEFAULT_PAGE_LENGTH), [selected, setSelected] = useState<string[]>([]), [page, setPage] = useState(0);
   const [dialog, setDialog] = useState<'filter' | 'release' | 'archive' | 'upload' | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -125,8 +123,8 @@ function ReleaseList({ type }: { type: ReleasePhase }) {
     {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
     {source.limited && <div className="alert" role="status"><AlertCircle size={18}/><span>Your profile cannot read the weld register, so the {noun} welds are not checked here. The server checks them when you release.</span></div>}
     <section className="table-card" aria-label={`${title} list`}>
-      <TableTools labelPrefix={title} exportable={canRecord('releases', 'export')} printable={canRecord('releases', 'print')} lengths={RELEASE_PAGE_LENGTHS} length={length} onLength={value => { setLength(value); setPage(0); }} query={query} onQuery={value => { setQuery(value); reset(); }}
-        onCsv={() => downloadCsv(`${file}csv`, columns, list.map(cells))} onExcel={() => downloadExcel(`${file}xls`, columns, list.map(cells))}/>
+      <TableTools labelPrefix={title} exportable={canExport(releaseExportTable(type))} printable={canPrint(releaseExportTable(type))} lengths={RELEASE_PAGE_LENGTHS} length={length} onLength={value => { setLength(value); setPage(0); }} query={query} onQuery={value => { setQuery(value); reset(); }}
+        onCsv={() => sendTable(releaseExportTable(type), 'csv', file.slice(0, -1), columns, list.map(cells), setError)} onExcel={() => sendTable(releaseExportTable(type), 'xlsx', file.slice(0, -1), columns, list.map(cells), setError)}/>
       <TableScroll><table className="data-table release-table" aria-label={`${title} isometrics`}>
         <thead><tr>
           <th className="select-cell" scope="col"><span className="sr-only">Options</span>{allowed && itpNo && <input type="checkbox" aria-label="Select all isometrics on this page" disabled={!selectableShown.length} ref={input => { if (input) input.indeterminate = selectableShown.some(entry => selected.includes(entry.iso.id)) && !selectableShown.every(entry => selected.includes(entry.iso.id)); }}
@@ -190,7 +188,7 @@ function useArchive(type: ReleasePhase): ReleaseArchiveRow[] {
 
 /** Options → Release archive: the generated release documents of the page, with their signed copies; ticked rows are deleted with Delete. */
 function ReleaseArchiveDialog({ type, onClose }: { type: ReleasePhase; onClose: () => void }) {
-  const { canRecord, refresh, notify } = useWorkspace(); const archive = useArchive(type);
+  const { canRecord, refresh, notify } = useWorkspace(); const archive = useArchive(type); const { canExport, canPrint } = useTableRights();
   const [query, setQuery] = useState(''), [length, setLength] = useState(20), [page, setPage] = useState(0), [ticked, setTicked] = useState<string[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const label = (entry: ReleaseArchiveRow) => `${entry.reportNo} | ${entry.fileName}`;
   const list = useMemo(() => { const needle = query.trim().toLowerCase(); return archive.filter(entry => !needle || label(entry).toLowerCase().includes(needle)); }, [archive, query]);
@@ -210,8 +208,8 @@ function ReleaseArchiveDialog({ type, onClose }: { type: ReleasePhase; onClose: 
   return <Modal title="Release archive" subtitle={`${type} release`} onClose={onClose} wide>
     <div className="modal-body">
       {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
-      <TableTools labelPrefix="Release archive" exportable={canRecord('releases', 'export')} printable={canRecord('releases', 'print')} lengths={[5, 20, 50, 100]} length={length} onLength={value => { setLength(value); setPage(0); }} query={query} onQuery={value => { setQuery(value); setPage(0); }}
-        onCsv={() => downloadCsv(`${type.toLowerCase()}-release-archive.csv`, header, list.map(cells))} onExcel={() => downloadExcel(`${type.toLowerCase()}-release-archive.xls`, header, list.map(cells))}/>
+      <TableTools labelPrefix="Release archive" exportable={canExport(releaseExportTable(type))} printable={canPrint(releaseExportTable(type))} lengths={[5, 20, 50, 100]} length={length} onLength={value => { setLength(value); setPage(0); }} query={query} onQuery={value => { setQuery(value); setPage(0); }}
+        onCsv={() => sendTable(releaseExportTable(type), 'csv', `${type.toLowerCase()}-release-archive`, header, list.map(cells), setError)} onExcel={() => sendTable(releaseExportTable(type), 'xlsx', `${type.toLowerCase()}-release-archive`, header, list.map(cells), setError)}/>
       <TableScroll><table className="data-table release-archive-table" aria-label={`${type} release archive`}>
         <thead><tr><th scope="col">File</th>{second && <th scope="col"><span className="sr-only">Signed copy</span></th>}</tr></thead>
         <tbody>{shown.map(entry => <tr key={entry.key}>
@@ -413,7 +411,7 @@ function AssignTab() {
       {allowed && checked.length > 0 && <button className="btn primary small" type="button" onClick={() => setDialog('assign')}>Assign Iso to FWP</button>}
       {phaseAllowed && checked.length > 0 && <button className="btn small" type="button" onClick={() => setDialog('phase')}>Set phase (Mass)</button>}
       <button className="btn small" type="button" onClick={() => setDialog('filter')}><SlidersHorizontal size={15}/>Filter</button>
-      {canArea('91', 'export') && <button className="btn small" type="button" disabled={!list.length} onClick={() => downloadCsv('isometrics-field-work-packages.csv', header, list.map(cells))}><Download size={15}/>Export</button>}
+      {canArea('91', areaVerb('91')) && <button className="btn small" type="button" disabled={!list.length} onClick={() => sendTable('assign-fwp', 'xlsx', 'isometrics-field-work-packages', header, list.map(cells), message => notify(message))}><Download size={15}/>Export</button>}
     </div>
     <div className="table-toolbar release-tools">
       <label className="release-length">Show <select aria-label="Entries per page" value={length} onChange={event => { setLength(Number(event.target.value)); setPage(0); }}>{ASSIGN_PAGE_LENGTHS.map(value => <option key={value} value={value}>{value}</option>)}</select> entries</label>

@@ -9,15 +9,10 @@ import { api, apiBlob, apiUrl, formatDate, formatNumber, post, type ApiError } f
 import { Badge, EmptyState, FieldInput, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { PdfDocumentButton, PickListPdfButton } from './pdf-documents.tsx';
 import { SignaturePad } from './signatures.tsx';
+import { exportTable, saveBlob, useTableRights } from './table-export.ts';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const includes = (values: unknown[], query: string) => !query || values.some(value => String(value ?? '').toLowerCase().includes(query.toLowerCase()));
-/** A CSV download of what the table shows; cells that would start a formula are quoted as text. */
-function downloadCsv(name: string, header: string[], lines: unknown[][]) {
-  const cell = (value: unknown) => { let text = String(value ?? ''); if (/^\s*[=+@-]/.test(text)) text = "'" + text; return '"' + text.replaceAll('"', '""') + '"'; };
-  const blob = new Blob(['﻿' + [header, ...lines].map(line => line.map(cell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-}
 function Restricted({ what }: { what: string }) { return <EmptyState title="This area is restricted" description={`Your profile does not include ${what}.`}/>; }
 function Heading({ eyebrow, title, children }: { eyebrow: string; title: string; children?: ReactNode }) {
   return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1></div>{children && <div className="heading-actions">{children}</div>}</div>;
@@ -29,18 +24,13 @@ const failure = (error: unknown) => (error as ApiError).message || 'The action c
 
 // ---- Isometric execution ---------------------------------------------------------------------------------------------
 
-/** An Excel file of what a table shows, written by the server (`/api/mto/table-export`). */
-async function downloadExcel(table: string, name: string, header: readonly string[], lines: unknown[][]) {
-  const blob = await apiBlob('/mto/table-export', { method: 'POST', body: JSON.stringify({ table, columns: header, rows: lines }) });
-  const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-}
-/** CSV, Excel and Print of a table (the reference's table buttons). Excel errors are reported by the page. */
+/** CSV, Excel and Print of a table (the reference's table buttons). The server writes the files and checks the Export right of the table's area; Print follows the area's Print box. */
 function TableButtons({ table, name, header, lines, onError }: { table: string; name: string; header: readonly string[]; lines: unknown[][]; onError: (message: string) => void }) {
-  const [busy, setBusy] = useState(false);
-  async function excel() { setBusy(true); try { await downloadExcel(table, `${name}.xlsx`, header, lines); } catch (problem) { onError(failure(problem)); } finally { setBusy(false); } }
-  return <div className="table-utilities"><button type="button" className="btn subtle small" onClick={() => downloadCsv(`${name}.csv`, [...header], lines)} disabled={!lines.length}><Download size={14}/>CSV</button>
-    <button type="button" className="btn subtle small" onClick={() => void excel()} disabled={!lines.length || busy}>{busy ? <Loader2 size={14} className="spin"/> : <Download size={14}/>}Excel</button>
-    <button type="button" className="btn subtle small" onClick={() => window.print()} aria-label="Print"><Printer size={14}/>Print</button></div>;
+  const [busy, setBusy] = useState(''); const { canExport, canPrint } = useTableRights();
+  async function save(format: 'csv' | 'xlsx') { setBusy(format); try { await exportTable(table, format, header, lines, name); } catch (problem) { onError(failure(problem)); } finally { setBusy(''); } }
+  return <div className="table-utilities">{canExport(table) && <><button type="button" className="btn subtle small" onClick={() => void save('csv')} disabled={!lines.length || Boolean(busy)}>{busy === 'csv' ? <Loader2 size={14} className="spin"/> : <Download size={14}/>}CSV</button>
+    <button type="button" className="btn subtle small" onClick={() => void save('xlsx')} disabled={!lines.length || Boolean(busy)}>{busy === 'xlsx' ? <Loader2 size={14} className="spin"/> : <Download size={14}/>}Excel</button></>}
+    {canPrint(table) && <button type="button" className="btn subtle small" onClick={() => window.print()} aria-label="Print"><Printer size={14}/>Print</button>}</div>;
 }
 const AUTO_REFRESH = [{ value: 0, label: 'Auto-refresh: Off' }, { value: 60, label: '1 min' }, { value: 300, label: '5 min' }, { value: 600, label: '10 min' }];
 const PAGING_KEY = 'isoExecutionPagingMode';
@@ -134,7 +124,7 @@ function StatusBar({ status }: { status?: IsoStatus }) {
 // ---- Pick List archive -----------------------------------------------------------------------------------------------
 
 export function PickListArchive() {
-  const { rows, label, canRecord, openRecord } = useWorkspace();
+  const { rows, label, canRecord, openRecord } = useWorkspace(); const { canExport } = useTableRights();
   const range = useMemo(() => archiveDefaultRange(today()), []);
   // From Date / To Date open on the last 30 days up to the end of the month; Filter applies them (reference GET form).
   const first = { projectId: '', from: range.from, to: range.to };
@@ -146,8 +136,9 @@ export function PickListArchive() {
   const reports = all.filter(report => includes([formatStamp(report.stamp), report.reportNo, label('projects', report.projectId), isoNo(report.isoId), report.taken ? 'Yes' : 'No'], query));
   const lines = reports.map(report => [formatStamp(report.stamp), report.reportNo, label('projects', report.projectId), isoNo(report.isoId), report.taken ? 'Yes' : 'No']);
   const current = open ? pickListReports(rows).find(report => report.reportNo === open) : undefined;
-  const exportCsv = () => downloadCsv('pick-list-archive.csv', ['Date', 'Report No.', 'Project', 'ISO No', 'Taken?', 'Lines'], reports.map(report => [report.date, report.reportNo, label('projects', report.projectId), isoNo(report.isoId), report.taken ? 'Yes' : 'No', report.lines.length]));
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · PROJECTS DATA" title="Pick List archive"><button className="btn" onClick={exportCsv} disabled={!reports.length}><Download size={15}/>Pick list archive export</button></Heading>
+  // The Pick list archive export (reference topbar link): an Excel file the server writes after the Export right of area 21; it follows the filter that was applied.
+  const exportList = async () => { try { saveBlob('pick-list-archive.xlsx', await apiBlob(`/mto/picklist-archive-export?${new URLSearchParams(Object.entries(applied).filter(([, value]) => value) as [string, string][])}`)); } catch (problem) { setError(failure(problem)); } };
+  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · PROJECTS DATA" title="Pick List archive">{canExport('picklist-archive') && <button className="btn" onClick={() => void exportList()} disabled={!reports.length}><Download size={15}/>Pick list archive export</button>}</Heading>
     <section className="panel execution-panel">
       <form className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied(draft); }}>
         <div className="field"><label htmlFor="picklist-project">Project</label><div className="select-wrap"><select id="picklist-project" value={draft.projectId} onChange={event => setDraft(old => ({ ...old, projectId: event.target.value }))}><option value="">All projects</option>{activeRows(rows, 'projects').map(row => <option key={row.id} value={row.id}>{label('projects', row.id)}</option>)}</select></div></div>
@@ -250,7 +241,7 @@ export function ServiceRequestSpools() {
   const text = (name: keyof SpoolFilters, title: string) => <div className="field"><label htmlFor={`spool-filter-${name}`}>{title}</label><input id={`spool-filter-${name}`} type="text" placeholder="..." value={String(draft[name] ?? '')} onChange={event => choose(name, event.target.value)}/></div>;
   return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Service request">
       <button className="btn" aria-expanded={panel} aria-controls="spool-filter-panel" onClick={() => setPanel(open => !open)}><SlidersHorizontal size={15}/>Filter</button>
-      <a className="btn" href={exportUrl} download><Download size={15}/>Export</a></Heading>
+      {canRecord('spools', 'export') && <a className="btn" href={exportUrl} download><Download size={15}/>Export</a>}</Heading>
     <section className="panel execution-panel">
       {panel && <form id="spool-filter-panel" className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied({ ...draft }); setSelected([]); }}>
         {select('projectId', 'Project', [['', 'All'], ...activeRows(rows, 'projects').map(row => [row.id, label('projects', row.id)] as [string, string])])}

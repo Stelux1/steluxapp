@@ -8,6 +8,8 @@ import type { AuditEvent } from '../shared/types.ts';
 import { TablePage } from './records.tsx';
 import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, REMOVE_REASONS, SEARCH_LIMIT, TRANSFER_PRIORITIES, INVENTORY_ROW_OPTIONS, defaultTransferType, inventoryLog, inventoryRows, lineCertificates, materialLogRows, prefilledOrderItems, reservedOnOpenOrders, returnToInventoryPlan, searchHasTerm, searchLocations, searchStock, siteMaterialLog, stockDetails, storehouseRows, storehouseTransactions, transferAmountDefault, transferOrderFields, transferRoute, transferTypesFor, validQuantity, type InventoryRow, type MaterialLogRow, type SearchFilters, type Transaction, type TransferContext } from '../shared/mto-stock.ts';
 import { certificateFile } from './certifications.tsx';
+import { TableExportButtons } from './table-buttons.tsx';
+import { INVENTORY_EXPORT_COLUMNS } from '../shared/export-tables.ts';
 import type { Row } from '../shared/types.ts';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -304,7 +306,7 @@ export function MaterialInventory() {
       <div className="panel-title-row"><h2>Materials in inventory</h2></div>
       <div className="inventory-filters">{!place.fixed && <Choice label="Project site" value={place.siteId} onChange={value => { place.choose(value); setChecked([]); }} options={place.sites} blank="Choose a project site"/>}
         <Control label="Show">{(_, props) => <div className="select-wrap"><select {...props} value={onlyWithQuantity ? 'qty' : 'all'} onChange={event => { setOnly(event.target.value === 'qty'); setChecked([]); }}><option value="qty">Only with quantity</option><option value="all">All materials</option></select><ChevronDown size={14}/></div>}</Control>
-        <SearchInput value={query} onChange={value => { setQuery(value); setChecked([]); }} placeholder="Search material or description…"/></div>
+        <SearchInput value={query} onChange={value => { setQuery(value); setChecked([]); }} placeholder="Search material or description…"/><TableExportButtons table="material-inventory" name="material-inventory" header={INVENTORY_EXPORT_COLUMNS} lines={list.map(entry => [entry.details.group, entry.details.articleNo, entry.details.materialNo, entry.details.dia, entry.details.lbs, entry.details.description, entry.quantity, entry.details.uom])}/></div>
       {selected.length > 0 && <div className="selection-bar"><strong>{selected.length} selected</strong><button className="clear-selection" onClick={() => setChecked([])}><X size={14}/>Clear selection</button></div>}
       {list.length ? <TableScroll><table className="data-table inventory-table"><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="numeric">Quantity</th><th>UOM</th><th>Options</th><th className="select-cell"><input type="checkbox" aria-label="Check all materials" checked={list.every(entry => checked.includes(entry.key))} onChange={event => setChecked(event.target.checked ? list.map(entry => entry.key) : [])}/></th></tr></thead>
         <tbody>{list.map(entry => <tr key={entry.key}>
