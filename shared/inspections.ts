@@ -118,6 +118,8 @@ export interface CellState {
   tracer: boolean;
 }
 export interface CellRows { results?: Row[] | null; requests?: Row[] | null; attachments?: Row[] | null; welds?: Row[] | null; }
+/** The cell rows out of the workspace rows (keyed by resource). Passing the workspace rows directly would leave every cell without results. */
+export const workspaceCellRows = (rows: Record<string, Row[] | null | undefined>): CellRows => ({ results: rows.inspection_results, requests: rows.inspection_requests, attachments: rows.attachments, welds: rows.welds });
 export const REQUEST_DOCUMENT = 'Request document';
 export const NDT_DOCUMENT = 'NDT document';
 export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellRows): CellState {
@@ -130,7 +132,8 @@ export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellR
   const requestIds = new Set(requests.map(row => row.id));
   const reportFiles = attachments.filter(file => file.entityType === 'inspection_results' && sameReport.has(String(file.entityId)) || file.entityType === 'inspection_requests' && requestIds.has(String(file.entityId)) && file.documentType !== REQUEST_DOCUMENT);
   const requestFiles = attachments.filter(file => file.entityType === 'inspection_requests' && requestIds.has(String(file.entityId)) && file.documentType === REQUEST_DOCUMENT);
-  const tracer = (kind === 'NDT' || kind === 'NDT PRE') && (isTracer(weld) || latestResult(rows.results, weld.id, kind)?.result === 'Rejected');
+  // A tracer weld shows the button in the NDT column it is examined in, not in a column that does not apply to it.
+  const tracer = (kind === 'NDT' || kind === 'NDT PRE') && ((isTracer(weld) && required) || latestResult(rows.results, weld.id, kind)?.result === 'Rejected');
   let status: CellStatus = 'not-required';
   if (required) {
     const typesNeeded = kind === 'PWHT' ? (requiredTypes(weld, kind).length ? requiredTypes(weld, kind) : types) : types;

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Check, FileText, MoreHorizontal, Printer, X } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
-import { KIND_LABELS, inspectionCellState, type InspectionKind } from '../shared/inspections.ts';
+import { KIND_LABELS, inspectionCellState, workspaceCellRows, type InspectionKind } from '../shared/inspections.ts';
 import { apiUrl } from './api.ts';
 import { useWorkspace } from './context.tsx';
 import { InspectionDialog } from './inspections.tsx';
@@ -14,7 +14,7 @@ import { InspectionDialog } from './inspections.tsx';
 export function InspectionCell({ weld, kind }: { weld: Row; kind: InspectionKind }) {
   const { rows, canRecord } = useWorkspace();
   const [open, setOpen] = useState<'cell' | 'tracer' | null>(null);
-  const state = inspectionCellState(weld, kind, rows);
+  const state = inspectionCellState(weld, kind, workspaceCellRows(rows));
   const readable = canRecord('inspection_results') || canRecord('inspection_requests');
   const name = `${KIND_LABELS[kind]} of weld ${weld.weldNo}`;
   const status = !state.required ? 'not required' : state.status === 'accepted' ? 'accepted' : state.status === 'rejected' ? 'not accepted' : state.status === 'requested' ? 'requested, result pending' : state.status === 'not-applicable' ? 'not applicable' : 'open';

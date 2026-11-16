@@ -2,7 +2,7 @@ import { useMemo, useState, type ComponentType, type FormEvent, type ReactNode }
 import { AlertCircle, ClipboardCheck, FileText, Loader2, Printer, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, isTracer,
+  KIND_LABELS, MANAGER_TABS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows, isTracer,
   locationField, managerColumns, managerRequests, managerWelds, processField, requestNumberError, resultLabel, roundErrors, roundLabel, tracerError, tracerSummary,
   weldResults, type InspectionKind, type ManagerTab, type RoundInput,
 } from '../shared/inspections.ts';
@@ -145,7 +145,7 @@ export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => vo
   const [upload, setUpload] = useState(false);
   if (!canRecord('inspection_results')) return <NoAccess onClose={onClose} what="viewing heat treatment records"/>;
   const results = weldResults(rows.inspection_results, weld.id, ['PRE-HT', 'PWHT']);
-  const state = inspectionCellState(weld, 'PWHT', rows);
+  const state = inspectionCellState(weld, 'PWHT', workspaceCellRows(rows));
   if (upload) return <UploadPwhtDialog weldIds={[weld.id]} onClose={onClose}/>;
   return <Modal title={`Pre-HT/PWHT ${context.projectName} / ${context.isoName} / ${weldName(weld)}`} subtitle="Heat treatment requirements and recorded reports." onClose={onClose}><div className="modal-body">
     <dl className="inspection-facts"><div><dt>Pre-HT</dt><dd>{weld.pwhtReqPre ? 'Required' : 'Not required'}</dd></div><div><dt>PWHT</dt><dd>{weld.pwhtReq ? 'Required' : 'Not required'}</dd></div></dl>
@@ -430,7 +430,7 @@ function WeldTab({ tab, welds, selected, setSelected, selectable }: { tab: Manag
 }
 function ManagerCell({ weld, kind }: { weld: Row; kind: InspectionKind }) {
   const [open, setOpen] = useState(false); const { rows } = useWorkspace();
-  const state = inspectionCellState(weld, kind, rows);
+  const state = inspectionCellState(weld, kind, workspaceCellRows(rows));
   return <><button type="button" className="text-link" onClick={() => setOpen(true)} aria-label={`${KIND_LABELS[kind]} of weld ${weldName(weld)}: ${state.status.replace('-', ' ')}`}><ClipboardCheck size={14}/>{state.status === 'accepted' ? 'Accepted' : state.status === 'rejected' ? 'NA' : state.status === 'requested' ? 'Requested' : state.status === 'not-applicable' ? 'Not applicable' : 'Open'}</button>{open && <InspectionDialog weld={weld} kind={kind} onClose={() => setOpen(false)}/>}</>;
 }
 function RequestArchive({ tab, match }: { tab: ManagerTab; match: (values: unknown[]) => boolean }) {

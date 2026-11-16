@@ -16,7 +16,7 @@ import { canAction } from '../shared/permissions.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { isoBlockers } from '../shared/iso-status.ts';
 import {
-  MANAGER_PATH, MANAGER_TABS, countsForCompliance, inspectionCellState, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
+  MANAGER_PATH, MANAGER_TABS, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
   resultLabel, roundErrors, roundLabel, storedResult, tracerError, tracerSummary, requestNumberError, inspectionFileError,
 } from '../shared/inspections.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -64,6 +64,10 @@ test('the inspection cell shows No, Yes while open, requested, accepted and not 
   assert.equal(inspectionCellState(hot, 'PWHT', { results: [result('h', 'Accepted', '2026-10-01', { type: 'PWHT' })] }).status, 'open');
   assert.equal(inspectionCellState(hot, 'PWHT', { results: [result('h', 'Accepted', '2026-10-01', { type: 'PWHT' }), result('h', 'Accepted', '2026-10-01', { type: 'PRE-HT' })] }).status, 'accepted');
   assert.equal(inspectionCellState(w, 'VI', { results: [result('w1', 'Not applicable', '2026-10-01', { type: 'VI' })] }).status, 'not-applicable');
+  // The weld table passes the workspace rows, keyed by resource: the cell must still see the results and requests.
+  const workspace = { inspection_results: [rejected], inspection_requests: [request], attachments: [], welds: [w] };
+  const fromWorkspace = inspectionCellState(w, 'NDT', workspaceCellRows(workspace));
+  assert.equal(fromWorkspace.status, 'rejected'); assert.equal(fromWorkspace.tracer, true);
 });
 
 test('repair welds are numbered R1, R2 along the chain and the original stays open until a repair is accepted', () => {
@@ -103,6 +107,10 @@ test('tracers: two per not-accepted weld, chosen manually, excluded from complia
   assert.equal(tracerSummary(linked[1], linked, results).source!.id, 's', 'a tracer shows its source weld');
   assert.equal(tracerSummary(b, linked, results).source, undefined, 'no source weld link');
   assert.equal(isTracer(linked[1]), true); assert.equal(countsForCompliance(linked[1]), false); assert.equal(countsForCompliance(b), true);
+  // A tracer examined by NDT shows the tracer button in the NDT column only, not in an NDT (Pre) column that does not apply.
+  const tracerWeld = weld('t', { tracer: true, tracerOfId: 's', ndoReq: true });
+  assert.equal(inspectionCellState(tracerWeld, 'NDT', {}).tracer, true);
+  assert.equal(inspectionCellState(tracerWeld, 'NDT PRE', {}).tracer, false);
 });
 
 test('NDT/PWHT Manager: welds enter a tab by flag and move to the archive once a result is recorded', () => {
