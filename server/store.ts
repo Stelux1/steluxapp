@@ -8,6 +8,7 @@ import { RELATIONS } from '../shared/welding.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
+import { normalizePunch, punchInputErrors } from '../shared/punch.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
 import { initializePostgres } from './postgres-schema.ts';
@@ -132,6 +133,7 @@ export class Store {
       data[field.name] = value as Value;
     }
     if (key === 'isometrics') Object.assign(errors, isoInputErrors(data, existing, isoBudgets(existing ?? data as unknown as Row)));
+    if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso)); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || String(Number(this.next('PL').split('-').pop())); } }
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
     if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
     if(key==='iso_materials')data.quantity=qty(data.quantity);

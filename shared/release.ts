@@ -117,6 +117,9 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       revisions: fields('isoId type revNo previousRev date comment'),
     });
     availability.actions.revision = fields('isoId type revNo date comment');
+    // Punch lists page (Weld Pilot → Releases) and its status changes.
+    deliverResource(availability, 'punchlists');
+    Object.assign(availability.actions, { 'punch-finish': fields('punchId signerType clientName company function inspector date note signMethod attachmentId'), 'punch-pass': fields('punchId date note'), 'punch-remove': fields('punchId date note') });
     // Set phase (bulk and single) and Copy isometrics: only the flags the user changes are sent.
     availability.actions.phases = fields('isoIds prefab_materials prefab_est prefab_welds prefab_doc field_doc field_test field_release prep_finished');
     availability.actions['copy-isometrics'] = fields('isoIds projectId copyWelds copyMaterials copyCalculations');

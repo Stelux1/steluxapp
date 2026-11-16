@@ -177,7 +177,7 @@ test('blockers: Punch counts open items of this isometric; groups come in the fi
   const blockers = isoBlockers(everything);
   assert.deepEqual(blockers.groups.map(group => group.key), ['release', 'welds', 'ndt', 'repair', 'punch']);
   assert.deepEqual(blockers.groups.map(group => group.count), [1, 1, 1, 1, 2]);
-  assert.equal(blockers.groups[4].items[0].message, '2 open punch items.');
+  assert.equal(blockers.groups[4].items[0].message, '2 open punch items in category A or B.');
   assert.equal(blockers.total, 6);
   assert.equal(isoBlockers(base({ punch })).total, 2);
   assert.equal(isoBlockers(base({ punch: null })).total, 0);
@@ -256,7 +256,9 @@ test('the hosted profile delivers every isometric field and the records the head
   for (const key of ['releases', 'punchlists', 'revisions']) assert.ok(hosted.resources[key], key);
   assert.ok(hosted.actions.revision);
   // They are delivered as data for the header only: no menu entry is added for them.
-  for (const key of ['releases', 'punchlists', 'revisions']) assert.ok(!hosted.navigation.includes(key), key);
+  for (const key of ['releases', 'revisions']) assert.ok(!hosted.navigation.includes(key), key);
+  // Punch lists have their own page now (Weld Pilot → Releases).
+  assert.ok(hosted.navigation.includes('punchlists'));
   // Other profiles are unchanged: the ordinary profile has no progress fields in its delivered list.
   assert.equal(availabilityFor('welding-demo')!.resources.isometrics.includes('shopPipeM'), false);
   assert.ok(RESOURCES.find(resource => resource.key === 'isometrics')!.fields.some(field => field.name === 'shopPipeM'), 'the full profile carries the additional fields');
