@@ -13,8 +13,8 @@ import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
-import { ATTACHMENT_POSITIONS, CATALOG_SITES, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, FORM_ENABLEMENT, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
-import { STANDARD_DEFECT_CODES, standardDefectCodeId } from '../shared/defect-codes.ts';
+import { ATTACHMENT_POSITIONS, CATALOG_SITES, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, FORM_ENABLEMENT, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, defectCodeMatchesNorm, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, qaEngineerCompany, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
+import { STANDARD_DEFECT_CODES, isStandardDefectCode, standardDefectCodeId } from '../shared/defect-codes.ts';
 import { upgradeWeldCatalogs } from '../server/catalog-upgrade.ts';
 import type { Bootstrap, Row } from '../shared/types.ts';
 
@@ -567,26 +567,85 @@ test('the sample weld types carry the reference values: Shop / Field abbreviatio
   store.close();
 });
 
-test('the upgrade step ships the standard defect codes and the QA/QC company text to an older workspace, once', () => {
+test('the upgrade step only adds the missing standard defect codes; a matching old code and an engineer stay as stored, once', () => {
   const store = new Store(':memory:'); seed(store);
   // An older workspace: the invented sample codes, no lock, an engineer with a company record only.
   store.db.exec('DELETE FROM ndt_defect_codes');
   const old = [['401', 'Lack of fusion', 'Bindfout', 'Lack of fusion', 'ISO 6520-1'], ['B31-CR', 'Cracks', 'Scheuren', 'Crack', 'ASME B31.3'], ['PO', 'Porosity', 'Porositeit', 'Cavity', 'Current list']];
   for (const [code, english, dutch, group, norm] of old) store.create('ndt_defect_codes', { code, english, dutch, group, norm, system: false }, SYSTEM);
   const engineer = store.get('qa_engineers', 'qa-1'); store.update('qa_engineers', engineer.id, { company: '' }, engineer._version, SYSTEM);
-  const first = upgradeWeldCatalogs(store);
-  assert.deepEqual(first, { defectCodesAdded: STANDARD_DEFECT_CODES.length - 1, defectCodesMarked: 1, engineersFilled: 1 });
+  const before = ['ndt_defect_codes', 'qa_engineers'].map(key => store.list(key, true));
+  assert.deepEqual(upgradeWeldCatalogs(store, { dryRun: true }), { defectCodesAdded: STANDARD_DEFECT_CODES.length - 1 }, 'the dry run counts what it would add');
+  assert.equal(store.list('ndt_defect_codes').length, 3, 'and adds nothing');
+  assert.deepEqual(upgradeWeldCatalogs(store), { defectCodesAdded: STANDARD_DEFECT_CODES.length - 1 });
   const active = store.list('ndt_defect_codes');
   assert.equal(active.length, STANDARD_DEFECT_CODES.length + 2, 'the two old codes that are not standard stay');
+  for (const row of before.flat()) assert.deepEqual(store.get(row.code !== undefined ? 'ndt_defect_codes' : 'qa_engineers', row.id, true), row, 'every stored record stays byte for byte');
   const fusion = active.find(code => code.code === '401' && code.norm === 'ISO 6520-1')!;
-  assert.deepEqual([fusion.system, fusion.dutch, fusion.group], [true, 'Bindingsfout', 'Fusion']);
+  assert.deepEqual([fusion.system, fusion.dutch, fusion.group], [false, 'Bindfout', 'Lack of fusion'], 'the client\'s own texts stay');
+  assert.equal(isStandardDefectCode(fusion), true, 'and it counts as the standard code'); assert.equal(isLockedRecord('ndt_defect_codes', fusion, true), true);
+  assert.ok(!active.some(code => code.id === standardDefectCodeId('401', 'ISO 6520-1')), 'no second 401 of ISO 6520-1');
   assert.ok(active.some(code => code.code === 'B31-CR') && active.some(code => code.code === 'PO'), 'nothing is removed');
   assert.equal(active.filter(code => code.code === 'IP').length, 2);
-  assert.equal(store.get('qa_engineers', 'qa-1').company, 'Stelux Engineering');
+  assert.equal(store.get('qa_engineers', 'qa-1').company, '', 'the engineer is not written');
   const second = upgradeWeldCatalogs(store);
-  assert.deepEqual(second, { defectCodesAdded: 0, defectCodesMarked: 0, engineersFilled: 0 }, 'a rerun adds and changes nothing');
+  assert.deepEqual(second, { defectCodesAdded: 0 }, 'a rerun adds nothing');
   assert.deepEqual(upgradeWeldCatalogs(store, { dryRun: true }), second);
   store.close();
+});
+
+test('a defect code counts as standard by its stored flag or by code + norm; other codes do not', () => {
+  assert.equal(isStandardDefectCode({ system: true, code: 'X-1', norm: 'Current list' }), true);
+  assert.equal(isStandardDefectCode({ system: false, code: '401', norm: 'ISO 6520-1' }), true);
+  assert.equal(isStandardDefectCode({ code: 'IP', norm: 'API 1104' }), true);
+  assert.equal(isStandardDefectCode({ system: false, code: '401', norm: 'Current list' }), false, 'same code, another norm');
+  assert.equal(isStandardDefectCode({ system: false, code: 'B31-CR', norm: 'ASME B31.3' }), false);
+  assert.equal(isStandardDefectCode({ system: false, code: '401 ', norm: 'ISO 6520-1' }), false, 'an exact match only');
+  assert.equal(isLockedRecord('ndt_defect_codes', row('old', { system: false, code: '401', norm: 'ISO 6520-1' }), false), false, 'only the hosted profile locks');
+  assert.equal(isLockedRecord('ndt_locations', row('old', { code: '401', norm: 'ISO 6520-1' }), true), false);
+});
+
+test('hosted: an older code matching a standard code is refused for edit and delete (403) and still switches per site', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const seeded = f.store.list('ndt_defect_codes').find(code => code.code === '401' && code.norm === 'ISO 6520-1')!;
+  f.store.db.prepare('DELETE FROM ndt_defect_codes WHERE id=?').run(seeded.id);
+  const old = f.store.create('ndt_defect_codes', { code: '401', english: 'Lack of fusion', dutch: 'Bindfout', group: 'Crack', norm: 'ISO 6520-1', system: false }, SYSTEM);
+  const listed = (await f.rows('ndt_defect_codes')).find(code => code.id === old.id)!;
+  assert.equal(listed.system, false); assert.equal(isLockedRecord('ndt_defect_codes', listed, true), true, 'the list shows it locked');
+  let response = await f.request(`/api/records/ndt_defect_codes/${old.id}`, 'PUT', { dutch: 'Anders', _version: old._version });
+  assert.equal(response.status, 403);
+  response = await f.request(`/api/records/ndt_defect_codes/${old.id}/archive`, 'POST', { _version: old._version });
+  assert.equal(response.status, 403);
+  response = await f.request('/api/bulk/ndt_defect_codes', 'POST', { ids: [old.id], versions: { [old.id]: old._version }, changes: { english: 'Other' } });
+  assert.ok([403, 404].includes(response.status), 'no bulk edit of its texts either');
+  response = await f.request('/api/bulk/ndt_defect_codes', 'POST', { ids: [old.id], versions: { [old.id]: old._version }, changes: { enabledOnSite: false, enabledSiteId: 'site-river' } });
+  assert.equal(response.status, 200, 'switching it per main project stays possible');
+  const stored = f.store.get('ndt_defect_codes', old.id);
+  assert.deepEqual([stored.english, stored.dutch, stored.group, stored.system], ['Lack of fusion', 'Bindfout', 'Crack', false], 'its texts stay the client\'s own');
+});
+
+test('hosted: a QA/QC engineer with a linked company and no Company text shows the company name in the list, the form and the export', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const engineer = f.store.get('qa_engineers', 'qa-1'); f.store.update('qa_engineers', engineer.id, { company: '' }, engineer._version, SYSTEM);
+  const stored = f.store.get('qa_engineers', 'qa-1');
+  assert.equal(stored.company, ''); assert.equal(stored.companyId, 'company-stelux');
+  const listed = (await f.rows('qa_engineers')).find(row => row.id === 'qa-1')!;
+  assert.equal(listed.company, 'Stelux Engineering', 'list and form start from the linked company name');
+  assert.equal(((await (await f.request('/api/records/qa_engineers')).json()) as { rows: Row[] }).rows.find(row => row.id === 'qa-1')!.company, 'Stelux Engineering');
+  const csv = await (await f.request('/api/export/qa_engineers')).text();
+  assert.match(csv.split('\n').find(line => line.includes('Morgan Lee'))!, /Stelux Engineering/, 'the export prints it');
+  assert.deepEqual(f.store.get('qa_engineers', 'qa-1'), stored, 'reading writes nothing');
+  // An edit that leaves Company out keeps the derived value acceptable; an explicit empty Company is still refused.
+  let response = await f.request('/api/records/qa_engineers/qa-1', 'PUT', { phone: '+31 10 555 0199', _version: stored._version });
+  assert.equal(response.status, 200);
+  response = await f.request('/api/records/qa_engineers/qa-1', 'PUT', { company: '', _version: f.store.get('qa_engineers', 'qa-1')._version });
+  assert.equal(response.status, 422);
+  // The stored text wins over the linked record.
+  response = await f.request('/api/records/qa_engineers/qa-1', 'PUT', { company: 'Site Lillo', _version: f.store.get('qa_engineers', 'qa-1')._version });
+  assert.equal(response.status, 200); assert.equal((await f.rows('qa_engineers')).find(row => row.id === 'qa-1')!.company, 'Site Lillo');
+  assert.equal(qaEngineerCompany({ company: '', companyId: 'gone' }, () => undefined), '');
+  assert.equal(qaEngineerCompany({ company: ' ', companyId: 'c' }, () => 'Linked'), 'Linked');
+  assert.equal(qaEngineerCompany({ company: 'Own', companyId: 'c' }, () => 'Linked'), 'Own');
 });
 
 test('Weld Pilot shows no laydown or service-company fields on the spools page; MTO Pilot keeps them', () => {
