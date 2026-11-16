@@ -114,11 +114,6 @@ export function WeldDashboard() {
   </div>;
 }
 
-/** MTO Pilot: the weld dashboard does not belong here; the MTO dashboard is built by another task. */
-export function MtoDashboardPlaceholder() {
-  return <section className="panel wd-state"><EmptyState title="MTO dashboard" description="The material readiness dashboard for this project will appear here."/></section>;
-}
-
 // ----- Link ITP on the isometric header ------------------------------------------------------------------------------------
 
 /** Link ITP / Unlink for one ITP slot of an isometric (Weld Pilot header). Renders nothing without the rights. */
