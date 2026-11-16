@@ -55,6 +55,7 @@ import { registerMtoLogisticsRoutes } from './mto-logistics.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
 import { registerMemoTemplateRoutes } from './memo-templates.ts';
+import { registerNdtBatchRoutes } from './ndt-batch.ts';
 import { assertIsoMaterialRecordEdit, addMaterialOnSite, assertMaterialsInScope, deriveMaterialRows, materialMassEdit, registerIsoMaterialImportRoutes, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { COMPANY_RESOURCE, companyFromRow, logoSizing } from '../shared/pdf-company.ts';
@@ -484,6 +485,8 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   if (pilots) registerIsoDialogRoutes(app, { store, documents, access });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
   if (pilots) registerWpsRoutes(app, { store, access });
+  // NDT Batch Import: results by file or by request number, written through the NDT cell's action (server/ndt-batch.ts).
+  if (pilots) registerNdtBatchRoutes(app, { store, documents, access });
   if (pilots) registerMaterialDbRoutes(app, { store, access });
   if (pilots) registerIsoMaterialImportRoutes(app, { store, access });
   app.post('/api/files', disk.single('file'), (req, res) => {

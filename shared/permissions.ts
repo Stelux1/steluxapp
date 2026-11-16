@@ -25,12 +25,12 @@ Object.assign(RESOURCE_SCOPES,MEMO_TEMPLATE_SCOPES);
 const MODULE_SCOPES:Record<Module,string[]>={
  general:['4','5','10','37','64','75','93','local-documents'],
  materials:['71','1','2','3','6','7','8','9','11','12','13','14','15','16','17','18','20','21','22','23','24','25','70','78','80','83','88','local-material-logistics'],
- welding:['35','36','39','40','41','42','43','44','45','46','47','48','49','50','63','65','66','67','68','73','74','76','77','79','81','82','84','85','86','87','89','90','91','92','94','95','97','98','99','100','local-welder-certificates','116','120'],
+ welding:['35','36','39','40','41','42','43','44','45','46','47','48','49','50','63','65','66','67','68','73','74','76','77','79','81','82','84','85','86','87','89','90','91','92','94','95','97','98','99','100','local-welder-certificates','116','120','121'],
  tools:['59','60','61','62'],settings:['26','53','96']
 };
 const localNames:Record<string,string>={'local-material-logistics':'Material locations & history','local-documents':'Documents','local-welder-certificates':'Welder certificate records'};
-/** Reference areas the observed matrix (reference/permissions-observed.json) does not hold yet: name and verbs from weld__system__profiles.txt (116 :183, 120 :105). */
-const REFERENCE_AREAS:Record<string,{name:string;verbs:PermissionVerb[]}>={'116':{name:'Visual inspection',verbs:['show','insert','edit','delete','print']},'120':{name:'ITPs',verbs:['show','insert','edit','delete']}};
+/** Reference areas the observed matrix (reference/permissions-observed.json) does not hold yet: name and verbs from weld__system__profiles.txt (116 :183, 120 :105, 121 :126). */
+const REFERENCE_AREAS:Record<string,{name:string;verbs:PermissionVerb[]}>={'116':{name:'Visual inspection',verbs:['show','insert','edit','delete','print']},'120':{name:'ITPs',verbs:['show','insert','edit','delete']},'121':{name:'NDT Batch Import',verbs:['show','import']}};
 /**
  * Stored rule keys of earlier local areas, read as the reference area that replaced them (profiles are never rewritten:
  * a stored 'local-visual-results' rule is the Visual inspection area 116, 'local-itps' is ITPs 120). Verbs the new
@@ -48,9 +48,9 @@ const areaOf=(key:string)=>areas.get(areaKey(key));
  * Page areas: a page (or a part of one) that needs Show on its own area, with no record type of its own. They are kept in
  * the account's capabilities (server/release-access.ts) so the menu and the server can check them: Weld dashboard 35,
  * Overview 36, NDT / PWHT request archive 66 / 67, Export welds 81, Iso overview 92, Welder card settings 95; MTO
- * dashboard panels 1 / 2 / 3, Material list 78, Pick list export 83.
+ * dashboard panels 1 / 2 / 3, Material list 78, Pick list export 83; NDT Batch Import 121 (Show opens it, Import uploads and commits).
  */
-export const PAGE_SCOPES=['1','2','3','35','36','66','67','78','81','83','92','95'];
+export const PAGE_SCOPES=['1','2','3','35','36','66','67','78','81','83','92','95','121'];
 export function parsePermissionRules(raw:unknown):PermissionRules{
  if(typeof raw!=='string'||raw.length>50000)throw new Error('Permission rules must be a valid matrix.');
  let input:unknown;try{input=JSON.parse(raw);}catch{throw new Error('Permission rules could not be read.');}

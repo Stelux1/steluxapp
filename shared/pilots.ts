@@ -2,6 +2,7 @@ import { MODULES, RESOURCE_MAP } from './resources.ts';
 import { PILOT_KEYS, splitPilotPath, type PilotKey } from './release.ts';
 import type { Module, User } from './types.ts';
 import { MANAGER_PATH } from './inspections.ts';
+import { NDT_BATCH_AREA, NDT_BATCH_PATH, NDT_BATCH_TITLE } from './ndt-batch.ts';
 
 export { PILOT_KEYS, splitPilotPath, type PilotKey };
 
@@ -47,7 +48,7 @@ export const PILOTS: Pilot[] = [
     { title: 'Weld data', icon: 'weld', items: [r('PQR', 'pqr'), r('WPS methods', 'wps'), r('Weld type', 'weld_types'), r('Coating', 'coatings'), r('Spools', 'spool_names')] },
     { title: 'Material data', icon: 'material', items: [r('Weld diameters', 'diameters'), r('Material part', 'material_parts'), r('Type of material', 'material_types'), r('Material supplier', 'suppliers'), r('Welding wire', 'welding_wires'), r('Certifications', 'certifications')] },
     { title: 'NDT data', icon: 'ndt', items: [r('NDT process groups', 'ndt_groups'), r('NDT process', 'ndt_processes'), r('Defect codes', 'ndt_defect_codes'), r('NDT locations', 'ndt_locations'), r('PWHT process', 'pwht_processes'), r('PWHT locations', 'pwht_locations')] },
-    { title: 'Welding data', icon: 'welding', items: [r('Projects', 'projects'), r('Isometrics list', 'isometrics'), r('ITPs', 'itps'), WELD_ISO_OVERVIEW, r('Weld register', 'welds'), p('Data LISL', '/welding/lisl', { reports: ['lisl'] }), p('NDT/PWHT Manager', MANAGER_PATH, { resources: ['welds', 'inspection_requests'] }), r('Inspection results', 'inspection_results'), r('QA/QC engineers', 'qa_engineers'), p('Export weld data', '/welding/reports', { reports: ['lisl', 'wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'], area: '81' })] },
+    { title: 'Welding data', icon: 'welding', items: [r('Projects', 'projects'), r('Isometrics list', 'isometrics'), r('ITPs', 'itps'), WELD_ISO_OVERVIEW, r('Weld register', 'welds'), p('Data LISL', '/welding/lisl', { reports: ['lisl'] }), p('NDT/PWHT Manager', MANAGER_PATH, { resources: ['welds', 'inspection_requests'] }), p(NDT_BATCH_TITLE, NDT_BATCH_PATH, { resources: ['welds', 'inspection_results', 'inspection_requests'], area: NDT_BATCH_AREA }), r('Inspection results', 'inspection_results'), r('QA/QC engineers', 'qa_engineers'), p('Export weld data', '/welding/reports', { reports: ['lisl', 'wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'], area: '81' })] },
     { title: 'Releases', icon: 'releases', items: [p('Prefab release', '/welding/releases?view=prefab', { resources: ['releases'] }), p('Field release', '/welding/releases?view=field', { resources: ['releases'] }), p('Assign Iso to FWP', '/welding/field_packages?tab=assign', { resources: ['field_packages'] }), r('Hydrotest release', 'test_systems'), r('Punch lists', 'punchlists'), r('Flange Management', 'flanges')] },
     { title: 'System', icon: 'system', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Signatures', 'signatures'), r('Company data', 'company_data')] },
   ] },
