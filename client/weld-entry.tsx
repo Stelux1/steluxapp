@@ -9,6 +9,7 @@ import { InspectionCell } from './weld-inspection-cell.tsx';
 import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
 import { projectCertificates } from '../shared/site-settings.ts';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
+import { INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS } from '../shared/inspections.ts';
 import {
   WELDERS, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
   planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
@@ -264,7 +265,10 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
         <TextField label="Length in mm" type="number" min={0} value={changes.dialen} error={e.dialen} onChange={value => { set('dialen')(value === '' ? '' : Number(value)); if (value !== '') set('diameterId')(''); }}/>
         {FLAGS.map(name => flag(name, FLAG_LABELS[name]))}{flag('tracer', 'Tracer')}
       </div>
-      <p className="muted">NDT and PWHT locations and processes are set with the inspection requests, not here.</p>
+      <h3 className="weld-form-section">NDT &amp; PWHT</h3>
+      <div className="form-grid">
+        {INSPECTION_WELD_FIELDS.filter(field => INSPECTION_MASS_EDIT_FIELDS.includes(field.name)).map(field => <SelectField key={field.name} label={field.label} value={changes[field.name]} error={e[field.name]} placeholder="Keep current" options={options(String(field.ref))} onChange={set(field.name)}/>)}
+      </div>
     </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Update {selected.length} {selected.length === 1 ? 'weld' : 'welds'}</button></div></form>
   </Modal>;
 }

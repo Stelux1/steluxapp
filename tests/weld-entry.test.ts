@@ -327,6 +327,12 @@ test('Mass edit welds writes only the fields that change, clears dates on reques
   assert.equal(result.status, 422); assert.match(result.body.error, /Weld date is required once a welder is assigned/); assert.ok(f.store.get('welds', 'weld-1').date);
   assert.equal((await f.act('mass-edit-welds', { weldIds: ['weld-5', 'weld-6'], changes: { clearDate: true } })).status, 201, 'Riverside has no mandatory fields');
   assert.equal(f.store.get('welds', 'weld-5').date, '');
+  // The inspection inputs of the capture's Mass edit (NDT location / process per round, PWHT location / process).
+  const fresh = Object.fromEntries(['weld-5', 'weld-6'].map(id => [id, f.store.get('welds', id)._version]));
+  result = await f.act('mass-edit-welds', { weldIds: ['weld-5', 'weld-6'], versions: fresh, changes: { ndtLocationId: 'ndt-shop', ndtProcess2Id: 'ndt-0', pwhtProcessId: 'pwht-1' } });
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  for (const id of ['weld-5', 'weld-6']) { const weld = f.store.get('welds', id); assert.deepEqual([weld.ndtLocationId, weld.ndtProcess2Id, weld.pwhtProcessId], ['ndt-shop', 'ndt-0', 'pwht-1'], id); }
+  assert.equal((await f.act('mass-edit-welds', { weldIds: ['weld-5'], changes: { ndtLocationId: 'no-such-location' } })).status, 422, 'a reference must exist');
 });
 
 test('the table order is stored per isometric; a stale order is refused', async t => {

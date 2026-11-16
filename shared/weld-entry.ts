@@ -2,6 +2,7 @@ import type { Row } from './types.ts';
 import { mandatoryFields, projectCertificates, wpsValidation } from './site-settings.ts';
 import { certificatesForProject as projectCertificatesOf } from './welder-data.ts';
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
+import { INSPECTION_MASS_EDIT_FIELDS } from './inspections.ts';
 
 /**
  * Weld table and weld entry on the isometric (Weld Pilot). Pure functions over plain rows: the server uses them
@@ -26,7 +27,9 @@ export const hasWelder = (weld: Values) => WELDERS.some(name => present(weld[nam
 export const WELD_ENTRY_FIELDS = ['weldNo', 'typeId', 'wpsId', 'datefit', 'date', ...WELDERS, 'lengthMode', 'diameterId', 'dialen', 'ndtpercent', 'coating1Id', 'coatingWeldId', 'coating2Id', 'sleeve', 'spoolId', 'kr', 'fp', 'insLength', 'insLength2', 'processId', 'wire1Id', 'pos1', 'wire2Id', 'pos2', 'chargeNo1', 'certificate1Id', 'material1Id', 'chargeNo2', 'certificate2Id', 'material2Id', 'ndoReqPre', 'ndoReq', 'pwhtReqPre', 'pwhtReq', 'repair', 'description', 'jointType'] as const;
 
 /** Fields of the capture's Mass edit welds that live on the weld itself, with how each one is written. */
-export const MASS_EDIT_FIELDS = ['typeId', ...WELDERS, 'coating1Id', 'coating2Id', 'wire1Id', 'wire2Id', 'pos1', 'pos2', 'certificate1Id', 'chargeNo1', 'material1Id', 'certificate2Id', 'chargeNo2', 'material2Id', 'wpsId', 'processId', 'datefit', 'date', 'diameterId', 'dialen', 'ndoReqPre', 'ndoReq', 'pwhtReqPre', 'pwhtReq', 'repair', 'tracer'] as const;
+export const MASS_EDIT_FIELDS = ['typeId', ...WELDERS, 'coating1Id', 'coating2Id', 'wire1Id', 'wire2Id', 'pos1', 'pos2', 'certificate1Id', 'chargeNo1', 'material1Id', 'certificate2Id', 'chargeNo2', 'material2Id', 'wpsId', 'processId', 'datefit', 'date', 'diameterId', 'dialen', 'ndoReqPre', 'ndoReq', 'pwhtReqPre', 'pwhtReq', 'repair', 'tracer',
+  // NDT location and process per round (Pre and final), PWHT location and process (Pre and final): the inspections flow's weld fields.
+  ...INSPECTION_MASS_EDIT_FIELDS] as readonly string[];
 export const MASS_EDIT_FLAGS = ['ndoReqPre', 'ndoReq', 'pwhtReqPre', 'pwhtReq', 'repair', 'tracer'] as const;
 
 // ---------------------------------------------------------------------------------------------------------------

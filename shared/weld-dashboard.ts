@@ -2,6 +2,7 @@ import type { Row } from './types.ts';
 import { newest } from './iso-status.ts';
 import { DEFAULT_NDT_PERCENT, isoItpId, itpNdtPercent } from './itp-dashboard.ts';
 import { repairPerformanceLimit } from './site-settings.ts';
+import { isTracer } from './inspections.ts';
 
 /**
  * Weld Pilot dashboard: KPI cards and Inspection compliance. Pure functions over plain rows (no I/O).
@@ -41,8 +42,8 @@ export const weldWelderIds = (weld: Row) => [1, 2, 3, 4].map(side => text(weld[`
 export const isWelded = (weld: Row) => weldWelderIds(weld).length > 0;
 /** The welder a compliance group is counted under: the first welder recorded on the weld. */
 export const primaryWelder = (weld: Row) => weldWelderIds(weld)[0] ?? '';
-/** Tracer welds. The inspections code has no predicate of its own, so the weld's tracer flag decides. */
-export const isTracerWeld = (weld: Row) => weld.tracer === true;
+/** Tracer welds: the inspections flow's predicate (tracer flag or a tracer link, shared/inspections.ts). */
+export const isTracerWeld = (weld: Row) => isTracer(weld);
 
 const NDT = 'NDT';
 /** NDT results of a weld, newest first. */

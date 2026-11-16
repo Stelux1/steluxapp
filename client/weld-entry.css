@@ -57,3 +57,5 @@
   .weld-delete-list { columns: 2; }
 }
 @media print { .weld-actions, .weld-sort-cell, .weld-sort-head, .weld-table .select-cell, .weld-table .weld-options { display: none; } }
+/* Mass edit welds: heading of the NDT & PWHT inputs. */
+.weld-form-section { margin: 20px 0 10px; font-size: 14px; font-weight: 600; color: var(--muted, inherit); }
