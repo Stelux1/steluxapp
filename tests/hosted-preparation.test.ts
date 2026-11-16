@@ -110,6 +110,10 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   }
   assert.ok(oldSpools.every(spool => store.get('spools', spool.id).testSystemId === undefined));
   assert.ok(oldSpools.some(spool => store.get('isometrics', spool.isoId).testSystemId), 'at least one old spool sits on an isometric with a test system');
+  // MTO stock of the first version: no project site inventories, and two transfers that only left the storehouse (the project "holds" them).
+  store.db.exec(`DELETE FROM stock WHERE json_extract(data, '$.locationKind') = 'site'`);
+  const holding = [['material-5', 'site-river', 'H-1042', 7], ['material-5', 'site-north', 'H-1042', 3]] as const;
+  for (const [materialId, siteId, chargeNo, quantity] of holding) store.create('movements', { number: `MM-OLD-${siteId}`, materialId, warehouseId: 'warehouse-main', siteId, type: 'Project transfer', quantity: -quantity, chargeNo, date: '2026-10-01' }, SYSTEM);
 
   // Every row of every record type, as stored (the raw data text, version, archived flag and timestamps).
   const snapshot = () => new Map(RESOURCES.map(resource => [resource.key, new Map((store.db.prepare(`SELECT id, data, version, archived, created_at, updated_at FROM "${resource.key}"`).all() as { id: string }[]).map(row => [row.id, { ...row }]))]));
@@ -125,6 +129,7 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
 
   const dry = runHostedPreparation(parts, true);
   assert.deepEqual(dry.catalogData, { defectCodesAdded: missing }, 'the dry run reports only what it would add'); assert.deepEqual(dry.diameterCatalog, { added: 0 });
+  assert.deepEqual(dry.projectHoldings, { holdings: 2, quantity: 10 });
   assert.deepEqual(snapshot(), before, 'a dry run changes nothing');
 
   const real = runHostedPreparation(parts, false);
@@ -132,7 +137,11 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   const after = snapshot();
   for (const [key, rows] of before) for (const [id, stored] of rows) assert.deepEqual(after.get(key)!.get(id), stored, `${key} ${id} is unchanged`);
   const added = Object.fromEntries([...after].map(([key, rows]) => [key, [...rows.keys()].filter(id => !before.get(key)!.has(id))]).filter(([, ids]) => ids.length));
-  assert.deepEqual(Object.keys(added), ['ndt_defect_codes'], 'only defect codes are added');
+  assert.deepEqual(Object.keys(added).sort(), ['movements', 'ndt_defect_codes', 'stock'], 'only defect codes, site inventory rows and their movements are added');
+  // The holdings are now rows of the project site inventories, each with one movement; the old movements stay as they were.
+  const siteRows: Row[] = (added.stock as string[]).map(id => store.get("stock", id));
+  assert.deepEqual(siteRows.map(row => [row.locationKind, row.siteId, row.materialId, row.chargeNo, row.quantity]).sort(), [['site', 'site-north', 'material-5', 'H-1042', 3], ['site', 'site-river', 'material-5', 'H-1042', 7]]);
+  assert.deepEqual((added.movements as string[]).map((id): Row => store.get('movements', id)).map(row => [row.siteId, row.type, row.quantity]).sort(), [['site-north', 'Project transfer', 3], ['site-river', 'Project transfer', 7]]);
   assert.deepEqual(new Set(added.ndt_defect_codes), new Set(STANDARD_DEFECT_CODES.filter(([code, , , , norm]) => !(code === '401' && norm === 'ISO 6520-1') && !(code === 'IP' && norm === 'ASME B31.3')).map(([code, , , , norm]) => standardDefectCodeId(code, norm))), 'the missing standard codes exist');
 
   // What the user sees: the matching old code is locked and refused, the engineer shows the linked company.
@@ -159,5 +168,6 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
   const settled = snapshot();
   assert.equal(runHostedPreparation(parts, false).upToDate, true);
   assert.deepEqual(runHostedPreparation(parts, true).catalogData, { defectCodesAdded: 0 });
+  assert.deepEqual(runHostedPreparation(parts, true).projectHoldings, { holdings: 0, quantity: 0 });
   assert.deepEqual(snapshot(), settled);
 });
