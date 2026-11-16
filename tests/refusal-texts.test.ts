@@ -52,7 +52,10 @@ test('scn-SB-D2: a duplicate ITP number names the field and the value; editing i
 
 test('scn-SC-N1: a custom material with "add to DB" and an existing number names the material number', async t => {
   const f = await fixture(t); await f.setup(); f.usePilot('mto');
-  const custom = { isoId: 'iso-1', source: 'Custom', materialNo: 'CUS-DUP-77', description: 'Custom pipe shoe', quantity: 5, uom: 'EA', materialGroup: 'Support', addToDB: true };
+  // MTO Pilot's Add material form always sends a Type and, while the isometric has ISO revisions, the newest revision.
+  const phaseId = f.db.list('operation_phases')[0]?.id;
+  const revisionId = f.db.list('revisions').filter(row => row.type === 'ISO' && row.isoId === 'iso-1').sort((a, b) => String(b._createdAt).localeCompare(String(a._createdAt)))[0]?.id;
+  const custom = { isoId: 'iso-1', source: 'Custom', materialNo: 'CUS-DUP-77', description: 'Custom pipe shoe', quantity: 5, uom: 'EA', materialGroup: 'Support', addToDB: true, phaseId, ...(revisionId ? { revisionId } : {}) };
   const first = await f.request('/actions/add-iso-material', 'POST', custom); assert.equal(first.status, 201, JSON.stringify(await first.clone().json()));
   const body = await refused(await f.request('/actions/add-iso-material', 'POST', custom), 409);
   assert.equal(body.error, 'Material No CUS-DUP-77 already exists.');
