@@ -2,6 +2,7 @@ import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
+import { applyMtoStock } from './mto-stock.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
@@ -146,6 +147,8 @@ const pilotAccess = (key: 'weld' | 'mto', title: string): Field[] => [
 extend('users', [t('title', 'Title', { hidden: true }), t('address', 'Address', { hidden: true }), t('phone', 'Phone', { hidden: true }), r('companyId', 'Company', 'companies', { hidden: true }), ...pilotAccess('weld', 'Weld Pilot'), ...pilotAccess('mto', 'MTO Pilot')]);
 // A user's own full / short signature (pilots profile): the image is the newest attachment of the record.
 extend('signatures', [r('userId', 'User', 'users', { hidden: true }), s('kind', 'Signature', ['Full signature', 'Short signature'], { hidden: true }), b('nameUnder', 'Add name under the signature', { hidden: true })]);
+// Storehouses, material inventory and transfer orders (shared/mto-stock.ts).
+applyMtoStock(resources);
 /** Fields above that only the pilots profile shows. */
 export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId'], signatures: ['userId', 'kind', 'nameUnder'] };
 export const RESOURCES = resources;

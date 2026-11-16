@@ -11,6 +11,8 @@ const references = [
 const ACCESS_REFERENCES = [
   ['users', 'companyId', 'companies'], ['users', 'weldProfileId', 'profiles'], ['users', 'mtoProfileId', 'profiles'],
   ['signatures', 'userId', 'users'],
+  // Storehouses and material inventory: the project a movement handed material to (MTO Pilot).
+  ['movements', 'siteId', 'sites'],
 ] as const;
 function accessReferencesPrepared(db: Database) {
   return ACCESS_REFERENCES.every(([table, field]) => {
