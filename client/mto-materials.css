@@ -1,6 +1,8 @@
 /* MTO materials: the Material database page and the Materials panel of the isometric. */
 .mto-status { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--ink, #1c2a3a); }
 .mto-status span { font-weight: 400; color: #5c6c81; }
+.mto-status { display: flex; align-items: center; gap: 6px; }
+.mto-status strong { font-variant-numeric: tabular-nums; }
 .mto-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; padding: 0 20px 14px; }
 .mto-toolbar .field { margin: 0; width: 220px; max-width: 100%; }
 .mto-toolbar .heading-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -33,3 +35,26 @@
 .material-import-table td.mi-warning-cell { background: #fff4d6; }
 .material-import-table .mi-edit-input { width: 100%; min-width: 120px; font: inherit; font-size: 12px; padding: 5px 7px; border: 1px solid #d5dde8; border-radius: 5px; }
 @media (max-width: 560px) { .mto-catalog-toolbar { padding: 10px 14px; } .material-import-takeover { padding: 12px; } }
+/* Materials panel: Inv. truck, Show entries, the searchable lists of Add material, Details. */
+.mto-truck { display: inline-flex; align-items: center; justify-content: center; padding: 2px 6px; border: 0; background: none; cursor: pointer; }
+.mto-truck-red { color: #c0392b; }
+.mto-truck-orange { color: #d9822b; }
+.mto-truck-green { color: #2e8b57; }
+.mto-truck:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 4px; }
+.mto-toolbar .page-size { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.mto-toolbar .page-size select { min-height: 34px; padding: 4px 8px; }
+.mto-toolbar .search-field { flex: 1 1 200px; max-width: 280px; }
+.iso-materials-panel .actions-cell { white-space: nowrap; }
+.mto-selected { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #f7f9fc; font-size: 13px; overflow-wrap: anywhere; }
+.mto-choice-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 148px; overflow: auto; padding: 6px 0; }
+.mto-choice-list button { font: inherit; font-size: 12px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; cursor: pointer; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
+.mto-choice-list button.is-active { border-color: var(--primary, #2457c5); background: #eaf1ff; font-weight: 600; }
+.mto-choice-list p { margin: 0; font-size: 13px; }
+.mto-charge-row { display: flex; gap: 8px; align-items: stretch; }
+.mto-charge-row .select-wrap { flex: 1 1 auto; min-width: 0; }
+.mto-detail-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 20px; margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: #f7f9fc; }
+.mto-detail-item dt { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.mto-detail-item dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.quantity-log-table th[scope="row"] { text-align: left; font-weight: 600; }
+.quantity-revision-actions .btn.full-width { width: 100%; margin: 8px 0 0; justify-content: center; }
+@media (max-width: 560px) { .mto-toolbar .search-field { max-width: none; flex-basis: 100%; } .mto-charge-row { flex-direction: column; } }

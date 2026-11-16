@@ -47,7 +47,7 @@ test('MTO Pilot end to end: order, take in, transfer, reserve, start and take a 
   // A catalog material nothing else in the sample uses, so the row's numbers come from this walk alone.
   const material = f.store.create('materials', { materialNo: 'SS-E114-90', description: '90° long radius elbow, stainless steel 316L', materialGroup: 'Elbow', articleNo: 'ART-2114', dia: '4', lbs: 'SCH 10S', uom: 'EA', price: 54.2 }, SYSTEM, 'material-e2e-elbow');
   const isoId = 'iso-4', date = '2026-11-02';
-  const added = await json<{ record: Row }>(await f.request('/api/actions/add-iso-material', 'POST', { isoId, source: 'Catalog', materialGroup: 'Elbow', materialId: material.id, quantity: 8, phaseId: 'phase-0' }));
+  const added = await json<{ record: Row }>(await f.request('/api/actions/add-iso-material', 'POST', { isoId, source: 'Catalog', materialGroup: 'Elbow', materialId: material.id, quantity: 8, phaseId: 'phase-0', revisionId: `revision-${isoId}` }));
   const requirementId = added.record.id;
   const row = async () => {
     const { rows } = await json<{ rows: Record<string, Row[]> }>(await f.request('/api/bootstrap'), 200);

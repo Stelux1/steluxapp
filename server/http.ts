@@ -45,7 +45,7 @@ import { inspectionFileError } from '../shared/inspections.ts';
 import { registerMtoStockRoutes } from './mto-stock.ts';
 import { registerCertificationRoutes, requireOwnerSite } from './certifications.ts';
 import { registerWpsRoutes } from './wps.ts';
-import { deriveMaterialRows, materialMassEdit, registerMaterialDbRoutes } from './mto-materials.ts';
+import { assertIsoMaterialRecordEdit, deriveMaterialRows, materialMassEdit, registerIsoMaterialImportRoutes, registerMaterialDbRoutes } from './mto-materials.ts';
 import { WELD_DATA_EXPORT_HIDDEN } from '../shared/wps.ts';
 import { activeSite, assertAccountReach, assertCopyInScope, assertSiteAccessEdit, assertSiteProfiles, guardStore, inSiteScope, isSiteRefusal, keepSiteScope, runInSiteScope, siteRefused, type SiteScope } from './site-scope.ts';
 
@@ -258,6 +258,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
+    if (pilots && resource.key === 'iso_materials') assertIsoMaterialRecordEdit(req.body, access.record(resource.key, String(req.params.id)));
     if (typeof req.body._version !== 'number') throw new AppError(422, 'A record version is required. Refresh and try again.');
     if (pilots && resource.key === 'users') { assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body, access.record(resource.key, String(req.params.id))); assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id))); assertSiteProfiles(store, req.body); }
     const row = store.transaction(() => {
@@ -416,6 +417,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
   if (pilots) registerWpsRoutes(app, { store, access });
   if (pilots) registerMaterialDbRoutes(app, { store, access });
+  if (pilots) registerIsoMaterialImportRoutes(app, { store, access });
   app.post('/api/files', disk.single('file'), (req, res) => {
     try {
       const key = String(req.body.entityType); access.resource(key); const target=access.record(key,req.body.entityId); if(key==='attachments')throw new AppError(404,'This resource could not be found.'); checkResourcePermission(req,key,'import',target);

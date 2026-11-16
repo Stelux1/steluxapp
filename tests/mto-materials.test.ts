@@ -96,7 +96,7 @@ function statusRows() {
 test('Ord.? / Inv. / Picked come from the requirement execution of the isometric', () => {
   const data = statusRows(), lines = materialLineStatuses(data, 'iso-a');
   assert.deepEqual([...lines.keys()], ['r1', 'r2', 'r3'], 'only this isometric');
-  assert.deepEqual(lines.get('r1'), { requirementId: 'r1', required: 10, ordered: 10, isOrdered: true, inventory: 3, picked: 2 });
+  assert.deepEqual(lines.get('r1'), { requirementId: 'r1', required: 10, ordered: 10, isOrdered: true, inventory: 3, picked: 2, hasOrder: true, orderId: 'o1', orderNo: '' });
   assert.equal(lines.get('r2')!.isOrdered, false, 'ordered 2 of 4 is not ordered');
   assert.equal(lines.get('r2')!.inventory, 9);
   assert.deepEqual([lines.get('r3')!.ordered, lines.get('r3')!.inventory, lines.get('r3')!.picked, lines.get('r3')!.isOrdered], [0, 0, 0, false]);
@@ -330,7 +330,8 @@ test('the MTO actions are allowed to MTO writers and refused to readers, other p
   // Administrator in the MTO pilot.
   let response = await f.request('/api/actions/set-material-type', 'POST', { requirementIds: [requirement.id], phaseId: 'phase-1' });
   assert.equal(response.status, 201); assert.equal((await body(response)).records?.[0].phaseId, 'phase-1');
-  response = await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Catalog', materialGroup: 'Pipe', materialId: 'material-1', quantity: 1.5, phaseId: 'phase-0' });
+  const fresh = f.store.create('materials', { materialNo: 'FRESH-1', description: 'Nothing is ordered for this', materialGroup: 'Pipe', uom: 'EA' }, actor);
+  response = await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Catalog', materialGroup: 'Pipe', materialId: fresh.id, quantity: 1.5, phaseId: 'phase-0', revisionId: 'revision-iso-1' });
   assert.equal(response.status, 201); const added = (await body(response)).record!;
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Catalog', materialGroup: 'Valve', materialId: 'material-1', quantity: 1 })).status, 422);
   assert.equal((await f.request('/api/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Catalog', materialId: 'material-1', quantity: 1, price: 3, surprise: true })).status, 404, 'undelivered fields are refused');
@@ -489,7 +490,7 @@ test('Import material: an .xlsx with the reference headings is previewed per row
 test('Take over missing materials: custom isometric lines of the site fill the preview and commit links them to the new catalog rows', async t => {
   const f = await hostedFixture(t); await f.setup();
   const iso = f.store.get('isometrics', 'iso-1'), siteId = String(f.store.get('projects', iso.projectId).siteId);
-  const line = runAction(f.store, 'add-iso-material', { isoId: iso.id, source: 'Custom', materialNo: 'CUS-TAKE-1', description: 'Site-measured pipe', materialGroup: 'Pipe', uom: 'M', quantity: 4, componentCode: '1' }, actor);
+  const line = runAction(f.store, 'add-iso-material', { isoId: iso.id, source: 'Custom', materialNo: 'CUS-TAKE-1', description: 'Site-measured pipe', materialGroup: 'Pipe', uom: 'M', quantity: 4, componentCode: '1', phaseId: 'phase-0', revisionId: 'revision-iso-1' }, actor);
   assert.ok('record' in line && line.record);
   const counts = await (await f.request(`/api/material-import/take-over?siteId=${siteId}`)).json() as { iso: number; order: number };
   assert.ok(counts.iso >= 1 && counts.order >= 1, JSON.stringify(counts));
@@ -599,4 +600,233 @@ test('an operation phase gets the next ID on create; the ID cannot be typed and 
   assert.equal(updated.number, 7);
   const listed = (await body(await f.request('/api/records/operation_phases'))).rows as unknown as Row[];
   assert.equal(listed.find(item => item.id === 'phase-0')?.number, 1);
+});
+
+// ----- Materials panel of the isometric (wave 3: w3-mto-iso-materials) ---------------------------------------------------------
+
+import { renderToStaticMarkup } from 'react-dom/server';
+import { requirementExecution } from '../shared/materials.ts';
+import {
+  ADD_MATERIAL_DIALOG, ISO_IMPORT_COLUMNS, NO_REVISION_CHANGES, ORDERED_LINE_REFUSAL, SET_TYPE_DIALOG, chargeNumberOptions, formatMaterialStatus, inventoryLevel, inventoryTooltip, isoImportPreview,
+  isoMaterialDeleteRefusal, listIsoMaterials, materialStatusByRevision, materialsOfGroup, orderDetails,
+} from '../shared/mto-materials.ts';
+import { commitIsoMaterialImport } from '../server/mto-materials.ts';
+import { MaterialStatusSlot, statusCardParts } from '../client/iso-header.tsx';
+import { pdfQuery, pdfEntries } from '../client/pdf-reports.tsx';
+
+/** One isometric with a material ordered (order 00006, 10 of 10), stocked on site (4) and received in two parts. */
+function orderedRows() {
+  return {
+    isometrics: [row('iso-a', { projectId: 'p', isoNo: 'ISO-A' })], projects: [row('p', { siteId: 'site-a' })], materials: [row('m1', { materialNo: '8138265581', description: 'BLT/N A320-L43', materialGroup: 'BOLTS A320-L43', uom: 'EA' }), row('m2', { materialNo: '7662782601', description: 'FLG PIPE', materialGroup: 'FITTING CS FLG', uom: 'EA' })], custom_materials: [] as Row[],
+    iso_materials: [row('r1', { isoId: 'iso-a', materialId: 'm1', quantity: 10, phaseId: 'shop' }), row('r2', { isoId: 'iso-a', materialId: 'm2', quantity: 16, phaseId: 'field' })],
+    operation_phases: [row('shop', { name: 'Shop', number: 1 }), row('field', { name: 'Field', number: 2 })],
+    orders: [row('o1', { projectId: 'p', status: 'Partially received', number: '00006', date: '2024-03-20', supplierId: 's1' })],
+    order_lines: [row('l1', { orderId: 'o1', materialId: 'm1', requirementId: 'r1', quantity: 10, received: 4 })],
+    receipts: [row('rc1', { orderId: 'o1', lineId: 'l1', materialId: 'm1', quantity: 3, date: '2024-03-21', supplierId: 's1' }), row('rc2', { orderId: 'o1', lineId: 'l1', materialId: 'm1', quantity: 1, date: '2024-07-04', supplierId: 's1' })],
+    stock: [row('s1', { materialId: 'm1', locationKind: 'site', siteId: 'site-a', quantity: 4 })], picklists: [] as Row[], material_quantity_changes: [] as Row[], revisions: [] as Row[],
+  } as Record<string, Row[]>;
+}
+
+test('material status shows a whole percent (49.3 as 49) and the word Empty without lines', () => {
+  assert.equal(formatMaterialStatus(49.3), '49%');
+  assert.equal(formatMaterialStatus(100), '100%');
+  assert.equal(formatMaterialStatus(0), '0%');
+  assert.equal(formatMaterialStatus(null), 'Empty');
+  const data: Record<string, Row[]> = { ...statusRows(), iso_materials: [row('q1', { isoId: 'iso-a', materialId: 'm1', quantity: 69 })], order_lines: [] as Row[], picklists: [] as Row[], stock: [row('s1', { materialId: 'm1', locationKind: 'site', siteId: 'site-a', quantity: 34 })] };
+  assert.equal(materialStatus(data.isometrics[0], data).percent, 49, '34 of 69 is 49.27 %: whole percent');
+  assert.equal(formatMaterialStatus(materialStatus(data.isometrics[0], data).percent), '49%');
+  assert.equal(formatMaterialStatus(materialStatus(row('iso-empty'), data).percent), 'Empty');
+  const markup = renderToStaticMarkup(MaterialStatusSlot({ percent: null, hydrotest: { inScope: false, completed: false } }));
+  assert.ok(markup.includes('>Empty<'), markup);
+});
+
+test('the MTO Status card holds Hydrotest completed then Material status and none of the Weld Pilot extras', () => {
+  assert.deepEqual(statusCardParts('mto'), { weldExtras: false });
+  assert.deepEqual(statusCardParts('weld'), { weldExtras: true });
+  assert.deepEqual(statusCardParts(undefined), { weldExtras: true }, 'outside the pilots nothing changes');
+  const markup = renderToStaticMarkup(MaterialStatusSlot({ percent: 49, hydrotest: { inScope: true, completed: false } }));
+  assert.ok(markup.indexOf('Hydrotest completed') >= 0 && markup.indexOf('Hydrotest completed') < markup.indexOf('Material status'), markup);
+  assert.ok(markup.includes('>49%<'));
+  for (const word of ['Blockers', 'Priority', 'Punch', 'Release']) assert.ok(!markup.includes(word), word);
+});
+
+test('the Inv. truck reads "Ord. 10 | Inv. 4" on an ordered line and "Need 16 | Have 0" on one without an order, and the Ord.? link names the order', () => {
+  const data = orderedRows(), lines = materialLineStatuses(data, 'iso-a');
+  const ordered = lines.get('r1')!, open = lines.get('r2')!;
+  assert.equal(inventoryTooltip(ordered), 'Ord. 10 | Inv. 4');
+  assert.equal(inventoryTooltip(open), 'Need 16 | Have 0');
+  assert.deepEqual([ordered.hasOrder, ordered.orderId, ordered.orderNo], [true, 'o1', '00006']);
+  assert.deepEqual([open.hasOrder, open.orderId], [false, '']);
+  assert.deepEqual([inventoryLevel(ordered), inventoryLevel(open), inventoryLevel({ ...ordered, inventory: 10 })], ['orange', 'red', 'green']);
+});
+
+test('the stock detail of a line: order, dates, quantities and the receipts of that order, newest first', () => {
+  const data = orderedRows(), ordered = orderDetails(data, 'r1')!, open = orderDetails(data, 'r2')!;
+  assert.deepEqual([ordered.orderNo, ordered.orderDate, ordered.orderedOnIso, ordered.receivedInOrder, ordered.inventory, ordered.showOrderedInOrder], ['00006', '2024-03-20', 10, 4, 4, false]);
+  assert.deepEqual(ordered.history.map(entry => [entry.date, entry.orderNo, entry.quantity, entry.action]), [['2024-07-04', '00006', 1, 'Receipt'], ['2024-03-21', '00006', 3, 'Receipt']]);
+  assert.deepEqual([open.orderNo, open.orderedOnIso, open.orderedInOrder, open.history.length, open.showOrderedInOrder], ['-', 0, 0, 0, false]);
+  assert.equal(orderDetails(data, 'nope'), undefined);
+});
+
+test('an ordered line cannot be deleted: the server refuses it and leaves it live, a line without an order is archived', t => {
+  const s = fixture(t); s.hostedRules = true;
+  const requirement = s.create('iso_materials', { isoId: 'iso-1', materialId: 'material-1', quantity: 5, phaseId: 'phase-0' }, actor, 'req-ordered');
+  const plain = s.create('materials', { materialNo: 'NOORDER-1', description: 'Never ordered', materialGroup: 'Pipe', uom: 'EA' }, actor), free = s.create('iso_materials', { isoId: 'iso-1', materialId: plain.id, quantity: 2, phaseId: 'phase-0' }, actor);
+  const order = s.create('orders', { number: 'T-1', projectId: s.get('isometrics', 'iso-1').projectId, status: 'Pending', date: '2026-11-01' }, actor);
+  s.create('order_lines', { orderId: order.id, materialId: 'material-1', requirementId: requirement.id, isoId: 'iso-1', quantity: 5, received: 0 }, actor);
+  assert.throws(() => runAction(s, 'archive-iso-materials', { requirementIds: [free.id, requirement.id] }, actor), (e: AppError) => e.status === 409 && e.message.includes(ORDERED_LINE_REFUSAL));
+  assert.equal(s.get('iso_materials', requirement.id)._archived, false);
+  assert.equal(s.get('iso_materials', free.id)._archived, false, 'nothing is archived when one line is refused');
+  runAction(s, 'archive-iso-materials', { requirementIds: [free.id] }, actor);
+  assert.equal(s.get('iso_materials', free.id, true)._archived, true);
+  assert.equal(isoMaterialDeleteRefusal(materialLineStatuses(rows(s), 'iso-1').get(requirement.id)), ORDERED_LINE_REFUSAL);
+  assert.equal(isoMaterialDeleteRefusal(undefined), '');
+});
+
+test('Add material from DB: Revision (while the isometric has revisions), Type and a quantity of 0.01 or more are required', t => {
+  const s = fixture(t); s.hostedRules = true;
+  const base = { isoId: 'iso-1', source: 'Catalog', materialId: 'material-1', quantity: 1, phaseId: 'phase-0', revisionId: 'revision-iso-1' };
+  const refused = (data: Record<string, unknown>, field: string) => assert.throws(() => runAction(s, 'add-iso-material', { ...base, ...data }, actor), (e: AppError) => e.status === 422 && Boolean(e.fields?.[field]), field);
+  refused({ revisionId: '' }, 'revisionId');
+  refused({ phaseId: '' }, 'phaseId');
+  refused({ quantity: 0.001 }, 'quantity');
+  assert.ok(runAction(s, 'add-iso-material', { ...base, quantity: 0.01 }, actor));
+  assert.deepEqual(isoMaterialInputErrors({ source: 'Catalog', materialId: 'x', quantity: 1 }, { requireRevision: true, requirePhase: true }), { revisionId: 'Choose the revision.', phaseId: 'Choose the type.' });
+  assert.equal(isoMaterialInputErrors({ source: 'Catalog', materialId: 'x', quantity: 0.001 }, { minQuantity: 0.01 }).quantity, 'The quantity must be at least 0.01.');
+  // Another profile keeps accepting a line without a revision or a type.
+  const other = fixture(t);
+  assert.ok(runAction(other, 'add-iso-material', { isoId: 'iso-1', source: 'Catalog', materialId: 'material-1', quantity: 0.5 }, actor));
+});
+
+test('Add custom material: UOM starts at EA, a revision is required, and Auto fill narrows the charge numbers by the Material No', t => {
+  const s = fixture(t); s.hostedRules = true;
+  const custom = { isoId: 'iso-1', source: 'Custom', materialNo: 'CUS-EA-1', description: 'Custom bracket', materialGroup: 'Support', quantity: 2, phaseId: 'phase-0', revisionId: 'revision-iso-1' };
+  const added = runAction(s, 'add-iso-material', custom, actor);
+  assert.ok('record' in added && added.record);
+  assert.equal(s.get('custom_materials', String(added.record!.customMaterialId)).uom, 'EA');
+  assert.throws(() => runAction(s, 'add-iso-material', { ...custom, materialNo: 'CUS-EA-2', revisionId: '' }, actor), (e: AppError) => e.status === 422 && Boolean(e.fields?.revisionId));
+  assert.deepEqual(chargeNumberOptions(['11111', '1212', '564321', '98784987', 'ada', '1212'], ''), ['11111', '1212', '564321', '98784987', 'ada']);
+  assert.deepEqual(chargeNumberOptions(['11111', '1212', '564321', 'ADA-9'], '12'), ['1212']);
+  assert.deepEqual(chargeNumberOptions(['11111', 'ADA-9'], 'ada'), ['ADA-9']);
+  assert.deepEqual(chargeNumberOptions(['11111'], '8138265581'), [], 'no results');
+  assert.deepEqual([ADD_MATERIAL_DIALOG.title, ADD_MATERIAL_DIALOG.submit, ADD_MATERIAL_DIALOG.quantityMin], ['Add material', 'Add', 0.01]);
+});
+
+test('the materials of a group come in database order as "<Material No> <description>", and Set type reads Type / Update', () => {
+  const data = orderedRows(), list = [...data.materials, row('m3', { materialNo: '8138259941', description: 'BLT 2', materialGroup: 'BOLTS A320-L43' })];
+  assert.deepEqual(materialsOfGroup(list, 'BOLTS A320-L43'), [{ id: 'm1', label: '8138265581 BLT/N A320-L43' }, { id: 'm3', label: '8138259941 BLT 2' }], 'database order, not by Material No');
+  assert.deepEqual(materialsOfGroup(list, 'nothing'), []);
+  assert.deepEqual([SET_TYPE_DIALOG.title, SET_TYPE_DIALOG.placeholder, SET_TYPE_DIALOG.submit], ['Set type', 'Type', 'Update']);
+});
+
+test('the Materials table is sorted by Picked ascending, filtered by Type and searched over its columns', () => {
+  const data = orderedRows();
+  data.iso_materials = [row('r1', { isoId: 'iso-a', materialId: 'm1', quantity: 10, phaseId: 'shop' }), row('r2', { isoId: 'iso-a', materialId: 'm2', quantity: 16, phaseId: 'field' }), row('r3', { isoId: 'iso-a', materialId: 'm1', quantity: 3, phaseId: 'shop' })];
+  data.picklists = [row('k1', { isoId: 'iso-a', materialId: 'm1', requirementId: 'r1', quantity: 4 }), row('k2', { isoId: 'iso-a', materialId: 'm2', requirementId: 'r2', quantity: 1 })];
+  const statuses = materialLineStatuses(data, 'iso-a');
+  assert.deepEqual(listIsoMaterials(data.iso_materials, data, statuses, {}).map(line => [line.id, statuses.get(line.id)!.picked]), [['r3', 0], ['r2', 1], ['r1', 4]], 'Picked ascending first');
+  assert.deepEqual(listIsoMaterials(data.iso_materials, data, statuses, { phaseId: 'shop' }).map(line => line.id), ['r3', 'r1']);
+  assert.deepEqual(listIsoMaterials(data.iso_materials, data, statuses, { query: ' flg ' }).map(line => line.id), ['r2'], 'search over the description, any case');
+  assert.deepEqual(listIsoMaterials(data.iso_materials, data, statuses, { query: '7662782601', phaseId: 'shop' }), []);
+  assert.deepEqual(listIsoMaterials(data.iso_materials, data, statuses, { query: 'Field' }).map(line => line.id), ['r2'], 'the Type column is searched too');
+});
+
+test('Print passes the Type chosen on the panel to the MTO report', () => {
+  const item = pdfEntries('mto', 'materials').find(entry => entry.key === 'mto-report')!;
+  const query = pdfQuery(item, 'iso-1', { type: 'All', weldRecord: true, signature: false, phase: 'phase-3', projectId: '', siteId: '' });
+  assert.equal(new URLSearchParams(query).get('phase'), 'phase-3');
+});
+
+test('Material status per revision: empty without revision-linked changes, else the removals per revision (newest first)', t => {
+  const s = fixture(t); s.hostedRules = true;
+  const empty = materialStatusByRevision(rows(s), 'iso-1');
+  assert.deepEqual(empty, []); assert.equal(NO_REVISION_CHANGES, 'No revision-linked material changes yet.');
+  const requirement = s.list('iso_materials').find(line => line.isoId === 'iso-1')!, revision = s.get('revisions', 'revision-iso-1');
+  runAction(s, 'remove-material-quantity', { requirementId: requirement.id, revisionId: revision.id, quantity: 0.5 }, actor);
+  const groups = materialStatusByRevision(rows(s), 'iso-1');
+  assert.equal(groups.length, 1); assert.equal(groups[0].revisionId, revision.id);
+  assert.deepEqual(groups[0].changes.map(change => [change.requirementId, change.removed]), [[requirement.id, 0.5]]);
+  assert.deepEqual(materialStatusByRevision(rows(s), 'iso-2').filter(group => group.changes.some(change => change.requirementId === requirement.id)), [], 'another isometric is not touched');
+});
+
+test('the quantity changes in one place: the record route refuses a new quantity, the quantity log removes by revision without a date or a note', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const line = f.store.get('iso_materials', 'requirement-1');
+  const refused = await f.request(`/api/records/iso_materials/${line.id}`, 'PUT', { quantity: Number(line.quantity) + 1, _version: line._version });
+  assert.equal(refused.status, 422); assert.ok((await body(refused)).fields?.quantity);
+  assert.equal(f.store.get('iso_materials', line.id).quantity, line.quantity);
+  const removed = await f.request('/api/actions/remove-material-quantity', 'POST', { requirementId: line.id, revisionId: `revision-${line.isoId}`, quantity: 0.25, expectedVersion: line._version });
+  assert.equal(removed.status, 201);
+  const after = f.store.get('iso_materials', line.id);
+  assert.equal(after.quantity, Number(line.quantity) - 0.25);
+  const change = f.store.list('material_quantity_changes').find(entry => entry.requirementId === line.id)!;
+  assert.equal(change.date, new Date().toISOString().slice(0, 10)); assert.equal(change.type, 'Revision removal');
+});
+
+test('Edit material changes Type, Component code, UOM and Charge number, writes the isometric audit trail and refuses the quantity', t => {
+  const s = fixture(t); s.hostedRules = true;
+  const custom = runAction(s, 'add-iso-material', { isoId: 'iso-1', source: 'Custom', materialNo: 'CUS-EDIT-1', description: 'Editable', materialGroup: 'Support', uom: 'EA', quantity: 3, phaseId: 'phase-0', revisionId: 'revision-iso-1' }, actor).record!;
+  const uom = s.list('uoms').find(row => row.name !== 'EA')!;
+  const done = runAction(s, 'edit-iso-material', { requirementId: custom.id, phaseId: 'phase-1', componentCode: '2', uom: String(uom.name), chargeNo: 'H-9001', expectedVersion: custom._version }, actor).record!;
+  assert.deepEqual([done.phaseId, done.componentCode, done.progressClass, done.uom, done.chargeNo, done.quantity], ['phase-1', '2', 'Supports', uom.name, 'H-9001', 3]);
+  assert.equal(s.get('custom_materials', String(done.customMaterialId)).uom, uom.name, 'the identity record carries the unit');
+  assert.equal(done.customMaterialId, custom.customMaterialId, 'the line keeps its identity for orders and stock');
+  const trail = s.activity(1000).filter(event => event.entityType === 'isometrics' && event.entityId === 'iso-1' && event.action === 'material edited');
+  assert.ok(trail.length === 1 && trail[0].summary.includes('type') && trail[0].summary.includes('charge number'), JSON.stringify(trail));
+  for (const field of ['quantity', 'materialNo', 'description', 'materialGroup']) assert.throws(() => runAction(s, 'edit-iso-material', { requirementId: custom.id, [field]: field === 'quantity' ? 99 : 'x' }, actor), (e: AppError) => e.status === 422 && Boolean(e.fields?.[field]), field);
+  assert.throws(() => runAction(s, 'edit-iso-material', { requirementId: custom.id, componentCode: '9' }, actor), (e: AppError) => e.status === 422);
+  assert.throws(() => runAction(s, 'edit-iso-material', { requirementId: custom.id, uom: 'NOPE' }, actor), (e: AppError) => e.status === 422);
+  assert.equal(s.get('iso_materials', custom.id).quantity, 3);
+});
+
+test('Import in ISO: two rows become two lines of this isometric only, an unknown UOM or type is an error row', async t => {
+  const s = fixture(t); s.hostedRules = true;
+  const preview = isoImportPreview([
+    { rowNo: 2, values: { materialNo: 'IMP-1', description: 'Imported pipe', materialGroup: 'Pipe', uom: 'M', quantity: '6' } },
+    { rowNo: 3, values: { materialNo: 'IMP-2', description: 'Imported elbow', quantity: '2,5', componentCode: '1' } },
+    { rowNo: 4, values: { materialNo: 'IMP-3', description: 'Bad unit', uom: 'ZZ', quantity: '1' } },
+    { rowNo: 5, values: { materialNo: 'IMP-4', description: 'Bad type', phase: 'Nowhere', quantity: '1' } },
+    { rowNo: 6, values: { materialNo: '', quantity: '0' } },
+  ], Object.fromEntries(['materials', 'uoms', 'operation_phases'].map(key => [key, s.list(key)])));
+  assert.deepEqual(preview.map(row => Object.keys(row.error).sort()), [[], [], ['uom'], ['phase'], ['materialNo', 'quantity']]);
+  assert.equal(preview[1].uom, 'EA', 'UOM starts at EA'); assert.equal(preview[1].quantity, 2.5);
+  assert.deepEqual(ISO_IMPORT_COLUMNS.map(column => column.header), ['CC', 'Group', 'Article No', 'Material No', 'Description', 'DIA', 'LBS/SCH', 'UOM', 'Qty', 'Operation phase', 'Spool']);
+  const before = { x: s.list('iso_materials').filter(line => line.isoId === 'iso-1').length, other: s.list('iso_materials').filter(line => line.isoId !== 'iso-1').length };
+  const result = commitIsoMaterialImport(s, 'iso-1', preview.map(row => ({ rowNo: row.rowNo, values: row.values })), actor);
+  assert.deepEqual(result, { committed: 2, failed: 3 });
+  const lines = s.list('iso_materials');
+  assert.equal(lines.filter(line => line.isoId === 'iso-1').length, before.x + 2); assert.equal(lines.filter(line => line.isoId !== 'iso-1').length, before.other);
+  const imported = lines.filter(line => line.materialNo === 'IMP-1')[0];
+  assert.deepEqual([imported.quantity, imported.revisionId, imported.uom], [6, 'revision-iso-1', 'M']);
+});
+
+test('the iso material import is delivered to MTO writers only: template, preview and commit', async t => {
+  const f = await hostedFixture(t);
+  assert.equal((await f.request('/api/iso-material-import/template?isoId=iso-1')).status, 401);
+  await f.setup();
+  assert.equal((await f.request('/api/iso-material-import/template?isoId=iso-1')).status, 200);
+  assert.equal((await f.request('/api/iso-material-import/template')).status, 422, 'an isometric is needed');
+  const form = await workbook(['Material No', 'Description', 'Qty', 'UOM'], [['HTTP-IMP-1', 'Imported by file', '3', 'EA'], ['HTTP-IMP-2', 'Second line', '1', 'EA']]); form.set('isoId', 'iso-1');
+  let response = await f.request('/api/iso-material-import/preview', 'POST', form);
+  const preview = await response.json() as { rows: { rowNo: number; values: Record<string, string>; error: Record<string, string> }[]; summary: { valid: number } };
+  assert.equal(response.status, 200); assert.equal(preview.rows.length, 2);
+  response = await f.request('/api/iso-material-import/commit', 'POST', { isoId: 'iso-1', rows: preview.rows.map(row => ({ rowNo: row.rowNo, values: row.values })) });
+  assert.equal(response.status, 201);
+  assert.equal(f.store.list('iso_materials').filter(line => line.isoId === 'iso-1' && String(line.materialNo).startsWith('HTTP-IMP')).length, preview.summary.valid);
+  f.usePilot('weld');
+  assert.equal((await f.request('/api/iso-material-import/template?isoId=iso-1')).status, 403, 'the Weld pilot has no materials');
+});
+
+test('Ordered stays on its line when another line of the same material changes quantity (no order link: stable by line order and start quantity)', () => {
+  const line = (id: string, quantity: number, n: number) => row(id, { isoId: 'iso-a', materialId: 'm1', quantity, _createdAt: `2026-01-01T00:00:0${n}Z` });
+  const data: Record<string, Row[]> = {
+    isometrics: [row('iso-a', { projectId: 'p' })], projects: [row('p', { siteId: 'site-a' })], materials: [row('m1', { materialNo: 'M1' })], custom_materials: [],
+    iso_materials: [line('c', 4, 1), line('b', 30, 2), line('a', 40, 3)],
+    orders: [row('o1', { projectId: 'p', status: 'Pending', number: '00001' })], order_lines: [row('l1', { orderId: 'o1', materialId: 'm1', quantity: 12, received: 0 })], stock: [], picklists: [], material_quantity_changes: [],
+  };
+  const orderedOf = (rowsOf: Record<string, Row[]>) => Object.fromEntries(requirementExecution(rowsOf).map(entry => [entry.requirement.id, entry.ordered]));
+  assert.deepEqual(orderedOf(data), { c: 4, b: 8, a: 0 });
+  // 2 of the 4 are removed by a revision: the quantity log keeps the start quantity.
+  const changed: Record<string, Row[]> = { ...data, iso_materials: [line('c', 2, 1), line('b', 30, 2), line('a', 40, 3)], material_quantity_changes: [row('x1', { requirementId: 'c', sequence: 1, previousQuantity: 4, quantity: -2, newQuantity: 2 })] };
+  assert.deepEqual(orderedOf(changed), { c: 4, b: 8, a: 0 }, 'only line c is touched; b keeps its 8');
 });

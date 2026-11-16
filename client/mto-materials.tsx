@@ -1,16 +1,14 @@
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ArrowUpDown, ChevronDown, Download, Loader2, MoreHorizontal, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, ArrowUpDown, ChevronDown, Download, History, Loader2, Pencil, Plus, Trash2, Truck, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { Row } from '../shared/types.ts';
 import { materialRecord } from '../shared/materials.ts';
-import { PROGRESS_CLASSES, isoMaterialInputErrors, materialLineStatuses, materialStatus } from '../shared/mto-materials.ts';
+import { ADD_MATERIAL_DIALOG, ISO_IMPORT_COLUMNS, ISO_MATERIAL_PAGE_SIZE, ISO_MATERIAL_PAGE_SIZES, NO_REVISION_CHANGES, PILOT_MATERIAL_RULES, SET_TYPE_DIALOG, chargeNumberOptions, formatMaterialStatus, inventoryLevel, inventoryTooltip, isoMaterialDeleteRefusal, isoMaterialInputErrors, isoRevisions, listIsoMaterials, materialLineStatuses, materialStatus, materialStatusByRevision, materialsOfGroup, orderDetails, revisionLabel, type IsoImportRow, type MaterialInputOptions, type MaterialLineStatus } from '../shared/mto-materials.ts';
 import { RESOURCE_MAP } from './catalog.ts';
 import { activeRows, useWorkspace } from './context.tsx';
-import { ApiError, api, apiUrl, formatNumber, post } from './api.ts';
+import { ApiError, api, apiUrl, formatDate, formatNumber, post } from './api.ts';
 import { DEFAULT_UOM, MASS_EDIT_BLANK, MASS_EDIT_FIELDS, MASS_EDIT_HELP, MATERIAL_DEFAULT_SORT, MATERIAL_FORM_FIELDS, MATERIAL_IMPORT_PATH, MATERIAL_PAGE_SIZE, MATERIAL_PAGE_SIZES, catalogOrder, massEditChanges, massEditRefusal, materialTypeLabel, phasesById, phasesByName, showingEntries, sortMaterials, uomByName } from '../shared/material-db.ts';
 import { Badge, Dropdown, EmptyState, FieldInput, Modal, SearchInput, TableScroll, FormError, selectPrompt } from './components.tsx';
-import { RecordEditor } from './dialogs.tsx';
-import { ArchiveRecordDialog } from './archive-record.tsx';
 import { MaterialQuantityLogDialog } from './material-quantity-log.tsx';
 import { MtoPrintButton } from './pdf-mto-print.tsx';
 
@@ -145,73 +143,101 @@ function DeleteMaterial({ record, onClose }: { record: Row; onClose: (done: bool
 
 interface PanelProps { iso: Row; onAttachments?: () => void; onAudit?: () => void; onPhase?: () => void; }
 
+/** The Inv. truck of a line: red, orange or green by the stock against the line, with the reference tooltip; it opens the stock detail. */
+function InventoryTruck({ state, name, onOpen }: { state: MaterialLineStatus; name: string; onOpen: () => void }) {
+  const tip = inventoryTooltip(state);
+  return <button type="button" className={`record-link mto-truck mto-truck-${inventoryLevel(state)}`} title={tip} aria-label={`${tip}, stock detail of ${name}`} aria-haspopup="dialog" onClick={onOpen}><Truck size={17} aria-hidden="true"/></button>;
+}
+
 /** The Materials panel of an isometric: the requirement lines with their order, inventory and pick state. */
 export function IsoMaterialsPanel({ iso, onAttachments, onAudit, onPhase }: PanelProps) {
-  const { rows, siteId, canRecord, canRun, canReadReport, label } = useWorkspace();
-  const [selected, setSelected] = useState<string[]>([]), [typeFilter, setTypeFilter] = useState(''), [dialog, setDialog] = useState<'catalog' | 'custom' | 'type' | 'delete' | ''>('');
-  const [log, setLog] = useState(''), [editing, setEditing] = useState<Row | null>(null), [archiving, setArchiving] = useState<Row | null>(null);
+  const { rows, canRecord, canRun, label } = useWorkspace();
+  const [selected, setSelected] = useState<string[]>([]), [typeFilter, setTypeFilter] = useState(''), [query, setQuery] = useState(''), [size, setSize] = useState(ISO_MATERIAL_PAGE_SIZE), [page, setPage] = useState(0);
+  const [dialog, setDialog] = useState<'catalog' | 'custom' | 'type' | 'delete' | 'import' | 'revisions' | ''>('');
+  const [log, setLog] = useState(''), [editing, setEditing] = useState<Row | null>(null), [deleting, setDeleting] = useState<Row | null>(null), [details, setDetails] = useState('');
   const phases = phasesById(rows.operation_phases);
   const lines = activeRows(rows, 'iso_materials').filter(line => line.isoId === iso.id);
   // Ord.? / Inv. / Picked need the orders, stock and pick lists the account may read; otherwise the columns show a dash.
   const executionVisible = ['orders', 'order_lines', 'stock', 'picklists'].every(key => canRecord(key));
-  const statuses = useMemo(() => executionVisible ? materialLineStatuses(rows, iso.id) : new Map(), [rows, iso.id, executionVisible]);
+  const statuses = useMemo(() => executionVisible ? materialLineStatuses(rows, iso.id) : new Map<string, MaterialLineStatus>(), [rows, iso.id, executionVisible]);
   const status = useMemo(() => executionVisible ? materialStatus(iso, rows) : null, [rows, iso, executionVisible]);
-  const listed = lines.filter(line => !typeFilter || (typeFilter === 'none' ? !line.phaseId : line.phaseId === typeFilter)).sort((a, b) => byText(materialRecord(rows, a)?.materialGroup ?? a.materialGroup, materialRecord(rows, b)?.materialGroup ?? b.materialGroup) || byText(materialRecord(rows, a)?.materialNo ?? a.materialNo, materialRecord(rows, b)?.materialNo ?? b.materialNo));
+  const listed = useMemo(() => listIsoMaterials(lines, rows, statuses, { phaseId: typeFilter, query }), [lines, rows, statuses, typeFilter, query]);
+  const pages = Math.max(1, Math.ceil(listed.length / size)), current = Math.min(page, pages - 1), shown = listed.slice(current * size, (current + 1) * size);
   const checked = lines.filter(line => selected.includes(line.id));
   const canAdd = canRun('add-iso-material', { isoId: iso.id }), canType = canRun('set-material-type'), canDelete = canRun('archive-iso-materials');
-  const reportUrl = apiUrl(`/reports/mto?${new URLSearchParams({ siteId, projectId: text(iso.projectId), isoId: iso.id })}`);
   if (!canRecord('iso_materials')) return <EmptyState title="Materials restricted" description="Your permission profile does not include isometric materials."/>;
   const toggle = (id: string, on: boolean) => setSelected(old => on ? [...old, id] : old.filter(item => item !== id));
   return <section className="panel iso-materials-panel" aria-label="Isometric materials">
-    <div className="panel-heading"><div><h2>Materials</h2>{status && <p className="mto-status" role="status">Material status {status.percent === null ? 'n/a' : `${formatNumber(status.percent)} %`}<span>{status.required > 0 ? ` · ${formatNumber(status.covered, 3)} of ${formatNumber(status.required, 3)} covered by pick and inventory` : ' · nothing required yet'}</span></p>}</div>
+    <div className="panel-heading"><div><h2>Materials</h2>{status && <p className="mto-status" role="status" title={status.required > 0 ? `${formatNumber(status.covered, 3)} of ${formatNumber(status.required, 3)} covered by pick and inventory` : 'The isometric has no material lines yet.'}>Material status <strong>{formatMaterialStatus(status.percent)}</strong><button type="button" className="icon-btn" title="Material status per revision" aria-label="Material status per revision" onClick={() => setDialog('revisions')}><History size={16}/></button></p>}</div>
       <div className="heading-actions">
         <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}><button disabled={!onAttachments} onClick={onAttachments}>Attachments</button><button disabled={!onAudit} onClick={onAudit}>Audit trail</button><button disabled={!onPhase || !canRun('phases', { isoIds: [iso.id] })} onClick={onPhase}>Set phase</button></Dropdown>
         <button className="btn" disabled={!checked.length || !canType} onClick={() => setDialog('type')}>Set type</button>
         <button className="btn" disabled={!checked.length || !canDelete} onClick={() => setDialog('delete')}><Trash2 size={15}/>Delete selected</button>
+        {canAdd && <button className="btn" onClick={() => setDialog('import')}><Upload size={15}/>Import in ISO</button>}
         {canAdd && <Dropdown label="Add" trigger={<span className="btn primary"><Plus size={15}/>Add<ChevronDown size={15}/></span>}><button onClick={() => setDialog('catalog')}>Add material from DB</button><button onClick={() => setDialog('custom')}>Add custom material</button></Dropdown>}
       </div></div>
     <div className="mto-toolbar">
-      <div className="field"><label htmlFor={`type-filter-${iso.id}`}>Type</label><div className="select-wrap"><select id={`type-filter-${iso.id}`} value={typeFilter} onChange={event => { setTypeFilter(event.target.value); setSelected([]); }}><option value="">All types</option>{phases.map(phase => <option key={phase.id} value={phase.id}>{text(phase.name)}</option>)}<option value="none">No type</option></select><ChevronDown size={14}/></div></div>
-      <div className="heading-actions">{canReadReport('mto', 'export') && <><a className="btn" href={reportUrl}><Download size={15}/>CSV</a><a className="btn" href={`${reportUrl}&format=xlsx`}><Download size={15}/>Excel</a></>}{canReadReport('mto', 'print') && <MtoPrintButton iso={iso}/>}</div>
+      <div className="field"><label htmlFor={`type-filter-${iso.id}`}>Type</label><div className="select-wrap"><select id={`type-filter-${iso.id}`} value={typeFilter} onChange={event => { setTypeFilter(event.target.value); setSelected([]); setPage(0); }}><option value="">All types</option>{phases.map(phase => <option key={phase.id} value={phase.id}>{text(phase.name)}</option>)}</select><ChevronDown size={14}/></div></div>
+      <label className="page-size">Show <select aria-label="Entries per page" value={size} onChange={event => { setSize(Number(event.target.value)); setPage(0); }}>{ISO_MATERIAL_PAGE_SIZES.map(option => <option key={option} value={option}>{option}</option>)}</select> entries</label>
+      <SearchInput value={query} onChange={value => { setQuery(value); setPage(0); }} placeholder="Search"/>
+      <div className="heading-actions"><MtoPrintButton iso={iso} phaseId={typeFilter}/></div>
     </div>
     <TableScroll><table className="data-table mto-lines-table">
-      <thead><tr><th>Group</th><th>Mat.no.</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th>Type</th><th className="number-cell">Qty.</th><th>UOM</th><th>Ord.?</th><th className="number-cell">Inv.</th><th className="number-cell">Picked</th><th className="actions-cell">Options</th><th className="select-cell"><input type="checkbox" aria-label="Select all listed materials" checked={listed.length > 0 && listed.every(line => selected.includes(line.id))} onChange={event => setSelected(event.target.checked ? [...new Set([...selected, ...listed.map(line => line.id)])] : selected.filter(id => !listed.some(line => line.id === id)))}/></th></tr></thead>
-      <tbody>{listed.map(line => {
-        const material = materialRecord(rows, line) || line, state = statuses.get(line.id);
+      <thead><tr><th>Group</th><th>Mat.no.</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th>Type</th><th className="number-cell">Qty.</th><th>UOM</th><th>Ord.?</th><th className="number-cell">Inv.</th><th className="number-cell">Picked</th><th className="actions-cell">Options</th><th className="select-cell"><input type="checkbox" aria-label="Select all listed materials" checked={shown.length > 0 && shown.every(line => selected.includes(line.id))} onChange={event => setSelected(event.target.checked ? [...new Set([...selected, ...shown.map(line => line.id)])] : selected.filter(id => !shown.some(line => line.id === id)))}/></th></tr></thead>
+      <tbody>{shown.map(line => {
+        const material = materialRecord(rows, line) || line, state = statuses.get(line.id), name = text(material.materialNo), refusal = isoMaterialDeleteRefusal(state);
         return <tr key={line.id} className={selected.includes(line.id) ? 'selected' : undefined}>
-          <td>{text(material.materialGroup) || '—'}</td><td><strong>{text(material.materialNo) || 'Unavailable material'}</strong>{line.customMaterial && !line.materialId ? <span className="custom-material-tag"> custom</span> : null}</td><td>{text(material.dia) || '—'}</td><td>{text(material.lbs) || '—'}</td><td className="description-cell">{text(material.description) || '—'}</td>
+          <td>{text(material.materialGroup) || '—'}</td><td><strong>{name || 'Unavailable material'}</strong>{line.customMaterial && !line.materialId ? <span className="custom-material-tag"> custom</span> : null}</td><td>{text(material.dia) || '—'}</td><td>{text(material.lbs) || '—'}</td><td className="description-cell">{text(material.description) || '—'}</td>
           <td>{line.phaseId ? label('operation_phases', line.phaseId) : '—'}</td>
-          <td className="number-cell"><button className="record-link" aria-label={`Quantity log of ${text(material.materialNo)}`} onClick={() => setLog(line.id)}>{formatNumber(line.quantity, 3)}</button></td><td>{text(material.uom) || '—'}</td>
-          <td>{state ? <Badge color={state.isOrdered ? 'green' : 'amber'}>{state.isOrdered ? 'Yes' : 'No'}</Badge> : '—'}</td><td className="number-cell">{state ? formatNumber(state.inventory, 3) : '—'}</td><td className="number-cell">{state ? formatNumber(state.picked, 3) : '—'}</td>
-          <td className="actions-cell"><Dropdown label={`Options for ${text(material.materialNo)}`} trigger={<span className="icon-btn"><MoreHorizontal size={16}/></span>}><button onClick={() => setLog(line.id)}>Quantity log</button><button disabled={!canRecord('iso_materials', 'edit', line)} onClick={() => setEditing(line)}>Edit</button><button disabled={!canRecord('iso_materials', 'delete', line)} onClick={() => setArchiving(line)}>Delete</button></Dropdown></td>
-          <td className="select-cell"><input type="checkbox" aria-label={`Select ${text(material.materialNo)}`} checked={selected.includes(line.id)} onChange={event => toggle(line.id, event.target.checked)}/></td>
+          <td className="number-cell"><button className="record-link" aria-label={`Quantity log of ${name}`} onClick={() => setLog(line.id)}>{formatNumber(line.quantity, 3)}</button></td><td>{text(line.uom) || text(material.uom) || '—'}</td>
+          <td>{!state ? '—' : state.hasOrder && state.orderId ? <Link className="text-link" to={`/materials/order-archive?order=${encodeURIComponent(state.orderId)}`} target="_blank" rel="noopener" title={`Ord. No.: ${state.orderNo}`}>Yes</Link> : <Badge color={state.hasOrder ? 'green' : 'amber'}>{state.hasOrder ? 'Yes' : 'No'}</Badge>}</td>
+          <td className="number-cell">{state ? <InventoryTruck state={state} name={name} onOpen={() => setDetails(line.id)}/> : '—'}</td><td className="number-cell">{state ? formatNumber(state.picked, 3) : '—'}</td>
+          <td className="actions-cell"><button className="icon-btn" aria-label={`Edit ${name}`} title="Edit" disabled={!canRecord('iso_materials', 'edit', line) || !canRun('edit-iso-material')} onClick={() => setEditing(line)}><Pencil size={16}/></button><button className="icon-btn" aria-label={`Delete ${name}`} title={refusal || 'Delete'} disabled={Boolean(refusal) || !canRecord('iso_materials', 'delete', line) || !canDelete} onClick={() => setDeleting(line)}><Trash2 size={16}/></button></td>
+          <td className="select-cell"><input type="checkbox" aria-label={`Select ${name}`} checked={selected.includes(line.id)} onChange={event => toggle(line.id, event.target.checked)}/></td>
         </tr>;
       })}</tbody>
     </table></TableScroll>
-    {!listed.length && <EmptyState title={lines.length ? 'No materials of this type' : 'No materials on this isometric'} description={lines.length ? 'Choose another type or All types.' : canAdd ? 'Use Add to take a material from the database or enter a custom one.' : 'Materials are added by team members who may edit the take-off.'}/>}
-    <div className="table-footer"><span>{listed.length} {listed.length === 1 ? 'line' : 'lines'}{checked.length ? ` · ${checked.length} checked` : ''}{!executionVisible ? ' · order, inventory and pick data are not available to your profile' : ''}</span></div>
+    {!listed.length && <EmptyState title={lines.length ? 'No materials match' : 'No materials on this isometric'} description={lines.length ? 'Choose another type or All types, or clear the search.' : canAdd ? 'Use Add to take a material from the database or enter a custom one.' : 'Materials are added by team members who may edit the take-off.'}/>}
+    <div className="table-footer"><span>{showingEntries(current * size + 1, current * size + shown.length, listed.length)}{checked.length ? ` · ${checked.length} checked` : ''}{!executionVisible ? ' · order, inventory and pick data are not available to your profile' : ''}</span><div><button className="btn small" disabled={!current} onClick={() => setPage(current - 1)}>Previous</button><span>{current + 1} / {pages}</span><button className="btn small" disabled={current + 1 >= pages} onClick={() => setPage(current + 1)}>Next</button></div></div>
     {dialog === 'catalog' && <AddCatalogMaterial iso={iso} onClose={() => setDialog('')}/>}
     {dialog === 'custom' && <AddCustomMaterial iso={iso} onClose={() => setDialog('')}/>}
     {dialog === 'type' && <SetTypeDialog lines={checked} onClose={done => { setDialog(''); if (done) setSelected([]); }}/>}
     {dialog === 'delete' && <DeleteLinesDialog lines={checked} onClose={done => { setDialog(''); if (done) setSelected([]); }}/>}
+    {dialog === 'import' && <ImportInIsoDialog iso={iso} onClose={() => setDialog('')}/>}
+    {dialog === 'revisions' && <MaterialStatusByRevisionDialog iso={iso} onClose={() => setDialog('')}/>}
     {log && <MaterialQuantityLogDialog requirementId={log} onClose={() => setLog('')}/>}
-    {editing && <RecordEditor resourceKey="iso_materials" record={editing} onClose={() => setEditing(null)}/>}
-    {archiving && <ArchiveRecordDialog resourceKey="iso_materials" record={archiving} onClose={() => setArchiving(null)}/>}
+    {details && <OrderDetailsDialog requirementId={details} onClose={() => setDetails('')}/>}
+    {editing && <EditIsoMaterialDialog line={editing} onClose={() => setEditing(null)}/>}
+    {deleting && <DeleteLinesDialog lines={[deleting]} onClose={() => setDeleting(null)}/>}
   </section>;
 }
 
 // ----- dialogs -------------------------------------------------------------------------------------------------------
 
 /** A labelled select used by the dialogs below. */
-function Choice({ label, value, onChange, options, error, required, hint, empty }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; error?: string; required?: boolean; hint?: string; empty?: string }) {
+function Choice({ label, value, onChange, options, error, required, hint, empty }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; error?: string; required?: boolean; hint?: string; empty?: string | null }) {
   const id = useId();
-  return <div className="field"><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label><div className="select-wrap"><select id={id} value={value} required={required} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}><option value="">{empty ?? selectPrompt(label)}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div>{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;
+  return <div className="field"><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label><div className="select-wrap"><select id={id} value={value} required={required} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} onChange={event => onChange(event.target.value)}>{empty !== null && <option value="">{empty ?? selectPrompt(label)}</option>}{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><ChevronDown size={14}/></div>{hint && <small className="field-hint">{hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;
+}
+/** A read-only line of the Edit material dialog. */
+function ReadOnly({ label, value }: { label: string; value: string }) {
+  const id = useId();
+  return <div className="field"><label htmlFor={id}>{label}</label><input id={id} readOnly value={value}/></div>;
+}
+/** A search box over a list of choices (the reference's group and material lists): type to narrow, click one to choose it. */
+function SearchChoice({ label, placeholder, empty, options, value, onChange, error, required }: { label: string; placeholder: string; empty: string; options: { value: string; label: string }[]; value: string; onChange: (value: string) => void; error?: string; required?: boolean }) {
+  const id = useId(), [query, setQuery] = useState('');
+  const matching = options.filter(option => option.label.toLowerCase().includes(query.trim().toLowerCase()));
+  return <div className="field full-width"><label htmlFor={id}>{label}{required && <span className="required"> *</span>}</label>
+    <input id={id} type="search" autoComplete="off" placeholder={placeholder} value={query} onChange={event => setQuery(event.target.value)} aria-describedby={error ? `${id}-error` : undefined}/>
+    <div className="mto-choice-list" role="listbox" aria-label={label}>{matching.map(option => <button type="button" role="option" aria-selected={option.value === value} key={option.value} className={option.value === value ? 'is-active' : undefined} onClick={() => onChange(option.value)}>{option.label}</button>)}{!matching.length && <p className="muted">{empty}</p>}</div>
+    {error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;
 }
 
 function useAddMaterial(iso: Row, onClose: () => void) {
   const { refresh, notify } = useWorkspace();
   const [error, setError] = useState(''), [fields, setFields] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
-  async function submit(payload: Record<string, unknown>, options: { requireGroup: boolean }) {
+  async function submit(payload: Record<string, unknown>, options: MaterialInputOptions) {
     const problems = isoMaterialInputErrors(payload, options);
     setError(''); setFields(problems);
     if (Object.keys(problems).length) { setError('Please check the highlighted fields.'); return; }
@@ -221,56 +247,111 @@ function useAddMaterial(iso: Row, onClose: () => void) {
   }
   return { error, fields, busy, submit };
 }
-const Form = ({ title, subtitle, onClose, onSubmit, busy, error, fields, submit, children }: { title: string; subtitle: string; onClose: () => void; onSubmit: (event: FormEvent) => void; busy: boolean; error: string; fields?: Record<string, string>; submit: string; children: ReactNode }) =>
+const Form = ({ title, subtitle, onClose, onSubmit, busy, error, fields, submit, children }: { title: string; subtitle?: string; onClose: () => void; onSubmit: (event: FormEvent) => void; busy: boolean; error: string; fields?: Record<string, string>; submit: string; children: ReactNode }) =>
   <Modal title={title} subtitle={subtitle} onClose={onClose} wide><form noValidate onSubmit={onSubmit}><div className="modal-body"><FormError message={error} fields={fields}/><div className="form-grid">{children}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>;
 
 const quantityOf = (value: unknown) => value === '' || value === undefined ? '' : Number(value);
-const revisionOptions = (rows: Record<string, Row[]>, iso: Row) => activeRows(rows, 'revisions').filter(row => row.type === 'ISO' && row.isoId === iso.id).sort((a, b) => text(b._createdAt).localeCompare(text(a._createdAt))).map(row => ({ value: row.id, label: `Revision ${text(row.revNo)}${row.date ? ` · ${text(row.date)}` : ''}` }));
+/** ISO revisions of the isometric as select options, newest first (the form opens on the newest). */
+const revisionOptions = (rows: Record<string, Row[]>, iso: Row) => isoRevisions(rows, iso.id).map(row => ({ value: row.id, label: revisionLabel(row) }));
 /** Operation phases in ID order (the Add material Type select opens on the first, as the reference does); Set type lists them A-Z. */
 const phaseOptions = (rows: Record<string, Row[]>, order = phasesById) => order(rows.operation_phases).map(phase => ({ value: phase.id, label: text(phase.name) }));
 
-/** Add material from DB: choose the material group, then a material of that group, quantity, revision and type. */
+/** Group, Type and quantity of the last material added, kept in this browser for the next time (a per-viewer convenience). */
+const SAVED_KEY = 'blitzkrieg-mto-add-material';
+const readSaved = (): { group?: string; phaseId?: string; quantity?: string } => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '{}') || {}; } catch { return {}; } };
+const writeSaved = (value: { group?: string; phaseId?: string; quantity?: string }) => { try { localStorage.setItem(SAVED_KEY, JSON.stringify(value)); } catch { /* storage may be blocked */ } };
+
+/** The input rules of the add forms: the pilots' reference rules (Type, Revision, 0.01), the other profiles as before. */
+function useInputRules(iso: Row): MaterialInputOptions {
+  const { rows, hasFeature } = useWorkspace();
+  return hasFeature('pilots') ? { ...PILOT_MATERIAL_RULES, requireRevision: isoRevisions(rows, iso.id).length > 0 } : {};
+}
+
+/** Add material from DB (reference "Add material"): Quantity, Revision (newest), Type, then a material group and a material of it. */
 function AddCatalogMaterial({ iso, onClose }: { iso: Row; onClose: () => void }) {
-  const { rows } = useWorkspace(); const { error, fields, busy, submit } = useAddMaterial(iso, onClose);
-  const [group, setGroup] = useState(''), [materialId, setMaterialId] = useState(''), [quantity, setQuantity] = useState<number | ''>(''), [revisionId, setRevision] = useState(''), [phaseId, setPhase] = useState(() => phaseOptions(rows)[0]?.value ?? '');
+  const { rows } = useWorkspace(); const { error, fields, busy, submit } = useAddMaterial(iso, onClose); const rules = useInputRules(iso);
+  const saved = useMemo(readSaved, []);
   const materials = activeRows(rows, 'materials'), groups = [...new Set(materials.map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
-  const inGroup = materials.filter(row => text(row.materialGroup) === group).sort((a, b) => byText(a.materialNo, b.materialNo));
-  return <Form title="Add material from DB" subtitle={`Take a material from the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit="Add material" onSubmit={event => { event.preventDefault(); void submit({ source: 'Catalog', materialGroup: group, materialId, quantity: quantityOf(quantity), revisionId, phaseId }, { requireGroup: false }); }}>
-    <Choice label="Material group" value={group} onChange={value => { setGroup(value); setMaterialId(''); }} options={groups.map(value => ({ value, label: value }))} empty="Choose group" required error={fields.materialGroup} hint={groups.length ? undefined : 'The database has no material groups yet.'}/>
-    <Choice label="Material" value={materialId} onChange={setMaterialId} options={inGroup.map(row => ({ value: row.id, label: `${text(row.materialNo)} · ${text(row.description)}${row.dia ? ` · ${text(row.dia)}` : ''}${row.lbs ? ` · ${text(row.lbs)}` : ''}` }))} empty={group ? 'Choose material' : 'Choose a group first'} required error={fields.materialId}/>
-    <FieldInput field={{ name: 'quantity', label: 'Quantity', type: 'number', required: true, min: 0 }} value={quantity} onChange={value => setQuantity(value as number | '')} error={fields.quantity}/>
-    <Choice label="Revision" value={revisionId} onChange={setRevision} options={revisionOptions(rows, iso)} empty="No revision" error={fields.revisionId}/>
-    <Choice label="Type" value={phaseId} onChange={setPhase} options={phaseOptions(rows)} empty="No type"/>
+  const revisions = revisionOptions(rows, iso), phases = phaseOptions(rows);
+  const firstOf = (group: string) => materialsOfGroup(materials, group)[0]?.id ?? '';
+  const startGroup = saved.group && groups.includes(saved.group) ? saved.group : '';
+  const [group, setGroup] = useState(startGroup), [materialId, setMaterialId] = useState(() => firstOf(startGroup)), [quantity, setQuantity] = useState<number | ''>(() => saved.quantity ? Number(saved.quantity) : '');
+  const [revisionId, setRevision] = useState(revisions[0]?.value ?? ''), [phaseId, setPhase] = useState(() => phases.some(phase => phase.value === saved.phaseId) ? saved.phaseId! : phases[0]?.value ?? '');
+  const inGroup = materialsOfGroup(materials, group), chosen = inGroup.find(item => item.id === materialId), phase = phases.find(item => item.value === phaseId);
+  return <Form title={ADD_MATERIAL_DIALOG.title} subtitle={`Take a material from the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit={ADD_MATERIAL_DIALOG.submit} onSubmit={event => { event.preventDefault(); writeSaved({ group, phaseId, quantity: String(quantity) }); void submit({ source: 'Catalog', materialGroup: group, materialId, quantity: quantityOf(quantity), revisionId, phaseId }, rules); }}>
+    <div className="full-width mto-selected" role="status">{group ? <>Selected Material Group: <strong>{group}</strong> · Material: <strong>{chosen?.label ?? '—'}</strong> · Type: <strong>{phase?.label ?? '—'}</strong></> : 'Nothing selected yet'}</div>
+    <FieldInput field={{ name: 'quantity', label: 'Quantity', type: 'number', required: true, min: ADD_MATERIAL_DIALOG.quantityMin, step: 0.01 }} value={quantity} onChange={value => setQuantity(value as number | '')} error={fields.quantity}/>
+    <Choice label="Revision" value={revisionId} onChange={setRevision} options={revisions} empty={revisions.length ? null : 'No revision'} required={revisions.length > 0} error={fields.revisionId}/>
+    <Choice label="Type" value={phaseId} onChange={setPhase} options={phases} empty={null} required error={fields.phaseId}/>
+    <SearchChoice label="Material group" placeholder="Search material group" empty="No material groups found." options={groups.map(value => ({ value, label: value }))} value={group} onChange={value => { setGroup(value); setMaterialId(firstOf(value)); }} error={fields.materialGroup} required/>
+    <SearchChoice label="Material" placeholder="Search material" empty={group ? 'No materials found.' : 'Choose a material group first.'} options={inGroup.map(item => ({ value: item.id, label: item.label }))} value={materialId} onChange={setMaterialId} error={fields.materialId} required/>
   </Form>;
 }
 
-/** Add custom material: the reference fields, optionally also saved to the Material database. */
+/** Add custom material (reference "Add material"): the reference fields in the reference order, optionally also saved to the Material database. */
 function AddCustomMaterial({ iso, onClose }: { iso: Row; onClose: () => void }) {
-  const { rows } = useWorkspace(); const { error, fields, busy, submit } = useAddMaterial(iso, onClose);
-  const [values, setValues] = useState<Record<string, unknown>>({ materialGroup: '', articleNo: '', legacyNo: '', materialNo: '', dia: '', lbs: '', quantity: '', phaseId: phaseOptions(rows)[0]?.value ?? '', price: '', uom: '', revisionId: '', chargeNo: '', description: '', componentCode: '', progressClass: '', addToDB: false });
+  const { rows } = useWorkspace(); const { error, fields, busy, submit } = useAddMaterial(iso, onClose); const rules = useInputRules(iso);
+  const uoms = activeRows(rows, 'uoms').map(row => text(row.name)), revisions = revisionOptions(rows, iso);
+  const [values, setValues] = useState<Record<string, unknown>>({ materialGroup: '', articleNo: '', legacyNo: '', materialNo: '', dia: '', lbs: '', phaseId: phaseOptions(rows)[0]?.value ?? '', price: '', quantity: '', uom: uoms.includes(DEFAULT_UOM) || !uoms.length ? DEFAULT_UOM : uoms[0], revisionId: revisions[0]?.value ?? '', chargeNo: '', description: '', addToDB: false });
+  const [chargeTerm, setChargeTerm] = useState('');
   const set = (name: string) => (value: unknown) => setValues(old => ({ ...old, [name]: value }));
   const str = (name: string) => text(values[name]);
-  const uoms = activeRows(rows, 'uoms').map(row => text(row.name)).sort(byText), groups = [...new Set(activeRows(rows, 'materials').map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
-  const charges = [...new Set(activeRows(rows, 'certifications').map(row => text(row.chargeNo)).filter(Boolean))].sort(byText);
-  const input = (name: string, label: string, extra: Partial<{ required: boolean; type: 'text' | 'number'; hint: string }> = {}) => <FieldInput field={{ name, label, type: extra.type || 'text', required: extra.required, hint: extra.hint, min: extra.type === 'number' ? 0 : undefined }} value={values[name]} onChange={set(name)} error={fields[name]}/>;
-  return <Form title="Add custom material" subtitle={`Enter a material that is not in the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit="Add material"
-    onSubmit={event => { event.preventDefault(); void submit({ source: 'Custom', ...values, quantity: quantityOf(values.quantity), price: quantityOf(values.price), addToDB: Boolean(values.addToDB) }, { requireGroup: true }); }}>
+  const groups = [...new Set(activeRows(rows, 'materials').map(row => text(row.materialGroup)).filter(Boolean))].sort(byText);
+  const charges = chargeNumberOptions(activeRows(rows, 'certifications').map(row => text(row.chargeNo)), chargeTerm);
+  const input = (name: string, label: string, extra: Partial<{ required: boolean; type: 'text' | 'number'; step: number }> = {}) => <FieldInput field={{ name, label, type: extra.type || 'text', required: extra.required, step: extra.step, min: undefined }} value={values[name]} onChange={set(name)} error={fields[name]}/>;
+  return <Form title={ADD_MATERIAL_DIALOG.title} subtitle={`Enter a material that is not in the database for ${text(iso.isoNo)}.`} onClose={onClose} busy={busy} error={error} fields={fields} submit={ADD_MATERIAL_DIALOG.submit}
+    onSubmit={event => { event.preventDefault(); void submit({ source: 'Custom', ...values, quantity: quantityOf(values.quantity), price: quantityOf(values.price), addToDB: Boolean(values.addToDB) }, { ...rules, requireGroup: true }); }}>
     <div className="field"><label htmlFor="custom-group">Material group<span className="required"> *</span></label><input id="custom-group" list="custom-group-options" required autoComplete="off" value={str('materialGroup')} aria-invalid={Boolean(fields.materialGroup)} onChange={event => set('materialGroup')(event.target.value)}/><datalist id="custom-group-options">{groups.map(group => <option key={group} value={group}/>)}</datalist>{fields.materialGroup && <small className="field-error">{fields.materialGroup}</small>}</div>
     {input('articleNo', 'Article No')}{input('legacyNo', 'Legacy No')}{input('materialNo', 'Material No', { required: true })}{input('dia', 'DIA')}{input('lbs', 'LBS/SCH')}
-    {input('quantity', 'Quantity', { required: true, type: 'number' })}
-    <Choice label="Type" value={str('phaseId')} onChange={set('phaseId')} options={phaseOptions(rows)} empty="No type"/>
+    <Choice label="Type" value={str('phaseId')} onChange={set('phaseId')} options={phaseOptions(rows)} empty={null} required error={fields.phaseId}/>
     {input('price', 'Price', { type: 'number' })}
-    {uoms.length ? <Choice label="UOM" value={str('uom')} onChange={set('uom')} options={uoms.map(value => ({ value, label: value }))} required error={fields.uom}/> : input('uom', 'UOM', { required: true })}
-    <Choice label="Revision" value={str('revisionId')} onChange={set('revisionId')} options={revisionOptions(rows, iso)} empty="No revision" error={fields.revisionId}/>
-    {charges.length ? <Choice label="Charge number" value={str('chargeNo')} onChange={set('chargeNo')} options={charges.map(value => ({ value, label: value }))} empty="No charge number"/> : input('chargeNo', 'Charge number')}
+    {input('quantity', 'Quantity', { required: true, type: 'number', step: 0.01 })}
+    {uoms.length ? <Choice label="UOM" value={str('uom')} onChange={set('uom')} options={uoms.map(value => ({ value, label: value }))} empty={null} error={fields.uom}/> : input('uom', 'UOM')}
+    <Choice label="Revision" value={str('revisionId')} onChange={set('revisionId')} options={revisions} empty={revisions.length ? null : 'No revision'} required={revisions.length > 0} error={fields.revisionId}/>
+    <ChargeNumber value={str('chargeNo')} onChange={set('chargeNo')} options={charges} term={chargeTerm} onAutoFill={() => setChargeTerm(str('materialNo'))}/>
     <div className="full-width">{input('description', 'Material description', { required: true })}</div>
-    {input('componentCode', 'Component code')}
-    <Choice label="Progress class" value={str('progressClass')} onChange={set('progressClass')} options={PROGRESS_CLASSES.map(value => ({ value, label: value }))} empty="Not classified" hint="Pipe, supports and appendages feed the progress budget of the isometric." error={fields.progressClass}/>
-    <div className="full-width"><FieldInput field={{ name: 'addToDB', label: 'add to DB', type: 'checkbox', hint: 'Also saves this material in the Material database for later use.' }} value={values.addToDB} onChange={set('addToDB')} error={fields.addToDB}/></div>
+    <div className="full-width"><FieldInput field={{ name: 'addToDB', label: 'Also add material to Material DB', type: 'checkbox' }} value={values.addToDB} onChange={set('addToDB')} error={fields.addToDB}/></div>
   </Form>;
 }
 
-/** Set type for the checked rows. */
+/** Charge number select with "Auto fill": the button narrows the list to the charge numbers that contain the typed Material No (nothing is looked up or filled in). */
+function ChargeNumber({ value, onChange, options, term, onAutoFill }: { value: string; onChange: (value: string) => void; options: string[]; term: string; onAutoFill: () => void }) {
+  const id = useId();
+  return <div className="field"><label htmlFor={id}>Charge number</label><div className="mto-charge-row"><div className="select-wrap"><select id={id} value={value} onChange={event => onChange(event.target.value)}><option value="">-----</option>{options.map(option => <option key={option} value={option}>{option}</option>)}</select><ChevronDown size={14}/></div><button type="button" className="btn" onClick={onAutoFill}>Auto fill</button></div>{term && <small className="field-hint">{options.length ? `Charge numbers containing ${term}.` : 'No results found.'}</small>}</div>;
+}
+
+/** Edit material (row pencil): the reference's fields; only Type, Component code, UOM and Charge number can be changed, the rest is shown read-only. */
+function EditIsoMaterialDialog({ line, onClose }: { line: Row; onClose: () => void }) {
+  const { rows, refresh, notify } = useWorkspace();
+  const material = materialRecord(rows, line) || line;
+  const uoms = activeRows(rows, 'uoms').map(row => text(row.name)), currentUom = text(line.uom) || text(material.uom), code = text(line.componentCode) || text(material.componentCode);
+  const [phaseId, setPhase] = useState(text(line.phaseId)), [componentCode, setCode] = useState(['1', '2', '3'].includes(code) ? code : ''), [uom, setUom] = useState(currentUom), [chargeNo, setCharge] = useState(text(line.chargeNo)), [chargeTerm, setChargeTerm] = useState('');
+  const [error, setError] = useState(''), [problems, setProblems] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
+  const charges = chargeNumberOptions([...activeRows(rows, 'certifications').map(row => text(row.chargeNo)), chargeNo], chargeTerm);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError(''); setProblems({});
+    const changes: Record<string, string> = {};
+    if (phaseId !== text(line.phaseId)) changes.phaseId = phaseId;
+    if (componentCode !== (['1', '2', '3'].includes(code) ? code : '')) changes.componentCode = componentCode;
+    if (uom !== currentUom) changes.uom = uom;
+    if (chargeNo !== text(line.chargeNo)) changes.chargeNo = chargeNo;
+    if (!Object.keys(changes).length) { onClose(); return; }
+    setBusy(true);
+    try { await post('/actions/edit-iso-material', { requirementId: line.id, expectedVersion: line._version, ...changes }); await refresh(); notify('Material updated.'); onClose(); }
+    catch (failure) { setError((failure as Error).message); setProblems((failure as ApiError).fields || {}); } finally { setBusy(false); }
+  }
+  return <Form title="Edit material" subtitle={text(material.materialNo)} onClose={onClose} busy={busy} error={error} fields={problems} submit="Update" onSubmit={event => void submit(event)}>
+    <ReadOnly label="Material group" value={text(material.materialGroup)}/><ReadOnly label="Article No" value={text(material.articleNo)}/><ReadOnly label="Legacy No" value={text(material.legacyNo)}/><ReadOnly label="Material No" value={text(material.materialNo)}/><ReadOnly label="DIA" value={text(material.dia)}/><ReadOnly label="LBS/SCH" value={text(material.lbs)}/>
+    <Choice label="Type" value={phaseId} onChange={setPhase} options={phaseOptions(rows)} empty={null} required error={problems.phaseId}/>
+    <Choice label="Component code (ISO progress) (1=pipe, 2=supports, 3=appendages)" value={componentCode} onChange={setCode} options={['1', '2', '3'].map(value => ({ value, label: value }))} empty="----------" error={problems.componentCode}/>
+    <ReadOnly label="Quantity" value={formatNumber(line.quantity, 3)}/>
+    <Choice label="UOM" value={uom} onChange={setUom} options={[...new Set([...uoms, currentUom].filter(Boolean))].map(value => ({ value, label: value }))} empty={null} error={problems.uom}/>
+    <ChargeNumber value={chargeNo} onChange={setCharge} options={charges} term={chargeTerm} onAutoFill={() => setChargeTerm(text(material.materialNo))}/>
+    <div className="full-width"><ReadOnly label="Material description" value={text(material.description)}/></div>
+  </Form>;
+}
+
+/** Set type for the checked rows (reference: one required "Type" select, button Update). */
 function SetTypeDialog({ lines, onClose }: { lines: Row[]; onClose: (done: boolean) => void }) {
   const { rows, refresh, notify } = useWorkspace();
   const [phaseId, setPhase] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -280,12 +361,12 @@ function SetTypeDialog({ lines, onClose }: { lines: Row[]; onClose: (done: boole
     try { await post('/actions/set-material-type', { requirementIds: lines.map(line => line.id), phaseId }); await refresh(); notify(`Type set for ${lines.length} ${lines.length === 1 ? 'material' : 'materials'}.`); onClose(true); }
     catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
   }
-  return <Form title="Set type" subtitle={`Change the operation phase of ${lines.length} checked ${lines.length === 1 ? 'material' : 'materials'}.`} onClose={() => onClose(false)} onSubmit={event => void submit(event)} busy={busy} error={error} submit="Set type">
-    <Choice label="Type" value={phaseId} onChange={setPhase} options={phaseOptions(rows, phasesByName)} required error={error && !phaseId ? error : undefined}/>
+  return <Form title={SET_TYPE_DIALOG.title} onClose={() => onClose(false)} onSubmit={event => void submit(event)} busy={busy} error={error} submit={SET_TYPE_DIALOG.submit}>
+    <Choice label="Type" value={phaseId} onChange={setPhase} options={phaseOptions(rows, phasesByName)} empty={SET_TYPE_DIALOG.placeholder} required error={error && !phaseId ? error : undefined}/>
   </Form>;
 }
 
-/** Delete selected: the lines are archived and can be restored from the Materials list. */
+/** Delete one or the checked lines: they are archived and can be restored. The server refuses a line that has an order. */
 function DeleteLinesDialog({ lines, onClose }: { lines: Row[]; onClose: (done: boolean) => void }) {
   const { refresh, notify } = useWorkspace();
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -294,8 +375,65 @@ function DeleteLinesDialog({ lines, onClose }: { lines: Row[]; onClose: (done: b
     try { await post('/actions/archive-iso-materials', { requirementIds: lines.map(line => line.id) }); await refresh(); notify(`${lines.length} ${lines.length === 1 ? 'material' : 'materials'} deleted.`); onClose(true); }
     catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
   }
-  return <Modal title="Delete selected materials?" subtitle={`${lines.length} checked ${lines.length === 1 ? 'material' : 'materials'}`} onClose={() => onClose(false)}>
-    <div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}<p>The checked materials leave this isometric. Their history stays, and they can be restored from the Materials list. Materials that are already ordered or picked must be removed there first.</p></div>
-    <div className="modal-footer"><button className="btn" disabled={busy} onClick={() => onClose(false)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void submit()}>{busy && <Loader2 size={15} className="spin"/>}Delete selected</button></div>
+  return <Modal title={lines.length === 1 ? 'Delete material' : 'Delete selected materials?'} subtitle={`${lines.length} ${lines.length === 1 ? 'material' : 'checked materials'}`} onClose={() => onClose(false)}>
+    <div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}<p>Are you sure?</p><p className="muted">The materials leave this isometric. Their history stays, and they can be restored from the Materials list. A material that is ordered cannot be deleted.</p></div>
+    <div className="modal-footer"><button className="btn" disabled={busy} onClick={() => onClose(false)}>Cancel</button><button className="btn primary" disabled={busy} onClick={() => void submit()}>{busy && <Loader2 size={15} className="spin"/>}Delete</button></div>
+  </Modal>;
+}
+
+/** The stock detail the Inv. truck opens: the order of the line, what arrived on it, and the receipts of that order. */
+function OrderDetailsDialog({ requirementId, onClose }: { requirementId: string; onClose: () => void }) {
+  const { rows, label, activity } = useWorkspace();
+  const details = useMemo(() => orderDetails(rows, requirementId), [rows, requirementId]);
+  if (!details) return null;
+  const who = (id: string) => activity.find(event => event.entityType === 'receipts' && event.entityId === id)?.actorName || '—';
+  const item = (name: string, value: ReactNode) => <div className="mto-detail-item"><dt>{name}</dt><dd>{value}</dd></div>;
+  return <Modal title="Details" onClose={onClose} wide><div className="modal-body mto-order-details">
+    <dl className="mto-detail-summary">{item('Material No', <>{details.materialNo}<br/><span className="muted">{details.description}</span></>)}{item('Ord. No.', details.orderNo)}{item('Date', details.orderDate ? formatDate(details.orderDate) : '-')}{item('Ordered on this ISO', formatNumber(details.orderedOnIso, 2))}{details.showOrderedInOrder && item('Ordered in this order', formatNumber(details.orderedInOrder, 2))}{item('Received in this order', formatNumber(details.receivedInOrder, 2))}{item('Inventory on site', formatNumber(details.inventory, 2))}</dl>
+    <div><h3>Audit trail</h3><TableScroll><table className="data-table"><thead><tr><th>Date</th><th>Order No.</th><th className="number-cell">Quantity</th><th>Supplier</th><th>Action</th><th>User</th></tr></thead>
+      <tbody>{details.history.map(entry => <tr key={entry.id}><td>{formatDate(entry.date)}</td><td>{entry.orderNo}</td><td className="number-cell">{formatNumber(entry.quantity, 2)}</td><td>{entry.supplierId ? label('suppliers', entry.supplierId) : '—'}</td><td>{entry.action}</td><td>{who(entry.id)}</td></tr>)}</tbody></table></TableScroll>
+      {!details.history.length && <p className="muted">No receipts yet.</p>}</div>
+  </div><div className="modal-footer"><button className="btn" onClick={onClose}>Close</button></div></Modal>;
+}
+
+/** Material status per revision: the quantity changes booked against each ISO revision (the reference reads a sentence while there are none). */
+function MaterialStatusByRevisionDialog({ iso, onClose }: { iso: Row; onClose: () => void }) {
+  const { rows } = useWorkspace();
+  const groups = useMemo(() => materialStatusByRevision(rows, iso.id), [rows, iso.id]);
+  return <Modal title="Material status per revision" subtitle={text(iso.isoNo)} onClose={onClose}><div className="modal-body">
+    {!groups.length ? <p>{NO_REVISION_CHANGES}</p> : groups.map(group => <section key={group.revisionId} aria-label={`Revision ${group.revNo}`}><h3>Revision {group.revNo}{group.comment ? ` ${group.comment}` : ''}</h3>
+      <TableScroll><table className="data-table"><thead><tr><th>Material No</th><th>Description</th><th className="number-cell">Quantity removed</th><th>Date</th></tr></thead><tbody>{group.changes.map((change, index) => <tr key={`${change.requirementId}-${index}`}><td>{change.materialNo}</td><td className="description-cell">{change.description}</td><td className="number-cell">{formatNumber(change.removed, 2)}</td><td>{formatDate(change.date)}</td></tr>)}</tbody></table></TableScroll></section>)}
+  </div><div className="modal-footer"><button className="btn" onClick={onClose}>Close</button></div></Modal>;
+}
+
+interface IsoImportPreview { rows: IsoImportRow[]; summary: { total: number; valid: number; errors: number } }
+/** Import in ISO: an Excel file (template to download) becomes material lines of this isometric; every row is checked in a preview first. */
+function ImportInIsoDialog({ iso, onClose }: { iso: Row; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace(); const fileId = useId();
+  const [file, setFile] = useState<File | null>(null), [preview, setPreview] = useState<IsoImportPreview | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  async function check(event: FormEvent) {
+    event.preventDefault(); setError('');
+    if (!file) { setError('Choose an Excel file (.xlsx).'); return; }
+    setBusy(true);
+    try { const body = new FormData(); body.set('file', file); body.set('isoId', iso.id); setPreview(await api<IsoImportPreview>('/iso-material-import/preview', { method: 'POST', body })); }
+    catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
+  }
+  async function commit() {
+    if (!preview) return;
+    setBusy(true); setError('');
+    try { const result = await post<{ committed: number; failed: number }>('/iso-material-import/commit', { isoId: iso.id, rows: preview.rows.map(row => ({ rowNo: row.rowNo, values: row.values })) }); await refresh(); notify(`${result.committed} ${result.committed === 1 ? 'material' : 'materials'} imported${result.failed ? `, ${result.failed} skipped` : ''}.`); onClose(); }
+    catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
+  }
+  return <Modal title="Import in ISO" subtitle={`Import materials from Excel into ${text(iso.isoNo)}.`} onClose={onClose} wide>
+    <form noValidate onSubmit={event => void check(event)}><div className="modal-body">
+      {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+      <div className="field"><label htmlFor={fileId}>Excel file</label><input id={fileId} type="file" accept=".xlsx" disabled={busy} onChange={event => { setFile(event.target.files?.[0] ?? null); setPreview(null); }}/></div>
+      <p className="material-import-templates"><a className="text-link" href={apiUrl(`/iso-material-import/template?isoId=${encodeURIComponent(iso.id)}`)}><Download size={14}/> Download Excel template</a></p>
+      {preview && <><p role="status">{preview.summary.valid} of {preview.summary.total} rows can be imported{preview.summary.errors ? `, ${preview.summary.errors} with errors are skipped` : ''}.</p>
+        <TableScroll><table className="data-table material-import-table"><thead><tr><th>Row</th>{ISO_IMPORT_COLUMNS.filter(column => column.field !== 'spool').map(column => <th key={column.field}>{column.header}</th>)}<th>Check</th></tr></thead>
+          <tbody>{preview.rows.map(row => <tr key={row.rowNo}><td>{row.rowNo}</td>{ISO_IMPORT_COLUMNS.filter(column => column.field !== 'spool').map(column => <td key={column.field} className={row.error[column.field] ? 'mi-error-cell' : undefined}>{row.values[column.field] || '—'}</td>)}<td>{Object.values(row.error).join(' ') || (row.source === 'Catalog' ? 'From the database' : 'Custom material')}</td></tr>)}</tbody></table></TableScroll></>}
+    </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button>
+      {preview ? <button type="button" className="btn primary" disabled={busy || !preview.summary.valid} onClick={() => void commit()}>{busy && <Loader2 size={15} className="spin"/>}Import {preview.summary.valid} {preview.summary.valid === 1 ? 'material' : 'materials'}</button>
+        : <button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Import</button>}</div></form>
   </Modal>;
 }

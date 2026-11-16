@@ -7,7 +7,7 @@ import { Modal, Progress } from './components.tsx';
 import { AddRevisionDialog, DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpLinkControl } from './itp-dashboard.tsx';
 import { itpSlots } from '../shared/itps.ts';
-import { materialStatus } from '../shared/mto-materials.ts';
+import { formatMaterialStatus, materialStatus } from '../shared/mto-materials.ts';
 import { hydrotestState, isoTestSystemIds } from '../shared/hydrotest.ts';
 import { hydrotestSpoolsPath } from './hydrotest.tsx';
 import { ReleaseStatus } from './releases.tsx';
@@ -42,7 +42,7 @@ interface HeaderProps {
 
 /** The six cards of the isometric header, identical under Weld Pilot and MTO Pilot. */
 export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld }: HeaderProps) {
-  const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot();
+  const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot(); const parts = statusCardParts(pilot?.pilot.key);
   const [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false);
   const site = rows.sites?.find(row => row.id === project?.siteId);
   // Budgets: the server summary carries them in the hosted profile (Weld Pilot cannot read material lines); elsewhere from the rows.
@@ -108,15 +108,15 @@ export function IsometricHeader({ iso, project, documents, onUpload, onOpenWeld 
       <Progress value={status.progress.total ?? 0}/>
       <dl className="iso-facts">
         <Fact label="Quality"><span title={status.quality.percent === null ? 'No NDT result accepted or rejected yet.' : `${status.quality.accepted} accepted, ${status.quality.rejected} rejected`}>{status.quality.percent === null ? '—' : `${formatNumber(status.quality.percent)} %`}</span></Fact>
-        <Fact label="Blockers">{status.blockers.total
+        {parts.weldExtras && <Fact label="Blockers">{status.blockers.total
           ? <button className="iso-open-count" aria-haspopup="dialog" onClick={() => setBlockers(true)}>{status.blockers.total} open</button>
-          : <span className="iso-clear"><Check size={14} aria-hidden="true"/>0 open</span>}</Fact>
-        <Fact label="Priority">{priorityLabel(iso.priority)}</Fact>
+          : <span className="iso-clear"><Check size={14} aria-hidden="true"/>0 open</span>}</Fact>}
+        {parts.weldExtras && <Fact label="Priority">{priorityLabel(iso.priority)}</Fact>}
       </dl>
-      <PhaseFlags iso={iso}/>
-      <ReleaseStatus iso={iso}/>
+      {parts.weldExtras && <PhaseFlags iso={iso}/>}
+      {parts.weldExtras && <ReleaseStatus iso={iso}/>}
       {pilot?.pilot.key === 'weld' && <HydrotestStep iso={iso} state={summary?.hydrotest ?? hydrotestState(iso, rows)} summaryName={summary?.testSystemName}/>}
-      <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
+      {parts.weldExtras && <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>}
       {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
     </Card>
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>
@@ -148,11 +148,17 @@ export function HydrotestStep({ iso, state, summaryName }: { iso: Row; state: { 
 /** "Hydrotest completed" of the MTO Pilot: always Yes or No (No also without a test system, as in the reference). */
 export const hydrotestCompletedText = (hydrotest: { inScope: boolean; completed: boolean }) => hydrotest.completed ? 'Yes' : 'No';
 
-/** Material status % (MTO Pilot): covered ÷ required over the isometric's material lines (shared/mto-materials.ts). */
-function MaterialStatusSlot({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
+/**
+ * What the Status card of an isometric holds besides Status % and Quality: in MTO Pilot only Hydrotest completed and
+ * Material status (reference), the blockers, priority, phase, release and punch summaries only in the other pilots.
+ */
+export const statusCardParts = (pilotKey?: string) => ({ weldExtras: pilotKey !== 'mto' });
+
+/** Hydrotest completed, then Material status (MTO Pilot): covered ÷ required over the isometric's material lines in whole percent, "Empty" without lines (shared/mto-materials.ts). */
+export function MaterialStatusSlot({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
   return <div className="iso-material-slot" data-slot="material-status">
-    <dl className="iso-facts"><Fact label="Material status">{percent === null ? <span title="The isometric requires no material yet.">—</span> : `${formatNumber(percent)} %`}</Fact>
-      <Fact label="Hydrotest completed"><span title={hydrotest.inScope ? undefined : 'No test system, or testing not applicable.'}>{hydrotestCompletedText(hydrotest)}</span></Fact></dl>
+    <dl className="iso-facts"><Fact label="Hydrotest completed"><span title={hydrotest.inScope ? undefined : 'No test system, or testing not applicable.'}>{hydrotestCompletedText(hydrotest)}</span></Fact>
+      <Fact label="Material status"><span title={percent === null ? 'The isometric has no material lines yet.' : undefined}>{formatMaterialStatus(percent)}</span></Fact></dl>
     {percent !== null && <Progress value={percent}/>}
   </div>;
 }

@@ -57,6 +57,7 @@ add('punch-approve', 'Mark as Client approved', 'welding', 'Record the client ap
 add('punch-promote', 'Promote to Punch', 'welding', 'Move the open pre-punch item to Punch.', [ref('punchId', 'Punch item', 'punchlists')], 'Promote to Punch');
 add('punch-remove', 'Remove punchlist', 'welding', 'Take the punch item off the list. It stays in the records as removed.', [ref('punchId', 'Punch item', 'punchlists'), date, text('note', 'Reason', { type: 'textarea' })], 'Delete');
 add('set-material-type', 'Set type', 'materials', 'Set the operation phase of the checked materials.', [ref('requirementIds', 'Material requirements', 'iso_materials', { multiple: true }), ref('phaseId', 'Type', 'operation_phases')], 'Set type');
+add('edit-iso-material', 'Edit material', 'materials', 'Change the type, component code, unit and charge number of a material line. The quantity changes only in the quantity log.', [ref('requirementId', 'Material requirement', 'iso_materials'), ref('phaseId', 'Type', 'operation_phases', { required: false }), text('componentCode', 'Component code (ISO progress) (1=pipe, 2=supports, 3=appendages)'), text('uom', 'UOM'), text('chargeNo', 'Charge number')], 'Update');
 add('archive-iso-materials', 'Delete selected materials', 'materials', 'Remove the checked materials from the isometric. They are archived and can be restored.', [ref('requirementIds', 'Material requirements', 'iso_materials', { multiple: true })], 'Delete selected');
 defs.push(...MTO_STOCK_ACTIONS);
 defs.push(...MTO_ACTION_DEFS);
