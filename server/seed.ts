@@ -4,6 +4,7 @@ import { seedHydrotest } from './hydrotest.ts';
 import { seedItpSamples } from './itp-dashboard.ts';
 import { seedWeldCatalogs } from './weld-catalogs-seed.ts';
 import { seedWeldEntry } from './weld-entry.ts';
+import { seedSpoolNames } from './spool-catalog.ts';
 export { seedInspectionSamples } from './inspections-seed.ts';
 import { seedMtoStock } from './mto-stock-seed.ts';
 import { loadDiameterCatalog } from './diameter-catalog.ts';
@@ -199,6 +200,9 @@ export function seed(store: Store, options: { hostedSample?: boolean } = {}) {
     seedWeldEntry(store);
     seedItpSamples(store);
     seedMtoStock(store, SYSTEM);
+    // Weld data → Spools: the sample spools' names, and three names no isometric uses yet (shared/spool-catalog.ts).
+    seedSpoolNames(store);
+    for (const name of ['SP-010', 'SP-011', 'SP-012']) add('spool_names', `spool-name-${name.toLowerCase()}`, { name, abbreviation: name });
     store.db.prepare('DELETE FROM audit').run();
     store.audit('projects', 'project-cooling', 'created', 'Cooling water expansion added to the workspace', SYSTEM);
     store.audit('orders', '', 'received', 'Partial delivery recorded from Atlas Steel Supply', SYSTEM);

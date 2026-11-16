@@ -12,9 +12,9 @@ import type { Field, Resource, Row } from './types.ts';
  */
 
 /** Resources of this flow (the reference's Weld data, NDT data, Welding data and General data catalogs). */
-export const WELD_CATALOG_RESOURCES = ['weld_processes', 'weld_types', 'coatings', 'ndt_groups', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'companies', 'attachment_names'];
+export const WELD_CATALOG_RESOURCES = ['weld_processes', 'weld_types', 'coatings', 'ndt_groups', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'companies', 'attachment_names', 'spool_names'];
 /** Catalogs that carry "Enabled on this site". Suppliers, service companies and laydowns only gain the enablement. */
-export const SITE_ENABLED_RESOURCES = ['weld_types', 'coatings', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'suppliers', 'service_companies', 'laydowns', 'material_laydowns', 'materials'];
+export const SITE_ENABLED_RESOURCES = ['weld_types', 'coatings', 'ndt_processes', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'qa_engineers', 'suppliers', 'service_companies', 'laydowns', 'material_laydowns', 'materials', 'spool_names'];
 /** Tables the hosted database needs for this flow (created by the preparation step, see shared/planning.ts). */
 export const CATALOG_TABLES = ['ndt_defect_codes', 'catalog_sites'];
 /** The link records: one per catalog record and site that was switched explicitly. Written only by the server. */
@@ -29,14 +29,14 @@ export const enableLabel = (siteName: string) => `Enable on this site (${siteNam
  * reference ticks nothing. On every other catalog (service companies, laydown areas and materials included) the
  * availability is changed only through Options.
  */
-export const FORM_ENABLEMENT: Record<string, boolean> = { ndt_processes: false, qa_engineers: false, coatings: false };
+export const FORM_ENABLEMENT: Record<string, boolean> = { ndt_processes: false, qa_engineers: false, coatings: false, spool_names: false };
 export const formEnablement = (key: string) => Object.hasOwn(FORM_ENABLEMENT, key);
 /**
  * Catalogs whose new records a user adds switched off on every main project until the Add form's box is ticked or
  * Options -> Activate selected is used (hosted profile; the sample data and the demo copy keep "no link = enabled").
  * Weld types are not in the list: their form has no box and their lists show every type as enabled.
  */
-export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers', 'materials'];
+export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers', 'materials', 'spool_names'];
 /**
  * Catalog forms with a File input inside the dialog, and the field it follows (the NDT process dialog lists File after Method;
  * the welding wire form keeps its own placement). The chosen file is attached to the record once it is saved.
@@ -71,6 +71,7 @@ export const WELD_CATALOG_COLUMNS: Record<string, string[]> = {
   qa_engineers: ['name', 'company', 'phone', 'email', 'stamp'],
   companies: ['name', 'address', 'phone', 'email'],
   attachment_names: ['name', 'isoBook', 'hydrotest'],
+  spool_names: ['name'],
 };
 /**
  * Fields the reference marks as required that the hosted profile enforces (client and server). The shared
@@ -242,6 +243,8 @@ export const CATALOG_WORDING: Record<string, CatalogWording> = {
   service_companies: { title: 'Service companies', add: 'Add company', edit: 'Edit company', remove: 'Delete company' },
   laydowns: { title: 'Laydown areas', add: 'Add laydown', edit: 'Edit laydown', remove: 'Delete laydown' },
   material_laydowns: { title: 'Laydown areas - Materials', add: 'Add laydown', edit: 'Edit laydown material', remove: 'Delete laydown' },
+  // Weld Pilot → Weld data → Spools and MTO Pilot → Materials → Spools (weld__welddata__spools.txt: Add spool, Edit spool, Delete spool).
+  spool_names: { title: 'Spools', add: 'Add spool', edit: 'Edit spool', remove: 'Delete spool' },
 };
 /**
  * Catalog pages whose row action reads "Delete" and asks "Are you sure?" in the hosted profile, as the reference does.

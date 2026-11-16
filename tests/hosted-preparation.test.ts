@@ -175,7 +175,7 @@ test('hosted preparation on a live-like workspace: only adds, every stored recor
 test('E7: the data steps after wave 3 are the three insert-only steps; the standard defect codes are the 98 of the reference (58 added in wave 3), inserted only when missing', () => {
   const store = new Store(':memory:'); seed(store);
   try {
-    assert.deepEqual(hostedDataSteps(() => store).map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings'], 'a new data step needs its own insert-only review');
+    assert.deepEqual(hostedDataSteps(() => store).map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings', 'spoolNames'], 'a new data step needs its own insert-only review (spoolNames: tests/spool-catalog.test.ts)');
     assert.equal(STANDARD_DEFECT_CODES.length, 98);
     const norms = STANDARD_DEFECT_CODES.reduce<Record<string, number>>((counts, code) => ({ ...counts, [code[4]]: (counts[code[4]] || 0) + 1 }), {});
     assert.deepEqual(norms, { 'ISO 6520-1': 63, 'ASME B31.3': 9, 'API 1104': 15, 'Current list': 11 });

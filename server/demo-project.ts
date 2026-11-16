@@ -64,7 +64,7 @@ const ALWAYS_SCOPED = new Set(['sites', 'warehouses', 'stock', 'movements', 'rec
 /** Records whose catalog material carries quantities (see the comment above). */
 const QUANTITY_RESOURCES = ['iso_materials', 'stock', 'order_lines', 'receipts', 'movements', 'picklists', 'reservations'];
 /** Matching key of global resources without a unique rule. */
-const NATURAL_KEYS: Record<string, string[]> = { certifications: ['name', 'chargeNo'], welder_certificates: ['welderId', 'name'], welder_card_lines: ['welderId', 'wireId', 'processId', 'diameterId', 'thicknessId', 'bwId', 'posId', 'asmeId'], qa_engineers: ['name'] };
+const NATURAL_KEYS: Record<string, string[]> = { certifications: ['name', 'chargeNo'], welder_certificates: ['welderId', 'name'], welder_card_lines: ['welderId', 'wireId', 'processId', 'diameterId', 'thicknessId', 'bwId', 'posId', 'asmeId'], qa_engineers: ['name'], spool_names: ['name'] };
 /** Children of a catalog record: skipped when their owner is an existing record and the target lacks them. */
 const OWNER_FIELD: Record<string, string> = { welder_certificates: 'welderId', welder_card_lines: 'welderId' };
 for (const [owner, relations] of Object.entries(RELATIONS)) if (owner !== 'users') for (const relation of relations) OWNER_FIELD[relation.resource] = relation.ownerKey;
