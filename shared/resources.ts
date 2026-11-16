@@ -2,6 +2,7 @@ import { PQR_ATTRIBUTES,RELATIONS } from './welding.ts';
 import type { Field, Resource, Module } from './types.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS } from './priority.ts';
 import { ISO_FINISH_STATES } from './iso-status.ts';
+import { RELEASE_EXTRA_FIELDS } from './releases.ts';
 import { DEFECT_NORMS, FLANGE_STANDARDS, MATERIAL_DISPLAYS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 const t = (name: string, label: string, extra: Partial<Field> = {}): Field => ({ name, label, type: 'text', ...extra });
 const n = (name: string, label: string, extra: Partial<Field> = {}): Field => t(name, label, { type: 'number', min: 0, ...extra });
@@ -135,6 +136,8 @@ extend('welds', [t('jointType', 'Joint type'), ...[1, 2].flatMap(i => [
   r(`material${i}Id`, `Material ${i}`, 'materials', { section: `Material side ${i}` }),
   r(`certificate${i}Id`, `Certificate ${i}`, 'certifications', { section: `Material side ${i}`, hint: 'Links the material, certificate index, and charge / heat number.' }),
 ])]);
+// Release records keep who released, the document numbering and signature titles, and Reopen (see shared/releases.ts).
+extend('releases', RELEASE_EXTRA_FIELDS);
 extend('inspection_results', [n('naLength', 'Not accepted length (mm)'), t('defectType', 'Defect type')]);
 // Pilots profile only (hidden elsewhere, see projectResource): descriptive account fields and access per application.
 // A missing / true "enabled" flag and an empty pilot profile mean "use the permission profile", so existing accounts keep working.

@@ -1,5 +1,5 @@
 import { RESOURCES } from '../shared/resources.ts';
-import { canResource, pilotBoundary, RESOURCE_SCOPES } from '../shared/permissions.ts';
+import { actionScope, canResource, pilotBoundary, RESOURCE_SCOPES } from '../shared/permissions.ts';
 import { actionAvailable, fieldAvailable, PILOT_KEYS, projectRow, resourceAvailable, rowAvailable, type PilotKey } from '../shared/release.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
@@ -17,7 +17,8 @@ export function releaseAccess(store: Store, availability?: Availability) {
   function user(original: User): User {
     if (!availability) return original;
     const modules = new Set(RESOURCES.filter(r => resourceAvailable(availability, r.key)).map(r => r.module));
-    const scopes = new Set(Object.entries(RESOURCE_SCOPES).filter(([key]) => resourceAvailable(availability, key)).flatMap(([, keys]) => keys));
+    // Areas of delivered actions count too: "Assign ISO to FWP" (91) is an action of its own, without a resource.
+    const scopes = new Set([...Object.entries(RESOURCE_SCOPES).filter(([key]) => resourceAvailable(availability, key)).flatMap(([, keys]) => keys), ...Object.keys(availability.actions).map(key => actionScope(key)[0]).filter(Boolean)]);
     return { ...original, availability,
       permissions: Object.fromEntries(Object.entries(original.permissions).map(([module, level]) => [module, modules.has(module as Module) ? level : 0])) as User['permissions'],
       ...(original.capabilities ? { capabilities: Object.fromEntries(Object.entries(original.capabilities).filter(([key]) => scopes.has(key))) } : {}),
@@ -68,9 +69,11 @@ export function releaseAccess(store: Store, availability?: Availability) {
       if (!visible(account, event.entityType, record(event.entityType, event.entityId, true))) return null;
     } catch { return null; }
     if (availability) {
-      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied'].includes(event.action)) return null;
+      if (!['created', 'updated', 'archived', 'restored', 'inspected', 'repair', 'copied', 'released', 'reopened'].includes(event.action)) return null;
       if (event.action === 'inspected' && !availability.inspectionTypes.some(type => ['accepted', 'rejected'].some(result => event.summary.startsWith(`${type} ${result} · `)))) return null;
     }
+    // Release and Reopen keep their sentences: they carry the report number and the reason the user typed.
+    if (event.action === 'released' || event.action === 'reopened') return event;
     return availability || account.capabilities ? { ...event, summary: `${event.action[0].toUpperCase() + event.action.slice(1)} ${resource(event.entityType).singular}` } : event;
   }
   const project = (key: string, row: Row) => projectRow(availability, key, row);

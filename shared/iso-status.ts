@@ -139,7 +139,7 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
   // Release: shop welds exist and no Prefab release record yet. Skipped when releases cannot be read.
   if (input.releases) {
     const shopWelds = welds.some(weld => locationOf(weld, input.weldTypes) === 'shop');
-    const released = live(input.releases).some(row => row.isoId === input.iso.id && row.type === 'Prefab');
+    const released = live(input.releases).some(row => row.isoId === input.iso.id && row.type === 'Prefab' && row.status !== 'Reopened');
     if (shopWelds && !released) add('release', [{ message: 'The shop welds have not been released for prefab yet.' }]);
   }
   add('welds', welds.filter(hasWelder).flatMap(weld => { const missing = missingWeldFields(weld); return missing.length ? [{ weldId: weld.id, message: `Weld ${weld.weldNo} is missing ${list(missing)}.` }] : []; }));
