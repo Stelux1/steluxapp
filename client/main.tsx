@@ -14,5 +14,6 @@ import './iso-header.css';
 import './pilots.css';
 import './signatures.css';
 import './weld-catalogs.css';
+import './welder-data.css';
 import App from './App.tsx';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

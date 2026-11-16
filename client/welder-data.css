@@ -1,0 +1,31 @@
+/* Welders page, filter dialog, certificates and files, and the Weld Pilot expire warnings. */
+.welders-page .welder-project-filter { margin: 0; min-width: 190px; display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.welders-page .welder-project-filter label { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.welder-expiry-flag { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #fbefe2; color: #8a4f14; white-space: nowrap; }
+.welder-files-section { margin-bottom: 22px; }
+.welder-files-section .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.welder-files-section h3 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; }
+.welder-certificate-files { margin-top: 6px; }
+.attach-file { display: inline-flex; flex-direction: column; gap: 4px; }
+.attach-file label.btn { cursor: pointer; }
+.attach-file input[type=file]:focus-visible + * , .attach-file label:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.expire-trigger { position: relative; }
+.expire-count { position: absolute; top: -4px; right: -4px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: #c9731d; color: #fff; font-size: 10px; font-weight: 600; line-height: 17px; text-align: center; }
+.expire-count.expired { background: #b3261e; }
+.expire-dropdown { width: 360px; max-width: calc(100vw - 16px); padding: 18px; }
+.expire-window { border: 0; padding: 0; margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+.expire-window legend { padding: 0; margin-bottom: 6px; color: var(--muted); }
+.expire-window label { display: inline-flex; align-items: center; gap: 6px; }
+.expire-empty { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+.expire-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 10px 0; color: var(--ink); }
+.expire-item:hover, .expire-item:focus-visible { background: var(--surface-blue); }
+.expire-item strong { display: block; font-size: 13px; font-weight: 600; }
+.expire-item > span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.expire-item small { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 12px; }
+.expire-status { font-weight: 600; }
+.expire-status.expired { color: #b3261e; }
+.expire-status.expiring { color: #9a5a10; }
+@media (max-width: 760px) {
+  .welders-page .welder-project-filter { width: 100%; }
+  .expire-dropdown { padding: 14px; }
+}

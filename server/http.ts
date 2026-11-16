@@ -32,6 +32,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   const cookieName = options.releaseProfile === 'access-prototype' ? 'blitzkrieg_prototype_session' : availability ? 'blitzkrieg_session' : 'stelux_session';
   const access = releaseAccess(store, availability);
   const pilots = Boolean(availability?.features.includes('pilots'));
+  store.hostedRules = pilots;
   const presentUser = (id: string) => access.present(id);
   const ensureAdmin = () => ensureAdministrator(store, access.administrators);
   // Accounts are created together with their credential; sample accounts seeded without a password do not count.
