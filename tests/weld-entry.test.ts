@@ -21,6 +21,8 @@ import {
   CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, SIDE_VALUES, addNewEnabled, certificateLabel, certificateSelectable, certificateSelectionErrors, chargeDetails, chargeOptionList,
   compositeEnds, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, normalizeSizeInch, parseInchSize, specialWeldCleared, specialWeldHidden,
   weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
+  ADD_PRE_HT_LABEL, RANGE_DIALOG, WELDER_GROUP_LABELS, WELDER_PLACEHOLDER, chargeMaterialGroup, chargesForWelders, diameterRowSize, groupWeldersForDia, materialGroupWarnings, sortChargesForDia, suggestOnDia,
+  welderFieldsDisabled, welderQualifiedByProcess, wpsValidationMode, welderOptionLabel, welderOptionList, weldersForWps, weldersQualifiedForDiameter, wpsChangeClearsWelders, wpsMatchesDiameter,
 } from '../shared/weld-entry.ts';
 import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -52,18 +54,18 @@ test('rule (a): mandatory fields apply only with the setting on and a welder on 
   assert.deepEqual(missingMandatoryFields({ mandatoryFields: true }, { ...complete, lengthMode: 'Length in mm', dialen: 120 }), {});
 });
 
-test('rule (b): validation on WPS compares the welding process and the expiry on the weld date', () => {
+test('rule (b): a main project whose Validation on WPS was never saved keeps the older check by welding process and expiry on the weld date', () => {
   const wps = row('p', { name: 'WPS-141', processId: 'tig' });
   const certs: Record<string, Row[]> = { ok: [row('c1', { welderId: 'ok', processId: 'tig', expiresAt: '2027-01-01' })], old: [row('c2', { welderId: 'old', processId: 'tig', expiresAt: '2026-01-01' })], other: [row('c3', { welderId: 'other', processId: 'mma' })], none: [] };
   const ask = (site: Record<string, unknown>, weld: Record<string, unknown>, process: Row | undefined = wps) => welderWpsErrors(site, { wpsId: 'p', date: '2026-10-01', ...weld }, process, id => certs[id], id => id.toUpperCase(), '2026-11-16');
-  assert.deepEqual(ask({ wpsValidation: true }, { welder1Id: 'ok', welder2Id: 'ok' }), {});
-  assert.deepEqual(Object.keys(ask({ wpsValidation: true }, { welder1Id: 'ok', welder2Id: 'old', welder3Id: 'other', welder4Id: 'none' })), ['welder2Id', 'welder3Id', 'welder4Id']);
-  assert.match(ask({ wpsValidation: true }, { welder1Id: 'old' }).welder1Id, /OLD has no valid qualification for WPS WPS-141 on 2026-10-01/);
-  assert.deepEqual(ask({ wpsValidation: true }, { welder1Id: 'old', date: '2025-12-31' }), {}, 'the qualification was valid on the weld date');
-  assert.deepEqual(Object.keys(ask({ wpsValidation: true }, { welder1Id: 'old', date: '' })), ['welder1Id'], 'without a date, today counts');
+  assert.deepEqual(ask({}, { welder1Id: 'ok', welder2Id: 'ok' }), {});
+  assert.deepEqual(Object.keys(ask({}, { welder1Id: 'ok', welder2Id: 'old', welder3Id: 'other', welder4Id: 'none' })), ['welder2Id', 'welder3Id', 'welder4Id']);
+  assert.match(ask({}, { welder1Id: 'old' }).welder1Id, /OLD has no valid qualification for WPS WPS-141 on 2026-10-01/);
+  assert.deepEqual(ask({}, { welder1Id: 'old', date: '2025-12-31' }), {}, 'the qualification was valid on the weld date');
+  assert.deepEqual(Object.keys(ask({}, { welder1Id: 'old', date: '' })), ['welder1Id'], 'without a date, today counts');
   assert.deepEqual(ask({ wpsValidation: false }, { welder1Id: 'none' }), {}, 'setting off');
-  assert.deepEqual(ask({ wpsValidation: true }, { welder1Id: 'none' }, row('p', { name: 'WPS-X' })), {}, 'a WPS without a process reference cannot express a match: it passes');
-  assert.deepEqual(ask({ wpsValidation: true }, { welder1Id: 'none', wpsId: '' }), {}, 'no WPS yet');
+  assert.deepEqual(ask({}, { welder1Id: 'none' }, row('p', { name: 'WPS-X' })), {}, 'a WPS without a process reference cannot express a match: it passes');
+  assert.deepEqual(ask({}, { welder1Id: 'none', wpsId: '' }), {}, 'no WPS yet');
   assert.equal(welderQualifiedForWps(null, [], '2026-10-01'), true);
 });
 
@@ -206,7 +208,7 @@ test('weld form layout: Add weld is one flat form with all four welders and with
   assert.deepEqual(labels('add'), [
     ['Weld no.', 'Weld type', 'Welder', 'Welder 3', 'Coating 1', 'Welding wire 1', 'Pos 1', 'Charge number 1'],
     ['WPS number', 'Welder 2', 'Welder 4', 'Coating 2', 'Welding wire 2', 'Pos 2', 'Charge number 2'],
-    ['Fitup date', 'Weld Date', 'Dia.', 'Length in mm', 'Spool', 'NDT Req. Pre', 'NDT Req.', 'Pre-HT', 'PWHT Req.', 'Repair', 'Tracer'],
+    ['Fitup date', 'Weld Date', 'Dia.', 'Length in mm', 'Spool', 'NDT Req. Pre', 'NDT Req.', 'Pre-WHT', 'PWHT Req.', 'Repair', 'Tracer'],
   ]);
   assert.ok(!labels('add').flat().includes('Multiple welders?'));
   // weld-iso-welds-016: the Edit-only fields and Weld process are not in Add weld; Edit has them (Weld process never).
@@ -364,11 +366,11 @@ test('save-weld creates a weld at the end of the table and enforces mandatory fi
   assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W040' })).status, 409, 'weld numbers are unique on an isometric');
   // The same incomplete weld is fine where the setting is off (Riverside).
   assert.equal((await f.act('save-weld', { isoId: 'iso-5', weldNo: 'W090', welder1Id: 'welder-1' })).status, 201);
-  // (b) validation on WPS: a welder without a qualification for the WPS process, then one whose certificate has expired.
+  // (b) validation on WPS (on at North): the WPS listed on a valid qualification document of the welder decides.
   const outsider = f.store.create('welders', { number: 'W-009', name: 'Pat Quinn', status: 'Active', globallyDeployable: true });
   result = await f.act('save-weld', { ...complete, weldNo: 'W041', welder1Id: outsider.id });
   assert.equal(result.status, 422); assert.match(result.body.fields.welder1Id, /Pat Quinn has no valid qualification for WPS STX-WPS-141-01/);
-  const expiring = f.store.create('welder_certificates', { name: 'WQ-OLD', welderId: outsider.id, processId: 'process-0', expiresAt: '2026-06-30' });
+  const expiring = f.store.create('welder_certificates', { name: 'WQ-OLD', welderId: outsider.id, isDocument: true, wpsIds: 'wps-1', expiresAt: '2026-06-30' });
   assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W041', welder1Id: outsider.id })).status, 422, 'expired before the weld date');
   assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W041', welder1Id: outsider.id, date: '2026-06-01' })).status, 201, 'valid on the weld date');
   f.store.update('welder_certificates', expiring.id, { expiresAt: '2027-06-30' }, expiring._version);
@@ -794,4 +796,182 @@ test('E9: a fixed part placeholder shows as Material with "-" in Idx / Chg.No.; 
   const result = await f.act('mass-edit-welds', { weldIds: ['weld-1'], changes: { chargeNo1: 'H-5120', certificate1Id: 'certificate-3' } });
   assert.equal(result.status, 422); assert.match(String(result.body.error), new RegExp(`${CERTIFICATE_NOT_SELECTABLE.replace(/[.:]/g, '\\$&')}$`));
   assert.equal(f.store.get('welds', 'weld-1')._version, before._version, 'nothing stored');
+});
+
+
+// ---------------------------------------------------------------------------------------------------- w4-weld-form-rules
+
+test('Add weld calls the Pre-HT box Pre-WHT (bound to pwhtReqPre); Edit weld and Mass edit keep Pre-HT (weld-iso-welds-019)', () => {
+  const add = weldFormLayout('add').flat().find(item => item.name === 'pwhtReqPre');
+  assert.deepEqual(add, { name: 'pwhtReqPre', label: 'Pre-WHT' }); assert.equal(ADD_PRE_HT_LABEL, 'Pre-WHT');
+  assert.equal(weldFormLayout('edit').flat().find(item => item.name === 'pwhtReqPre')!.label, 'Pre-HT');
+  assert.ok(massEditLabels().includes('Pre-HT') && !massEditLabels().includes('Pre-WHT'));
+});
+
+test('Add welds range: 001..015 by default, zero padding of Start, existing numbers skipped and reported (weld-iso-welds-013)', () => {
+  assert.deepEqual({ title: RANGE_DIALOG.title, start: RANGE_DIALOG.start, end: RANGE_DIALOG.end, button: RANGE_DIALOG.button, toolbar: RANGE_DIALOG.toolbar }, { title: 'Add weld', start: '001', end: '015', button: 'Add', toolbar: 'Add welds' });
+  const plan = planWeldRange(RANGE_DIALOG.start, RANGE_DIALOG.end, []);
+  assert.equal(plan.numbers.length, 15); assert.equal(plan.numbers[0], '001'); assert.equal(plan.numbers.at(-1), '015');
+  const again = planWeldRange('001', '015', ['003', '010']);
+  assert.equal(again.numbers.length, 13); assert.deepEqual(again.skipped, ['003', '010']);
+  assert.deepEqual(planWeldRange('01', '03', []).numbers, ['01', '02', '03'], 'the padding is the one of Start');
+});
+
+test('Add welds range through HTTP: 001..015 creates the missing numbers and says which it skipped', async t => {
+  const f = await fixture(t);
+  const iso = 'iso-2', before = f.store.list('welds').filter(w => w.isoId === iso).map(w => String(w.weldNo));
+  assert.ok(before.length > 0);
+  const result = await f.act('add-welds', { isoId: iso, start: '001', end: '015' });
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  assert.deepEqual([...result.body.skipped].sort(), before.filter(name => Number(name.replace(/\D/g, '')) <= 15).sort(), 'the numbers that existed are skipped and reported');
+  assert.equal(result.body.records.length + result.body.skipped.length, 15);
+  const names = f.store.list('welds').filter(w => w.isoId === iso).map(w => String(w.weldNo));
+  assert.equal(new Set(names).size, names.length); assert.ok(names.some(name => name.endsWith('015')));
+});
+
+const dias = new Map<string, Row>([['d2', row('d2', { diameter: '2"', sizeinch: 2, size: 60.3 })], ['d4', row('d4', { diameter: '4"', sizeinch: 4, size: 114.3 })]]);
+const lookups = { diameters: dias };
+const certs = new Map<string, Row>([
+  ['c2', row('c2', { chargeNo: 'A-2', diameterId: 'd2', controlled: true, accepted: true, materialId: 'm1' })],
+  ['c4', row('c4', { chargeNo: 'A-4', diameterId: 'd4', controlled: true, accepted: true })],
+  ['u2', row('u2', { chargeNo: 'U-2', diameterId: 'd2', controlled: true, accepted: false })],
+]);
+const ask = (over: Record<string, unknown> = {}) => suggestOnDia({ values: {}, diameterSize: '2', previous: null, next: null, certificates: certs, lookups, matchingWps: [], ...over } as Parameters<typeof suggestOnDia>[0]);
+
+test('after Dia.: charge 1 from the previous weld charge 2 and charge 2 from the next weld charge 1, only Controlled + Accepted with this diameter (weld-iso-welds-027)', () => {
+  assert.equal(diameterRowSize(dias.get('d2')), '2');
+  const suggestion = ask({ previous: { certificate2Id: 'c2', chargeNo2: 'A-2' }, next: { certificate1Id: 'c2', chargeNo1: 'A-2' } });
+  assert.deepEqual(suggestion.patch, { chargeNo1: 'A-2', certificate1Id: 'c2', material1Id: 'm1', chargeNo2: 'A-2', certificate2Id: 'c2', material2Id: 'm1' });
+  assert.deepEqual(ask({ previous: { certificate2Id: 'u2', chargeNo2: 'U-2' } }).patch, {}, 'not Controlled + Accepted: only sorted');
+  assert.deepEqual(ask({ previous: { certificate2Id: 'c4', chargeNo2: 'A-4' } }).patch, {}, 'another diameter');
+  assert.deepEqual(ask({ previous: { certificate2Id: '', chargeNo2: 'EXISTING' } }).patch, {}, 'a fixed value is no certificate');
+  assert.deepEqual(ask().patch, {}, 'no neighbour: nothing proposed');
+  assert.deepEqual(ask({ values: { chargeNo1: 'EXISTING' }, previous: { certificate2Id: 'c2', chargeNo2: 'A-2' } }).patch, {}, 'a charge already chosen is never changed');
+});
+
+test('after Dia.: one matching WPS is selected, two are not, a chosen WPS and welders stay, the weld type is never suggested', () => {
+  assert.equal(ask({ matchingWps: ['wps-1'] }).wpsId, 'wps-1');
+  assert.equal(ask({ matchingWps: ['wps-1', 'wps-2'] }).wpsId, '');
+  assert.equal(ask({ values: { wpsId: 'wps-9' }, matchingWps: ['wps-1'] }).wpsId, '', 'an already chosen WPS is kept');
+  const result = ask({ values: { welder1Id: 'welder-1', typeId: '' }, matchingWps: ['wps-1'], previous: { certificate2Id: 'c2' } });
+  assert.deepEqual(Object.keys(result.patch).filter(name => /welder|typeId/.test(name)), [], 'welders and the weld type are not in the proposal');
+  assert.equal(ask({ diameterSize: '', matchingWps: ['wps-1'] }).wpsId, '');
+});
+
+test('charge lists after Dia.: certificates of the diameter first, each group in its own order; the fixed values keep their place', () => {
+  const list = [...certs.values()];
+  assert.deepEqual(sortChargesForDia(list, '4', lookups).map(c => c.id), ['c4', 'c2', 'u2']);
+  assert.deepEqual(sortChargesForDia(list, '2', lookups).map(c => c.id), ['c2', 'u2', 'c4']);
+  assert.deepEqual(sortChargesForDia(list, '', lookups).map(c => c.id), ['c2', 'c4', 'u2'], 'no diameter: the order stays');
+  const add = chargeOptionList(list, 'add', lookups, '4').map(option => option.value);
+  assert.deepEqual(add.slice(0, 3), ['c4', 'c2', 'u2']); assert.equal(add[3], 'CONN ISO');
+  assert.deepEqual(chargeOptionList(list, 'edit', lookups, '4').map(option => option.value).slice(0, 3), ['CONN ISO', 'EXISTING', '1 / Pipe']);
+  assert.equal(chargeOptionList(list, 'edit', lookups, '4').map(option => option.value).indexOf('c4') < chargeOptionList(list, 'edit', lookups, '4').map(option => option.value).indexOf('c2'), true);
+});
+
+test('welder lists after Dia.: qualified for the diameter first, the others under Other welders', () => {
+  const qualifications = [row('q1', { welderId: 'w1', diameterFrom: '21.3', diameterTo: '168.3' }), row('q2', { welderId: 'w2', diameterFrom: '100', diameterTo: '200', expiresAt: '2020-01-01' }), row('q3', { welderId: 'w3', diameterFrom: '', diameterTo: '' })];
+  const ids = weldersQualifiedForDiameter(qualifications, 60.3, '2026-11-16');
+  assert.deepEqual([...ids], ['w1'], 'a range that holds the size, valid on the date; an expired or empty range does not count');
+  const options = [{ value: 'w1', label: 'A' }, { value: 'w2', label: 'B' }, { value: 'w3', label: 'C' }];
+  const groups = groupWeldersForDia(options, ids);
+  assert.deepEqual(groups.map(group => [group.label, group.options.map(o => o.value)]), [[WELDER_GROUP_LABELS.qualified, ['w1']], [WELDER_GROUP_LABELS.other, ['w2', 'w3']]]);
+  assert.deepEqual([WELDER_GROUP_LABELS.qualified, WELDER_GROUP_LABELS.other], ['Qualified for this diameter', 'Other welders']);
+  assert.equal(groupWeldersForDia(options, new Set(options.map(o => o.value))).length, 1, 'an empty group is not shown');
+});
+
+test('WPS match a diameter by the scope of their PQR; one number is exact, a lower limit is open ended', () => {
+  assert.equal(wpsMatchesDiameter(['21.3 - 168.3'], 60.3), true);
+  assert.equal(wpsMatchesDiameter(['21,3-48.3'], 60.3), false);
+  assert.equal(wpsMatchesDiameter(['> 50'], 60.3), true);
+  assert.equal(wpsMatchesDiameter(['n/a', ''], 60.3), false);
+  assert.equal(wpsMatchesDiameter(['21.3 - 168.3'], null), false);
+});
+
+test('material group warning: one warning when the pair is not covered, none for an allowed pair, one for a WPS without groups (weld-iso-welds-030)', () => {
+  const wps = (data: Record<string, unknown>) => row('w', { name: 'WPS-141', ...data });
+  assert.deepEqual(materialGroupWarnings({ iso: '1.1' }, { iso: '8.1' }, wps({ isoGroups: '1.1' })), ['Material groups 1.1 / 8.1 are not covered by WPS WPS-141.']);
+  assert.deepEqual(materialGroupWarnings({ iso: '1.1' }, { iso: '8.1' }, wps({ isoGroups: '1.1', isoPairs: '1.1+8.1' })), [], 'an allowed dissimilar pair');
+  assert.deepEqual(materialGroupWarnings({ iso: '8.1' }, { iso: '1.1' }, wps({ isoPairs: '1.1+8.1' })), [], 'the pair has no direction');
+  assert.deepEqual(materialGroupWarnings({ iso: '1.1' }, { iso: '1.2' }, wps({ isoGroups: '1.1, 1.2' })), [], 'both inside the WPS groups');
+  assert.equal(materialGroupWarnings({ iso: '1.1' }, { iso: '1.1' }, wps({})).length, 1, 'a WPS without groups');
+  assert.deepEqual(materialGroupWarnings({ iso: '1.1' }, { iso: '' }, wps({})), [], 'a charge without a group');
+  assert.deepEqual(materialGroupWarnings({ asme: 'P-1' }, { asme: 'P-8' }, wps({ asmePNumbers: 'P-1', asmePairs: 'P-1+P-4' })), ['Material groups P-1 / P-8 are not covered by WPS WPS-141.']);
+  assert.deepEqual(materialGroupWarnings({ asme: 'P-1' }, { asme: 'P-8' }, wps({ asmePairs: 'P-1+P-8' })), []);
+  assert.deepEqual(materialGroupWarnings({ iso: '1.1' }, { iso: '8.1' }, null), [], 'no WPS chosen yet');
+  const types = new Map<string, Row>([['t1', row('t1', { iso15608: '1.1', asmePNumber: 'P-1' })]]);
+  assert.deepEqual(chargeMaterialGroup(row('c', { materialTypeId: 't1' }), types), { iso: '1.1', asme: 'P-1' });
+});
+
+test('saving is never blocked by a material group warning: a WPS that does not cover the charge groups still saves', async t => {
+  const f = await fixture(t);
+  const wps = f.store.get('wps', 'wps-1');
+  f.store.update('wps', wps.id, { isoGroups: '8.1' }, wps._version);
+  const result = await f.act('save-weld', { ...complete, weldNo: 'W060' });
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+});
+
+const welders = [row('w1', { number: '1', name: 'Ann', welderCode: 'W01' }), row('w2', { number: '2', name: '', welderCode: 'W02' }), row('w3', { number: '3', name: 'Cy', welderCode: 'W03', status: 'Inactive' }), row('w4', { number: '4', name: 'Di', welderCode: 'W04' })];
+const documents = [
+  row('d1', { welderId: 'w1', isDocument: true, wpsIds: 'A,B', expiresAt: '2027-01-01' }),
+  row('d2', { welderId: 'w4', isDocument: true, wpsIds: 'B', expiresAt: '2020-01-01' }),
+];
+
+test('Validation on WPS: the WPS listed on a valid qualification document decides; an expired document does not qualify (weld-iso-welds-036)', () => {
+  const wps = (id: string) => row(id, { name: `WPS-${id}`, processId: 'tig' });
+  assert.equal(welderQualifiedForWps(wps('B'), documents.filter(d => d.welderId === 'w1'), '2026-11-16'), true);
+  assert.equal(welderQualifiedForWps(wps('C'), documents.filter(d => d.welderId === 'w1'), '2026-11-16'), false);
+  assert.equal(welderQualifiedForWps(wps('B'), documents.filter(d => d.welderId === 'w4'), '2026-11-16'), false, 'expired');
+  assert.equal(welderQualifiedForWps(wps('B'), documents.filter(d => d.welderId === 'w4'), '2019-01-01'), true, 'valid on the weld date');
+  // The welding process does not qualify a welder any more; it is only the older check of a setting that was never saved.
+  assert.equal(welderQualifiedForWps(wps('B'), [row('p', { welderId: 'w2', processId: 'tig' })], '2026-11-16'), false);
+  assert.equal(welderQualifiedByProcess(wps('B'), [row('p', { welderId: 'w2', processId: 'tig' })], '2026-11-16'), true);
+  assert.deepEqual([{ wpsValidation: true }, { wpsValidation: false }, {}, null].map(site => wpsValidationMode(site)), ['documents', 'off', 'process', 'off']);
+});
+
+test('Validation on WPS: off offers every active welder once a WPS is chosen, on only the qualified; none before a WPS; Add / Mass edit clear welders on a WPS change, Edit keeps them', () => {
+  const wps = row('B', { name: 'WPS-B' });
+  assert.deepEqual(weldersForWps({ wpsValidation: false }, welders, documents, undefined, '2026-11-16'), [], 'no WPS: nothing offered');
+  assert.deepEqual(weldersForWps({ wpsValidation: false }, welders, documents, wps, '2026-11-16').map(w => w.id), ['w1', 'w2', 'w4'], 'every active welder, inactive left out, catalog order');
+  assert.deepEqual(weldersForWps({ wpsValidation: true }, welders, documents, wps, '2026-11-16').map(w => w.id), ['w1'], 'only the qualified');
+  assert.deepEqual(weldersForWps({ wpsValidation: true }, welders, documents, wps, '2026-11-16', ['w3']).map(w => w.id), ['w1', 'w3'], 'a welder the form already holds stays');
+  assert.deepEqual(weldersForWps({ wpsValidation: true }, welders, undefined, wps, '2026-11-16').map(w => w.id), ['w1', 'w2', 'w4'], 'qualifications not known on the client: the server decides');
+  assert.equal(welderFieldsDisabled({ wpsValidation: true }, ''), true); assert.equal(welderFieldsDisabled({ wpsValidation: true }, 'B'), false); assert.equal(welderFieldsDisabled({ wpsValidation: false }, ''), false);
+  assert.deepEqual((['add', 'mass', 'edit'] as const).map(mode => wpsChangeClearsWelders(mode)), [true, true, false]);
+  const all = [...certs.values()], size = (c: Row) => c.id === 'c4' ? 114.3 : 60.3;
+  assert.equal(chargesForWelders(all, ['w1'], wps, documents, '2026-11-16', size).length, 3, 'a welder without a range limits nothing');
+  const ranged = [...documents, row('r1', { welderId: 'w1', diameterFrom: '21.3', diameterTo: '70', expiresAt: '2027-01-01' })];
+  assert.deepEqual(chargesForWelders(all, ['w1'], wps, ranged, '2026-11-16', size).map(c => c.id), ['c2', 'u2'], 'sizes outside the qualified range are left out');
+  assert.deepEqual(chargesForWelders(all, ['w4'], wps, documents, '2026-11-16', () => null), [], 'a welder who is not qualified for the WPS: nothing');
+});
+
+test('welder option texts: "<code> <name>" in Add weld and Mass edit, "<code>, <name>" in Edit weld, code only without a name; catalog order; placeholders (delta-I1-009)', () => {
+  assert.equal(welderOptionLabel(welders[0], 'add'), 'W01 Ann'); assert.equal(welderOptionLabel(welders[0], 'mass'), 'W01 Ann'); assert.equal(welderOptionLabel(welders[0], 'edit'), 'W01, Ann');
+  assert.equal(welderOptionLabel(welders[1], 'add'), 'W02'); assert.equal(welderOptionLabel(welders[1], 'edit'), 'W02');
+  assert.equal(welderOptionLabel(row('x', { number: '28', name: 'Zed' }), 'edit'), '28, Zed', 'without a welder code the number stands');
+  assert.deepEqual(welderOptionList([welders[3], welders[0]], 'add').map(o => o.value), ['w4', 'w1'], 'the order of the rows is kept, not sorted by number');
+  assert.deepEqual(WELDER_PLACEHOLDER, { add: 'Choose Welder', edit: '-----------------', mass: '-----------------' });
+});
+
+test('save-weld through HTTP with Validation on WPS: a welder not on a valid qualification document of the WPS is refused, a listed one is accepted (weld-iso-welds-036)', async t => {
+  const f = await fixture(t);
+  const wps = f.store.get('wps', 'wps-1');
+  const other = f.store.create('wps', { name: 'WPS-OTHER', method: '141', definition: 'Other procedure' });
+  const listed = f.store.create('welders', { number: 'W-101', name: 'Lia Roe', status: 'Active', globallyDeployable: true });
+  const unlisted = f.store.create('welders', { number: 'W-102', name: 'Max Orr', status: 'Active', globallyDeployable: true });
+  const expired = f.store.create('welders', { number: 'W-103', name: 'Eve Ash', status: 'Active', globallyDeployable: true });
+  f.store.create('welder_certificates', { name: 'Doc A', welderId: listed.id, isDocument: true, wpsIds: wps.id, expiresAt: '2030-01-01' });
+  f.store.create('welder_certificates', { name: 'Doc B', welderId: unlisted.id, isDocument: true, wpsIds: other.id, expiresAt: '2030-01-01' });
+  f.store.create('welder_certificates', { name: 'Doc C', welderId: expired.id, isDocument: true, wpsIds: wps.id, expiresAt: '2026-01-01' });
+  assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W070', welder1Id: listed.id })).status, 201);
+  let result = await f.act('save-weld', { ...complete, weldNo: 'W071', welder1Id: unlisted.id });
+  assert.equal(result.status, 422); assert.match(result.body.fields.welder1Id, /Max Orr has no valid qualification for WPS/);
+  result = await f.act('save-weld', { ...complete, weldNo: 'W072', welder1Id: expired.id });
+  assert.equal(result.status, 422, 'an expired document does not qualify');
+  const target = f.store.list('welds').find(w => w.isoId === 'iso-1' && w.wpsId === 'wps-1');
+  assert.ok(target, 'a sample weld on WPS 1');
+  const mass = await f.act('mass-edit-welds', { weldIds: [target!.id], versions: { [target!.id]: target!._version }, changes: { welder1Id: unlisted.id } });
+  assert.equal(mass.status, 422, JSON.stringify(mass.body));
+  // Setting off (Riverside): the same welder is accepted.
+  assert.equal((await f.act('save-weld', { ...complete, isoId: 'iso-5', weldNo: 'W073', welder1Id: unlisted.id, diameterId: 'diameter-9' })).status, 201);
 });

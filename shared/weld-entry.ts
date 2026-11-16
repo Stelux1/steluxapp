@@ -1,6 +1,6 @@
 import type { Row } from './types.ts';
 import { mandatoryFields, projectCertificates, wpsValidation } from './site-settings.ts';
-import { certificatesForProject as projectCertificatesOf } from './welder-data.ts';
+import { certificatesForProject as projectCertificatesOf, splitIds } from './welder-data.ts';
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
 import { INSPECTION_MASS_EDIT_FIELDS, locationField, processField } from './inspections.ts';
 import { nonWeldCode, type NonWeldCode } from './weld-codes.ts';
@@ -205,25 +205,98 @@ export function missingMandatoryFields(site: SiteLike, weld: Values): Record<str
 // ---------------------------------------------------------------------------------------------------------------
 // Rule (b): validation on WPS
 
+/** The mode of "Validation on WPS" of a main project: on = the WPS on the welder's qualification documents; off = no check; the setting never saved (absent) keeps the older check by welding process. */
+export const wpsValidationMode = (site: SiteLike): 'documents' | 'off' | 'process' => wpsValidation(site) ? 'documents' : site && (site.wpsValidation === undefined || site.wpsValidation === null) ? 'process' : 'off';
+const notExpired = (cert: Row, onDate: string) => !present(cert.expiresAt) || text(cert.expiresAt) >= onDate;
 /**
- * "Validation on WPS": a welder is accepted when one of the welder's certificates names the welding process of
- * the WPS and has not expired on the weld date (today while the weld has no date). INFERRED: the data holds no
- * finer qualification range (diameter, thickness, material group), so only the process can be compared; a WPS
- * without a process reference cannot express a match and passes.
+ * "Validation on WPS" on: a welder is qualified for a WPS when a qualification document of the welder lists that WPS and has
+ * not expired on the weld date (today while the weld has no date) (reference: Personnel's certificates and files, w3-welder-card).
  */
 export function welderQualifiedForWps(wps: Values | undefined | null, certificates: Row[], onDate: string): boolean {
+  if (!wps) return true;
+  return live(certificates).some(cert => splitIds(cert.wpsIds).includes(text(wps.id)) && notExpired(cert, onDate));
+}
+/** The older check, kept for a main project whose setting was never saved: a certificate names the welding process of the WPS and has not expired; a WPS without a process reference passes. */
+export function welderQualifiedByProcess(wps: Values | undefined | null, certificates: Row[], onDate: string): boolean {
   if (!wps || !present(wps.processId)) return true;
-  return live(certificates).some(cert => cert.processId === wps.processId && (!present(cert.expiresAt) || text(cert.expiresAt) >= onDate));
+  return live(certificates).some(cert => cert.processId === wps.processId && notExpired(cert, onDate));
 }
 /** Messages by welder field for every welder of the weld who does not cover the weld's WPS. */
 export function welderWpsErrors(site: SiteLike, weld: Values, wps: Values | undefined | null, certificatesOf: (welderId: string) => Row[], welderName: (welderId: string) => string, today: string): Record<string, string> {
-  if (!wpsValidation(site) || !present(weld.wpsId) || !wps || !present(wps.processId)) return {};
+  const mode = wpsValidationMode(site);
+  if (mode === 'off' || !present(weld.wpsId) || !wps) return {};
   const onDate = present(weld.date) ? text(weld.date) : today, errors: Record<string, string> = {};
   for (const name of WELDERS) {
     const id = text(weld[name]); if (!id) continue;
-    if (!welderQualifiedForWps(wps, certificatesOf(id), onDate)) errors[name] = `${welderName(id)} has no valid qualification for WPS ${text(wps.name)} on ${onDate}.`;
+    if (!(mode === 'documents' ? welderQualifiedForWps : welderQualifiedByProcess)(wps, certificatesOf(id), onDate)) errors[name] = `${welderName(id)} has no valid qualification for WPS ${text(wps.name)} on ${onDate}.`;
   }
   return errors;
+}
+/** An active welder, or one the form already holds (kept so an edit still shows who welded). */
+const activeWelder = (welder: Row, keep: unknown[]) => !welder._archived && (welder.status !== 'Inactive' || keep.includes(welder.id));
+/**
+ * The welders Welder 1-4 offer once a WPS is chosen, in the catalog's own order (creation order; the rows arrive in it).
+ * Nothing is offered before a WPS is chosen. With "Validation on WPS" off every active welder is offered; with it on only
+ * those qualified for the WPS (`certificates` undefined: the qualifications are not known here, the server decides).
+ */
+export function weldersForWps(site: SiteLike, welders: Row[], certificates: Row[] | undefined, wps: Values | undefined | null, onDate: string, keep: unknown[] = []): Row[] {
+  if (!wps) return [];
+  const active = welders.filter(welder => activeWelder(welder, keep));
+  if (!wpsValidation(site) || !certificates) return active;
+  return active.filter(welder => keep.includes(welder.id) || welderQualifiedForWps(wps, certificates.filter(cert => cert.welderId === welder.id), onDate));
+}
+/** Welder 1-4 stay disabled until a WPS is chosen when "Validation on WPS" is on (Add weld, Mass edit after a WPS change). */
+export const welderFieldsDisabled = (site: SiteLike, wpsId: unknown) => wpsValidation(site) && !present(wpsId);
+/**
+ * Charge number 1/2 under "Validation on WPS" are limited to certificates the chosen welders may weld: INFERRED from the
+ * qualification ranges (the reference's getAllCerts answer is not captured). When a chosen welder is not qualified for the WPS
+ * nothing is offered; otherwise a certificate whose size (mm) lies outside every Diameter range of the welder's valid
+ * qualifications is left out. A welder without any range, and a certificate without a size, do not limit the list.
+ */
+export function chargesForWelders(certificates: Row[], welderIds: string[], wps: Values | undefined | null, welderCertificates: Row[] | undefined, onDate: string, sizeOf: (certificate: Row) => number | null): Row[] {
+  const ids = welderIds.filter(Boolean);
+  if (!wps || !welderCertificates || !ids.length) return certificates;
+  let list = certificates;
+  for (const id of ids) {
+    const own = live(welderCertificates).filter(cert => cert.welderId === id);
+    if (!welderQualifiedForWps(wps, own, onDate)) return [];
+    const ranges = own.filter(cert => (!present(cert.expiresAt) || text(cert.expiresAt) >= onDate) && (present(cert.diameterFrom) || present(cert.diameterTo)))
+      .map(cert => [present(cert.diameterFrom) ? Number(cert.diameterFrom) : 0, present(cert.diameterTo) && Number(cert.diameterTo) > 0 ? Number(cert.diameterTo) : Number.POSITIVE_INFINITY]);
+    if (!ranges.length) continue;
+    list = list.filter(certificate => { const size = sizeOf(certificate); return size === null || ranges.some(([from, to]) => size >= from && size <= to); });
+  }
+  return list;
+}
+/** Welder option texts: "<code> <name>" in Add weld and Mass edit, "<code>, <name>" in Edit weld; a welder without a name shows the code only. */
+export function welderOptionLabel(welder: Values, mode: 'add' | 'edit' | 'mass'): string {
+  const code = text(welder.welderCode || welder.number), name = text(welder.name);
+  return !name ? code : mode === 'edit' ? `${code}, ${name}` : `${code} ${name}`;
+}
+export interface SelectOption { value: string; label: string; disabled?: boolean; }
+/** Welder options of a dialog in the catalog's order (the rows arrive in creation order). */
+export const welderOptionList = (welders: Row[], mode: 'add' | 'edit' | 'mass'): SelectOption[] => welders.map(welder => ({ value: String(welder.id), label: welderOptionLabel(welder, mode) }));
+/** The empty option of the welder selects: Add weld after a WPS change 'Choose Welder' (disabled), Edit weld and Mass edit '-----------------'. */
+export const WELDER_PLACEHOLDER = { add: 'Choose Welder', edit: '-----------------', mass: '-----------------' } as const;
+/** Add weld and Mass edit empty the four welder fields on every WPS change (the reference's change handlers); Edit weld keeps them. */
+export const wpsChangeClearsWelders = (mode: 'add' | 'edit' | 'mass') => mode !== 'edit';
+/** Welder lists after Dia.: two groups with the reference's labels. */
+export const WELDER_GROUP_LABELS = { qualified: 'Qualified for this diameter', other: 'Other welders' } as const;
+export function groupWeldersForDia(options: SelectOption[], qualifiedIds: Set<string>): { label: string; options: SelectOption[] }[] {
+  return [{ label: WELDER_GROUP_LABELS.qualified, options: options.filter(option => qualifiedIds.has(option.value)) }, { label: WELDER_GROUP_LABELS.other, options: options.filter(option => !qualifiedIds.has(option.value)) }].filter(group => group.options.length);
+}
+/** The outside diameter (mm) of a diameter row; null when it has none. */
+export const diameterSizeMm = (row?: Values | null): number | null => { const size = Number(row?.size); return row && present(row.size) && Number.isFinite(size) && size > 0 ? size : null; };
+/** Welders with a valid (not expired) qualification whose Diameter range (mm) holds the size. An open end (empty or 0) is no limit; a row without any range says nothing. */
+export function weldersQualifiedForDiameter(welderCertificates: Row[] | undefined, sizeMm: number | null, onDate: string): Set<string> {
+  const ids = new Set<string>();
+  if (sizeMm === null) return ids;
+  for (const cert of live(welderCertificates)) {
+    if (present(cert.expiresAt) && text(cert.expiresAt) < onDate) continue;
+    if (!present(cert.diameterFrom) && !present(cert.diameterTo)) continue;
+    const from = present(cert.diameterFrom) ? Number(cert.diameterFrom) : 0, to = present(cert.diameterTo) && Number(cert.diameterTo) > 0 ? Number(cert.diameterTo) : Number.POSITIVE_INFINITY;
+    if (sizeMm >= from && sizeMm <= to) ids.add(text(cert.welderId));
+  }
+  return ids;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -281,6 +354,8 @@ export function addNewEnabled(weldNo: unknown, original: unknown, existing: unkn
   return current !== '' && current !== text(original) && !existing.map(text).includes(current);
 }
 
+/** The reference's Add weld calls the Pre-HT required box 'Pre-WHT' (Edit weld and Mass edit say 'Pre-HT'); it is bound to Pre-HT required (pwhtReqPre). */
+export const ADD_PRE_HT_LABEL = 'Pre-WHT';
 export interface WeldFormField { name: string; label: string; }
 const field = (name: string, label: string): WeldFormField => ({ name, label });
 /**
@@ -289,7 +364,7 @@ const field = (name: string, label: string): WeldFormField => ({ name, label });
  * with NDT Req. ticked. Weld process is never shown (the stored field stays).
  */
 export function weldFormLayout(mode: 'add' | 'edit'): WeldFormField[][] {
-  const flags = [field('ndoReqPre', 'NDT Req. Pre'), field('ndoReq', 'NDT Req.'), ...(mode === 'edit' ? [field('ndtpercent', 'NDT percent')] : []), field('pwhtReqPre', 'Pre-HT'), field('pwhtReq', 'PWHT Req.'), field('repair', 'Repair'), field('tracer', 'Tracer')];
+  const flags = [field('ndoReqPre', 'NDT Req. Pre'), field('ndoReq', 'NDT Req.'), ...(mode === 'edit' ? [field('ndtpercent', 'NDT percent')] : []), field('pwhtReqPre', mode === 'add' ? ADD_PRE_HT_LABEL : 'Pre-HT'), field('pwhtReq', 'PWHT Req.'), field('repair', 'Repair'), field('tracer', 'Tracer')];
   if (mode === 'add') return [
     [field('weldNo', 'Weld no.'), field('typeId', 'Weld type'), field('welder1Id', 'Welder'), field('welder3Id', 'Welder 3'), field('coating1Id', 'Coating 1'), field('wire1Id', 'Welding wire 1'), field('pos1', 'Pos 1'), field('chargeNo1', 'Charge number 1')],
     [field('wpsId', 'WPS number'), field('welder2Id', 'Welder 2'), field('welder4Id', 'Welder 4'), field('coating2Id', 'Coating 2'), field('wire2Id', 'Welding wire 2'), field('pos2', 'Pos 2'), field('chargeNo2', 'Charge number 2')],
@@ -355,11 +430,92 @@ export interface ChargeOption { value: string; label: string; disabled?: boolean
  * A charge number list. Add weld and Mass edit: the certificates, then CONN ISO, EXISTING and the 13 placeholders;
  * Edit weld: the fixed values first. Certificates that are not Controlled + Accepted are offered disabled.
  */
-export function chargeOptionList(certificates: Values[], mode: 'add' | 'edit', lookups: CertificateLookups = {}): ChargeOption[] {
+export function chargeOptionList(certificates: Values[], mode: 'add' | 'edit', lookups: CertificateLookups = {}, diameterSize = ''): ChargeOption[] {
   const fixed = SIDE_VALUES.map(value => ({ value: value as string, label: value as string }));
-  const certs = certificates.map(row => ({ value: text(row.id), label: certificateLabel(row, lookups), ...(certificateSelectable(row) ? {} : { disabled: true }) }));
+  const certs = sortChargesForDia(certificates, diameterSize, lookups).map(row => ({ value: text(row.id), label: certificateLabel(row, lookups), ...(certificateSelectable(row) ? {} : { disabled: true }) }));
   return mode === 'edit' ? [...fixed, ...certs] : [...certs, ...fixed];
 }
+// ----- after Dia. is chosen (reference ajax-weld-form-suggest; manual, Add weld)
+
+/** The size a Dia. row stands for, as the Dia. check compares it. */
+export const diameterRowSize = (row?: Values | null) => row ? normalizeSizeInch(row.sizeinch) || normalizeSizeInch(row.diameter) : '';
+const certificateHasSize = (certificate: Values, size: string, lookups: CertificateLookups) => Boolean(size) && certificateSizes(certificate, lookups.diameters?.get(text(certificate.diameterId))).includes(size);
+/** Certificates of the chosen diameter first, the others after them, each group in its own order. Without a diameter the order stays. */
+export function sortChargesForDia<T extends Values>(certificates: T[], diameterSize: string, lookups: CertificateLookups = {}): T[] {
+  if (!diameterSize) return certificates;
+  return [...certificates.filter(row => certificateHasSize(row, diameterSize, lookups)), ...certificates.filter(row => !certificateHasSize(row, diameterSize, lookups))];
+}
+export interface DiaSuggestion { patch: Values; wpsId: string; }
+export interface DiaSuggestInput {
+  /** The form's values now: nothing already chosen is changed. */
+  values: Values;
+  diameterSize: string;
+  /** The weld before / after this one in table order (none: null). */
+  previous: Values | null; next: Values | null;
+  certificates: Map<string, Values>;
+  lookups?: CertificateLookups;
+  /** Ids of the WPS that match the diameter. */
+  matchingWps: string[];
+}
+/**
+ * What choosing Dia. proposes. Charge number 1 = the previous weld's Charge number 2, and Charge number 2 = the next weld's
+ * Charge number 1, but only when that certificate is Controlled and Accepted and has this diameter, and the field is still empty.
+ * A single matching WPS is selected when none is chosen. Welders and the Weld type are never proposed.
+ */
+export function suggestOnDia(input: DiaSuggestInput): DiaSuggestion {
+  const patch: Values = {}, lookups = input.lookups || {};
+  const propose = (side: 1 | 2, from: Values | null, fromSide: 1 | 2) => {
+    if (!from || present(input.values[`chargeNo${side}`]) || present(input.values[`certificate${side}Id`])) return;
+    const certificate = input.certificates.get(text(from[`certificate${fromSide}Id`]));
+    if (!certificate || isSideValue(from[`chargeNo${fromSide}`]) || !certificateSelectable(certificate) || !certificateHasSize(certificate, input.diameterSize, lookups)) return;
+    Object.assign(patch, { [`chargeNo${side}`]: text(certificate.chargeNo), [`certificate${side}Id`]: certificate.id, [`material${side}Id`]: text(certificate.materialId) });
+  };
+  if (!input.diameterSize) return { patch, wpsId: '' };
+  propose(1, input.previous, 2); propose(2, input.next, 1);
+  const wpsId = !present(input.values.wpsId) && input.matchingWps.length === 1 ? input.matchingWps[0] : '';
+  return { patch, wpsId };
+}
+/** The numbers of a PQR scope text such as "21.3 - 168.3" or "> 25": a range, a lower limit or one size. */
+export function scopeRange(value: unknown): [number, number] | null {
+  const raw = text(value).replace(/,/g, '.');
+  const numbers = raw.match(/\d+(\.\d+)?/g)?.map(Number) ?? [];
+  if (numbers.length >= 2) return [Math.min(numbers[0], numbers[1]), Math.max(numbers[0], numbers[1])];
+  if (numbers.length === 1) return /^\s*(>|≥|>=|from)/i.test(raw) ? [numbers[0], Number.POSITIVE_INFINITY] : [numbers[0], numbers[0]];
+  return null;
+}
+/** A WPS matches a diameter when one of its PQR scope texts (EN Ø, ASME IX Ø) covers the outside diameter in mm. INFERRED: the reference's own rule is on its server. */
+export const wpsMatchesDiameter = (scopeTexts: unknown[], sizeMm: number | null) => sizeMm !== null && scopeTexts.some(value => { const range = scopeRange(value); return Boolean(range) && sizeMm >= range![0] && sizeMm <= range![1]; });
+
+// ----- material groups against the WPS (reference weld-material-group-check.php)
+
+export interface MaterialGroup { iso?: string; asme?: string; }
+/** The group of a charge: ISO 15608 group and ASME P-Number of the certificate's type of material. */
+export function chargeMaterialGroup(certificate: Values | null | undefined, materialTypes?: Map<string, Values>): MaterialGroup {
+  const type = certificate ? materialTypes?.get(text(certificate.materialTypeId)) : undefined;
+  return { iso: text(type?.iso15608), asme: text(type?.asmePNumber) };
+}
+const tags = (value: unknown) => text(value).split(',').map(item => item.trim()).filter(Boolean);
+const pairKey = (a: string, b: string) => [a, b].sort().join('+');
+/**
+ * Non-blocking warnings when both charges have a group and the WPS does not cover them: the WPS has no groups at all, or the pair is
+ * neither inside the WPS's groups nor one of its allowed dissimilar pairs (ISO, ASME). Saving is never blocked.
+ */
+export function materialGroupWarnings(charge1: MaterialGroup, charge2: MaterialGroup, wps: Values | null | undefined, wpsName = ''): string[] {
+  if (!wps) return [];
+  const name = text(wpsName || wps.name), warnings: string[] = [];
+  const systems = [
+    { one: text(charge1.iso), two: text(charge2.iso), groups: tags(wps.isoGroups), pairs: tags(wps.isoPairs) },
+    { one: text(charge1.asme), two: text(charge2.asme), groups: tags(wps.asmePNumbers), pairs: tags(wps.asmePairs) },
+  ];
+  const wpsHasGroups = systems.some(system => system.groups.length || system.pairs.length);
+  for (const system of systems) {
+    if (!system.one || !system.two) continue;
+    const covered = system.groups.length || system.pairs.length ? (system.groups.includes(system.one) && system.groups.includes(system.two)) || system.pairs.some(pair => pair.split('+').length === 2 && pairKey(pair.split('+')[0].trim(), pair.split('+')[1].trim()) === pairKey(system.one, system.two)) : wpsHasGroups;
+    if (!covered) warnings.push(`Material groups ${system.one} / ${system.two} are not covered by WPS ${name}.`);
+  }
+  return warnings;
+}
+
 /** Dia. options in the reference order: plain text order of their labels (code points, so "1,5" < "1.5" < "10"). */
 export const diameterTextOrder = <T extends { label: string }>(options: T[]) => [...options].sort((a, b) => a.label < b.label ? -1 : a.label > b.label ? 1 : 0);
 
@@ -468,6 +624,9 @@ export function normalizedNdtPercent(weld: Values): number | null {
 // Add welds (range)
 
 export const MAX_RANGE = 500;
+/** The reference's range dialog (#addWelds): its title and defaults; the toolbar button that opens it reads 'Add welds'. */
+export const RANGE_DIALOG = { title: 'Add weld', start: '001', end: '015', button: 'Add', toolbar: 'Add welds' } as const;
+export const rangeSkippedMessage = (skipped: string[]) => skipped.length ? `Skipped, already on the isometric: ${skipped.join(', ')}.` : '';
 /** How the isometric's weld numbers look: the common text before the digits and whether the digits are zero-padded. */
 export function weldNumberStyle(existing: string[]): { prefix: string; width: number } {
   const counts = new Map<string, { count: number; width: number; padded: boolean }>();
@@ -480,7 +639,7 @@ export function weldNumberStyle(existing: string[]): { prefix: string; width: nu
   return best ? { prefix: best[0], width: best[1].padded ? best[1].width : 0 } : { prefix: '', width: 3 };
 }
 export interface RangePlan { numbers: string[]; skipped: string[]; }
-/** The missing numbers between start and end (inclusive), written like the existing ones; present numbers are skipped. */
+/** The missing numbers between start and end (inclusive), written with the zero padding of Start (else like the existing ones); present numbers are skipped and reported. */
 export function planWeldRange(start: unknown, end: unknown, existing: string[]): RangePlan {
   const from = Number(start), to = Number(end);
   if (!present(start) || !present(end) || !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < 0) throw new Error('Weld no. Start and End must be whole numbers.');
@@ -488,7 +647,9 @@ export function planWeldRange(start: unknown, end: unknown, existing: string[]):
   if (to - from + 1 > MAX_RANGE) throw new Error(`A range holds at most ${MAX_RANGE} welds.`);
   const style = weldNumberStyle(existing), taken = new Set<number>();
   for (const number of existing) { const match = /^(\D*?)(\d+)$/.exec(text(number)); if (match && match[1] === style.prefix) taken.add(Number(match[2])); }
-  const width = style.width || (to > 999 ? String(to).length : 0), numbers: string[] = [], skipped: string[] = [];
+  // The zero padding of Start ("001" gives 001, 002 ...) wins; otherwise the width of the existing numbers.
+  const startText = text(start), startWidth = typeof start === 'string' && startText.length > 1 && startText.startsWith('0') ? startText.length : 0;
+  const width = startWidth || style.width || (to > 999 ? String(to).length : 0), numbers: string[] = [], skipped: string[] = [];
   for (let value = from; value <= to; value++) { const name = `${style.prefix}${String(value).padStart(width, '0')}`; (taken.has(value) ? skipped : numbers).push(name); }
   return { numbers, skipped };
 }

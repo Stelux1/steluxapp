@@ -198,7 +198,7 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       if (!plan.numbers.length) throw new AppError(422, 'Every weld number in this range already exists.');
       let order = nextSortOrder(store, iso.id, actor);
       const created = plan.numbers.map(weldNo => { const input = { weldNo, isoId: iso.id, lengthMode: 'Diameter', diameterId: data.diameterId ?? '', sortOrder: order++ }; assertWeldEntry(store, input); return store.create('welds', input, actor); });
-      return { resource: 'welds', records: created };
+      return { resource: 'welds', records: created, skipped: plan.skipped };
     }
     if (key === 'mass-edit-welds') {
       const ids = Array.isArray(data.weldIds) ? data.weldIds : [];
