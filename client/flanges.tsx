@@ -5,7 +5,7 @@ import {
   ALIGNMENT_MAX_MM, ALIGNMENT_POINTS, FLANGE_ASSEMBLY_CHECKLIST, FLANGE_COMPLETION_CHECKS, FLANGE_DEFAULT_PAGE_SIZE, FLANGE_DEFAULT_SORT, FLANGE_DETAIL_CARDS, FLANGE_GENERAL_DOCUMENT,
   FLANGE_HARDCOPY_DOCUMENT, FLANGE_LIST_COLUMNS, FLANGE_PAGE_SIZES, FLANGE_PREPARATION_CONTROLS, FLANGE_PROTOCOL_DOCUMENT, FLANGE_STATUSES, METHOD_FIELDS, NO_FLANGE_FILTERS, PASS_NUMBERS, RECORD_INPUT_FIELDS,
   RECORD_PASS_ROWS, SIGNATURE_ROLES, TIGHTENING_METHODS, alignmentDifference, filterFlanges, finalPass, flangeDetailPath, flangeDocumentDeleteRefusal, flangeDocuments, flangeItems, flangeMissingMasterData,
-  flangeValidationProposals, gateOpen, isoFlangeCount, latestRecord, leakTestsNewestFirst, openDeviations, recordSignatures, registeredPdf, releaseGate, selectedFlanges, sortFlanges, workflowOptions,
+  flangeValidationProposals, gateOpen, flangeMoment, isoFlangeCount, latestRecord, leakTestsNewestFirst, openDeviations, passStressRequired, recordSignatures, registeredPdf, releaseGate, selectedFlanges, sortFlanges, workflowOptions,
   type FlangeFilters, type FlangeItem, type SignatureRole,
 } from '../shared/flanges.ts';
 import type { Row } from '../shared/types.ts';
@@ -111,7 +111,7 @@ function FlangeRow({ item, columns, ticked, onTick, onView, onEdit, onDocuments,
 
 /* ------------------------------------------------------------------------------------------------ shared helpers */
 const text = (value: unknown) => String(value ?? '').trim();
-const dateTime = (value: unknown) => { const raw = text(value); return raw ? `${formatDate(raw.slice(0, 10))} ${raw.slice(11, 16)}`.trim() : '—'; };
+const dateTime = (value: unknown) => { const raw = flangeMoment(value); return raw ? `${formatDate(raw.slice(0, 10))} ${raw.slice(11, 16)}`.trim() : '—'; };
 /** Opens a PDF of an API route in a new tab (errors are shown where the button is). */
 async function openPdf(path: string) {
   const blob = await apiBlob(path);
@@ -289,11 +289,11 @@ function PassRegistration({ flange, editable }: { flange: Row; editable: boolean
   const final = finalPass(rows.flange_passes, flange.id);
   const set = (name: string, value: string) => setValues(old => ({ ...old, [name]: value }));
   const submit = (event: FormEvent) => { event.preventDefault(); void action.run(() => post(`/flanges/${flange.id}/passes`, values), 'Pass recorded.', () => setValues(empty())); };
-  const input = (name: string, label: string, type = 'text', extra: Record<string, unknown> = {}) => <Field id={`${id}-${name}`} label={label} required error={action.fields[name]}><input id={`${id}-${name}`} type={type} required value={values[name]} onChange={e => set(name, e.target.value)} {...extra}/></Field>;
+  const input = (name: string, label: string, type = 'text', extra: Record<string, unknown> = {}, required = true) => <Field id={`${id}-${name}`} label={label} required={required} error={action.fields[name]}><input id={`${id}-${name}`} type={type} required={required} value={values[name]} onChange={e => set(name, e.target.value)} {...extra}/></Field>;
   return <Section id="flange-passes" title="Validated tightening-pass registration" help="Each entry is append-only and checked by the server against the flange master targets (tolerance ±5%). A pass outside the tolerance is kept with its result.">
     {editable && <form className="form-grid flange-grid" onSubmit={submit}><FormProblem error={action.error}/>
       <Field id={`${id}-pass`} label="Pass" required error={action.fields.pass_number}><select id={`${id}-pass`} value={values.pass_number} onChange={e => set('pass_number', e.target.value)}>{PASS_NUMBERS.map(n => <option key={n} value={n}>Pass {n}</option>)}</select></Field>
-      {input('torque_nm', 'Measured torque (Nm)', 'number', { min: 0.001, step: 0.001 })}{input('stress_value', 'Measured stress', 'number', { min: 0.001, step: 0.001 })}
+      {input('torque_nm', 'Measured torque (Nm)', 'number', { min: 0.001, step: 0.001 })}{input('stress_value', 'Measured stress', 'number', { min: 0.001, step: 0.001 }, passStressRequired(flange))}
       {input('tool_id', 'Tool ID', 'text', { maxLength: 100 })}{input('operator_name', 'Operator', 'text', { maxLength: 150 })}{input('performed_at', 'Performed at', 'datetime-local')}
       <div className="flange-form-actions"><button className="btn primary" disabled={action.busy}>{action.busy && <Loader2 size={15} className="spin"/>}Record pass</button></div></form>}
     <TableScroll><table className="data-table"><thead><tr><th>Pass</th><th>Measured torque (Nm)</th><th>Measured stress</th><th>Tool ID</th><th>Operator</th><th>Performed at</th><th>Result</th></tr></thead>

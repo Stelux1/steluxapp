@@ -337,7 +337,7 @@ export const FLANGE_RECORD_RESOURCES: Resource[] = [
   resource('flange_records', 'Flange joint assembly records', 'flange joint assembly record', 'Saved assembly records of a flange; the latest one counts.', RECORD_FIELDS, ['flangeId', 'assembly_date', 'tightening_method', 'installer_name']),
   resource('flange_passes', 'Flange tightening passes', 'tightening pass', 'Validated tightening passes of a flange, kept also when out of tolerance.', [
     flangeRef, recordField('recordId', 'Assembly record', 'ref', { ref: 'flange_records' }), recordField('pass_number', 'Pass', 'number', { min: 1, max: 9, step: 1, required: true }),
-    recordField('torque_nm', 'Measured torque (Nm)', 'number', { required: true }), recordField('stress_value', 'Measured stress', 'number', { required: true }),
+    recordField('torque_nm', 'Measured torque (Nm)', 'number', { required: true }), recordField('stress_value', 'Measured stress', 'number'),
     recordField('tool_id', 'Tool ID', 'text', { required: true }), recordField('operator_name', 'Operator', 'text', { required: true }), recordField('performed_at', 'Performed at', 'text', { required: true }),
     recordField('target_nm', 'Target Moment (Nm)', 'number'), recordField('target_stress', 'Target Stress', 'number'), recordField('result', 'Result', 'select', { options: PASS_RESULTS, required: true }),
   ], ['pass_number', 'torque_nm', 'stress_value', 'performed_at', 'result']),
@@ -407,13 +407,15 @@ const filledText = (value: unknown) => String(value ?? '').trim() !== '';
 const tooLong = (value: unknown, max: number) => String(value ?? '').trim().length > max;
 const NO_TARGET = 'The flange has no Target Moment (Nm). Use Edit to complete the master data first.';
 
-/** "Validated tightening-pass registration": every input is required (reference). Returns field errors. */
+/** Measured stress is asked for only when the flange has a Target Stress to compare it with (SB2 N9-4). */
+export const passStressRequired = (flange: Partial<Row> | Record<string, unknown>) => flangeTargets(flange).stress !== null;
+/** "Validated tightening-pass registration": every input is required (reference), Measured stress only against a Target Stress. Returns field errors. */
 export function passInputErrors(input: Record<string, unknown>, flange: Partial<Row> | Record<string, unknown>): Record<string, string> {
   const errors: Record<string, string> = {};
   const pass = numeric(input.pass_number);
   if (pass === null || !PASS_NUMBERS.includes(pass)) errors.pass_number = 'Choose Pass 1 to Pass 9.';
   if (!positiveNumber(input.torque_nm)) errors.torque_nm = 'Enter the measured torque (Nm), above 0.';
-  if (!positiveNumber(input.stress_value)) errors.stress_value = 'Enter the measured stress, above 0.';
+  if (passStressRequired(flange) || filledText(input.stress_value)) { if (!positiveNumber(input.stress_value)) errors.stress_value = 'Enter the measured stress, above 0.'; }
   if (!filledText(input.tool_id)) errors.tool_id = 'Tool ID is required.'; else if (tooLong(input.tool_id, 100)) errors.tool_id = 'Tool ID can be at most 100 characters.';
   if (!filledText(input.operator_name)) errors.operator_name = 'Operator is required.'; else if (tooLong(input.operator_name, 150)) errors.operator_name = 'Operator can be at most 150 characters.';
   if (!isDateTime(input.performed_at)) errors.performed_at = 'Enter the date and time the pass was performed.';
@@ -520,6 +522,19 @@ export function recordSignatures(signatures: Row[] | undefined, recordId: string
   return out;
 }
 /** The registered protocol PDF of a record: the flange's protocol attachment made for that record with a stored hash. */
+/**
+ * A moment of the flange record as "YYYY-MM-DD HH:MM" in local time (SB2 N9-3): a stored instant (`_createdAt`, ISO with a
+ * zone) is converted to the local clock, as the PDF footer (server time) and the typed date-times (Performed at, Tested at)
+ * already are; a typed local date-time is shown as typed.
+ */
+export function flangeMoment(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (!/(Z|[+-]\d\d:?\d\d)$/.test(raw)) return raw.replace('T', ' ').slice(0, 16);
+  const date = new Date(raw); if (Number.isNaN(date.getTime())) return raw.replace('T', ' ').slice(0, 16);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
 export const registeredPdf = (attachments: Row[] | undefined, flangeId: string, recordId: string | undefined): Row | undefined =>
   recordId ? (attachments || []).filter(file => !file._archived && file.entityType === 'flanges' && file.entityId === flangeId && file.documentType === FLANGE_PROTOCOL_DOCUMENT && file.recordId === recordId && /^[0-9a-f]{64}$/.test(String(file.sha256 ?? ''))).sort(newest)[0] : undefined;
 /** Whether stored bytes still match their registered SHA-256 (hex). */
