@@ -411,3 +411,28 @@ test('through the hosted API: receiving and correcting need different rights, an
   const body = await (await f.request('/api/bootstrap')).json() as { rows: Record<string, Row[]> }; for (const key of ['orders', 'order_lines', 'receipts']) assert.equal(body.rows[key], undefined, key);
   assert.equal((await f.request('/mto/materials/take-in')).status, 200, 'the page shell is served; the page itself shows its no-access state');
 });
+
+// ----- wave 3 integration (E4): a requirement on a merged order line is ordered -------------------------------------------
+test('E4: a requirement named only by a line merged per material cannot be deleted, and the dashboard gives that line\'s open quantity to its own requirements', async t => {
+  const { allocateOpenOrders } = await import('../shared/mto-dashboard.ts');
+  const { requirementOrderLines, materialIdentity } = await import('../shared/materials.ts');
+  const s = fixture(t); s.hostedRules = true;
+  const { material, requirements: [a, b] } = bolts(s, [['iso-1', 12], ['iso-2', 5]]);
+  const third = s.create('iso_materials', { isoId: 'iso-1', materialId: material.id, quantity: 4 }, actor);
+  // One merged line of 12 for a and b: in requirement order a takes all 12, so b has nothing ordered, but it is on the order; the third line is not.
+  const order = s.create('orders', { number: '00090', projectId: 'project-cooling', status: 'Pending', date: '2026-11-01' }, actor);
+  s.create('order_lines', { orderId: order.id, materialId: material.id, quantity: 12, received: 0, requirementId: '', isoId: '', requirementIds: `${a.id},${b.id}` }, actor);
+  assert.deepEqual([a, b, third].map(r => requirementOrderLines(rows(s), r.id).length), [1, 1, 0], 'one rule names the merged line for both requirements');
+  assert.equal(requirementExecution(rows(s)).find(e => e.requirement.id === b.id)!.ordered, 0, 'b gets nothing of the 12');
+  // Delete: refused for b (nothing stored), allowed for the third line.
+  assert.throws(() => runAction(s, 'archive-iso-materials', { requirementIds: [b.id] }, actor, { hosted: true }), (error: { status?: number }) => error.status === 409);
+  assert.equal(s.get('iso_materials', b.id)._archived, false);
+  runAction(s, 'archive-iso-materials', { requirementIds: [third.id] }, actor, { hosted: true });
+  assert.equal(s.get('iso_materials', third.id, true)._archived, true);
+  // Dashboard: another line of the same material and project short 4 (listed first), a short 10, b short 5; the merged line has 12 open.
+  const identity = materialIdentity({ materialId: material.id } as unknown as Row);
+  const line = (requirementId: string, isoId: string, shortage: number) => ({ requirementId, isoId, identity, shortage, blockingBackorder: 0, notOrdered: 0, openLinked: 0, openExtra: 0 }) as unknown as Parameters<typeof allocateOpenOrders>[1][number];
+  const lines = [line('other', 'iso-1', 4), line(a.id, 'iso-1', 10), line(b.id, 'iso-2', 5)];
+  allocateOpenOrders(rows(s), lines, () => 'project-cooling');
+  assert.deepEqual(lines.map(item => [item.blockingBackorder, item.notOrdered]), [[0, 4], [10, 0], [2, 3]], 'the merged line blocks its own requirements (a 10, then b 2), not another line of its project');
+});

@@ -14,6 +14,7 @@ import {
   ALREADY_ON_SITE, LINK_NOTE, NOT_ON_SITE, USED_ON_SITE_RESOURCES, changedSites, cleanImportPlan, importFromSitePlan, linkOnAdd, materialOnSite, materialSiteIds, materialsOnSite,
   materialsUsedOnSite, siteLinkRows, takeOverLinks,
 } from '../shared/material-sites.ts';
+import { lineRequirementIds, requirementOrderLines } from '../shared/materials.ts';
 import { AppError, qty, type Actor, type Store } from './store.ts';
 import { actorOf, type AuthRequest } from './auth.ts';
 import type { releaseAccess } from './release-access.ts';
@@ -83,7 +84,7 @@ function archiveIsoMaterials(store: Store, data: Input, actor: Actor): MtoResult
   // Pilots (the reference disables Delete on an ordered line): a line that has an order stays, and nothing is archived then.
   if (store.hostedRules) {
     const rows = executionRows(store), lines = ids.map(id => store.get('iso_materials', id));
-    for (const line of lines) if (materialLineStatuses(rows, String(line.isoId)).get(line.id)?.hasOrder) throw new AppError(409, `${ORDERED_LINE_REFUSAL} Check the lines without an order and try again.`, { requirementIds: ORDERED_LINE_REFUSAL });
+    for (const line of lines) if (materialLineStatuses(rows, String(line.isoId)).get(line.id)?.hasOrder || requirementOrderLines(rows, line.id).length) throw new AppError(409, `${ORDERED_LINE_REFUSAL} Check the lines without an order and try again.`, { requirementIds: ORDERED_LINE_REFUSAL });
   }
   const records = ids.map(id => { const row = store.get('iso_materials', id); return store.archive('iso_materials', row.id, row._version, actor); });
   return { resource: 'iso_materials', records };
@@ -338,7 +339,7 @@ function sentRows(value: unknown): ImportRowInput[] {
 function linkableLines(store: Store, siteId: string, materialNo: string): Row[] {
   const projects = new Set(store.list('projects').filter(project => project.siteId === siteId).map(project => project.id));
   const isos = new Set(store.list('isometrics').filter(iso => projects.has(String(iso.projectId))).map(iso => iso.id));
-  const used = new Set(['order_lines', 'picklists', 'reservations', 'material_locations', 'service_requests', 'movements'].flatMap(key => store.list(key, true).map(row => String(row.requirementId || ''))));
+  const used = new Set(['order_lines', 'picklists', 'reservations', 'material_locations', 'service_requests', 'movements'].flatMap(key => store.list(key, true).flatMap(row => key === 'order_lines' ? lineRequirementIds(row) : [String(row.requirementId || '')])));
   const held = new Set(['stock', 'movements', 'order_lines', 'picklists'].flatMap(key => store.list(key, true).map(row => String(row.customMaterialId || ''))));
   return store.list('iso_materials').filter(line => !line.materialId && line.customMaterial && String(line.materialNo ?? '').trim() === materialNo && isos.has(String(line.isoId)) && !used.has(line.id) && !held.has(String(line.customMaterialId || '')));
 }

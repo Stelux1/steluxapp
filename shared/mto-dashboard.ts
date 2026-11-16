@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { materialIdentity, materialRecord, requirementExecution } from './materials.ts';
+import { lineRequirementIds, materialIdentity, materialRecord, requirementExecution } from './materials.ts';
 import { priorityLabel } from './priority.ts';
 import { freePool as sitePools, isTaken, poolKey, spoolLocation } from './mto-logistics.ts';
 import { isoSiteId } from './mto-stock.ts';
@@ -166,14 +166,19 @@ export function allocateOpenOrders(rows: Rows, lines: ScopeLine[], isoProject: (
   const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
   const requirementPool = new Map<string, number>(), isoPool = new Map<string, number>(), projectPool = new Map<string, number>();
   const add = (map: Map<string, number>, key: string, quantity: number) => map.set(key, round((map.get(key) || 0) + quantity));
-  const requirementIdentity = new Map(lines.map(line => [line.requirementId, line.identity]));
+  const inScope = new Map(lines.map(line => [line.requirementId, line]));
   for (const line of active(rows, 'order_lines')) {
     const order = orders.get(text(line.orderId)); if (!order) continue;
     const open = round(Number(line.quantity || 0) - Number(line.received || 0)); if (open <= 0) continue;
-    const identity = materialIdentity(line);
-    if (line.requirementId && requirementIdentity.get(text(line.requirementId)) === identity) add(requirementPool, text(line.requirementId), open);
-    else if (!line.requirementId && line.isoId) add(isoPool, `${line.isoId}|${identity}`, open);
-    else if (!line.requirementId) add(projectPool, `${text(order.projectId)}|${identity}`, open);
+    const identity = materialIdentity(line), ids = lineRequirementIds(line);
+    if (ids.length) {
+      // Its own requirement, or the requirements a line merged per material was ordered for: in requirement order, each up to its
+      // shortage, the rest on the last one (shared/materials.ts gives an ordered quantity out the same way).
+      const own = ids.map(id => inScope.get(id)).filter((item): item is ScopeLine => Boolean(item) && item!.identity === identity);
+      let left = open;
+      own.forEach((item, index) => { const share = index === own.length - 1 ? left : round(Math.min(left, Math.max(0, item.shortage))); if (share > 0) add(requirementPool, item.requirementId, share); left = round(left - share); });
+    } else if (line.isoId) add(isoPool, `${line.isoId}|${identity}`, open);
+    else add(projectPool, `${text(order.projectId)}|${identity}`, open);
   }
   const take = (map: Map<string, number>, key: string, wanted: number) => { const taken = round(Math.min(wanted, map.get(key) || 0)); if (taken > 0) map.set(key, round((map.get(key) || 0) - taken)); return taken; };
   for (const line of lines) {
@@ -345,7 +350,7 @@ function serverFilterEntries(rows: Rows, entries: Entry[], filters: DashboardFil
   if (filters.supplierId) {
     const orders = new Set(active(rows, 'orders').filter(order => order.status !== 'Cancelled' && text(order.supplierId) === filters.supplierId).map(order => order.id));
     const lines = active(rows, 'order_lines').filter(line => orders.has(text(line.orderId)));
-    kept = kept.filter(entry => lines.some(line => line.requirementId ? line.requirementId === entry.requirement.id : line.isoId === entry.iso.id && materialIdentity(line) === entry.identity));
+    kept = kept.filter(entry => lines.some(line => lineRequirementIds(line).length ? lineRequirementIds(line).includes(entry.requirement.id) : line.isoId === entry.iso.id && materialIdentity(line) === entry.identity));
   }
   return kept;
 }
@@ -381,9 +386,10 @@ export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { 
   for (const line of active(rows, 'order_lines')) {
     const order = orders.get(text(line.orderId)); if (!order || Number(line.quantity || 0) - Number(line.received || 0) <= 0) continue;
     if (filters.supplierId && text(order.supplierId) !== filters.supplierId) continue;
-    const isoId = line.requirementId ? scopeRequirements.get(text(line.requirementId)) || '' : scopeIsoMaterials.has(`${text(line.isoId)}|${materialIdentity(line)}`) ? text(line.isoId) : '';
-    if (!isoId) continue;
-    const date = day(order.date); if (date && (!oldestOpen.get(isoId) || date < oldestOpen.get(isoId)!)) oldestOpen.set(isoId, date);
+    const ids = lineRequirementIds(line);
+    const isoIds = ids.length ? [...new Set(ids.map(id => scopeRequirements.get(id) || '').filter(Boolean))] : scopeIsoMaterials.has(`${text(line.isoId)}|${materialIdentity(line)}`) ? [text(line.isoId)] : [];
+    const date = day(order.date); if (!date) continue;
+    for (const isoId of isoIds) if (!oldestOpen.get(isoId) || date < oldestOpen.get(isoId)!) oldestOpen.set(isoId, date);
   }
 
   const materialsOf = (own: ScopeLine[], pick: (line: ScopeLine) => number) => {
