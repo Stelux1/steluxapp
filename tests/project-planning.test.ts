@@ -87,7 +87,9 @@ test('hosted planning CRUD, formula spreadsheets, scoped exports and viewer perm
   }
   const password = 'Planning-Test-Password';
   assert.equal((await request('/auth/setup', 'POST', { name: 'Planning admin', email: 'plan@example.test', password })).status, 201);
-  let response = await request('/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'HTTP-PIPE', description: 'HTTP pipe', quantity: 2.5, uom: 'M' });
+  // MTO Pilot's Add material form always sends a Type (and the newest ISO revision while the isometric has one).
+  const revision = store.list('revisions').filter(row => row.type === 'ISO' && row.isoId === 'iso-1').sort((a, b) => String(b._createdAt).localeCompare(String(a._createdAt)))[0];
+  let response = await request('/actions/add-iso-material', 'POST', { isoId: 'iso-1', source: 'Custom', materialNo: 'HTTP-PIPE', description: 'HTTP pipe', quantity: 2.5, uom: 'M', phaseId: store.list('operation_phases')[0]?.id, ...(revision ? { revisionId: revision.id } : {}) });
   assert.equal(response.status, 201); const material = (await response.json()).record;
   response = await request('/records/calculation_norms', 'POST', { name: 'HTTP metre norm', uom: 'M', hoursPerUnit: 0.5 });
   assert.equal(response.status, 201); const norm = (await response.json()).record;
@@ -104,8 +106,11 @@ test('hosted planning CRUD, formula spreadsheets, scoped exports and viewer perm
     assert.equal((await request(`/reports/${key}?isoId=iso-2`)).status, 200);
     assert.doesNotMatch(await (await request(`/reports/${key}?isoId=iso-2`)).text(), /HTTP work|HTTP cut/);
   }
-  const update = await request(`/records/iso_materials/${material.id}`, 'PUT', { quantity: 5, _version: material._version }); assert.equal(update.status, 200);
-  assert.equal(buildReport('calculation', rows(store), { isoId: 'iso-1' }).rows[0].values.hours, 2.5);
+  // In MTO Pilot the quantity changes only through the quantity log (scn-SC-N2): the record route refuses it, and a removal by revision moves the hours.
+  assert.equal((await request(`/records/iso_materials/${material.id}`, 'PUT', { quantity: 5, _version: material._version })).status, 422);
+  assert.ok(revision, 'iso-1 has an ISO revision');
+  assert.equal((await request('/actions/remove-material-quantity', 'POST', { requirementId: material.id, revisionId: revision.id, quantity: 1.5 })).status, 201);
+  assert.equal(buildReport('calculation', rows(store), { isoId: 'iso-1' }).rows[0].values.hours, 0.5);
   const user = store.create('users', { name: 'Planning viewer', email: 'viewer-plan@example.test', profileId: 'profile-viewer', active: true });
   const { passwordHash } = await import('../server/auth.ts'); store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
   assert.equal((await request('/auth/login', 'POST', { email: user.email, password })).status, 200);

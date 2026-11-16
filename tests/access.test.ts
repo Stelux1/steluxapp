@@ -69,6 +69,7 @@ const status = async (response: Response) => response.status;
 const json = async <T = Record<string, unknown>>(response: Response) => await response.json() as T;
 
 /** Every request kind of the task, for one pilot. `ok` is the status of an allowed request. */
+const newestIsoRevision = (store: Store, isoId: string) => { const revision = store.list('revisions').filter(row => row.type === 'ISO' && row.isoId === isoId).sort((a, b) => String(b._createdAt).localeCompare(String(a._createdAt)))[0]; return revision ? { revisionId: revision.id } : {}; };
 async function requestKinds(as: { request: (path: string, options?: Options) => Promise<Response> }, store: Store, pilot: string, kind: 'weld' | 'mto', fileId: string) {
   const iso = store.get('isometrics', 'iso-1');
   const weldKinds = {
@@ -87,7 +88,8 @@ async function requestKinds(as: { request: (path: string, options?: Options) => 
     read: () => as.request('/records/iso_materials', { pilot }),
     write: () => { const row = store.list('iso_materials')[0]; return as.request(`/records/iso_materials/${row.id}`, { method: 'PUT', pilot, data: { chargeNo: `CH-${pilot}`, _version: row._version } }); },
     bulk: () => as.request('/bulk/isometrics', { method: 'POST', pilot, data: { ids: [iso.id], changes: { area: `Bulk ${pilot}` }, versions: { [iso.id]: store.get('isometrics', iso.id)._version } } }),
-    action: () => as.request('/actions/add-iso-material', { method: 'POST', pilot, data: { isoId: iso.id, source: 'Custom', materialNo: `ACCESS-${pilot}`, description: 'Access test pipe', quantity: 1, uom: 'M' } }),
+    // MTO Pilot's Add material form always sends a Type (and the newest ISO revision while the isometric has one).
+    action: () => as.request('/actions/add-iso-material', { method: 'POST', pilot, data: { isoId: iso.id, source: 'Custom', materialNo: `ACCESS-${pilot}`, description: 'Access test pipe', quantity: 1, uom: 'M', phaseId: store.list('operation_phases')[0]?.id, ...newestIsoRevision(store, iso.id) } }),
     report: () => as.request('/reports/mto', { pilot }),
     export: () => as.request('/export/iso_materials?format=csv', { pilot }),
     file: () => as.request(`/files/${fileId}`, { pilot }),

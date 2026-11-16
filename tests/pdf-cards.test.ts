@@ -419,7 +419,7 @@ test('the registry lists the four documents and the Reports menu declares their 
   assert.match(entry('weld-cards'), /pilots: \['weld'\].*page: 'isometric'/); assert.match(entry('weld-labels'), /pilots: \['weld'\].*page: 'isometric'/);
   assert.match(entry('mto-report'), /pilots: \['mto'\].*page: 'materials'/); assert.match(entry('certification-index'), /pilots: \['weld', 'mto'\].*page: 'certifications'.*scope: 'project'/);
   const mount = readFileSync(new URL('../client/mto-materials.tsx', import.meta.url), 'utf8');
-  assert.ok(mount.includes('<MtoPrintButton iso={iso}/>') && !mount.includes('window.print()'), 'Print of the MTO materials view makes the MTO report');
+  assert.ok(/<MtoPrintButton iso=\{iso\}( phaseId=\{typeFilter\})?\/>/.test(mount) && !mount.includes('window.print()'), 'Print of the MTO materials view makes the MTO report');
   const records = readFileSync(new URL('../client/records.tsx', import.meta.url), 'utf8');
   assert.ok(records.includes("resourceKey === 'certifications' && <CertificationIndexButton"), 'the button is on the Certifications page');
 });
