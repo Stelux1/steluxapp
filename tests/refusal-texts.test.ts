@@ -32,7 +32,7 @@ const NOT_GENERIC: string[] = [REFUSAL_TEXTS.conflict, REFUSAL_TEXTS.check, REFU
 
 test('scn-SB-D2: a duplicate Flange ID names the field and the value, at the field', async t => {
   const f = await fixture(t); await f.setup();
-  const flange = { isoId: 'iso-3', flange_id: 'FL-DUP-1', assetTag: 'AT-DUP-1', first_pass_nm: 50, second_pass_nm: 100, target_moment_nm: 150, max_dev: 5 };
+  const flange = { isoId: 'iso-3', flange_id: 'FL-DUP-1', line_number: 'AT-DUP-1', first_pass_nm: 50, second_pass_nm: 100, target_moment_nm: 150, max_dev: 5 };
   assert.equal((await f.request('/records/flanges', 'POST', flange)).status, 201);
   const body = await refused(await f.request('/records/flanges', 'POST', flange), 409);
   assert.equal(body.error, 'Flange ID FL-DUP-1 already exists.'); assert.ok(body.fields?.flange_id);
@@ -62,9 +62,9 @@ test('scn-SB-D3: refusals of action routes keep their own sentence and their fie
   const f = await fixture(t); await f.setup();
   let body = await refused(await f.request('/actions/reopen-release', 'POST', { isoId: 'iso-1', type: 'Field', reason: '', date: '2026-11-20' }), 422);
   assert.ok(!NOT_GENERIC.includes(body.error), body.error); assert.ok(body.fields?.reason, JSON.stringify(body));
-  body = await refused(await f.request('/actions/hydrotest-move', 'POST', { isoIds: ['iso-1'], testSystemId: 'test-st' }), 422);
+  body = await refused(await f.request('/actions/hydrotest-move', 'POST', { spoolIds: [], testSystemId: 'test-st' }), 422);
   assert.ok(!NOT_GENERIC.includes(body.error), body.error);
-  body = await refused(await f.request('/actions/hydrotest-result', 'POST', { requestId: 'hydrotest-st-1', result: 'Passed', actualPressure: '', date: '2026-11-22' }), 422);
+  body = await refused(await f.request('/actions/hydrotest-result', 'POST', { testSystemId: 'test-st', accepted: 'yes' }), 422);
   assert.ok(!NOT_GENERIC.includes(body.error), body.error); assert.ok(body.fields && Object.keys(body.fields).length);
   const fwp = f.db.list('field_packages').find(row => row.projectId !== f.db.get('isometrics', 'iso-1').projectId);
   if (fwp) { body = await refused(await f.request('/actions/assign-fwp', 'POST', { isoIds: ['iso-1'], fieldPackageId: fwp.id }), 422); assert.ok(!NOT_GENERIC.includes(body.error), body.error); }
@@ -123,7 +123,7 @@ test('record routes may only name delivered fields; action routes keep their hin
 
 test('an error from the store never carries the name or id of a record outside the answer', async t => {
   const f = await fixture(t); await f.setup();
-  const flange = { isoId: 'iso-3', flange_id: 'FL-SCOPE-1', assetTag: 'AT-S', first_pass_nm: 50, second_pass_nm: 100, target_moment_nm: 150, max_dev: 5 };
+  const flange = { isoId: 'iso-3', flange_id: 'FL-SCOPE-1', line_number: 'AT-S', first_pass_nm: 50, second_pass_nm: 100, target_moment_nm: 150, max_dev: 5 };
   await f.request('/records/flanges', 'POST', flange);
   const body = await refused(await f.request('/records/flanges', 'POST', flange), 409);
   const other = f.db.list('flanges').find(row => row.flange_id === 'FL-SCOPE-1')!;

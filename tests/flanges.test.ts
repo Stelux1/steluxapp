@@ -230,7 +230,7 @@ test('a flange needs no Flange ID; a filled one stays unique per isometric, and 
   assert.equal((await f.request(`/api/records/flanges/${blankRecord.id}`, 'PUT', { operator: 'Edited', _version: blankRecord._version })).status, 200, 'the flange without Flange ID can still be edited');
   assert.equal((await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3', flange_id: 'FL-U-1' })).status, 201);
   const again = await f.request('/api/records/flanges', 'POST', { isoId: 'iso-3', flange_id: 'FL-U-1' });
-  assert.equal(again.status, 422); assert.ok((await again.json()).fields.flange_id);
+  assert.equal(again.status, 409); const repeated = await again.json(); assert.equal(repeated.error, 'Flange ID FL-U-1 already exists.'); assert.ok(repeated.fields.flange_id);
   assert.equal((await f.request('/api/records/flanges', 'POST', { isoId: 'iso-1', flange_id: 'FL-U-1' })).status, 201, 'the same ID on another isometric');
   const iso = f.store.get('isometrics', 'iso-3'); const record = (await blank.json()).record;
   assert.equal(record.projectId, iso.projectId, 'stored from the isometric');

@@ -216,9 +216,8 @@ export class Store {
     for (const [name, message] of Object.entries(prepared.errors)) errors[name] ??= message;
     if (key === 'flanges') {
       for (const [name, message] of Object.entries(flangeInputErrors(data))) errors[name] ??= message;
-      // A Flange ID is unique per isometric, only when it is filled.
-      if (data.flange_id && data.isoId && this.list('flanges').some(r => r.id !== existing?.id && r.isoId === data.isoId && String(r.flange_id ?? '').trim() === data.flange_id)) errors.flange_id ??= 'This isometric already has a flange with this Flange ID.';
-      // The unique rule (isometric, Flange ID) also holds for an empty Flange ID: one flange without an ID per isometric.
+      // The unique rule (isometric, Flange ID): a repeated filled Flange ID is answered by the duplicate sentence
+      // ("Flange ID … already exists.", see `duplicate`); an empty one is refused here, at the field, as the index would refuse it.
       if (!String(data.flange_id ?? '').trim() && data.isoId && this.list('flanges').some(r => r.id !== existing?.id && r.isoId === data.isoId && !String(r.flange_id ?? '').trim())) errors.flange_id ??= 'This isometric already has a flange without a Flange ID. Enter a Flange ID.';
     }
     if (key === 'ndt_defect_codes' && actor.id !== SYSTEM.id) data.system = existing?.system === true;
