@@ -103,19 +103,20 @@ export function materialMassEdit(changes: Record<string, unknown>): Record<strin
 }
 
 /**
- * Delete a material for good, as the reference does. A material that any record points at (an isometric, an order, the
+ * Delete material, as the reference shows it. A material that any record points at (an isometric, an order, the
  * inventory, a certificate, a weld, earlier records included) or that has documents is refused, so nothing loses it.
+ * Underneath the record is archived, as in every other catalog; its Material No can be used again by a new material.
  */
 export function deleteMaterial(store: Store, id: string, version: unknown, actor: Actor): void {
   store.transaction(() => {
     const material = store.get('materials', id, true);
+    if (material._archived) throw new AppError(404, 'This material no longer exists.');
     if (material._version !== version) throw new AppError(409, 'This record changed. Refresh and try again.');
     for (const resource of RESOURCES) for (const field of resource.fields.filter(item => item.ref === 'materials')) {
       if (store.db.prepare(`SELECT id FROM "${resource.key}" WHERE "${field.name}"=? LIMIT 1`).get(id)) throw new AppError(422, `This material is used by ${resource.title.toLowerCase()} and cannot be deleted.`);
     }
     if (store.list('attachments', true).some(file => file.entityType === 'materials' && file.entityId === id)) throw new AppError(422, 'This material has documents and cannot be deleted.');
-    store.db.prepare('DELETE FROM "materials" WHERE id=? AND version=?').run(id, material._version);
-    store.audit('materials', id, 'deleted', `Deleted material ${store.display('materials', material)}`, actor);
+    store.archive('materials', id, material._version, actor);
   });
 }
 

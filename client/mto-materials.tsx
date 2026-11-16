@@ -126,7 +126,7 @@ function MassEditMaterials({ records, onClose }: { records: Row[]; onClose: (don
   </Form>;
 }
 
-/** Delete material: "Are you sure?" as the reference; the material is deleted for good, which the server refuses while anything uses it. */
+/** Delete material: "Are you sure?" as the reference; the server refuses it while anything uses the material, and archives the record underneath. */
 function DeleteMaterial({ record, onClose }: { record: Row; onClose: (done: boolean) => void }) {
   const { refresh, notify } = useWorkspace();
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);

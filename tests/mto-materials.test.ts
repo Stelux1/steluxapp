@@ -497,7 +497,7 @@ test('Add material: only the group and Material No are needed, UOM defaults to E
   assert.equal((await full.request('/api/records/materials', 'POST', { materialNo: 'FREE-1', uom: 'XX', description: 'Free code' })).status, 201);
 });
 
-test('Delete material deletes an unused material for good and refuses one an isometric uses', async t => {
+test('Delete material removes an unused material from the database (archived underneath) and refuses one an isometric uses', async t => {
   const f = await hostedFixture(t); await f.setup();
   const used = f.store.get('materials', 'material-1');
   assert.ok(f.store.list('iso_materials').some(line => line.materialId === used.id));
@@ -507,8 +507,14 @@ test('Delete material deletes an unused material for good and refuses one an iso
   assert.equal((await f.request(`/api/materials/${fresh.id}/delete`, 'POST', { _version: fresh._version + 1 })).status, 409, 'a stale version');
   response = await f.request(`/api/materials/${fresh.id}/delete`, 'POST', { _version: fresh._version });
   assert.equal(response.status, 200);
-  assert.equal(f.store.list('materials', true).some(item => item.id === fresh.id), false, 'gone, not archived');
-  assert.equal(f.store.history('materials', fresh.id).events[0].action, 'deleted');
+  assert.equal(f.store.list('materials').some(item => item.id === fresh.id), false, 'no longer in the material database');
+  assert.equal(f.store.get('materials', fresh.id, true)._archived, true, 'the record is still archived underneath');
+  assert.equal(f.store.history('materials', fresh.id).events[0].action, 'archived');
+  const listed = (await body(await f.request('/api/records/materials'))).rows as unknown as Row[];
+  assert.equal(listed.some(item => item.id === fresh.id), false, 'the list does not show it');
+  assert.equal((await f.request(`/api/materials/${fresh.id}/delete`, 'POST', { _version: f.store.get('materials', fresh.id, true)._version })).status, 404, 'a second delete does not restore it');
+  const reused = await f.request('/api/records/materials', 'POST', { materialGroup: 'Valve', materialNo: 'DEL-1' });
+  assert.equal(reused.status, 201, 'a new material may take the Material No of the deleted one');
   await f.signIn('Material reader 2', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'No access' });
   const other = f.store.create('materials', { materialGroup: 'Valve', materialNo: 'DEL-2', description: 'x' });
   assert.equal((await f.request(`/api/materials/${other.id}/delete`, 'POST', { _version: other._version })).status, 403);
