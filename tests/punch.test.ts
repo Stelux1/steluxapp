@@ -195,7 +195,8 @@ test('project-related items stay in the project and pilot scope; the sample show
     assert.ok(projectScope(rows, 'site-north').punchlists.some(item => item.id === related.id));
     assert.ok(!projectScope(rows, 'site-river').punchlists.some(item => item.id === related.id));
     assert.ok(pilotScope(rows, 'mto').punchlists.some(item => item.id === related.id));
-    const skid = pilotScope(rows, 'mto'); assert.ok(!skid.projects.some(project => project.id === 'project-skid'));
+    const off = { ...rows, projects: rows.projects.map(project => project.id === 'project-skid' ? { ...project, mtoPilot: false } : project) };
+    assert.ok(!pilotScope(off, 'mto').projects.some(project => project.id === 'project-skid'), 'a project switched off for MTO Pilot leaves it');
   } finally { store.close(); }
 });
 

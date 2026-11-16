@@ -102,19 +102,21 @@ test('the store rejects inconsistent progress weights with a clear message and s
   assert.equal(store.update('sites', created.id, { weightSite: 0, weightShop: 46, siteHydrotest: null, sitePaintTracing: null }, created._version).weightShop, 46);
 });
 
-test('sample data carries a configured site and a project that is enabled for one pilot only', t => {
+test('sample data carries a configured site; every sample project is enabled for both pilots', t => {
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
   const north = store.get('sites', 'site-north');
   assert.deepEqual(progressWeights(north).phases, { shop: 38, field: 54, site: 8 }); assert.equal(validateProgressWeights(north).valid, true);
   assert.equal(repairPerformanceLimit(north), 4); assert.equal(defectNorm(north), 'ISO 6520-1'); assert.equal(mandatoryFields(north), true);
   assert.equal(repairPerformanceLimit(store.get('sites', 'site-river')), 5);
   const projects = store.list('projects');
-  assert.deepEqual(projects.filter(project => !projectInPilot(project, 'mto')).map(project => project.id), ['project-skid']);
+  // STX-2403 carries the sample MTO requirements, orders and reservations, so it is on for MTO Pilot too.
+  assert.deepEqual(projects.filter(project => !projectInPilot(project, 'mto')).map(project => project.id), []);
   assert.ok(projects.every(project => projectInPilot(project, 'weld')));
 });
 
 test('a project switched off for a pilot disappears from that pilot together with its isometrics, welds and counts', t => {
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  const skid = store.get('projects', 'project-skid'); store.update('projects', skid.id, { mtoPilot: false }, skid._version);
   const rows = allRows(store);
   assert.equal(pilotScope(rows), rows); assert.equal(pilotScope(rows, undefined), rows);
   assert.equal(pilotScope(rows, 'weld'), rows, 'everything is enabled for Weld Pilot');
