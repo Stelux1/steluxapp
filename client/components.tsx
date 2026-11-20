@@ -176,7 +176,7 @@ export function FieldInput({ field, value, onChange, error, values = {}, allowed
   const common = { id, name: field.name, required: field.required, disabled: field.readonly, 'aria-invalid': Boolean(error), 'aria-describedby': error ? `${id}-error` : undefined };
   // A select shown as radio buttons (no empty option), each with its short explanation (NDT measurement of a main project).
   if (field.control === 'radio' && field.options) {
-    const chosen = field.options.includes(String(value)) ? String(value) : field.options[0];
+    const chosen = field.options.includes(String(value)) ? String(value) : field.legacy?.[String(value)] ?? field.options[0];
     return <fieldset className="field radio-field" aria-describedby={error ? `${id}-error` : undefined}><legend>{field.label}{field.required && <span className="required"> *</span>}</legend>{field.options.map(option => <label key={option} className="radio-option"><input type="radio" name={id} value={option} checked={chosen === option} disabled={field.readonly} onChange={() => onChange(option)}/><span>{option}{field.optionHints?.[option] && <small className="field-hint">{field.optionHints[option]}</small>}</span></label>)}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</fieldset>;
   }
   if (field.type === 'checkbox') return <div className="field checkbox-field"><label htmlFor={id}><input {...common} type="checkbox" checked={Boolean(value)} onChange={e => onChange(e.target.checked)}/><span>{field.label}</span></label>{field.hint && <small className="field-hint">{field.hint}</small>}{error && <small id={`${id}-error`} className="field-error">{error}</small>}</div>;

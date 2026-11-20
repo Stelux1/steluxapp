@@ -612,11 +612,11 @@ test('VT generate: three welds get the next number of the main project and are l
   const rules = inspectionRules(store, SYSTEM);
   const ids = isoWelds(store);
   const first = rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: ids.slice(0, 3), activityNo: '4.2', customNo: 'C-9', mode: 'Go (PDF)' }).record!;
-  assert.equal(first.number, 'VT 1'); assert.equal(first.itp, 'ITP 1', 'ITP defaults to ITP 1'); assert.equal(first.mode, 'Go (PDF)'); assert.equal(first.activityNo, '4.2'); assert.equal(first.customNo, 'C-9');
+  assert.equal(first.number, '00001', 'new numbers are 5 digits'); assert.equal(first.itp, 'ITP 1', 'ITP defaults to ITP 1'); assert.equal(first.mode, 'Go (PDF)'); assert.equal(first.activityNo, '4.2'); assert.equal(first.customNo, 'C-9');
   assert.equal(String(first.weldIds).split(',').length, 3); assert.deepEqual(String(first.weldIds).split(','), ids.slice(0, 3));
   assert.ok(first.siteId, 'the number counts per main project');
   const second = rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: [ids[3]], itp: 'ITP 2' }).record!;
-  assert.equal(second.number, 'VT 2'); assert.equal(second.itp, 'ITP 2');
+  assert.equal(second.number, '00002'); assert.equal(second.itp, 'ITP 2');
   assert.throws(() => rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: [ids[0], ids[3]] }), /already on a visual report/);
   assert.throws(() => rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: ['weld-2'] }), /not on this isometric/);
   assert.throws(() => rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: [] }), /at least one weld/);
@@ -626,7 +626,7 @@ test('VT generate: three welds get the next number of the main project and are l
   assert.equal(nextVtSeq(store.list('visual_reports', true), siteId), 3);
   assert.equal(nextVtSeq(store.list('visual_reports', true), 'another-site'), 1);
   store.update('visual_reports', second.id, { seq: 345, number: 'VT 345' }, store.get('visual_reports', second.id)._version);
-  assert.equal(rules.run('visual-inspection', { op: 'generate', isoId: 'iso-2', weldIds: [isoWelds(store, 'iso-2')[0]] }).record!.number, 'VT 346');
+  assert.equal(rules.run('visual-inspection', { op: 'generate', isoId: 'iso-2', weldIds: [isoWelds(store, 'iso-2')[0]] }).record!.number, '00346', 'the sequence continues after an older "VT 345"');
 });
 
 test('VT upload: A and NA are saved weld by weld, the PDF closes the report only when every weld is marked', t => {
@@ -645,7 +645,7 @@ test('VT upload: A and NA are saved weld by weld, the PDF closes the report only
   assert.equal(vtOpenReports(store.list('visual_reports'), results(), 'iso-1').length, 1, 'the report still has an open weld');
   assert.throws(() => rules.run('visual-inspection', { op: 'upload', reportId: report.id }), /Each weld must have A \(accepted\) or NA \(not accepted\) before upload\. Missing: W\d+/);
   rules.run('visual-inspection', { op: 'marks', reportId: report.id, date: '2026-10-31', accepted: [ids[2]] });
-  assert.equal(results().filter(row => row.type === 'VI' && row.reportNo === 'VT 1').length, 3);
+  assert.equal(results().filter(row => row.type === 'VI' && row.reportNo === '00001').length, 3);
   assert.equal(vtOpenReports(store.list('visual_reports'), results(), 'iso-1').length, 0);
   assert.equal(vtUploadReports(store.list('visual_reports'), 'iso-1').length, 1, 'a fully marked report waits for its PDF');
   assert.throws(() => rules.run('visual-inspection', { op: 'upload', reportId: report.id }), /at least one PDF/);
@@ -688,7 +688,7 @@ test('VT archive: deleting a generated report frees its welds and takes its resu
   rules.run('visual-inspection', { op: 'delete', reportIds: [report.id] });
   assert.deepEqual(store.list('visual_reports'), []); assert.equal(store.list('inspection_results').filter(row => row.type === 'VI').length, 0);
   assert.ok(ids.every(id => eligible().includes(id)), 'the welds are back in the New picker');
-  assert.equal(rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: ids }).record!.number, 'VT 2', 'a deleted number is not used again');
+  assert.equal(rules.run('visual-inspection', { op: 'generate', isoId: 'iso-1', weldIds: ids }).record!.number, '00002', 'a deleted number is not used again');
   assert.throws(() => rules.run('visual-inspection', { op: 'delete', reportIds: ['missing'] }), /could not be found|not found/i);
 });
 
@@ -704,7 +704,7 @@ test('VT delivery and access: the hosted profile delivers the report record and 
   assert.equal((await reader.request('/actions/visual-inspection', 'POST', 'weld', { op: 'generate', isoId: 'iso-1', weldIds: ids })).status, 403);
   assert.equal((await inspector.request('/actions/visual-inspection', 'POST', 'mto', { op: 'generate', isoId: 'iso-1', weldIds: ids })).status, 403);
   const made = await inspector.request('/actions/visual-inspection', 'POST', 'weld', { op: 'generate', isoId: 'iso-1', weldIds: ids.slice(0, 2), itp: 'ITP 2', engineerId: 'qa-1' });
-  assert.equal(made.status, 201); assert.equal((await made.json()).record.number, 'VT 1');
+  assert.equal(made.status, 201); assert.equal((await made.json()).record.number, '00001');
   assert.equal((await inspector.request('/actions/visual-inspection', 'POST', 'weld', { op: 'generate', isoId: 'iso-1', weldIds: ids.slice(0, 1) })).status, 422, 'a weld cannot go on a second report');
   assert.equal((await inspector.request('/actions/visual-inspection', 'POST', 'weld', { op: 'generate', isoId: 'iso-1', weldIds: ids.slice(2, 3), secret: 'x' })).status, 404, 'unknown inputs are refused');
   assert.equal((await reader.request('/records/visual_reports', 'GET', 'weld')).status, 200);
@@ -712,7 +712,7 @@ test('VT delivery and access: the hosted profile delivers the report record and 
   assert.equal(listed.rows.length, 1);
   const report = listed.rows[0];
   // The report's PDF lists its welds before any result is marked, and the PDF files are attached to the report.
-  const pdf = await inspector.request(`/pdf/visual-report?reportNo=${encodeURIComponent('VT 1')}`, 'GET', 'weld');
+  const pdf = await inspector.request(`/pdf/visual-report?reportNo=${encodeURIComponent('00001')}`, 'GET', 'weld');
   assert.equal(pdf.status, 200); assert.equal(pdf.headers.get('content-type'), 'application/pdf');
   const form = new FormData(); form.set('entityType', 'visual_reports'); form.set('entityId', report.id); form.set('documentType', VT_DOCUMENT); form.set('file', new Blob(['%PDF-1.4']), 'vt-1.pdf');
   assert.equal((await inspector.request('/files', 'POST', 'weld', form)).status, 201);

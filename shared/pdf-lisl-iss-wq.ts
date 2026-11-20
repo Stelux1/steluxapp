@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { ISS_NDT_STANDARDS, LISL_VT_SOURCES } from './site-settings.ts';
+import { ISS_NDT_STANDARDS, LISL_VT_SOURCES, LISL_VT_SOURCE_LEGACY } from './site-settings.ts';
 import { lislModel, printDate, type LislEntry, type LislModel } from './pdf-lisl.ts';
 import { NDT_FORM_COLUMNS, VT_COLUMN, ndtFormCells, ndtLookups, type NdtCell, type NdtFormColumn } from './pdf-ndt-columns.ts';
 
@@ -59,7 +59,7 @@ export interface IssModel extends FormBase {
  * existed) prints the VT column as it always did, `vt2` prints the report number of the weld's visual inspection report
  * (the newest VI result) and nothing else in that column.
  */
-export const issVtSource = (site?: Row | null): 'ndt' | 'vt2' => text(site?.lislVtSource) === LISL_VT_SOURCES[1] ? 'vt2' : 'ndt';
+export const issVtSource = (site?: Row | null): 'ndt' | 'vt2' => [LISL_VT_SOURCES[1], LISL_VT_SOURCE_LEGACY].includes(text(site?.lislVtSource) as typeof LISL_VT_SOURCES[1]) ? 'vt2' : 'ndt';
 /** The columns of [ISS] for a site: the standard set, with the VT column reading from the visual inspection report when the site says so. */
 export const issVtColumns = (site?: Row | null): NdtFormColumn[] => issVtSource(site) === 'vt2' ? NDT_FORM_COLUMNS.iss.map(item => item.id === 'vt' ? { ...item, match: { VI: 'any' } } : item) : NDT_FORM_COLUMNS.iss;
 export const issMethodLines =(cell: NdtCell | undefined): string[] => cell?.result ? lines(cell.result, cell.report, printDate(cell.date)) : [];

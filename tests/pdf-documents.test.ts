@@ -169,11 +169,10 @@ test('Visual inspection report: ITP, activity, engineer with stamp, VT fields of
   const f = await fixture(t);
   const path = 'visual-report?reportNo=VT-2026-014';
   const text = await get(f, path);
-  for (const label of ['Visual inspection report', 'Report VT-2026-014', 'ITP', 'ITP 1', 'Activity no.', '4.2', 'Custom no.', 'NFY-VT-07', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Inspection date', 'VT type 2 order No', 'PO-44017', 'VT 2 prefix', 'VT2', 'Accepted', 'applicable', 'Weld no.', 'Reviewed by']) assert.ok(text.includes(label), label);
+  for (const label of ['Visual inspection VT-2026-014', 'ITP', 'ITP 1', 'Activity no.', '4.2', 'Custom no.', 'NFY-VT-07', 'QA/QC engineer', 'Morgan Lee - stamp ML-07', 'Inspection date', 'VT-NFY-01 rev B', 'VT Procedure No.', 'PR-VT-004', 'Accepted', 'applicable', 'Weld no.', 'Reviewed by']) assert.ok(text.includes(label), label);
   for (const id of ['weld-1', 'weld-10', 'weld-19']) assert.ok(text.includes(weldNo(f.store, id)), id);
   assert.equal(text.filter(line => line === 'X').length, 3, 'one mark per weld');
-  assert.ok(text.includes('15.06.2026'), 'VT type 2 date prints as dd.mm.yyyy');
-  assert.ok(!text.includes('VT-NFY-01 rev B') && !text.includes('PR-VT-004'), 'a version 2 report prints no version 1 lines');
+  for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix', 'Visual inspection report']) assert.ok(!text.includes(label), `${label} is not printed`);
   assert.equal((await f.admin.request('/pdf/visual-report?reportNo=NOPE', { pilot: 'weld' })).status, 404);
   const before = await pdf(await f.admin.request(`/pdf/${path}`, { pilot: 'weld' }));
   assert.ok(!hasImage(before), 'no signature when the engineer has none');
@@ -602,18 +601,17 @@ test('every operational document has an access key that names a resource, and no
   assert.equal(canReport(nobody, 'pdf-punch', 'export'), true, 'without an availability (full profile) the key follows the resource');
 });
 
-test('Visual inspection report: the main project switch Visual Inspection Ver 2 decides the header lines (version 1: Doc.No. & Rev.No. and Procedure No.; version 2: VT type 2 lines and the VT 2 prefix)', async t => {
+test('Visual inspection report: one report whatever the stored Ver 2 switch says; the VT type 2 values stay stored but are not printed', async t => {
   const f = await fixture(t);
-  // The sample main project with the VT document settings (the sites share one creation time, so list order does not tell).
   const site = f.store.list('sites').find(row => row.vtDocNo === 'VT-NFY-01 rev B')!;
-  const off = f.store.update('sites', site.id, { vt2Enabled: false }, site._version, SYSTEM);
-  const v1 = await get(f, 'visual-report?reportNo=VT-2026-014');
-  for (const label of ['VT-NFY-01 rev B', 'VT Procedure No.', 'PR-VT-004']) assert.ok(v1.includes(label), label);
-  for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix']) assert.ok(!v1.includes(label), `${label} stays off a version 1 report`);
-  f.store.update('sites', site.id, { vt2Enabled: true }, off._version, SYSTEM);
-  const v2 = await get(f, 'visual-report?reportNo=VT-2026-014');
-  for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix', 'VT2']) assert.ok(v2.includes(label), label);
-  assert.ok(!v2.includes('VT Procedure No.') && !v2.includes('PR-VT-004'));
+  const stored = f.store.update('sites', site.id, { vt2Enabled: true, vtType2OrderNo: 'PO-44017', vt2Prefix: 'VT2' }, site._version, SYSTEM);
+  for (const enabled of [true, false]) {
+    if (!enabled) f.store.update('sites', site.id, { vt2Enabled: false }, stored._version, SYSTEM);
+    const text = await get(f, 'visual-report?reportNo=VT-2026-014');
+    for (const label of ['Visual inspection VT-2026-014', 'VT-NFY-01 rev B', 'VT Procedure No.', 'PR-VT-004']) assert.ok(text.includes(label), label);
+    for (const label of ['VT type 2 order No', 'PO-44017', 'VT 2 prefix']) assert.ok(!text.includes(label), `${label} stays off the report`);
+  }
+  assert.equal(f.store.get('sites', site.id).vtType2OrderNo, 'PO-44017', 'the stored value is untouched');
 });
 
 test('mto-logistics-004: a confirmed request with two spools of two projects yields the Service request and the Release note, two project groups each and three signature blocks', async t => {

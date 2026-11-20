@@ -62,7 +62,7 @@ function FilePicker({ id, label, files, onChange, pdf = false, hint, single = fa
 }
 function FileLinks({ files }: { files: Row[] }) {
   if (!files.length) return <p className="muted">No documents yet.</p>;
-  return <ul className="inspection-files">{files.map(file => <li key={file.id}><a href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a></li>)}</ul>;
+  return <ul className="inspection-files">{files.map(file => <li key={file.id}><a target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a></li>)}</ul>;
 }
 /** Selected welds, or a picker over the given welds when none are selected. */
 function WeldPicker({ welds, value, onChange, label = 'Welds' }: { welds: Row[]; value: string[]; onChange: (ids: string[]) => void; label?: string }) {
@@ -266,7 +266,7 @@ export function WeldArchiveDialog({ weld, kind, onClose }: { weld: Row; kind: In
   async function open(type: string, number: string) { setError(''); try { await openRequestPdf(type, number, false); } catch (failure) { setError((failure as ApiError).message || 'The request document could not be opened.'); } }
   return <Modal title={title} onClose={onClose}><div className="modal-body"><Alert message={error}/>
     {state.archive.length ? <TableScroll><table className="data-table" aria-label={title}><thead><tr><th scope="col">Document</th><th scope="col">Date</th>{!pwht && <th scope="col">Details</th>}</tr></thead><tbody>{state.archive.map(item => <tr key={item.key}>
-      <td>{item.file ? <a className="text-link" href={apiUrl(`/files/${item.file.id}`)} title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`}>{item.document}</a> : <button type="button" className="text-link" title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`} onClick={() => void open(item.type, item.number)}>{item.document}</button>}</td>
+      <td>{item.file ? <a className="text-link" target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${item.file.id}`)} title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`}>{item.document}</a> : <button type="button" className="text-link" title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`} onClick={() => void open(item.type, item.number)}>{item.document}</button>}</td>
       <td>{item.date}</td>{!pwht && <td><Link className="text-link" to={MANAGER_PATH} title={`Open request ${item.shown} in the NDT request archive`}>Details</Link></td>}</tr>)}</tbody></table></TableScroll>
       : <EmptyState title="No requests yet" description={`Weld ${weldName(weld)} is not on a ${pwht ? 'PWHT' : 'NDT'} request.`}/>}
   </div><Footer busy={false} onClose={onClose}/></Modal>;
@@ -319,7 +319,7 @@ export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => vo
     </div></section>; }) : <EmptyState title="No heat treatment required" description="Tick Pre-HT or PWHT required on the weld first."/>}
     {sections.length > 0 && <>
       {editable && <FilePicker id="pwht-weld-file" label="Document (Only PDFs are allowed)" files={files} onChange={setFiles} pdf single hint="One PDF file."/>}
-      {stored.length > 0 && <fieldset className="field full-width inspection-files"><legend>Documents</legend>{stored.map(file => <label key={file.id}><a href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a>{editable && canRun('pwht-weld', { deleteFileIds: [file.id] }) && <span className="inspection-delete"><input type="checkbox" aria-label={`Check for delete ${file.name}`} checked={removing.includes(file.id)} onChange={e => setRemoving(e.target.checked ? [...removing, file.id] : removing.filter(id => id !== file.id))}/> Check for delete</span>}</label>)}</fieldset>}
+      {stored.length > 0 && <fieldset className="field full-width inspection-files"><legend>Documents</legend>{stored.map(file => <label key={file.id}><a target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${file.id}`)}><FileText size={14}/>{String(file.name)}</a>{editable && canRun('pwht-weld', { deleteFileIds: [file.id] }) && <span className="inspection-delete"><input type="checkbox" aria-label={`Check for delete ${file.name}`} checked={removing.includes(file.id)} onChange={e => setRemoving(e.target.checked ? [...removing, file.id] : removing.filter(id => id !== file.id))}/> Check for delete</span>}</label>)}</fieldset>}
     </>}
   </div><Footer busy={busy} onClose={onClose} submit={editable && sections.length ? 'Save' : undefined}/></form></Modal>;
 }

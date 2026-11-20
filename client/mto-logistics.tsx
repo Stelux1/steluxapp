@@ -479,7 +479,7 @@ function RequestOptions({ request, onUpload }: { request: ArchiveRequest; onUplo
       {upload && !request.signOff && <button type="button" className="btn small" title="Upload" aria-label={`Upload the signed document of ${request.number}`} onClick={onUpload}><Upload size={14}/></button>}
       {request.files.signed && <a className="btn small" href={documentUrl(request, 'signed')} target="_blank" rel="noopener" title="Download" aria-label={`Download the signed document of ${request.number}`}><Download size={14}/></a>}
     </>}
-    {request.documents.map(document => <a key={document.id} className="btn small" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
+    {request.documents.map(document => <a key={document.id} className="btn small" target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
 }
 const documentUrl = (request: ArchiveRequest, kind: 'service-request' | 'coating-release' | 'signed') => apiUrl(`/service-requests/${encodeURIComponent(request.headId)}/document/${kind}`);
 /** Upload signed doc: attach a scanned signed PDF to the request (the request is then signed and read-only). */

@@ -198,3 +198,28 @@ test('PostgreSQL cloud preparation rejects internal workspaces and preserves acc
     } finally { rmSync(backupDir, { recursive: true, force: true }); }
   } finally { db.close(); }
 });
+
+test('attachments open for a preview: a PDF or image is served inline by its bytes, anything else and ?download=1 as an attachment, always with nosniff and a restrictive CSP', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'stelux-preview-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new Store(join(dir, 'database.sqlite')); seed(store); const app = await serve(store, join(dir, 'runtime')); t.after(async () => { await app.close(); store.close(); });
+  const setup = await app.request('/api/auth/setup', 'POST', { name: 'Cloud administrator', email: 'cloud@example.test', password: 'Test-Password-123' });
+  const cookie = setup.headers.get('set-cookie')!.split(';')[0];
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('payload')]);
+  const send = async (name: string, content: Buffer | string) => { const form = new FormData(); form.set('entityType', 'welds'); form.set('entityId', 'weld-1'); form.set('file', new Blob([new Uint8Array(Buffer.from(content))]), name); const response = await app.request('/api/files', 'POST', form, cookie); assert.equal(response.status, 201, name); return (await response.json()).record.id as string; };
+  const get = (id: string, query = '', withCookie = cookie) => app.request(`/api/files/${id}${query}`, 'GET', undefined, withCookie);
+  const pdf = await get(await send('certificate.pdf', '%PDF-1.4 certificate'));
+  assert.equal(pdf.status, 200); assert.equal(pdf.headers.get('content-type'), 'application/pdf'); assert.match(pdf.headers.get('content-disposition')!, /^inline; filename="?certificate\.pdf"?/);
+  assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff'); assert.match(pdf.headers.get('content-security-policy')!, /default-src 'none'/); assert.doesNotMatch(pdf.headers.get('content-security-policy')!, /sandbox/, 'the PDF viewer needs the policy without the sandbox directive');
+  const image = await get(await send('photo.png', png));
+  assert.equal(image.headers.get('content-type'), 'image/png'); assert.match(image.headers.get('content-disposition')!, /^inline/); assert.deepEqual(Buffer.from(await image.arrayBuffer()), png); assert.match(image.headers.get('content-security-policy')!, /; sandbox$/);
+  // Decided by the bytes, not the name: HTML named .pdf or .png is an attachment; a PDF named .txt is still a PDF.
+  for (const [name, content] of [['fake.pdf', '<html><script>alert(1)</script></html>'], ['fake.png', '<svg xmlns="http://www.w3.org/2000/svg"></svg>'], ['notes.txt', 'plain text']] as const) {
+    const response = await get(await send(name, content));
+    assert.match(response.headers.get('content-disposition')!, /^attachment/, name); assert.equal(response.headers.get('content-type'), 'application/octet-stream', name); assert.equal(response.headers.get('x-content-type-options'), 'nosniff', name);
+  }
+  assert.equal((await get(await send('really-a-pdf.txt', '%PDF-1.7 x'))).headers.get('content-type'), 'application/pdf');
+  const forced = await get(await send('again.pdf', '%PDF-1.4 again'), '?download=1');
+  assert.match(forced.headers.get('content-disposition')!, /^attachment/); assert.equal(forced.headers.get('x-content-type-options'), 'nosniff');
+  const id = await send('private.pdf', '%PDF-1.4 private');
+  assert.equal((await get(id, '', '')).status, 401, 'a request without an account is refused as before');
+});

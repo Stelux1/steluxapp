@@ -508,6 +508,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
       const name = basename(req.file.originalname).replace(/[\r\n]/g, '');
       if (!/\.(pdf|png|jpe?g|webp|csv|xlsx|docx|txt)$/i.test(name)) throw new AppError(422, 'Choose a PDF, image, CSV, Excel, Word, or text file.');
       const inspectionFile = inspectionFileError(req.body.documentType, name); if (inspectionFile) throw new AppError(422, inspectionFile);
+      if (pilots && key === 'certifications' && !/\.pdf$/i.test(name)) throw new AppError(422, 'Choose a PDF file for the certificate.');
       if (pilots && key === 'wps' && !/\.pdf$/i.test(name)) throw new AppError(422, 'Choose a PDF file for the WPS document.');
       if (pilots && key === 'releases' && !/\.pdf$/i.test(name)) throw new AppError(422, 'Only PDF files are allowed for signed release documents.');
       // A new signature image replaces the current one; earlier images stay as attachments (history).
@@ -519,7 +520,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   });
   app.get('/api/files/:id', (req, res) => {
     const file = access.record('attachments', String(req.params.id)); checkResourcePermission(req,String(file.entityType),'show',access.record(String(file.entityType),file.entityId,true));
-    documents.download(file.id, String(file.name), res);
+    documents.download(file.id, String(file.name), res, req.query.download === '1');
   });
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'This API endpoint does not exist.')));
   const dist = resolve(options.distDir || (options.releaseProfile === 'access-prototype' ? 'dist-access-prototype' : availability ? 'dist-welding-demo' : 'dist'));

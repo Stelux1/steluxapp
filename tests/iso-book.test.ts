@@ -148,7 +148,9 @@ test('the merged book: cover with project, isometric, revision, date and content
   await ok(await f.upload(f.admin, 'wps', 'wps-1', await f.document('WPSDOC', 1), 'wps-1.pdf'));
   await ok(await f.upload(f.admin, 'wps', 'wps-1', Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 10 10]>>endobj\n4 0 obj<</Filter/Standard/V 1/R 2/O(x)/U(y)/P -4>>endobj\ntrailer<</Root 1 0 R/Size 5/Encrypt 4 0 R>>\n%%EOF'), 'locked.pdf'));
   await ok(await f.upload(f.admin, 'certifications', 'certificate-1', await f.document('CERT1', 1), 'cert-1.pdf'));
-  await ok(await f.upload(f.admin, 'certifications', 'cert-h1043', Buffer.from('PK\x03\x04 a word document'), 'cert-h1043.docx'));
+  // A certificate takes a PDF only now; a Word file stored on one earlier is simulated by renaming a stored attachment.
+  await ok(await f.upload(f.admin, 'certifications', 'cert-h1043', Buffer.from('PK\x03\x04 a word document'), 'cert-h1043.pdf'));
+  const older = f.store.list('attachments').find(row => row.name === 'cert-h1043.pdf')!; f.store.update('attachments', older.id, { name: 'cert-h1043.docx' }, older._version, SYSTEM);
   await ok(await f.upload(f.admin, 'certifications', 'certificate-3', await f.document('CERT3', 1), 'unused.pdf'));
   const parts = ['task-sheet', 'itp', 'isometric', 'ndt', 'wps', 'material-certificates', 'lisl:lisl', 'lisl-blank', 'welders-summary', ...(await f.parts(f.admin, 'iso-1')).parts.filter(part => part.source === 'custom' && part.available).map(part => part.key)];
   const response = await f.book(f.admin, { isoIds: ['iso-1'], parts });

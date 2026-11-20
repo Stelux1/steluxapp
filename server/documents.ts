@@ -39,18 +39,25 @@ export function documentStorage(store: Store, dataDir: string, mode: DocumentSto
       const path = store.db.prepare('SELECT filename FROM upload_paths WHERE attachment_id=?').get(id) as { filename: string } | undefined;
       return path && existsSync(join(uploadsDir, path.filename)) ? readFileSync(join(uploadsDir, path.filename)) : null;
     },
-    download(id: string, name: string, res: Response) {
-      res.setHeader('Cache-Control', 'no-store');
-      if (mode === 'database') {
-        const blob = store.db.prepare('SELECT content FROM upload_blobs WHERE attachment_id=?').get(id) as { content: string } | undefined;
-        if (!blob) throw new AppError(404, 'This file is unavailable.');
-        res.attachment(name).type('application/octet-stream').send(Buffer.from(blob.content, 'base64'));
-      } else {
-        const path = store.db.prepare('SELECT filename FROM upload_paths WHERE attachment_id=?').get(id) as { filename: string } | undefined;
-        if (!path || !existsSync(join(uploadsDir, path.filename))) throw new AppError(404, 'This file is unavailable.');
-        // Relative to the uploads folder: `send` refuses absolute paths with a dot segment (such as `.data/`), even here.
-        res.download(path.filename, name, { root: uploadsDir });
-      }
+    /** Send an attachment. A PDF or a PNG/JPEG/GIF/WEBP image (decided by its bytes, never its name) opens inline for a preview; everything else, and `?download=1`, is an attachment. */
+    download(id: string, name: string, res: Response, forceDownload = false) {
+      res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); const bytes = this.read(id); if (!bytes) throw new AppError(404, 'This file is unavailable.');
+      const inline = inlineType(bytes);
+      // Chrome's PDF viewer does not run inside a CSP sandbox, so a PDF gets the same policy without that one directive.
+      res.setHeader('Content-Security-Policy', `default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'${inline === 'application/pdf' && !forceDownload ? '' : '; sandbox'}`);
+      if (inline && !forceDownload) { res.attachment(name); res.setHeader('Content-Disposition', String(res.getHeader('Content-Disposition')).replace(/^attachment/, 'inline')); res.type(inline).send(bytes); }
+      else res.attachment(name).type('application/octet-stream').send(bytes);
     },
   };
+}
+
+/** The content type a file may be previewed as, from its first bytes (PDF, PNG, JPEG, GIF, WEBP); null for anything else. */
+export function inlineType(bytes: Buffer): string | null {
+  const head = bytes.subarray(0, 16);
+  if (head.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
+  if (head.length >= 8 && head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg';
+  if (['GIF87a', 'GIF89a'].includes(head.subarray(0, 6).toString('latin1'))) return 'image/gif';
+  if (head.length >= 12 && head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
 }
