@@ -14,7 +14,7 @@ export const PERMISSION_VERBS:PermissionVerb[]=['show','insert','edit','delete',
 export const VERB_LABELS:Record<PermissionVerb,string>={show:'View',insert:'Add',edit:'Edit',delete:'Archive',export:'Export',import:'Import',print:'Print'};
 export interface PermissionArea {key:string;name:string;module:Module;verbs:PermissionVerb[];}
 export const RESOURCE_SCOPES:Record<string,string[]>={
- calculation_norms:['71'],calculation_lines:['71'],cut_list:['71'],cut_fittings:['71'],coatings:['84'],sites:['4'],projects:['5'],materials:['6'],material_parts:['7'],material_types:['8'],uoms:['9'],spools:['10'],spool_names:['10'],operation_phases:['11'],suppliers:['12'],orders:['17','14','13'],order_lines:['17','14','13'],rfqs:['13'],rfq_lines:['13'],stock:['16'],movements:['16'],picklists:['21'],service_companies:['22'],service_requests:['24'],spool_moves:['24'],laydowns:['25'],users:['26'],user_sites:['26'],company_data:['26'],welders:['68'],certificate_types:['40'],certifications:['18'],companies:['37'],roles:['39'],welder_customs_catalog:['41'],wps:['42'],weld_processes:['43'],weld_types:['44'],diameters:['45'],ndt_processes:['46'],ndt_locations:['47'],pwht_processes:['48'],pwht_locations:['49'],profiles:['53'],clients:['59'],tool_movements:['60'],articles:['61'],tool_stock:['61'],rentals:['62'],welds:['63'],isometrics:['64'],revisions:['64'],inspection_requests:['50','65'],inspection_results:['76','94','97','116'],visual_reports:['116'],iso_materials:['70'],custom_materials:['70'],qa_engineers:['73'],warehouses:['75'],punchlists:['77'],ndt_groups:['79'],daily_reports:['82'],attachment_names:['85'],releases:['86','89','74'],test_systems:['87'],material_laydowns:['88'],field_packages:['90'],signatures:['96'],pqr:['98'],qualification_options:['98'],welding_wires:['99'],flanges:['100'],material_locations:['local-material-logistics'],material_location_events:['local-material-logistics'],material_quantity_changes:['70'],welder_certificates:['local-welder-certificates'],attachments:['local-documents'],wps_pqr:['42'],wps_projects:['42'],wps_sites:['42'],welder_sites:['68'],welder_customs:['68'],ndt_defect_codes:['46'],catalog_sites:['44','84','46','47','48','49','73','22','25','6','10'],itps:['120'],itp_projects:['120'],receipts:['15'],reservations:['20']
+ calculation_norms:['71'],calculation_lines:['71'],cut_list:['71'],cut_list_revisions:['71'],cut_fittings:['71'],coatings:['84'],sites:['4'],projects:['5'],materials:['6'],material_parts:['7'],material_types:['8'],uoms:['9'],spools:['10'],spool_names:['10'],operation_phases:['11'],suppliers:['12'],orders:['17','14','13'],order_lines:['17','14','13'],rfqs:['13'],rfq_lines:['13'],stock:['16'],movements:['16'],picklists:['21'],service_companies:['22'],service_requests:['24'],spool_moves:['24'],laydowns:['25'],users:['26'],user_sites:['26'],company_data:['26'],welders:['68'],certificate_types:['40'],certifications:['18'],companies:['37'],roles:['39'],welder_customs_catalog:['41'],wps:['42'],weld_processes:['43'],weld_types:['44'],diameters:['45'],ndt_processes:['46'],ndt_locations:['47'],pwht_processes:['48'],pwht_locations:['49'],profiles:['53'],clients:['59'],tool_movements:['60'],articles:['61'],tool_stock:['61'],rentals:['62'],welds:['63'],isometrics:['64'],revisions:['64'],inspection_requests:['50','65'],inspection_results:['76','94','97','116'],visual_reports:['116'],iso_materials:['70'],custom_materials:['70'],qa_engineers:['73'],warehouses:['75'],punchlists:['77'],ndt_groups:['79'],daily_reports:['82'],attachment_names:['85'],releases:['86','89','74'],test_systems:['87'],material_laydowns:['88'],field_packages:['90'],signatures:['96'],pqr:['98'],qualification_options:['98'],welding_wires:['99'],flanges:['100'],material_locations:['local-material-logistics'],material_location_events:['local-material-logistics'],material_quantity_changes:['70'],welder_certificates:['local-welder-certificates'],attachments:['local-documents'],wps_pqr:['42'],wps_projects:['42'],wps_sites:['42'],welder_sites:['68'],welder_customs:['68'],ndt_defect_codes:['46'],catalog_sites:['44','84','46','47','48','49','73','22','25','6','10'],itps:['120'],itp_projects:['120'],receipts:['15'],reservations:['20']
 };
 Object.assign(RESOURCE_SCOPES,WELDER_DATA_SCOPES);
 Object.assign(RESOURCE_SCOPES,HYDROTEST_SCOPES);
@@ -24,13 +24,16 @@ Object.assign(RESOURCE_SCOPES,MTO_STOCK_SCOPES);
 Object.assign(RESOURCE_SCOPES,MEMO_TEMPLATE_SCOPES);
 const MODULE_SCOPES:Record<Module,string[]>={
  general:['4','5','10','37','64','75','93','local-documents'],
- materials:['71','1','2','3','6','7','8','9','11','12','13','14','15','16','17','18','20','21','22','23','24','25','70','78','80','83','88','local-material-logistics'],
+ materials:['71','1','2','3','6','7','8','9','11','12','13','14','15','16','17','18','20','21','22','23','24','25','70','78','80','83','88','local-material-logistics','local-cut-list-completed'],
  welding:['35','36','39','40','41','42','43','44','45','46','47','48','49','50','63','65','66','67','68','73','74','76','77','79','81','82','84','85','86','87','89','90','91','92','94','95','97','98','99','100','local-welder-certificates','116','120','121'],
  tools:['59','60','61','62'],settings:['26','53','96']
 };
 const localNames:Record<string,string>={'local-material-logistics':'Material locations & history','local-documents':'Documents','local-welder-certificates':'Welder certificate records'};
 /** Reference areas the observed matrix (reference/permissions-observed.json) does not hold yet: name and verbs from weld__system__profiles.txt (116 :183, 120 :105, 121 :126). */
 const REFERENCE_AREAS:Record<string,{name:string;verbs:PermissionVerb[]}>={'116':{name:'Visual inspection',verbs:['show','insert','edit','delete','print']},'120':{name:'ITPs',verbs:['show','insert','edit','delete']},'121':{name:'NDT Batch Import',verbs:['show','import']}};
+/** MTO Pilot: changing a completed (locked) cut list, with a reason (shared/cut-list-rights.ts); administrators may without it. Edit is its only box. */
+export const COMPLETED_CUT_LIST_AREA='local-cut-list-completed';
+const LOCAL_AREAS:Record<string,{name:string;verbs:PermissionVerb[]}>={[COMPLETED_CUT_LIST_AREA]:{name:'Edit completed cut lists',verbs:['edit']}};
 /**
  * Stored rule keys of earlier local areas, read as the reference area that replaced them (profiles are never rewritten:
  * a stored 'local-visual-results' rule is the Visual inspection area 116, 'local-itps' is ITPs 120). Verbs the new
@@ -39,7 +42,7 @@ const REFERENCE_AREAS:Record<string,{name:string;verbs:PermissionVerb[]}>={'116'
 export const AREA_ALIASES:Record<string,string>={'local-visual-results':'116','local-itps':'120'};
 export const areaKey=(key:string)=>AREA_ALIASES[key]??key;
 export const PERMISSION_AREAS:PermissionArea[]=Object.entries(MODULE_SCOPES).flatMap(([module,keys])=>keys.map(key=>{
- const source=observed.areas.find(a=>a.actions.some(action=>action===`show_${key}`)),own=REFERENCE_AREAS[key];
+ const source=observed.areas.find(a=>a.actions.some(action=>action===`show_${key}`)),own=REFERENCE_AREAS[key]??LOCAL_AREAS[key];
  return {key,name:source?.name||own?.name||localNames[key]||key,module:module as Module,verbs:source?source.actions.map(a=>a.split('_')[0] as PermissionVerb):own?own.verbs:PERMISSION_VERBS};
 }));
 const areas=new Map(PERMISSION_AREAS.map(a=>[a.key,a]));
@@ -48,9 +51,10 @@ const areaOf=(key:string)=>areas.get(areaKey(key));
  * Page areas: a page (or a part of one) that needs Show on its own area, with no record type of its own. They are kept in
  * the account's capabilities (server/release-access.ts) so the menu and the server can check them: Weld dashboard 35,
  * Overview 36, NDT / PWHT request archive 66 / 67, Export welds 81, Iso overview 92, Welder card settings 95; MTO
- * dashboard panels 1 / 2 / 3, Material list 78, Pick list export 83; NDT Batch Import 121 (Show opens it, Import uploads and commits).
+ * dashboard panels 1 / 2 / 3, Material list 78, Pick list export 83; NDT Batch Import 121 (Show opens it, Import uploads and commits);
+ * Edit completed cut lists (COMPLETED_CUT_LIST_AREA).
  */
-export const PAGE_SCOPES=['1','2','3','35','36','66','67','78','81','83','92','95','121'];
+export const PAGE_SCOPES=['1','2','3','35','36','66','67','78','81','83','92','95','121',COMPLETED_CUT_LIST_AREA];
 export function parsePermissionRules(raw:unknown):PermissionRules{
  if(typeof raw!=='string'||raw.length>50000)throw new Error('Permission rules must be a valid matrix.');
  let input:unknown;try{input=JSON.parse(raw);}catch{throw new Error('Permission rules could not be read.');}

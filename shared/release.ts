@@ -116,10 +116,12 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       operation_phases: fields('name sort description'),
       calculation_norms: fields('name uom hoursPerUnit description'),
       calculation_lines: fields('name isoId requirementId normId quantity description'),
-      cut_list: fields('name isoId requirementId spoolId quantity lengthMm description sheet dia material schedule totalLength bevel extraLength fit1Id fit2Id fit3Id fit4Id takeoff1 takeoff2 takeoff3 takeoff4'),
+      cut_list: fields('name isoId requirementId spoolId quantity lengthMm description sheet dia material schedule totalLength bevel extraLength fit1Id fit2Id fit3Id fit4Id takeoff1 takeoff2 takeoff3 takeoff4 revisionId takeoffsFixed'),
     });
-    // The fitting catalog of the cut list: its page opens from the Cut list of an isometric (no menu item, shared/pilots.ts).
+    // The fitting catalog of the cut list: MTO Pilot → Cut List → Cut list standards (shared/pilots.ts).
     deliverResource(availability, 'cut_fittings');
+    // Revisions of the cut list (shared/cut-list-revisions.ts), shown on the Cut list tab; the stored norms and snapshot stay on the server.
+    deliverResource(availability, 'cut_list_revisions', fields('name isoId revNo status source sourceRevisionId standardsMode createdByName completedAt completedByName attachmentId amendments'), { page: false });
     availability.actions['add-iso-material'] = fields('isoId source materialId phaseId quantity materialNo description materialGroup articleNo legacyNo dia lbs uom price chargeNo addToDB');
     Object.assign(availability.reports, {
       mto: fields('project iso revision group article material dia lbs description quantity uom phase charge'),

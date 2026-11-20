@@ -26,7 +26,7 @@ import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 import { HOSTED_OPTIONAL, hostedFreeValue } from '../shared/welder-data.ts';
 import { pqrNumber } from '../shared/wps.ts';
-import { prepareCutListInput, prepareFittingInput } from './cut-list.ts';
+import { assertCutListLineArchivable, prepareCutListInput, prepareFittingInput } from './cut-list.ts';
 import { UOM_IN_USE, nextPhaseNumber, resolveMaterialUom, uomOfMaterial } from '../shared/material-db.ts';
 
 export class AppError extends Error {
@@ -408,6 +408,8 @@ export class Store {
       if (cascade) { this.cascading++; try { this.archiveDependents(key, id, actor); } finally { this.cascading--; } }
       if (row._version !== version) throw conflict('This record changed. Refresh and try again.');
       this.guardTestSystem(key, row);
+      // A line of a completed cut list is locked (server/cut-list.ts); deleting its isometric still takes it along.
+      if (key === 'cut_list' && !cascade) assertCutListLineArchivable(this, row);
       if (this.hostedRules && key === 'roles' && isWelderRole(row) && !row._archived) throw new AppError(422, 'The Welder role cannot be deleted.');
       if (key === 'users' && id === actor.id) throw new AppError(422, 'You cannot archive your own account.');
       if (key === 'uoms' && this.hostedRules && !row._archived && this.list('materials').some(material => uomOfMaterial(material, row))) throw new AppError(422, UOM_IN_USE);

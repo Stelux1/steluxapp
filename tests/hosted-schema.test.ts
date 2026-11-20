@@ -240,7 +240,7 @@ test('client 20.11.2026: an older hosted database with a global ITP No / WPS / P
   const fresh = fingerprint();
   workspace();
   // As the previous release left it: no siteId reference column, one unique rule over every main project.
-  for (const [name, [key]] of Object.entries(REPLACED_UNIQUE_RULES)) {
+  for (const [name, [key]] of Object.entries(REPLACED_UNIQUE_RULES).filter(([name]) => name !== 'cut_list_unique_0')) {
     const table = name.replace(/_unique_0$/, '');
     db.exec(`DROP INDEX stelux."${name}"; ALTER TABLE stelux."${table}" DROP COLUMN "siteId"; CREATE UNIQUE INDEX "${name}" ON stelux."${table}" ((coalesce(data::jsonb->>'${key}', ''))) WHERE archived=0`);
   }

@@ -49,3 +49,28 @@
   .cut-list-print tr{break-inside:avoid}
   .cut-list-print-iso{display:none}
 }
+/* Revisions of the cut list (shared/cut-list-revisions.ts): selector, status, facts and the revision actions. */
+.cut-list-revision-bar{display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;padding:10px 0 12px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.cut-list-revision-select{display:inline-flex;align-items:center;gap:8px;font-size:10px;font-weight:600;color:var(--muted)}
+.cut-list-revision-select select{min-height:32px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:11px;color:var(--ink)}
+.cut-list-revision-facts{font-size:10px;color:var(--muted);flex:1 1 240px;min-width:0}
+.cut-list-revision-actions{display:inline-flex;flex-wrap:wrap;gap:8px;margin-left:auto}
+.cut-list-locked{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--muted);background:var(--surface-blue);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+.cut-list-amend{display:flex;flex-direction:column;gap:5px;margin-bottom:10px;padding:10px;border:1px solid #e8d3a6;background:#fbf4e5;border-radius:6px}
+.cut-list-amend label{font-size:10px;font-weight:600;color:#7d5d24}
+.cut-list-amend input{min-height:34px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:11px;max-width:640px}
+.cut-list-documents{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:10px;color:var(--muted);margin-bottom:10px}
+.cut-list-revision-options fieldset{border:0;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:8px}
+.cut-list-revision-options legend{font-size:10px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.cut-list-revision-options label{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--line);border-radius:7px;cursor:pointer}
+.cut-list-revision-options label:has(input:checked){border-color:var(--border-strong);background:var(--surface-blue)}
+.cut-list-revision-options label span{display:flex;flex-direction:column;gap:3px}
+.cut-list-revision-options strong{font-size:11px}.cut-list-revision-options small{font-size:10px;color:var(--muted)}
+.cut-list-history{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.cut-list-history li{display:flex;flex-direction:column;gap:2px;font-size:11px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.cut-list-history strong{font-size:10px;color:var(--muted);font-weight:600}
+/* MTO Pilot → Cut List → Cut list standards */
+.cut-list-standards-toolbar{gap:10px;flex-wrap:wrap}
+.cut-list-standards-toolbar select{min-height:38px;border:1px solid var(--line);border-radius:6px;padding:0 10px;background:#fff;font-size:12px;max-width:100%}
+.cut-list-standards-type{display:block;font-size:9px}
+@media (max-width:760px){.cut-list-revision-actions{margin-left:0}}

@@ -116,7 +116,7 @@ export const SITE_RULES: Record<string, SiteRule> = {
   certifications: shared(SITE),
   laydowns: shared(SITE),
   // Material records of an isometric
-  calculation_lines: via(ISO), cut_list: via(ISO), iso_materials: via(ISO),
+  calculation_lines: via(ISO), cut_list: via(ISO), cut_list_revisions: via(ISO), iso_materials: via(ISO),
   material_quantity_changes: via(REQUIREMENT),
   material_locations: via(REQUIREMENT), material_location_events: via(REQUIREMENT),
   reservations: via(ISO, REQUIREMENT),
