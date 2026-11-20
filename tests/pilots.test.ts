@@ -30,7 +30,9 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(PILOTS.map(pilot => [pilot.key, pilot.title, pilot.module]), [['weld', 'Weld Pilot', 'welding'], ['mto', 'MTO Pilot', 'materials']]);
   assert.equal(PILOT_MAP.weld.color, '#6d9a54'); assert.equal(PILOT_MAP.mto.color, '#de8d35');
   assert.deepEqual(PILOT_MAP.weld.groups.map(group => group.title), ['General data', 'Start', 'Welder data', 'Weld data', 'Material data', 'NDT data', 'Welding data', 'Releases', 'System']);
-  assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'Calculations', 'System']);
+  assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'System']);
+  // Calculations leave MTO Pilot (client, 20.11.2026): they become a pilot of their own later.
+  assert.ok(!PILOT_MAP.mto.groups.some(group => group.title === 'Calculations'));
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);
   // Iso overview: Weld Pilot "Welding data" right after ITPs (the reference's ITP templates are not built) and before
   // NDT/PWHT Manager; MTO Pilot "Projects data" last, after Pick List archive. Both open the Iso overview page of all isometrics of the main project.
@@ -74,11 +76,13 @@ test('every menu item resolves to a real page and resource items use resourcePat
   // isometric itself (the reference's Order / Take in menu has no Isometric materials, mto-procurement-stock-011).
   // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025). Transfer orders open from the Transfer Orders button on Storehouses and from the bell (mto-procurement-stock-010).
   // Weld data / Materials → Spools open the spool name catalog (w4-spool-catalog); an isometric's own spools open from its Spools tab and the Service request page.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders', 'roles'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders', 'roles', 'inspection_results', 'calculation_norms'].includes(key)))
+  // Inspection results: NDT results are attached on the weld itself (client, 20.11.2026); calculation norms go with the Calculations pilot.
+  assert.ok(!listed.has(resourcePath('inspection_results')) && !listed.has(resourcePath('calculation_norms'))); assert.ok(listed.has(resourcePath(key)), key);
   // Roles has no function in Weld Pilot (client, 20.11.2026): no menu item; the welder keeps its Welder role on the server.
   assert.ok(!listed.has(resourcePath('roles')), 'Roles has no menu item');
   assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
-  assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(!listed.has('/welding/lisl'), 'Data LISL opens from Iso overview, not from the menu'); assert.ok(listed.has('/materials/planning'));
+  assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(!listed.has('/welding/lisl'), 'Data LISL opens from Iso overview, not from the menu'); assert.ok(!listed.has('/materials/planning'));
 });
 
 test('pilot membership keeps shared pages in both pilots and pilot pages in their own', () => {
