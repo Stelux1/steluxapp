@@ -13,7 +13,7 @@ import { RESOURCES } from '../shared/resources.ts';
 import { availabilityFor, pageAvailable, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { pagePilots, PILOT_MAP, pilotItemPath } from '../shared/pilots.ts';
 import { canAction } from '../shared/permissions.ts';
-import { PROCUREMENT_PAGES, archiveDefaultRange, archivedOrders, csvCell, dateRangeError, momentOf, orderChoiceText, orderPlanning, orderStatus, pendingLines, printMoment, receiptItems, receiptLog, receiptMoment, receiptQuantityErrors, receiptRemaining, receivableOrders, supplierChoiceText, toCsv } from '../shared/mto-procurement.ts';
+import { PROCUREMENT_PAGES, additionalOverview, orderedMaterials, archiveDefaultRange, archivedOrders, csvCell, dateRangeError, momentOf, orderChoiceText, orderPlanning, orderStatus, pendingLines, printMoment, receiptItems, receiptLog, receiptMoment, receiptQuantityErrors, receiptRemaining, receivableOrders, supplierChoiceText, toCsv } from '../shared/mto-procurement.ts';
 import { ORDER_COLUMNS, orderDocumentModel } from '../shared/pdf-documents.ts';
 import { requirementExecution } from '../shared/materials.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -132,9 +132,9 @@ test('a take back to zero returns the order to Pending, and custom materials sta
 test('order status, quantity checks and CSV cells follow one explicit rule each', () => {
   assert.equal(orderStatus([]), 'Pending'); assert.equal(orderStatus([{ quantity: 4, received: 0 }]), 'Pending');
   assert.equal(orderStatus([{ quantity: 4, received: 1 }, { quantity: 2, received: 2 }]), 'Partially received'); assert.equal(orderStatus([{ quantity: 4, received: 4 }, { quantity: 2, received: 2 }]), 'Received');
-  // Today rec.: more than ordered is accepted; a negative value takes back at most what the line received (here 2).
-  assert.deepEqual(receiptQuantityErrors([{ lineId: 'a', received: 2, quantity: '' }, { lineId: 'b', received: 2, quantity: 12 }, { lineId: 'c', received: 2, quantity: -2 }, { lineId: 'd', received: 2, quantity: -2.5 }, { lineId: 'e', received: 2, quantity: 'x' }]), { d: 'At most 2 can be taken back.', e: 'Enter a number.' });
-  assert.deepEqual(receiptItems({ a: '', b: '12', c: '-10', d: '0', e: 'x' }), [{ lineId: 'b', quantity: 12 }, { lineId: 'c', quantity: -10 }]);
+  // Today rec.: more than ordered is accepted; a negative value is refused (no negative take-in, client answer 17.11.2026).
+  assert.deepEqual(receiptQuantityErrors([{ lineId: 'a', received: 2, quantity: '' }, { lineId: 'b', received: 2, quantity: 12 }, { lineId: 'c', received: 2, quantity: -2 }, { lineId: 'd', received: 2, quantity: -2.5 }, { lineId: 'e', received: 2, quantity: 'x' }]), { c: 'Enter a positive quantity.', d: 'Enter a positive quantity.', e: 'Enter a number.' });
+  assert.deepEqual(receiptItems({ a: '', b: '12', c: '-10', d: '0', e: 'x' }), [{ lineId: 'b', quantity: 12 }]);
   assert.equal(csvCell('=HYPERLINK("x")'), '"\'=HYPERLINK(""x"")"'); assert.equal(csvCell('-5'), '-5'); assert.equal(csvCell('a,b'), '"a,b"'); assert.equal(csvCell(null), '');
   assert.equal(toCsv(['A', 'B'], [[1, 'x']]), 'A,B\r\n1,x');
 });
@@ -224,7 +224,7 @@ test('mto-procurement-stock-016: quantity to order = Σ not-ordered need − Σ 
   assert.throws(() => hostedRun(s, 'order-requirements', { requirementIds: [another.id] }), /Open orders already cover/);
 });
 
-test('mto-procurement-stock-017/018: receiving 12 on an order line of 10 is accepted, as is −10; the figures of the line, Pending order and the inventory', t => {
+test('mto-procurement-stock-017/018: receiving 12 on an order line of 10 is accepted; a negative take-in is refused; the figures of the line, Pending order and the inventory', t => {
   const s = fixture(t); const { material, requirements: [req] } = bolts(s, [['iso-1', 10]]);
   const order = hostedRun(s, 'order-requirements', { requirementIds: [req.id] }); const line = s.list('order_lines').find(l => l.orderId === order.id)!;
   const inventory = () => s.list('stock').filter(r => r.locationKind === 'site' && r.siteId === 'site-north' && r.materialId === material.id).reduce((sum, r) => sum + Number(r.quantity), 0);
@@ -233,25 +233,16 @@ test('mto-procurement-stock-017/018: receiving 12 on an order line of 10 is acce
   // +12: received 0 + 12 = 12 > 10 ordered; outstanding max(0, 10 − 12) = 0 so it leaves Pending order; inventory 0 + 12 = 12.
   hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', warehouseId: 'warehouse-main', items: [{ lineId: line.id, quantity: 12 }] });
   assert.deepEqual(state(), { ordered: 10, received: 12, pending: 0, inventory: 12, status: 'Received' });
-  // A Received order can still be chosen and taken in: −10 gives received 12 − 10 = 2, outstanding 8, inventory 12 − 10 = 2.
+  // A Received order can still be chosen; the log holds the positive entry only.
   assert.ok(receivableOrders(rows(s)).some(o => o.id === order.id));
-  hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: -10 }] });
-  assert.deepEqual(state(), { ordered: 10, received: 2, pending: 8, inventory: 2, status: 'Partially received' });
   const log = receiptLog(rows(s)).filter(e => e.order?.id === order.id);
-  assert.deepEqual(log.map(e => Number(e.receipt.quantity)).sort((x, y) => x - y), [-10, 12]); assert.ok(log.every(e => e.supplierId === 'supplier-pipe' && e.receipt.takenAt));
-  assert.equal(log.find(e => Number(e.receipt.quantity) < 0)!.receipt.correction, true);
-  assert.ok(s.list('movements').some(m => m.siteId === 'site-north' && m.materialId === material.id && m.type === 'Adjustment' && Number(m.quantity) === -10));
-  // Refused without a trace: taking back more than received (2), a zero, a cancelled order.
+  assert.deepEqual(log.map(e => Number(e.receipt.quantity)), [12]); assert.ok(log.every(e => e.supplierId === 'supplier-pipe' && e.receipt.takenAt && !e.receipt.correction));
+  // Refused without a trace: a negative take-in (−10, −3), a zero, no supplier, a cancelled order.
   const before = snapshot(s);
-  assert.throws(() => hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: -3 }] }), /Only 2 of this line can be taken back/);
-  assert.throws(() => hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: 0 }] }), /other than zero/);
+  for (const quantity of [-10, -3, -0.5]) assert.throws(() => hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity }] }), /greater than zero/);
+  assert.throws(() => hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: 0 }] }), /greater than zero/);
   assert.throws(() => hostedRun(s, 'receive', { orderId: order.id, items: [{ lineId: line.id, quantity: 1 }] }), /supplier/);
   assert.equal(snapshot(s), before);
-  // Stock already used cannot be taken back: 2 leave the site, then −2 is refused and nothing changes.
-  runAction(s, 'inventory-remove', { siteId: 'site-north', materialId: material.id, quantity: 2, comment: 'Used' }, actor);
-  const used = snapshot(s);
-  assert.throws(() => hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: -2 }] }), /Insufficient stock/);
-  assert.equal(snapshot(s), used);
   // The order's own supplier is never filled from a take-in.
   assert.equal(s.get('orders', order.id).supplierId, '');
 });
@@ -351,9 +342,9 @@ test('through the hosted API: order, take in, over-receipt, correction and the a
   const pdf = await f.request(`/api/pdf/order-materials?orderId=${order.id}`); assert.equal(pdf.status, 200); assert.equal(pdf.headers.get('content-type'), 'application/pdf');
   assert.match(String(pdf.headers.get('content-disposition')), new RegExp(`_R${order.number}-OrderMaterial\\.pdf`));
   assert.equal((await f.request('/api/pdf/order-materials?orderId=missing')).status, 404);
-  // Taking back more than received is refused, nothing is recorded.
+  // A negative take-in is refused, nothing is recorded.
   const back = await f.request('/api/actions/receive', 'POST', { orderId: order.id, supplierId: 'supplier-steel', items: [{ lineId: lines[0].id, quantity: -1 }] });
-  assert.equal(back.status, 409); assert.equal(f.store.list('receipts').filter(r => r.orderId === order.id).length, 0);
+  assert.equal(back.status, 422); assert.equal(f.store.list('receipts').filter(r => r.orderId === order.id).length, 0);
   // Unknown fields are refused by the delivered action.
   assert.equal((await f.request('/api/actions/receive', 'POST', { orderId: order.id, supplierId: 'supplier-steel', warehouseId: 'warehouse-main', items: [{ lineId: lines[0].id, quantity: 1 }], status: 'Received' })).status, 404);
   // More than ordered is accepted (4 ordered, 6 received on the first line).
@@ -469,4 +460,79 @@ test('SC2 N-F: Receive materials step 2 empties the Today rec. fields once the r
   const step2 = source.slice(source.indexOf('function TakeInOrder'), source.indexOf('function TakeInOrder') + 4000);
   assert.match(step2, /await post\('\/actions\/receive', \{ orderId, supplierId, items \}\); setQuantities\(\{\}\); await refresh\(\); notify\('Materials taken in\.'\); onDone\(\);/, 'a second click cannot receive the same quantities again');
   assert.match(source, /<TakeInOrder orderId=\{orderId\} supplierId=\{params\.get\('supplier'\) \|\| ''\} onDone=\{\(\) => setParams\(\{\}\)\}\/>/, 'and the page goes back to the take-in log');
+});
+
+test('client answer 17.11.2026: the ordered materials are listed apart (Ordered view) and Order materials keeps listing what is still to order', t => {
+  const s = fixture(t); const { material, requirements: [a, b] } = bolts(s, [['iso-1', 3], ['iso-2', 10]]);
+  const order = hostedRun(s, 'order-requirements', { requirementIds: [a.id] });
+  assert.ok(!orderPlanning(rows(s)).some(g => g.requirementIds.includes(a.id)), 'the ordered requirement is not in the To order list');
+  assert.ok(orderPlanning(rows(s)).some(g => g.requirementIds.includes(b.id)), 'the other one still is');
+  const ordered = orderedMaterials(rows(s)).find(m => m.material.id === material.id)!;
+  assert.deepEqual([ordered.ordered, ordered.received, ordered.outstanding, ordered.orderNumbers, ordered.additional], [3, 0, 3, [String(order.number)], false]);
+  assert.equal(orderedMaterials(rows(s), { projectId: 'project-cooling' }).some(m => m.material.id === material.id), true);
+  assert.equal(orderedMaterials(rows(s), { projectId: 'project-other-none' }).some(m => m.material.id === material.id), false);
+  assert.equal(orderedMaterials(rows(s), { isoId: 'iso-2' }).some(m => m.material.id === material.id), false, 'iso-2 has no order line');
+  assert.equal(orderedMaterials(rows(s), { isoId: 'iso-1' }).some(m => m.material.id === material.id), true);
+  const line = s.list('order_lines').find(l => l.orderId === order.id)!;
+  hostedRun(s, 'receive', { orderId: order.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: 1 }] });
+  const part = orderedMaterials(rows(s)).find(m => m.material.id === material.id)!; assert.deepEqual([part.ordered, part.received, part.outstanding], [3, 1, 2]);
+  assert.equal(orderedMaterials(rows(s), { query: 'no-such-material' }).length, 0);
+});
+
+test('client answer 17.11.2026: an additional order is on top of the need: it never covers the planning, it is taken in like any order, and Additional vs required shows its share', t => {
+  const s = fixture(t); const { material, requirements: [a, b] } = bolts(s, [['iso-1', 4], ['iso-2', 6]]);
+  const planned = () => orderPlanning(rows(s)).find(g => g.material.id === material.id)!.quantity;
+  assert.equal(planned(), 10);
+  // The regular order covers iso-1 (4); the additional order of 5 does not reduce the 6 still to order, open or received.
+  hostedRun(s, 'order-requirements', { requirementIds: [a.id] }); const baseline = planned(); assert.ok(baseline > 0 && baseline <= 6);
+  const extra = hostedRun(s, 'order-additional', { projectId: 'project-cooling', materialId: material.id, quantity: 5, reason: 'Pipe cut wrongly on the shop floor' });
+  assert.match(String(extra.number), /^\d{5}$/); assert.equal(extra.projectId, 'project-cooling'); assert.equal(extra.status, 'Pending');
+  const line = s.list('order_lines').find(l => l.orderId === extra.id)!;
+  assert.equal(line.additional, true); assert.equal(line.additionalReason, 'Pipe cut wrongly on the shop floor'); assert.equal(Number(line.quantity), 5); assert.equal(line.requirementId, '');
+  assert.equal(planned(), baseline, 'an open additional order does not cover the need');
+  const execution = requirementExecution(rows(s)); assert.equal(execution.find(e => e.requirement.id === b.id)!.ordered, 0); assert.equal(execution.find(e => e.requirement.id === b.id)!.toOrder, 6);
+  hostedRun(s, 'receive', { orderId: extra.id, supplierId: 'supplier-pipe', items: [{ lineId: line.id, quantity: 5 }] });
+  assert.equal(Number(s.get('order_lines', line.id).received), 5); assert.equal(s.get('orders', extra.id).status, 'Received');
+  assert.equal(planned(), baseline, 'a received additional order does not cover the need either');
+  assert.equal(s.list('stock').filter(r => r.locationKind === 'site' && r.materialId === material.id).reduce((sum, r) => sum + Number(r.quantity), 0), 5, 'it is taken into the inventory');
+  // The Ordered view lists it, marked.
+  const listed = orderedMaterials(rows(s)).find(m => m.material.id === material.id)!; assert.equal(listed.additional, true); assert.equal(listed.ordered, 9); assert.ok(listed.orderNumbers.includes(`${extra.number} (additional)`));
+  // Overview: required 10, regular ordered 4, additional 5 = 50 %.
+  const overview = additionalOverview(rows(s), { projectId: 'project-cooling' }); const row = overview.rows.find(r => r.material.id === material.id)!;
+  assert.deepEqual([row.projectId, row.required, row.ordered, row.additional, row.percent], ['project-cooling', 10, 4, 5, 50]);
+  assert.equal(overview.totals.required, Math.round(overview.rows.reduce((n, r) => n + r.required, 0) * 1e6) / 1e6); assert.equal(overview.totals.additional, 5);
+  assert.equal(overview.totals.percent, Math.round(5 / overview.totals.required * 1000) / 10);
+  // Another project's filter does not show the row; an additional order for a material with no requirement has no percentage.
+  assert.equal(additionalOverview(rows(s), { projectId: 'project-other-none' }).rows.length, 0);
+  const free = s.create('materials', { materialNo: 'ADD-FREE-1', description: 'Not in any requirement', materialGroup: 'Pipe', uom: 'M' }, actor);
+  hostedRun(s, 'order-additional', { projectId: 'project-cooling', materialId: free.id, quantity: 2, reason: 'Spare', supplierId: 'supplier-pipe' });
+  const none = additionalOverview(rows(s), { projectId: 'project-cooling' }).rows.find(r => r.material.id === free.id)!; assert.deepEqual([none.required, none.additional, none.percent], [0, 2, null]);
+  // Dashboard figures do not count it as ordered either.
+  assert.equal(additionalOverview(rows(s), { query: 'ADD-FREE' }).rows.length, 1);
+  // Refused without a trace: no reason, no project, no / two materials, zero quantity, unknown supplier.
+  const before = snapshot(s);
+  assert.throws(() => hostedRun(s, 'order-additional', { projectId: 'project-cooling', materialId: material.id, quantity: 1, reason: '  ' }), /reason/);
+  assert.throws(() => hostedRun(s, 'order-additional', { materialId: material.id, quantity: 1, reason: 'x' }), /project/);
+  assert.throws(() => hostedRun(s, 'order-additional', { projectId: 'project-cooling', quantity: 1, reason: 'x' }), /one material/);
+  assert.throws(() => hostedRun(s, 'order-additional', { projectId: 'project-cooling', materialId: material.id, customMaterialId: 'c', quantity: 1, reason: 'x' }), /one material/);
+  assert.throws(() => hostedRun(s, 'order-additional', { projectId: 'project-cooling', materialId: material.id, quantity: 0, reason: 'x' }), /greater than zero/);
+  assert.throws(() => hostedRun(s, 'order-additional', { projectId: 'project-cooling', materialId: material.id, quantity: 1, reason: 'x', supplierId: 'nope' }));
+  assert.equal(snapshot(s), before);
+});
+
+test('through the hosted API: the additional order needs the order right of Order materials (13), as ordering does', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const material = f.store.list('materials')[0]; const body = { projectId: 'project-cooling', materialId: material.id, quantity: 2, reason: 'Wrongly cut pipe' };
+  assert.equal(hosted.actions['order-additional'] !== undefined, true, 'the hosted profile delivers the action');
+  await f.signIn('Order viewer', detailed({ ...BASE_RULES, '13': ['show'] }));
+  const refused = await f.request('/api/actions/order-additional', 'POST', body); assert.equal(refused.status, 403); assert.equal(f.store.list('orders').some(o => String(o.note).startsWith('Additional order')), false);
+  await f.signIn('Pending viewer', detailed({ ...BASE_RULES, '13': [], '14': ['show'] }));
+  assert.equal((await f.request('/api/actions/order-additional', 'POST', body)).status, 403);
+  await f.signIn('Orderer', detailed({ ...BASE_RULES, '13': ['show', 'print'] }));
+  assert.equal((await f.request('/api/actions/order-additional', 'POST', { ...body, reason: '' })).status, 422);
+  const made = await f.request('/api/actions/order-additional', 'POST', body); assert.equal(made.status, 201, JSON.stringify(await made.json()));
+  const line = f.store.list('order_lines').find(l => l.additional)!; assert.equal(line.additionalReason, 'Wrongly cut pipe');
+  const read = await (await f.request('/api/records/order_lines')).json() as { rows?: Row[]; records?: Row[] }; const lines = (read.rows || read.records || []) as Row[];
+  assert.equal(lines.find(l => l.id === line.id)?.additional, true, 'the flag is delivered to the page');
+  f.usePilot('weld'); assert.equal((await f.request('/api/actions/order-additional', 'POST', body)).status, 403);
 });

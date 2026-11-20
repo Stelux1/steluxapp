@@ -411,7 +411,7 @@ test('the MTO-only account loads every record the dashboard reads and the figure
   assert.equal((await weld.request('/api/records/stock', 'mto')).status, 403);
 });
 
-test('page areas 1 / 2 / 3 gate the dashboard panels: an account without "Dashboard - Pending materials" (2) sees no KPI cards or board', async t => {
+test('client answer 17.11.2026: the dashboard is the same for everyone: an account that may open it (any of areas 1 / 2 / 3) sees every panel, one with none of them sees none', async t => {
   const f = await hostedFixture(t);
   assert.deepEqual(MTO_DASHBOARD_PANEL_AREAS, { logistics: '1', materials: '2', orders: '3' });
   const base = { '64': ['show'], '70': ['show'], '16': ['show'] };
@@ -420,7 +420,7 @@ test('page areas 1 / 2 / 3 gate the dashboard panels: an account without "Dashbo
   const a = f.client(), b = f.client(); await a.login(without.email); await b.login(none.email);
   const userA = (await (await a.request('/api/bootstrap', 'mto')).json() as { user: User }).user, userB = (await (await b.request('/api/bootstrap', 'mto')).json() as { user: User }).user;
   assert.equal(userA.capabilities?.['2'], undefined, 'area 2 is not granted');
-  assert.deepEqual(dashboardPanels(key => canScope(userA, key)), { logistics: true, materials: false, orders: true });
+  assert.deepEqual(dashboardPanels(key => canScope(userA, key)), { logistics: true, materials: true, orders: true });
   assert.deepEqual(dashboardPanels(key => canScope(userB, key)), { logistics: false, materials: false, orders: false });
 });
 
@@ -460,4 +460,41 @@ test('E6: the sample order of 2026-10-16 receives its partial delivery on the ma
     assert.deepEqual(received, [['material-1', 0], ['material-3', 10]], 'received 12, two corrected back');
     store.close();
   }
+});
+
+test('client answer 17.11.2026: Ordered %, Received % and Isometrics started % of the dashboard, over the filtered requirements; additional orders are not counted', () => {
+  created = 0;
+  const m = (id: string) => row(`m-${id}`, { materialNo: id, description: `Material ${id}` });
+  const base = (): Record<string, Row[]> => ({
+    sites: [row('s', { name: 'Site' })], projects: [row('p', { siteId: 's' }), row('p2', { siteId: 's' })],
+    isometrics: [row('iso-a', { isoNo: 'A', projectId: 'p' }), row('iso-b', { isoNo: 'B', projectId: 'p' }), row('iso-c', { isoNo: 'C', projectId: 'p2' })],
+    materials: [m('1'), m('2')], custom_materials: [], reservations: [], stock: [], operation_phases: [],
+    iso_materials: [row('req-a1', { isoId: 'iso-a', materialId: 'm-1', quantity: 10 }), row('req-a2', { isoId: 'iso-a', materialId: 'm-2', quantity: 10 }), row('req-b1', { isoId: 'iso-b', materialId: 'm-1', quantity: 5 }), row('req-c1', { isoId: 'iso-c', materialId: 'm-1', quantity: 20 })],
+    picklists: [row('pick-a', { isoId: 'iso-a', requirementId: 'req-a1', materialId: 'm-1', quantity: 1, taken: false, date: '2026-11-01' })],
+    orders: [row('o1', { number: '00001', projectId: 'p', date: '2026-11-01', status: 'Partially received' }), row('o2', { number: '00002', projectId: 'p', date: '2026-11-02', status: 'Received' }), row('o3', { number: '00003', projectId: 'p', date: '2026-11-03', status: 'Pending' })],
+    order_lines: [
+      row('l1', { orderId: 'o1', requirementId: 'req-a1', materialId: 'm-1', quantity: 10, received: 4 }),
+      row('l2', { orderId: 'o1', requirementId: 'req-a2', materialId: 'm-2', quantity: 5, received: 5 }),
+      row('l3', { orderId: 'o2', materialId: 'm-1', quantity: 100, received: 100, additional: true, additionalReason: 'Wrongly cut' }),
+    ],
+  });
+  const rows = base();
+  const all = mtoDashboard(rows, { today: '2026-11-17', projectId: 'p' }).progress;
+  // Required 10 + 10 + 5 = 25; ordered 10 + 5 = 15 (the additional 100 of material 1 covers nothing); received 4 + 5 = 9; isometrics A (started by its pick list) and B.
+  assert.deepEqual([all.required, all.ordered, all.received], [25, 15, 9]);
+  assert.deepEqual([all.orderedPercent, all.receivedPercent], [60, 36]);
+  assert.deepEqual([all.isometrics, all.started, all.startedPercent], [2, 1, 50]);
+  // Same figures with the additional line removed: it never counted.
+  const without = { ...rows, order_lines: rows.order_lines.filter(line => !line.additional) };
+  assert.deepEqual(mtoDashboard(without, { today: '2026-11-17', projectId: 'p' }).progress, all);
+  // An additional order does not move the cards of the whole dashboard either, and the existing Ordered chip leaves it out.
+  assert.equal(mtoDashboard(rows, { today: '2026-11-17' }).chips.ordered, mtoDashboard(without, { today: '2026-11-17' }).chips.ordered);
+  // The filters apply: project p2 has one isometric of 20, nothing ordered, nothing started; a phase / supplier with no lines gives no percentage.
+  const other = mtoDashboard(rows, { today: '2026-11-17', projectId: 'p2' }).progress;
+  assert.deepEqual([other.required, other.ordered, other.received, other.orderedPercent, other.receivedPercent, other.isometrics, other.started, other.startedPercent], [20, 0, 0, 0, 0, 1, 0, 0]);
+  const empty = mtoDashboard(rows, { today: '2026-11-17', projectId: 'p', supplierId: 'nobody' }).progress;
+  assert.deepEqual([empty.required, empty.orderedPercent, empty.receivedPercent, empty.isometrics, empty.startedPercent], [0, null, null, 0, null]);
+  // Fully ordered and received = 100 %; a surplus on one line does not hide another requirement's shortage (ordered is capped per requirement).
+  const surplus = { ...rows, order_lines: [...rows.order_lines.filter(line => !line.additional), row('l4', { orderId: 'o3', requirementId: 'req-a1', materialId: 'm-1', quantity: 30, received: 0 })] };
+  assert.equal(mtoDashboard(surplus, { today: '2026-11-17', projectId: 'p' }).progress.ordered, 15 + 0 + 0, 'req-a1 stays capped at its 10; req-b1 is still not ordered');
 });

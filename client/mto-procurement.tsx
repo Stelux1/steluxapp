@@ -1,13 +1,13 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Download, ExternalLink, Link2, List, Loader2, PackageCheck, Printer, ShoppingCart } from 'lucide-react';
-import { materialName } from '../shared/materials.ts';
-import { PROCUREMENT_PAGES, archiveDefaultRange, archivedOrders, dateRangeError, momentOf, orderChoiceText, orderDetail, orderMoment, orderPlanning, pendingLines, printMoment, receiptItems, receiptLog, receiptMoment, receiptQuantityErrors, receivableOrders, supplierChoiceText, toCsv } from '../shared/mto-procurement.ts';
+import { AlertCircle, ArrowLeft, Download, ExternalLink, Link2, List, Loader2, PackageCheck, PackagePlus, Printer, ShoppingCart } from 'lucide-react';
+import { materialName, materialRecord } from '../shared/materials.ts';
+import { PROCUREMENT_PAGES, additionalOverview, orderedMaterials, archiveDefaultRange, archivedOrders, dateRangeError, momentOf, orderChoiceText, orderDetail, orderMoment, orderPlanning, pendingLines, printMoment, receiptItems, receiptLog, receiptMoment, receiptQuantityErrors, receivableOrders, supplierChoiceText, toCsv } from '../shared/mto-procurement.ts';
 import type { Row } from '../shared/types.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
 import { ApiError, apiUrl, formatDate, formatNumber, post } from './api.ts';
-import { EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
+import { Badge, EmptyState, FieldInput, Modal, SearchInput, TableScroll } from './components.tsx';
 import { exportTable, useTableRights } from './table-export.ts';
 import { ORDER_MATERIALS_EXPORT_COLUMNS } from '../shared/export-tables.ts';
 
@@ -46,6 +46,14 @@ function ChoiceFilter({ id, label, empty, value, options, onChange }: { id: stri
   return <div className="field"><label htmlFor={id}>{label}</label><select id={id} value={value} onChange={event => onChange(event.target.value)}><option value="">{empty}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>;
 }
 
+/** A view computed from the rows the workspace already loaded: a failure shows as a message instead of breaking the page. */
+function safely<T>(compute: () => T, fallback: T): { data: T; error: string } {
+  try { return { data: compute(), error: '' }; } catch (problem) { return { data: fallback, error: (problem as Error).message || 'The figures could not be calculated.' }; }
+}
+const NO_OVERVIEW = { rows: [], totals: { required: 0, ordered: 0, additional: 0, percent: null } };
+const percentText = (value: number | null) => value === null ? '—' : `${formatNumber(value, 1)} %`;
+type OrderView = 'order' | 'ordered' | 'additional';
+
 /** Order materials: one row per material, summed over the isometrics that still need it, less what open orders still bring. */
 export function OrderMaterials() {
   const { rows, label, canRun, refresh, notify } = useWorkspace();
@@ -54,7 +62,11 @@ export function OrderMaterials() {
   const [projectId, setProject] = useState(''); const [isoId, setIso] = useState(''); const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const [created, setCreated] = useState<{ number: string; url: string } | null>(null);
+  const [view, setView] = useState<OrderView>('order'); const [additionalOpen, setAdditionalOpen] = useState(false);
   const planning = useMemo(() => orderPlanning(rows, { projectId, isoId, query }), [rows, projectId, isoId, query]);
+  // The same project / isometric filter feeds the three views: what is still to order, what is already ordered, and the additional orders against the project need.
+  const ordered = useMemo(() => safely(() => orderedMaterials(rows, { projectId, isoId, query }), []), [rows, projectId, isoId, query]);
+  const overview = useMemo(() => safely(() => additionalOverview(rows, { projectId, query }), NO_OVERVIEW), [rows, projectId, query]);
   const checked = planning.filter(group => selected.includes(group.identity));
   const requirementIds = checked.flatMap(group => group.requirementIds);
   if (!allowed) return <NoAccess title="Order materials"/>;
@@ -75,20 +87,98 @@ export function OrderMaterials() {
     } catch (problem) { tab?.close(); setError(problem instanceof ApiError || problem instanceof Error ? problem.message : 'The order could not be created.'); } finally { setBusy(false); }
   }
   return <div className="page mto-procurement-page"><Heading title="Order materials" description="Materials still to be ordered, added up over the isometrics that need them. Check the rows and order them: the order document opens in a new tab.">
-    {canExport('order-materials') && <button className="btn" disabled={!exportRows.length} onClick={() => send('order-materials', 'xlsx', 'order-materials', [...ORDER_MATERIALS_EXPORT_COLUMNS], exportRows.map(g => { const c = materialCells(g.material); return [c[0], c[1], c[2], c[3], c[4], c[5], g.quantity, c[6]]; }))}><Download size={16}/>Export</button>}
-    {canRun('order-requirements') && <button className="btn primary" disabled={!requirementIds.length || busy} onClick={() => void orderChecked()}>{busy ? <Loader2 size={16} className="spin"/> : <ShoppingCart size={16}/>}Order checked materials{checked.length ? ` (${checked.length})` : ''}</button>}
+    {canExport('order-materials') && view === 'order' && <button className="btn" disabled={!exportRows.length} onClick={() => send('order-materials', 'xlsx', 'order-materials', [...ORDER_MATERIALS_EXPORT_COLUMNS], exportRows.map(g => { const c = materialCells(g.material); return [c[0], c[1], c[2], c[3], c[4], c[5], g.quantity, c[6]]; }))}><Download size={16}/>Export</button>}
+    {canRun('order-additional') && <button className="btn" onClick={() => setAdditionalOpen(true)}><PackagePlus size={16}/>Additional order</button>}
+    {canRun('order-requirements') && view === 'order' && <button className="btn primary" disabled={!requirementIds.length || busy} onClick={() => void orderChecked()}>{busy ? <Loader2 size={16} className="spin"/> : <ShoppingCart size={16}/>}Order checked materials{checked.length ? ` (${checked.length})` : ''}</button>}
   </Heading>
     {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
     {created && <div className="alert success" role="status">Order {created.number} was created. <a className="text-link" href={created.url} target="_blank" rel="noreferrer">Open the order document<ExternalLink size={13} aria-hidden="true"/></a></div>}
     <section className="panel procurement-panel">
       <div className="procurement-filters"><ChoiceFilter id="order-materials-project" label="Project" empty="All projects" value={projectId} options={projects} onChange={value => { setProject(value); setIso(''); setSelected([]); }}/><ChoiceFilter id="order-materials-iso" label="Isometric" empty="All isometrics" value={isoId} options={isometrics} onChange={value => { setIso(value); setSelected([]); }}/></div>
+      <div className="table-card-top"><div className="table-tabs" role="tablist" aria-label="Order materials views">
+        <button type="button" role="tab" aria-selected={view === 'order'} className={view === 'order' ? 'selected' : ''} onClick={() => setView('order')}>To order<span>{planning.length}</span></button>
+        <button type="button" role="tab" aria-selected={view === 'ordered'} className={view === 'ordered' ? 'selected' : ''} onClick={() => setView('ordered')}>Ordered<span>{ordered.data.length}</span></button>
+        <button type="button" role="tab" aria-selected={view === 'additional'} className={view === 'additional' ? 'selected' : ''} onClick={() => setView('additional')}>Additional vs required</button></div></div>
       <div className="table-toolbar"><SearchInput value={query} onChange={v => { setQuery(v); setSelected([]); }} placeholder="Search"/></div>
+      {view === 'ordered' && <OrderedView label={label} state={ordered} filtered={Boolean(projectId || isoId || query)}/>}
+      {view === 'additional' && <AdditionalView label={label} state={overview} filtered={Boolean(projectId || query)} isoFiltered={Boolean(isoId)}/>}
+      {view === 'order' && <>
       <TableScroll><table className="data-table"><caption className="sr-only">Materials waiting to be ordered</caption><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="number-cell">Quantity</th><th>UOM</th><th className="select-cell"><input type="checkbox" aria-label="Check all" title="Check all" checked={planning.length > 0 && checked.length === planning.length} disabled={!planning.length} onChange={e => setSelected(e.target.checked ? planning.map(g => g.identity) : [])}/></th></tr></thead>
         <tbody>{planning.map(group => { const c = materialCells(group.material); return <tr key={group.identity}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}</td><td className="number-cell">{formatNumber(group.quantity, 3)}</td><td>{c[6]}</td><td className="select-cell"><input type="checkbox" aria-label={`Check ${c[2]}`} checked={selected.includes(group.identity)} onChange={e => toggle(group.identity, e.target.checked)}/></td></tr>; })}</tbody></table></TableScroll>
       {!planning.length && <EmptyState title="Nothing waiting to be ordered" description={projectId || isoId || query ? 'No material matches these filters.' : 'Every material requirement is already on an order.'}/>}
-      <div className="table-footer"><span>{planning.length} material{planning.length === 1 ? '' : 's'}{checked.length ? ` · ${checked.length} checked` : ''}</span><span>Open orders of a material are subtracted. The supplier is assigned in Order archive.</span></div>
+      <div className="table-footer"><span>{planning.length} material{planning.length === 1 ? '' : 's'}{checked.length ? ` · ${checked.length} checked` : ''}</span><span>Open orders of a material are subtracted. The supplier is assigned in Order archive.</span></div></>}
     </section>
+    {additionalOpen && <AdditionalOrderDialog projectId={projectId} onClose={() => setAdditionalOpen(false)}/>}
   </div>;
+}
+
+/** Order materials, "Ordered": the materials already on an order for the same filter, apart from what is still to be ordered. */
+function OrderedView({ label, state, filtered }: { label: (resource: string, id: unknown) => string; state: { data: ReturnType<typeof orderedMaterials>; error: string }; filtered: boolean }) {
+  if (state.error) return <div className="alert error" role="alert"><AlertCircle size={18}/><span>{state.error}</span></div>;
+  return <>
+    <TableScroll><table className="data-table"><caption className="sr-only">Materials that are already ordered</caption><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th>UOM</th><th className="number-cell">Ordered</th><th className="number-cell">Received</th><th className="number-cell">Outstanding</th><th>Order No.</th><th>Supplier</th></tr></thead>
+      <tbody>{state.data.map(item => { const c = materialCells(item.material); return <tr key={item.identity}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}</td><td>{c[6]}</td><td className="number-cell">{formatNumber(item.ordered, 3)}</td><td className="number-cell">{formatNumber(item.received, 3)}</td><td className="number-cell">{formatNumber(item.outstanding, 3)}</td><td>{item.orderNumbers.join(', ')}</td><td>{item.supplierIds.length ? item.supplierIds.map(id => label('suppliers', id)).join(', ') : '—'}</td></tr>; })}</tbody></table></TableScroll>
+    {!state.data.length && <EmptyState title="Nothing is ordered yet" description={filtered ? 'No ordered material matches these filters.' : 'Materials appear here once they are on an order.'}/>}
+    <div className="table-footer"><span>{state.data.length} material{state.data.length === 1 ? '' : 's'}</span><span>Cancelled orders are left out.</span></div>
+  </>;
+}
+
+/** Order materials, "Additional vs required": per project and material, what the isometrics require against what was ordered additionally. */
+function AdditionalView({ label, state, filtered, isoFiltered }: { label: (resource: string, id: unknown) => string; state: { data: ReturnType<typeof additionalOverview>; error: string }; filtered: boolean; isoFiltered: boolean }) {
+  if (state.error) return <div className="alert error" role="alert"><AlertCircle size={18}/><span>{state.error}</span></div>;
+  const { rows: lines, totals } = state.data;
+  return <>
+    <TableScroll><table className="data-table"><caption className="sr-only">Additional orders against the quantity the projects require</caption><thead><tr><th>Project</th><th>Material No</th><th>Description</th><th>UOM</th><th className="number-cell">Required</th><th className="number-cell">Ordered</th><th className="number-cell">Additional</th><th className="number-cell">Additional % of required</th></tr></thead>
+      <tbody>{lines.map(line => { const c = materialCells(line.material); return <tr key={`${line.projectId}|${line.identity}`}><td>{line.projectId ? label('projects', line.projectId) : '—'}</td><td>{c[2]}</td><td className="description-cell">{c[5]}</td><td>{c[6]}</td><td className="number-cell">{formatNumber(line.required, 3)}</td><td className="number-cell">{formatNumber(line.ordered, 3)}</td><td className="number-cell">{formatNumber(line.additional, 3)}</td><td className="number-cell">{percentText(line.percent)}</td></tr>; })}</tbody>
+      {lines.length > 0 && <tfoot><tr><th colSpan={4}>Total</th><td className="number-cell">{formatNumber(totals.required, 3)}</td><td className="number-cell">{formatNumber(totals.ordered, 3)}</td><td className="number-cell">{formatNumber(totals.additional, 3)}</td><td className="number-cell">{percentText(totals.percent)}</td></tr></tfoot>}</table></TableScroll>
+    {!lines.length && <EmptyState title="No requirements or additional orders" description={filtered ? 'No material matches these filters.' : 'Isometric requirements and additional orders appear here.'}/>}
+    <div className="table-footer"><span>{lines.length} row{lines.length === 1 ? '' : 's'}</span><span>{isoFiltered ? 'The isometric filter does not apply here: the figures are per project. ' : ''}Additional orders are on top of the project need and never reduce what is to be ordered.</span></div>
+  </>;
+}
+
+/** Additional order: one material on top of the project need (a pipe cut wrongly, for example); the reason is required. */
+function AdditionalOrderDialog({ projectId: preset, onClose }: { projectId: string; onClose: () => void }) {
+  const { rows, siteId, label, refresh, notify } = useWorkspace();
+  const projects = activeRows(rows, 'projects');
+  const [projectId, setProject] = useState(preset || (projects.length === 1 ? projects[0].id : '')); const [material, setMaterial] = useState('');
+  const [quantity, setQuantity] = useState(''); const [supplierId, setSupplier] = useState(''); const [reason, setReason] = useState('');
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const suppliers = enabledOptions('suppliers', activeRows(rows, 'suppliers'), siteId, rows);
+  // The materials of the project's own requirements come first, then the rest of the catalog.
+  const choices = useMemo(() => {
+    const isos = new Set(activeRows(rows, 'isometrics').filter(iso => iso.projectId === projectId).map(iso => iso.id)); const seen = new Set<string>();
+    const required = activeRows(rows, 'iso_materials').filter(line => isos.has(String(line.isoId))).flatMap(line => { const key = line.materialId ? `catalog:${line.materialId}` : line.customMaterialId ? `custom:${line.customMaterialId}` : ''; if (!key || seen.has(key)) return []; seen.add(key); return [{ key, record: materialRecord(rows, line) }]; });
+    const rest = activeRows(rows, 'materials').filter(record => !seen.has(`catalog:${record.id}`)).map(record => ({ key: `catalog:${record.id}`, record }));
+    const name = (item: { record: Row | undefined }) => `${text(item.record?.materialNo, 'Unavailable material')} · ${text(item.record?.description, '')}`;
+    return { required: required.map(item => ({ key: item.key, name: name(item) })), rest: rest.map(item => ({ key: item.key, name: name(item) })) };
+  }, [rows, projectId]);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError('');
+    if (!projectId) return setError('Choose the project.');
+    if (!material) return setError('Choose the material.');
+    const amount = Number(quantity);
+    if (!quantity.trim() || !Number.isFinite(amount) || amount <= 0) return setError('Enter a quantity greater than zero.');
+    if (!reason.trim()) return setError('Enter the reason for this additional order.');
+    const [kind, id] = [material.slice(0, material.indexOf(':')), material.slice(material.indexOf(':') + 1)];
+    setBusy(true);
+    try {
+      const { record } = await post<{ record: Row }>('/actions/order-additional', { projectId, ...(kind === 'custom' ? { customMaterialId: id } : { materialId: id }), quantity: amount, reason: reason.trim(), ...(supplierId ? { supplierId } : {}) });
+      await refresh(); notify(`Additional order ${String(record.number)} created.`); onClose();
+    } catch (problem) { setError((problem as Error).message || 'The order could not be created.'); } finally { setBusy(false); }
+  }
+  return <Modal title="Additional order" subtitle="On top of the project need" onClose={onClose}>
+    <form onSubmit={event => void submit(event)} noValidate><div className="modal-body">
+      {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+      <div className="form-grid">
+        <div className="field wide-field"><label htmlFor="additional-project">Project</label><select id="additional-project" required value={projectId} onChange={e => { setProject(e.target.value); setMaterial(''); }}><option value="">Choose a project</option>{projects.map(project => <option key={project.id} value={project.id}>{label('projects', project.id)}</option>)}</select></div>
+        <div className="field wide-field"><label htmlFor="additional-material">Material</label><select id="additional-material" required value={material} onChange={e => setMaterial(e.target.value)}><option value="">Choose a material</option>
+          {choices.required.length > 0 && <optgroup label="Required by this project">{choices.required.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</optgroup>}
+          {choices.rest.length > 0 && <optgroup label="Material catalog">{choices.rest.map(item => <option key={item.key} value={item.key}>{item.name}</option>)}</optgroup>}</select></div>
+        <div className="field"><label htmlFor="additional-quantity">Quantity</label><input id="additional-quantity" type="number" inputMode="decimal" min="0" step="any" required value={quantity} onChange={e => setQuantity(e.target.value)}/></div>
+        <div className="field"><label htmlFor="additional-supplier">Supplier</label><select id="additional-supplier" value={supplierId} onChange={e => setSupplier(e.target.value)}><option value="">Assign later in Order archive</option>{suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplierChoiceText(supplier)}</option>)}</select></div>
+        <div className="field wide-field"><label htmlFor="additional-reason">Reason</label><textarea id="additional-reason" required rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="For example: pipe cut wrongly on the shop floor"/></div>
+      </div>
+    </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Create additional order</button></div></form></Modal>;
 }
 
 /** Pending order: ordered against received for every order line that is still open. */
@@ -107,7 +197,7 @@ export function PendingOrders() {
       <div className="procurement-filters"><FieldInput field={{ name: 'projectId', label: 'Project', type: 'ref', ref: 'projects' }} value={projectId} onChange={v => setProject(String(v))}/></div>
       <div className="table-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search material or order number…"/></div>
       <TableScroll><table className="data-table"><caption className="sr-only">Order lines that are not received in full</caption><thead><tr><th>Group</th><th>Material No</th><th>Description</th><th className="number-cell">Ordered</th><th>Ord. No.</th><th>Date</th><th className="number-cell">Received</th>{canRun('receive') && <th className="actions-cell"><span className="sr-only">Options</span></th>}</tr></thead>
-        <tbody>{lines.map(({ line, order, material, outstanding }) => <tr key={line.id}><td>{text(material?.materialGroup)}</td><td>{materialName(rows, line)}</td><td className="description-cell">{text(line.description ?? material?.description)}</td><td className="number-cell">{formatNumber(line.quantity, 3)} {text(line.uom ?? material?.uom, '')}</td><td>{String(order.number)}</td><td>{formatDate(order.date)}</td><td className="number-cell">{formatNumber(line.received, 3)}<small className="execution-subvalue">{formatNumber(outstanding, 3)} open</small></td>{canRun('receive') && <td className="actions-cell"><button className="btn small" onClick={() => setTakeIn(order.id)}><PackageCheck size={14}/>Take in</button></td>}</tr>)}</tbody></table></TableScroll>
+        <tbody>{lines.map(({ line, order, material, outstanding }) => <tr key={line.id}><td>{text(material?.materialGroup)}</td><td>{materialName(rows, line)}</td><td className="description-cell">{text(line.description ?? material?.description)}</td><td className="number-cell">{formatNumber(line.quantity, 3)} {text(line.uom ?? material?.uom, '')}</td><td>{String(order.number)}{Boolean(line.additional) && <> <Badge color="amber">Additional</Badge></>}</td><td>{formatDate(order.date)}</td><td className="number-cell">{formatNumber(line.received, 3)}<small className="execution-subvalue">{formatNumber(outstanding, 3)} open</small></td>{canRun('receive') && <td className="actions-cell"><button className="btn small" onClick={() => setTakeIn(order.id)}><PackageCheck size={14}/>Take in</button></td>}</tr>)}</tbody></table></TableScroll>
       {!lines.length && <EmptyState title="No pending orders" description={projectId || query ? 'No open order line matches these filters.' : 'Everything ordered has been received.'}/>}
       <div className="table-footer"><span>{lines.length} open line{lines.length === 1 ? '' : 's'}</span><span>{projectId ? label('projects', projectId) : 'All projects in view'}</span></div>
     </section>
@@ -126,7 +216,7 @@ export function MaterialTakeIn() {
   if (!allowed) return <NoAccess title="Material take in"/>;
   const orderId = params.get('order') || '';
   if (orderId) return <TakeInOrder orderId={orderId} supplierId={params.get('supplier') || ''} onDone={() => setParams({})}/>;
-  return <div className="page mto-procurement-page"><Heading title="Material take in" description="Every delivery taken in against an order. Negative quantities correct an earlier receipt.">
+  return <div className="page mto-procurement-page"><Heading title="Material take in" description="Every delivery taken in against an order. An entry taken in by mistake is taken back with a correction.">
     {canExport('take-in') && <><button className="btn" disabled={!log.length} onClick={() => send('take-in', 'csv', 'material-take-in', ['Date', 'Order No.', 'Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Description', 'Quantity', 'UOM', 'Supplier'], log.map(e => { const c = materialCells(e.material, e.receipt); return [printMoment(receiptMoment(e.receipt)), e.order?.number ?? '', c[0], c[1], c[2], c[3], c[4], c[5], e.receipt.quantity, c[6], e.supplierId ? label('suppliers', e.supplierId) : '']; }))}><Download size={16}/>CSV</button><button className="btn" disabled={!log.length} onClick={() => send('take-in', 'xlsx', 'material-take-in', ['Date', 'Order No.', 'Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Description', 'Quantity', 'UOM', 'Supplier'], log.map(e => { const c = materialCells(e.material, e.receipt); return [printMoment(receiptMoment(e.receipt)), e.order?.number ?? '', c[0], c[1], c[2], c[3], c[4], c[5], e.receipt.quantity, c[6], e.supplierId ? label('suppliers', e.supplierId) : '']; }))}><Download size={16}/>Excel</button></>}
     {canPrint('take-in') && <button className="btn" onClick={() => window.print()}><Printer size={16}/>Print</button>}
     {canRun('receive') && <button className="btn primary" onClick={() => setReceiving(true)}><PackageCheck size={16}/>Receive materials</button>}
@@ -136,7 +226,7 @@ export function MaterialTakeIn() {
       <TableScroll><table className="data-table"><caption className="sr-only">Log of material receipts</caption><thead><tr><th>Date</th><th>Order No.</th><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="number-cell">Quantity</th><th>UOM</th><th>Supplier</th></tr></thead>
         <tbody>{log.map(({ receipt, order, material, supplierId }) => { const c = materialCells(material, receipt); const negative = Number(receipt.quantity) < 0; return <tr key={receipt.id} className={negative ? 'correction-row' : undefined}><td>{printMoment(receiptMoment(receipt))}</td><td>{order ? String(order.number) : '—'}</td><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}</td><td className="number-cell">{formatNumber(receipt.quantity, 3)}</td><td>{c[6]}</td><td>{supplierId ? label('suppliers', supplierId) : '—'}</td></tr>; })}</tbody></table></TableScroll>
       {!log.length && <EmptyState title="No receipts" description={query ? 'No receipt matches this search.' : 'Deliveries appear here once they are taken in against an order.'}/>}
-      <div className="table-footer"><span>{log.length} entr{log.length === 1 ? 'y' : 'ies'}</span><span>A correction is entered as a negative Today rec. quantity and can take back at most what was received.</span></div>
+      <div className="table-footer"><span>{log.length} entr{log.length === 1 ? 'y' : 'ies'}</span><span>Today rec. takes in positive quantities only; corrections are shown as negative entries.</span></div>
     </section>
     {receiving && <ReceiveDialog onClose={() => setReceiving(false)}/>}
   </div>;
@@ -166,7 +256,7 @@ export function ReceiveDialog({ orderId = '', onClose }: { orderId?: string; onC
     </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!order || !supplierId}>Add</button></div></form></Modal>;
 }
 
-/** Receive materials, step 2: the order's lines with Alr. rec. and a Today rec. quantity each; a negative quantity corrects a receipt. */
+/** Receive materials, step 2: the order's lines with Alr. rec. and a Today rec. quantity each (positive quantities only). */
 function TakeInOrder({ orderId, supplierId, onDone }: { orderId: string; supplierId: string; onDone: () => void }) {
   const { rows, label, canRun, refresh, notify } = useWorkspace();
   const order = activeRows(rows, 'orders').find(row => row.id === orderId);
@@ -186,12 +276,12 @@ function TakeInOrder({ orderId, supplierId, onDone }: { orderId: string; supplie
     try { await post('/actions/receive', { orderId, supplierId, items }); setQuantities({}); await refresh(); notify('Materials taken in.'); onDone(); }
     catch (problem) { setError((problem as Error).message); } finally { setBusy(false); }
   }
-  return <div className="page mto-procurement-page"><Heading title={`Material take in / ${String(order.number)}`} description={`Supplier: ${supplierId ? label('suppliers', supplierId) : '—'}. Enter what arrived today; a negative value corrects an earlier receipt. All lines are saved together.`}>{back}</Heading>
+  return <div className="page mto-procurement-page"><Heading title={`Material take in / ${String(order.number)}`} description={`Supplier: ${supplierId ? label('suppliers', supplierId) : '—'}. Enter what arrived today. All lines are saved together.`}>{back}</Heading>
     <section className="panel procurement-panel"><form onSubmit={event => void submit(event)} noValidate>
       {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
       <TableScroll><table className="data-table"><caption className="sr-only">Lines of order {String(order.number)}</caption><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>Description</th><th className="number-cell">Quantity</th><th>UOM</th><th className="number-cell">Alr. rec.</th><th>Today rec.</th></tr></thead>
         <tbody>{lines.map(({ line, material }) => { const c = materialCells(material, line); return <tr key={line.id}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td className="description-cell">{c[5]}</td><td className="number-cell">{formatNumber(line.quantity, 3)}</td><td>{c[6]}</td><td className="number-cell">{formatNumber(line.received, 3)}</td>
-          <td><input type="number" inputMode="decimal" step="0.01" placeholder="+/-" title="Use a negative value to correct a receipt." aria-label={`Today received ${c[2]}`} aria-invalid={Boolean(errors[line.id])} value={quantities[line.id] ?? ''} disabled={busy} onChange={e => setQuantities(old => ({ ...old, [line.id]: e.target.value }))}/>{errors[line.id] && <small className="field-error" role="alert">{errors[line.id]}</small>}</td></tr>; })}</tbody></table></TableScroll>
+          <td><input type="number" inputMode="decimal" min="0" step="0.01" aria-label={`Today received ${c[2]}`} aria-invalid={Boolean(errors[line.id])} value={quantities[line.id] ?? ''} disabled={busy} onChange={e => setQuantities(old => ({ ...old, [line.id]: e.target.value }))}/>{errors[line.id] && <small className="field-error" role="alert">{errors[line.id]}</small>}</td></tr>; })}</tbody></table></TableScroll>
       {!lines.length && <EmptyState title="No lines" description="This order has no material lines."/>}
       <div className="table-footer"><span>{lines.length} line{lines.length === 1 ? '' : 's'}</span><button className="btn primary" disabled={busy || !lines.length}>{busy ? <Loader2 size={15} className="spin"/> : <PackageCheck size={15}/>}Receive materials</button></div>
     </form></section>
@@ -208,6 +298,7 @@ export function OrderArchive() {
   // A link from the Ord.? column of an isometric (?order=<id>) opens that order.
   const [detail, setDetail] = useState(() => new URLSearchParams(window.location.search).get('order') || ''); const [assigning, setAssigning] = useState('');
   const rangeError = dateRangeError(from, to);
+  const additionalOrders = useMemo(() => new Set((rows.order_lines || []).filter(line => line.additional && !line._archived).map(line => String(line.orderId))), [rows]);
   const orders = useMemo(() => rangeError ? [] : archivedOrders(rows, { projectId, from, to }, sort), [rows, projectId, from, to, sort, rangeError]);
   if (!allowed) return <NoAccess title="Order archive"/>;
   const projects = activeRows(rows, 'projects').map(project => ({ value: project.id, label: label('projects', project.id) }));
@@ -222,7 +313,7 @@ export function OrderArchive() {
         <div className="field"><label htmlFor="archive-sort">Sort</label><select id="archive-sort" value={sort} onChange={e => setSort(e.target.value === 'asc' ? 'asc' : 'desc')}><option value="desc">Order by date desc.</option><option value="asc">Order by date asc.</option></select></div>
       </div>
       <TableScroll><table className="data-table"><caption className="sr-only">Archive of material orders</caption><thead><tr><th>Date</th><th>Request number</th><th>Assigned supplier</th><th className="actions-cell">Options</th></tr></thead>
-        <tbody>{orders.map(order => <tr key={order.id}><td>{printMoment(orderMoment(order), true)}</td><td>{String(order.number)}</td><td>{order.supplierId ? label('suppliers', order.supplierId) : 'NA'}</td><td className="actions-cell">
+        <tbody>{orders.map(order => <tr key={order.id}><td>{printMoment(orderMoment(order), true)}</td><td>{String(order.number)}{additionalOrders.has(order.id) && <> <Badge color="amber">Additional</Badge></>}</td><td>{order.supplierId ? label('suppliers', order.supplierId) : 'NA'}</td><td className="actions-cell">
           {canRun('assign-order-supplier') && <button className="btn small" aria-label={`Assign order ${String(order.number)} to supplier`} title="Assign order to supplier" onClick={() => setAssigning(order.id)}><Link2 size={14}/></button>}
           {printable && <a className="btn small" href={apiUrl(orderPdfPath(order.id))} target="_blank" rel="noreferrer" aria-label={`Print order ${String(order.number)}`} title="Print order"><Printer size={14}/></a>}
           <button className="btn small" aria-label={`Contents of order ${String(order.number)}`} title="Order contents" onClick={() => setDetail(order.id)}><List size={14}/></button>
@@ -264,7 +355,7 @@ function OrderDetailDialog({ orderId, onClose }: { orderId: string; onClose: () 
   if (!order) return null;
   return <Modal title={`Order ${String(order.number)}`} subtitle={`${printMoment(orderMoment(order), true)} · ${order.supplierId ? label('suppliers', order.supplierId) : 'NA'}`} onClose={onClose} wide><div className="modal-body">
     <TableScroll><table className="data-table"><caption className="sr-only">Lines of this order</caption><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th>UOM</th><th className="number-cell">Ordered</th><th className="number-cell">Received</th><th className="number-cell">Left</th></tr></thead>
-      <tbody>{lines.map(({ line, material, outstanding }) => { const c = materialCells(material, line); return <tr key={line.id}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}</td><td>{c[6]}</td><td className="number-cell">{formatNumber(line.quantity, 3)}</td><td className="number-cell">{formatNumber(line.received, 3)}</td><td className="number-cell">{formatNumber(Math.max(0, outstanding), 3)}</td></tr>; })}</tbody></table></TableScroll>
+      <tbody>{lines.map(({ line, material, outstanding }) => { const c = materialCells(material, line); return <tr key={line.id}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}{Boolean(line.additional) && <><br/><Badge color="amber">Additional</Badge><small className="execution-subvalue">{text(line.additionalReason)}</small></>}</td><td>{c[6]}</td><td className="number-cell">{formatNumber(line.quantity, 3)}</td><td className="number-cell">{formatNumber(line.received, 3)}</td><td className="number-cell">{formatNumber(Math.max(0, outstanding), 3)}</td></tr>; })}</tbody></table></TableScroll>
     {!lines.length && <EmptyState title="No lines" description="This order has no material lines."/>}
   </div></Modal>;
 }

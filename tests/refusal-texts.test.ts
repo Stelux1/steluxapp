@@ -75,11 +75,10 @@ test('scn-SB-D3: refusals of action routes keep their own sentence and their fie
 
 test('scn-SC-D1: a 409 raised by a rule carries the rule sentence, with no record names', async t => {
   const f = await fixture(t); await f.setup(); f.usePilot('mto');
-  const order = f.db.list('orders').find(o => !['Received', 'Cancelled'].includes(String(o.status)))!;
-  const line = f.db.list('order_lines').find(l => l.orderId === order.id)!;
-  // MTO Pilot accepts more than ordered (as the reference); taking back more than the line received is the rule's 409.
-  const over = await refused(await f.request('/actions/receive', 'POST', { orderId: order.id, supplierId: order.supplierId || 'supplier-steel', items: [{ lineId: line.id, quantity: -(Number(line.received) + 1000) }] }), 409);
-  assert.equal(over.error, `Only ${Number(line.received)} of this line can be taken back.`);
+  // A take-in is positive only; correcting more than a delivery still holds is the rule's 409.
+  const delivery = f.db.list('receipts').find(r => Number(r.quantity) > 0 && !r.correction)!;
+  const over = await refused(await f.request('/actions/correct-receipt', 'POST', { receiptId: delivery.id, quantity: Number(delivery.quantity) + 1000, note: 'Count' }), 409);
+  assert.match(over.error, /^Only [\d.]+ of this delivery can still be corrected\.$/);
   const stock = f.db.list('stock')[0];
   const short = await f.request('/actions/adjust-material', 'POST', { warehouseId: stock.warehouseId, materialId: stock.materialId, customMaterialId: stock.customMaterialId, chargeNo: stock.chargeNo, quantity: -(Number(stock.quantity) + 1000), reason: 'Count' });
   if (short.status === 409) assert.match((await short.json()).error, /^Insufficient stock/);
