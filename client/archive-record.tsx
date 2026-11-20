@@ -6,7 +6,7 @@ import { useWorkspace } from './context.tsx';
 import { post } from './api.ts';
 import { Modal } from './components.tsx';
 import { DELETE_WORDING_RESOURCES, deleteWording } from '../shared/weld-catalogs.ts';
-import { isometricDeleteRefusal, isometricUseOf, PROJECT_DELETE_TEXT, projectDeleteRefusal } from '../shared/iso-pages.ts';
+import { isometricDeleteNotice, isometricUseOf, PROJECT_DELETE_TEXT, projectDeleteRefusal } from '../shared/iso-pages.ts';
 
 export function ArchiveRecordDialog({ resourceKey, record, onClose, onSaved }: { resourceKey: string; record: Row; onClose: () => void; onSaved?: () => void }) {
   const { canRecord, refresh, notify, label, user, rows } = useWorkspace();
@@ -16,7 +16,8 @@ export function ArchiveRecordDialog({ resourceKey, record, onClose, onSaved }: {
   const hosted = Boolean(user.availability?.features.includes('pilots'));
   const deleting = !restoring && hosted && (DELETE_WORDING_RESOURCES.includes(resourceKey) || ['projects', 'isometrics'].includes(resourceKey));
   // The reference names the reason and keeps Delete off (the server decides again; here only what the loaded records show).
-  const blocked = !restoring && hosted ? resourceKey === 'isometrics' ? isometricDeleteRefusal(isometricUseOf(rows, record.id)) : resourceKey === 'projects' ? projectDeleteRefusal((rows.isometrics || []).filter(row => !row._archived && row.projectId === record.id).length) : '' : '';
+  const blocked = !restoring && hosted ? resourceKey === 'projects' ? projectDeleteRefusal((rows.isometrics || []).filter(row => !row._archived && row.projectId === record.id).length) : '' : '';
+  const notice = deleting && resourceKey === 'isometrics' ? isometricDeleteNotice(isometricUseOf(rows, record.id)) : '';
   const wording = deleteWording(resourceKey, RESOURCE_MAP[resourceKey].singular);
   if (!canRecord(resourceKey, 'delete', record)) return null;
   async function submit() {
@@ -27,7 +28,7 @@ export function ArchiveRecordDialog({ resourceKey, record, onClose, onSaved }: {
     } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   }
   return <Modal title={deleting ? wording.title : `${verb} ${RESOURCE_MAP[resourceKey].singular}?`} subtitle={label(resourceKey, record.id)} onClose={onClose}>
-    <div className="modal-body">{blocked && <div className="alert error" role="alert">{blocked}</div>}<p>{deleting ? wording.text : restoring ? 'This record will appear in active lists again.' : 'Remove this record from active lists and keep its documents and history. Archive linked active records first.'}</p>{error && <div className="alert error" role="alert">{error}</div>}</div>
+    <div className="modal-body">{blocked && <div className="alert error" role="alert">{blocked}</div>}<p>{deleting ? wording.text : restoring ? 'This record will appear in active lists again.' : 'Remove this record from active lists and keep its documents and history. Archive linked active records first.'}</p>{notice && <p className="muted">{notice}</p>}{error && <div className="alert error" role="alert">{error}</div>}</div>
     <div className="modal-footer"><button className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || Boolean(blocked)} onClick={() => void submit()}>{deleting ? wording.button : `${verb} record`}</button></div>
   </Modal>;
 }

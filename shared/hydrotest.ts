@@ -36,7 +36,7 @@ const TIME_HINT = 'Time as HH:MM, for example 09:30.';
 
 /** Added to the existing `test_systems` resource (see `extend()` in shared/resources.ts). */
 export const TEST_SYSTEM_FIELDS: Field[] = [
-  t('accepted', 'Test system accepted by client', { type: 'select', options: TS_ACCEPTED_OPTIONS, default: '', blank: TS_NOT_SET, hint: '"Testing not applicable" takes the spools of the system out of the hydrotest; "Approved" completes it.' }),
+  t('accepted', 'Test system accepted by client', { type: 'select', options: TS_ACCEPTED_OPTIONS, default: '', blank: TS_NOT_SET, hint: '"Testing not applicable" takes the spools of the system out of the hydrotest; "Approved" completes it, and is set only after a signed document is uploaded.' }),
 ];
 /** Added to the `spools` resource: the test system a spool is tested in, written only by "Move to test system". */
 export const SPOOL_TEST_SYSTEM_FIELDS: Field[] = [
@@ -98,8 +98,8 @@ export const HYDROTEST_ACTIONS: ActionDefinition[] = [
   { key: 'hydrotest-release', title: 'Hydrotest release', module: 'welding', submit: 'Confirm',
     description: 'The Pressure Test Plan of the filtered test system with all of its spools.', fields: releaseFields },
   { key: 'hydrotest-result', title: 'Enter results', module: 'welding', submit: 'Add',
-    description: 'The signed acceptance document of a test system; "Accepted?" completes its hydrotest.',
-    fields: [ref('testSystemId', 'Test system', 'test_systems'), t('accepted', 'Accepted?', { type: 'checkbox', default: false })] },
+    description: 'The signed acceptance document of a test system; "Accepted?" approves the system once a signed document is uploaded, which finishes its hydrotest.',
+    fields: [ref('testSystemId', 'Test system', 'test_systems'), t('accepted', 'Accepted?', { type: 'checkbox', default: false }), ref('resultId', 'Result', 'hydrotest_results', { required: false })] },
   { key: 'hydrotest-result-delete', title: 'Delete result', module: 'welding', submit: 'Delete',
     description: 'Remove a result and its files from the results history.', fields: [ref('resultId', 'Result', 'hydrotest_results')] },
   { key: 'hydrotest-documents', title: 'Attachments', module: 'welding', submit: 'Save',
@@ -177,7 +177,22 @@ export function spoolsOfSystem(systemId: string, rows: { spools?: Row[] | null; 
   const isos = new Map(live(rows.isometrics).map(iso => [iso.id, iso]));
   return live(rows.spools).map(spool => ({ spool, iso: isos.get(text(spool.isoId)) })).filter(entry => text(systemId) !== '' && spoolTestSystemId(entry.spool, entry.iso) === text(systemId));
 }
-/** A test system's hydrotest is done: approved by the client, an accepted result, or (earlier records) a passed request. */
+/** Message of a refused approval: the signed document comes first. */
+export const APPROVAL_NEEDS_DOCUMENT = 'Upload the signed document (PDF) of this test system first, then approve it.';
+/**
+ * Whether a test system has a signed document: a live PDF attached as "Hydrotest result" to a live result of the system
+ * (the files of "Enter results"). The custom documents of the system (punchlist, ITP, blind list …) are not signed results.
+ */
+export function hasSignedDocument(systemId: string, rows: { hydrotest_results?: Row[] | null; attachments?: Row[] | null }): boolean {
+  const results = new Set(live(rows.hydrotest_results).filter(row => text(row.testSystemId) === systemId).map(row => row.id));
+  return live(rows.attachments).some(file => file.entityType === 'hydrotest_results' && results.has(String(file.entityId)) && text(file.documentType) === HYDROTEST_RESULT_DOCUMENT && isPdfName(file.name));
+}
+/**
+ * A test system's hydrotest is done only when the client's approval is recorded ("Approved", which the server sets only
+ * after a signed document is uploaded). Systems finished under the earlier rule keep their completion: an accepted result
+ * or a passed request of the system still counts (new approvals always carry both the document and the Approved status;
+ * taking the status off an approved system also takes the acceptance off its results).
+ */
 export function systemCompleted(system: Row | undefined, systemId: string, rows: HydrotestRows): boolean {
   return text(system?.accepted) === TS_APPROVED
     || live(rows.hydrotest_results).some(row => text(row.testSystemId) === systemId && row.accepted === true)

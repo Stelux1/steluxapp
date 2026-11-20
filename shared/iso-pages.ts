@@ -15,21 +15,18 @@ export const PROJECT_PRINT_ENTRIES = ['Certification index', 'Project book'] as 
 /** The sentence of the "Delete selected projects" dialog (dashboard capture). */
 export const PROJECT_DELETE_TEXT = { intro: 'You are going to delete selected projects from this project', confirm: 'Are you sure?', note: 'Please note that only unused (blank) projects can be deleted' };
 
-// ----- Delete refusals ---------------------------------------------------------------------------------------------------
+// ----- Delete ------------------------------------------------------------------------------------------------------------
 
 /** What still hangs on an isometric (counts of live records). */
 export interface IsometricUse { welds: number; materials: number; reserved: number; calculations: number; started: number }
 /**
- * The first reason an isometric cannot be deleted, in the order of the manual: welds (the reference sentence, word for word),
- * materials, reserved materials, calculations, work that has already started. Empty when it can go.
+ * An isometric may be deleted at any time (client answer of 17.11.2026); the Delete right on isometrics is the only gate.
+ * Its welds, materials, reservations, calculations, spools and the rest that hang on it are deleted with it, so every
+ * figure (WDI, welder percentages, dashboards, MTO) follows the state without it. This is the sentence the dialog shows.
  */
-export function isometricDeleteRefusal(use: IsometricUse): string {
-  if (use.welds) return 'Deletion is not possible while this isometric still has welds. Delete the welds first.';
-  if (use.materials) return 'Deletion is not possible while this isometric still has materials. Remove its materials in MTO Pilot first.';
-  if (use.reserved) return 'Deletion is not possible while this isometric still has reserved materials. Release the reservations first.';
-  if (use.calculations) return 'Deletion is not possible while this isometric still has calculations. Remove its calculations first.';
-  if (use.started) return 'Deletion is not possible because work on this isometric has already started (a pick list or a release exists).';
-  return '';
+export function isometricDeleteNotice(use: IsometricUse): string {
+  const parts = ([[use.welds, 'weld'], [use.materials, 'material line'], [use.reserved, 'reservation'], [use.calculations, 'calculation line']] as [number, string][]).filter(([count]) => count > 0).map(([count, noun]) => `${count} ${noun}${count === 1 ? '' : 's'}`);
+  return `The isometric's welds and materials leave all figures (weld lists, WDI, welder statistics, dashboards and MTO)${parts.length ? `: this deletes ${parts.join(', ')} with it` : ''}.${use.started ? ' A pick list or release already exists; it is deleted with the isometric.' : ''}`;
 }
 /** A project is deleted only while it is blank: no isometric of it is left. */
 export function projectDeleteRefusal(isometrics: number): string {

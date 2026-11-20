@@ -100,6 +100,9 @@ test('hydrotest result of a test system cannot complete isometrics of a main pro
   assert.equal(f.store.get('test_systems', system.id)._version, shared._version);
   // A test system holding only the account's own spools still takes its result.
   const spool4 = f.store.get('spools', 'spool-4'); f.store.update('spools', 'spool-4', { testSystemId: '' }, spool4._version, SYSTEM);
+  // The approval needs the signed document first (a result without Accepted? carries it).
+  const draft = f.store.create('hydrotest_results', { testSystemId: system.id, accepted: false }, SYSTEM);
+  f.store.create('attachments', { name: 'signed.pdf', entityType: 'hydrotest_results', entityId: draft.id, documentType: 'Hydrotest result' }, SYSTEM);
   const own = await north.as.request('/actions/hydrotest-result', { method: 'POST', pilot: 'weld', data: { testSystemId: system.id, accepted: true } });
   assert.equal(own.status, 201, await own.clone().text());
   assert.equal(hydrotestState(f.store.get('isometrics', 'iso-1'), rows()).completed, true);
