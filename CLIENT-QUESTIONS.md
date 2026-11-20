@@ -103,6 +103,20 @@ Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.doc
 | U izometriji ukloniti „Calculation · MSPS"; „MSPS cut list" → „Cut list". | Urađeno. |
 | Cut list kao tabela za proračun po Excelu; fitinzi sa nazivima tipa „90° Elbow 2"". | Cut list ima redove SHT, Spool, DIA, Material, SCH/WT, Total length, Bevel, Extra length, Fit 1–4; Pastuk = Total + Extra − 2×Bevel − take-off fitinga (11 primera iz Excela daju iste vrednosti). Katalog od 1019 fitinga iz lista Codes sa čitljivim nazivima (npr. „45° Elbow 1"", „Weld neck flange 2" LBS150"), prvo za prečnik reda; dugme „Fittings" za dodavanje i izmenu. Excel i Print u izgledu lista Print. |
 
+### Core-ovi i Cut List sa revizijama (poruka od 20.11.2026, kasno uveče)
+
+| Zahtev | Urađeno |
+|---|---|
+| Weld Pilot → Weld Core, MTO Pilot → Material Core. | Svi natpisi koje korisnik vidi (izbor, meni, dugmad „Open in …", poruke, profil prava). Adrese /weld i /mto ostaju. |
+| Izbor Core-a pri prijavi (sada ulazi direktno u Weld). | Posle svake prijave prvo izbor Core-a; direktan link na određenu stranicu (npr. izometriju) i dalje vodi na nju. Uzrok: nalog sa jednim Core-om je preskakao izbor, a stara adresa iz prethodne sesije otvarala Core direktno. |
+| Tools & Equipment, Finance & Calculation, Teams Core — vidljivi, neaktivni. | Pet kartica na izboru (crvena, narandžasta, plava, zelena, ljubičasta); poslednje tri sa „Coming soon", ne mogu se otvoriti. |
+| Boje Material Core (narandžasto) i Weld Core (crveno), ne ikonice. | Blok Core-a na vrhu menija, „Change site", aktivna stavka, tačka „Connected workspace" i talas na dnu menija u boji Core-a; ikonice menija iste. Kontrast proveren (WCAG AA). |
+| Prikaz glavnih projekata: Grid / List. | Prekidač Grid / List; List je tabela sa istim podacima i dugmadima; izbor se pamti u browseru. |
+| Sidebar → Cut List: baza standarda, kodova i dimenzija elemenata. | Material Core → Cut List → „Cut list standards": 1019 elemenata, pretraga, filter po tipu i prečniku, dodavanje / izmena / arhiva (kod, naziv, standard, prečnik, take-off mm). |
+| Complete Cut List. | Obračun, PDF krojne liste sačuvan u Documents izometrije („Cut list Rev 00"), datum, revizija i korisnik, status Completed; podaci zaključani. Izmena zaključanih samo administrator ili profil sa novim pravom „Edit completed cut lists", uz obavezan razlog; svaka izmena je zabeležena i pravi novi PDF (amendment), stari ostaje. |
+| Create New Revision (iz postojeće ili nova), Rev. 00/01/02. | Oba načina; kod revizije iz postojeće izbor „Keep Previous Standards" / „Apply Latest Standards". Istorija revizija, PDF-ovi se nikad ne brišu ni ne prepisuju. |
+| Izmene normativa ne smeju menjati završene liste. | Pri završavanju se čuva snapshot korišćenih normativa i obračuna; završena revizija se nikad ne preračunava iz kataloga. |
+
 Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
 
 ---

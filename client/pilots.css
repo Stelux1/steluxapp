@@ -30,8 +30,8 @@ a.pilot-tile:hover { border-color: var(--border-strong); border-top-color: var(-
 .pilot-tile-badge { margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: color-mix(in srgb, var(--pilot-color) 55%, #000); background: color-mix(in srgb, var(--pilot-color) 12%, #fff); border: 1px solid color-mix(in srgb, var(--pilot-color) 30%, #fff); }
 .pilot-select-empty { padding: 8px; }
 
-.pilot-badge { display: flex; align-items: center; gap: 10px; margin: 0 18px 10px; padding: 9px 10px; border-radius: 8px; background: color-mix(in srgb, var(--module-color) 16%, transparent); border-left: 3px solid var(--module-color); color: var(--on-navy); }
-.pilot-badge strong { font-size: 13px; flex: 1; min-width: 0; color: #fff; }
+.pilot-badge { display: flex; align-items: center; gap: 8px; margin: 0 14px 10px; padding: 9px 8px; border-radius: 8px; background: color-mix(in srgb, var(--module-color) 16%, transparent); border-left: 3px solid var(--module-color); color: var(--on-navy); }
+.pilot-badge strong { font-size: 13px; flex: 1; min-width: 0; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The rounded icon square in the Core colour, darkened a little so the white icon keeps 3:1 (orange #f07a1a alone is 2.8:1). */
 .pilot-badge-icon { display: grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: 8px; background: color-mix(in srgb, var(--module-color) 85%, #000); color: #fff; }
 .pilot-badge-switch { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 9px; border-radius: 5px; border: 1px solid #ffffff2e; background: transparent; color: var(--on-navy); font: inherit; font-size: 12px; cursor: pointer; }
