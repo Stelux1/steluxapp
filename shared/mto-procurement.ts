@@ -12,6 +12,8 @@ const text = (value: unknown) => String(value ?? '');
 
 /** The four pages, their route, the permission area that opens them (reference areas 13, 14, 15, 17) and the records they read. */
 export const PROCUREMENT_PAGES = [
+  // Request for Quotation (client request 20.11.2026): the same list as Order materials, but it only asks suppliers for offers; it never touches orders, receipts or stock.
+  { key: 'request-for-quotation', label: 'Request for Quotation', path: '/materials/request-for-quotation', scope: '13', resources: ['iso_materials', 'orders', 'order_lines'] },
   { key: 'order-materials', label: 'Order materials', path: '/materials/order-materials', scope: '13', resources: ['iso_materials', 'orders', 'order_lines'] },
   { key: 'pending-order', label: 'Pending order', path: '/materials/pending-orders', scope: '14', resources: ['orders', 'order_lines'] },
   { key: 'take-in', label: 'Material take in', path: '/materials/take-in', scope: '15', resources: ['receipts', 'orders', 'order_lines'] },
@@ -26,12 +28,17 @@ export const PROCUREMENT_PATHS: string[] = PROCUREMENT_PAGES.map(page => page.pa
  */
 export const PROCUREMENT_RESOURCE_FIELDS: Record<string, string[]> = {
   receipts: ['orderId', 'lineId', 'materialId', 'customMaterialId', 'warehouseId', 'supplierId', 'chargeNo', 'quantity', 'date', 'takenAt', 'correction', 'correctsId', 'note'],
+  // Requests for quotation: records of what was asked, read only (the action writes them).
+  rfqs: ['number', 'siteId', 'projectId', 'supplierId', 'date', 'requiredBy', 'note', 'issuedAt'],
+  rfq_lines: ['rfqId', 'materialId', 'customMaterialId', 'requirementIds', 'pipingClass', 'materialNo', 'description', 'uom', 'dia', 'lbs', 'quantity'],
   suppliers: ['name', 'address', 'zip', 'residence', 'phone', 'email', 'description'],
   // No storehouse: a take-in books into the Material inventory of the order's project site (shared/mto-stock.ts).
 };
 export const PROCUREMENT_ACTION_FIELDS: Record<string, string[]> = {
   'order-requirements': ['requirementIds', 'supplierId', 'date', 'note'],
   // Additional order (e.g. a pipe cut wrongly): one material on top of the project need, with a required reason.
+  // Request for Quotation: the checked requirements, an optional supplier, a quote-needed-by date and a note. No order, receipt or stock record is written.
+  'request-for-quotation': ['requirementIds', 'supplierId', 'requiredBy', 'date', 'note'],
   'order-additional': ['projectId', 'materialId', 'customMaterialId', 'quantity', 'supplierId', 'reason', 'date'],
   receive: ['orderId', 'supplierId', 'warehouseId', 'date', 'note', 'items'],
   'correct-receipt': ['receiptId', 'quantity', 'date', 'note'],
@@ -125,6 +132,23 @@ export function orderRequestLines(rows: Rows, requirementIds: string[]): { lines
   const lines = planMaterials(rows, entries);
   if (lines.some(line => line.quantity <= 0)) return { lines: [], error: { status: 409, message: 'Open orders already cover a selected material.' } };
   return { lines };
+}
+
+export interface RfqEntry { rfq: Row; count: number }
+/**
+ * Request for Quotation, "Sent requests": the requests made so far, newest first, for the project filter (a request of several projects of one main project shows for every
+ * project of that main project) and a search over its number, supplier note and materials. Records only: nothing here is an order.
+ */
+export function rfqArchive(rows: Rows, filter: ScopeFilter = {}): RfqEntry[] {
+  const projects = new Map(active(rows, 'projects').map(project => [project.id, text(project.siteId)]));
+  const lines = active(rows, 'rfq_lines');
+  return active(rows, 'rfqs').flatMap(rfq => {
+    if (filter.projectId && !(rfq.projectId ? rfq.projectId === filter.projectId : text(rfq.siteId) === projects.get(filter.projectId))) return [];
+    const own = lines.filter(line => line.rfqId === rfq.id);
+    const supplier = active(rows, 'suppliers').find(row => row.id === rfq.supplierId);
+    if (!includes([rfq.number, rfq.note, supplier?.name, ...own.flatMap(line => [line.materialNo, line.description])], filter.query)) return [];
+    return [{ rfq, count: own.length }];
+  }).sort((a, b) => text(b.rfq.date).localeCompare(text(a.rfq.date)) || text(b.rfq.number).localeCompare(text(a.rfq.number)) || b.rfq.id.localeCompare(a.rfq.id));
 }
 
 export interface PendingLine { line: Row; order: Row; material: Row | undefined; outstanding: number }

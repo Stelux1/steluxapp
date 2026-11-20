@@ -18,7 +18,7 @@ import { resourcePath } from '../client/records.tsx';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
-const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/workspace/iso-overview', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive', '/materials/materials-list', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
+const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/workspace/iso-overview', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/request-for-quotation', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive', '/materials/materials-list', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
 // The Prefab release and Field release pages share the releases route and differ by ?view= (see client/releases.tsx).
 EXPLICIT_ROUTES.push('/welding/releases', '/welding/field_packages');
 // NDT Batch Import has a route of its own (client/ndt-batch-import.tsx).
@@ -253,7 +253,7 @@ test('read-only welding never writes a shared catalog and detailed permission pr
 
 test('mto-procurement-stock-010: MTO Order / Take in has the seven reference items and no Transfer orders; the list keeps its page in MTO Pilot', () => {
   const items = PILOT_MAP.mto.groups.find(group => group.title === 'Order / Take in')!.items.map(item => item.label);
-  assert.deepEqual(items, ['Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
+  assert.deepEqual(items, ['Request for Quotation', 'Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
   assert.equal(PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items)).some(item => item.label === 'Transfer orders'), false);
   assert.equal(pageAvailable(hosted, '/mto/materials/transfer_orders', RESOURCES), true, 'opened from the Transfer Orders button on Storehouses and from the bell');
   assert.deepEqual(pagePilots('/materials/transfer_orders'), ['mto']);

@@ -147,7 +147,7 @@ test('the menu items open the four pages, each in MTO Pilot only, and the hosted
     assert.ok(pageAvailable(hosted, `/mto${path}`, RESOURCES), path);
     assert.equal(pageAvailable(availabilityFor('welding-demo'), path, RESOURCES), false, `${path} stays out of other profiles`);
   }
-  assert.deepEqual(PROCUREMENT_PAGES.map(page => page.scope), ['13', '14', '15', '17']);
+  assert.deepEqual(PROCUREMENT_PAGES.map(page => page.scope), ['13', '13', '14', '15', '17']);
   assert.equal(pageAvailable(hosted, '/mto/materials/orders', RESOURCES), false); assert.equal(pageAvailable(hosted, '/mto/materials/receipts', RESOURCES), false);
   for (const key of ['orders', 'order_lines', 'receipts', 'stock', 'suppliers', 'warehouses']) assert.ok(hosted.resources[key], key);
   assert.deepEqual(Object.keys(hosted.actions).filter(key => ['order-requirements', 'receive', 'correct-receipt'].includes(key)).sort(), ['correct-receipt', 'order-requirements', 'receive']);
@@ -300,7 +300,7 @@ test('mto-procurement-stock-033/011: Order materials rows are sorted by Material
   assert.deepEqual(groups, [...groups].sort((a, b) => a.localeCompare(b, 'en', { numeric: true })));
   assert.ok(groups.indexOf('BOLTS A320-L7') < groups.indexOf('BOLTS B16') && groups.indexOf('BOLTS B16') < groups.indexOf('PIPE 316'));
   const items = PILOT_MAP.mto.groups.find(g => g.title === 'Order / Take in')!.items.map(item => item.label);
-  assert.deepEqual(items, ['Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
+  assert.deepEqual(items, ['Request for Quotation', 'Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
   // The full profile keeps the generic Isometric materials page that Material execution links to.
   assert.equal(pageAvailable(availabilityFor('full'), '/materials/iso_materials', RESOURCES), true);
 });

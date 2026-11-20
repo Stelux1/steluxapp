@@ -32,7 +32,7 @@ export interface PdfRouteDependencies {
  * also stored as a document of each record in `attachTo` (the account needs the import right on that record, as for a file upload).
  */
 /** Query values that name one record by id, and the record types they can name. */
-const QUERY_RECORDS: Record<string, string[]> = { welderId: ['welders'], releaseId: ['releases'], requestId: ['hydrotest_requests'], orderId: ['orders', 'transfer_orders'] };
+const QUERY_RECORDS: Record<string, string[]> = { welderId: ['welders'], releaseId: ['releases'], requestId: ['hydrotest_requests'], orderId: ['orders', 'transfer_orders'], rfqId: ['rfqs'] };
 export function registerPdfRoutes({ app, store, documents, availability, readableRows, pilotIsometrics, publicOrigin }: PdfRouteDependencies) {
   /** A record of a main project out of reach is refused with the record routes' 403 (`site`); anything else is left to the document's own answer. */
   const refuseOutOfReach = (key: string, id: string) => { try { store.get(key, id, true); } catch (error) { if (isSiteRefusal(error)) throw error; } };

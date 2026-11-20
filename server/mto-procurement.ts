@@ -68,6 +68,37 @@ export function orderCheckedMaterials(ctx: ProcurementContext, requirementIds: s
 }
 
 /**
+ * Request for Quotation (client request 20.11.2026): a request to suppliers for prices, availability and delivery times before the purchase order.
+ * It uses the same planned quantities as Order materials, but writes ONLY an `rfqs` record with its `rfq_lines`: no order, order line, receipt,
+ * reservation or stock movement, so the quantities and ordering status of the materials stay as they were and the same materials can be put on another
+ * request or ordered. One request covers one main project; its number continues that main project's own counter (RFQ-00001, RFQ-00002, …).
+ */
+export function requestForQuotation(ctx: ProcurementContext, requirementIds: string[], data: Input, stamped: boolean) {
+  for (const id of requirementIds) ctx.ensure('iso_materials', id);
+  const rows = Object.fromEntries(PLANNING_RESOURCES.map(key => [key, ctx.store.list(key)]));
+  const { lines, error } = orderRequestLines(rows, requirementIds);
+  if (error) throw new AppError(error.status, error.message);
+  const isos = new Map(rows.isometrics.map(iso => [iso.id, iso]));
+  const projectOf = new Map(rows.projects.map(project => [project.id, project]));
+  const projects = [...new Set(lines.flatMap(line => line.isoIds.map(id => String(isos.get(id)?.projectId || ''))).filter(Boolean))];
+  const sites = [...new Set(projects.map(id => String(projectOf.get(id)?.siteId || '')).filter(Boolean))];
+  if (sites.length !== 1) throw new AppError(422, 'Choose materials of one main project for a request for quotation.');
+  const supplierId = str(data.supplierId); if (supplierId) ctx.ensure('suppliers', supplierId);
+  const requiredBy = str(data.requiredBy);
+  if (requiredBy && !/^\d{4}-\d{2}-\d{2}$/.test(requiredBy)) throw new AppError(422, 'Enter the date the quote is needed by.', { requiredBy: 'Enter a valid date.' });
+  const rfq = ctx.add('rfqs', { number: `RFQ-${ctx.store.nextDigits(`RFQ-${sites[0]}`)}`, siteId: sites[0], projectId: projects.length === 1 ? projects[0] : '', supplierId, date: ctx.date, requiredBy, note: ctx.note, ...(stamped ? { issuedAt: new Date().toISOString() } : {}) });
+  for (const line of lines) {
+    const first = rows.iso_materials.find(row => row.id === line.requirementIds[0])!;
+    const custom = Boolean(first.customMaterialId) && !first.materialId;
+    const record = ctx.ensure(custom ? 'custom_materials' : 'materials', custom ? first.customMaterialId : first.materialId);
+    const snapshot = Object.fromEntries(['materialNo', 'description', 'uom', 'dia', 'lbs'].map(name => [name, record[name] || '']));
+    const pipingClass = [...new Set(line.isoIds.map(id => String(isos.get(id)?.pipingClass || '')).filter(Boolean))].join(', ');
+    ctx.add('rfq_lines', { ...snapshot, rfqId: rfq.id, materialId: custom ? '' : record.id, customMaterialId: custom ? record.id : '', requirementIds: line.requirementIds.join(','), pipingClass, quantity: positive(line.quantity) });
+  }
+  return { resource: 'rfqs', record: ctx.store.get('rfqs', rfq.id) };
+}
+
+/**
  * Receive materials, step 2 (pilots): the "Today rec." quantity of each line of one order. More than ordered is accepted
  * (the line then reads received > ordered and leaves Pending order); a take-in is always a positive quantity (the client has no
  * need for a negative take-in; an entry taken in by mistake is taken back with Correct receipt). A delivery goes into the Material

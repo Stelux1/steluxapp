@@ -10,9 +10,9 @@ import { currentDrawingFile } from './iso-book-parts.ts';
 import { blankPunchPdf, flangeLabelsPdf, flangePdf, pickListPdf, punchPdf, reservedMaterialsPdf } from './operational-lists.ts';
 import {
   REQUEST_DOCUMENTS, visualSignerId, hydrotestDocumentModel, pdfText as text, releaseDocumentModel, requestDocumentModel, requestDocumentOptions, visualReportModel, type RequestDocumentKind,
-  ORDER_COLUMNS, orderDocumentModel,
+  ORDER_COLUMNS, orderDocumentModel, RFQ_COLUMNS, rfqDocumentModel,
 } from '../../shared/pdf-documents.ts';
-import { A4_PORTRAIT, documentHeader, plainTable, renderOperational } from './operational-blocks.ts';
+import { A4_LANDSCAPE, A4_PORTRAIT, documentHeader, noteBlock, plainTable, renderOperational, type Step } from './operational-blocks.ts';
 import { canScope } from '../../shared/permissions.ts';
 import { flangeReportModel, flangeReportOptions, pickListModel, punchListModel, punchListOptions } from '../../shared/pdf-lists.ts';
 import { REQUEST_DOCUMENT } from '../../shared/inspections.ts';
@@ -217,7 +217,33 @@ const orderMaterials: PdfScopedDefinition = {
   },
 };
 
+/**
+ * Request for Quotation: the document of one request (`?rfqId=…`), opened after "Request for Quotation" on its page. It lists the asked
+ * materials with empty columns for the supplier's unit price, availability and delivery time. It is no order document.
+ */
+const requestForQuotation: PdfScopedDefinition = {
+  key: 'request-for-quotation', title: 'Request for Quotation', report: 'pdf-rfq', scope: 'scoped',
+  async build({ store, documents, user, rows, projectIds, query, now }) {
+    if (!canScope(user, '13', 'print')) throw new AppError(403, 'Your permission profile does not allow this document.');
+    const model = rfqDocumentModel(rows, query.rfqId ?? '', projectIds);
+    if (!model) throw notFound('This request for quotation');
+    const company = companyForDocuments(store, documents);
+    const { bytes } = await renderOperational({
+      page: A4_LANDSCAPE, title: `Request for Quotation ${model.number}`, generatedAt: now,
+      async layout(pdf) {
+        const header = await documentHeader(pdf, { title: 'Request for Quotation', subtitle: model.date ? `${model.number} - ${model.date}` : model.number, company, left: model.items });
+        const steps: Step[] = [{ table: plainTable(RFQ_COLUMNS, [9, 8, 9, 4, 6, 6, 22, 6, 4, 8, 9, 9], model.lines, { size: 7, headerSize: 7 }) }];
+        if (model.note.trim()) steps.push({ block: noteBlock('Note', model.note), before: 6 });
+        steps.push({ block: noteBlock('', 'This is a request for quotation, not an order. Please state your unit price, availability and delivery time for every line you can offer.'), before: 6 });
+        return { header, steps };
+      },
+    });
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(text(model.rfq.date)) ? text(model.rfq.date).replaceAll('-', '') : isoDate(now).replaceAll('-', '');
+    return { bytes, fileName: `${day}_${safe(model.number, 'rfq')}-RequestForQuotation` };
+  },
+};
+
 export const OPERATIONAL_DOCUMENTS: (PdfDocumentDefinition | PdfScopedDefinition)[] = [
   requestDefinition('ndt-request'), requestDefinition('ndt-pre-request'), requestDefinition('pwht-request'), visualReport,
-  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList, reservedMaterialsDocument, orderMaterials,
+  releaseDefinition('Prefab'), releaseDefinition('Field'), hydrotestRequest, punchList, punchListBlank, flangeReport, flangeLabels, pickList, reservedMaterialsDocument, orderMaterials, requestForQuotation,
 ];
