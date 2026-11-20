@@ -55,6 +55,16 @@ Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.doc
 | 38 | Za sastanak. | Ostaje. |
 | Napomena | Prilozi treba da se otvore za pregled u novom prozoru, ne da se odmah preuzmu. | PDF i slike se otvaraju u novoj kartici (inline, tip po sadržaju fajla); ostali fajlovi i `?download=1` se preuzimaju. |
 
+### Dodatni zahtevi klijenta od 20.11.2026 (pet slika) i šta je urađeno
+
+| Zahtev | Urađeno |
+|---|---|
+| ISO broj „KH-034708-SHEET 5" je odbijen; treba dozvoliti i druge znakove. | ISO broj prima pojedinačne razmake između delova (njihov izvoz: 72 od 7621 brojeva imaju razmak, drugih znakova nema). |
+| ITP, WPS i WPQR se za svaki glavni projekat unose iznova (novi glavni projekat je nudio ITP-ove demo projekata). | Svaki ITP, WPS i PQR pripada jednom glavnom projektu i vidi se samo tamo; stariji zapisi pripadaju glavnom projektu svojih veza. Broj / naziv je jedinstven po glavnom projektu (Luka). Menja jedinstvene indekse u bazi: priprema baze pre puštanja. |
+| Ne razume „Iso progress" pri kreiranju glavnog projekta. | Forma ima odeljak „How Iso progress is calculated" (svako polje, pravilo zbira i primer); Welds u progresu broji var kao zavaren sa zavarivačem i datumom, kao WDI. |
+| „Welder customs" ne pripada „Welder data", nego „Weld data". | Stavka Customs je premeštena u grupu Weld data (posle Spools); nazivi grupa ostaju (Luka). |
+| Spoolovi novog glavnog projekta treba da budu A, B, C …; CSV za druga imena. | Nov glavni projekat dobija A–Z (ostala imena isključena samo za njega); stranica Spools ima „Import CSV" (kolona Spool name, opciono Abbreviation; opcija da zameni listu tog glavnog projekta). |
+
 Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
 
 ---
