@@ -170,7 +170,7 @@ test('a link can only be added to a record the account may read: a WPS editor wi
   const put = (who: typeof editor, data: Record<string, unknown>) => who.as.request(`/records/wps/${wps.id}`, { method: 'PUT', pilot: 'weld', data: { ...data, _version: f.store.get('wps', wps.id)._version } });
   // New link by id on a new WPS, on an existing one, and through the primary PQR field.
   const before = f.store.list('wps').length;
-  const created = await editor.as.request('/records/wps', { method: 'POST', pilot: 'weld', data: { name: 'WPS-FORGED', method: '141', definition: 'Forged link', allProjects: true, pqrIds: [pqr.id] } });
+  const created = await editor.as.request('/records/wps', { method: 'POST', pilot: 'weld', data: { name: 'WPS-FORGED', siteId: NORTH, method: '141', definition: 'Forged link', allProjects: true, pqrIds: [pqr.id] } });
   assert.equal(created.status, 403, await created.clone().text());
   assert.equal(f.store.list('wps').length, before, 'nothing was created');
   assert.equal((await put(editor, { pqrIds: [pqr.id] })).status, 403);

@@ -15,7 +15,7 @@ import { crc32 } from 'node:zlib';
 import { extname } from 'node:path';
 import { canResource } from '../shared/permissions.ts';
 import { CERTIFICATE_IMPORT_COLUMNS, IMPORT_ROW_LIMIT, importRow, type ImportLookup, type ImportedRow } from '../shared/certifications.ts';
-import { SITE_OWNED, certificateBasicMaterial, inOwnerSite, linkedToProject } from '../shared/welder-data.ts';
+import { SITE_OWNED, SITE_UNIQUE, certificateBasicMaterial, inOwnerSite, linkedToProject } from '../shared/welder-data.ts';
 import type { Row } from '../shared/types.ts';
 import { actorOf, checkResourcePermission, type AuthRequest } from './auth.ts';
 import type { documentStorage } from './documents.ts';
@@ -25,8 +25,12 @@ import { AppError, type Store } from './store.ts';
 
 const text = (value: unknown) => value === null || value === undefined ? '' : String(value).trim();
 
-/** Hosted profile: a certificate or welding wire is created in a main project (the client sends the open one). */
-export function requireOwnerSite(key: string, input: Record<string, unknown>) {
+/**
+ * Hosted profile: a record of SITE_OWNED is created in a main project. The client sends the open one for a certificate or
+ * welding wire; an ITP, WPS or PQR created without one takes the request's main project (`activeSiteId`).
+ */
+export function requireOwnerSite(key: string, input: Record<string, unknown>, activeSiteId = '') {
+  if (SITE_UNIQUE[key] && !text(input.siteId) && activeSiteId) input.siteId = activeSiteId;
   if (SITE_OWNED[key] && !text(input.siteId)) throw new AppError(422, 'Open a main project before adding this record.', { siteId: 'Open a main project first.' });
 }
 

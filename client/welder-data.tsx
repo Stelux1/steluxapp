@@ -120,7 +120,7 @@ const expired = (document: Row) => Boolean(document.expiresAt) && String(documen
 
 /** "Personnel data" (Show): photo, Summary list link, the personal data, and the welder's documents by expire date. */
 export function WelderShowDialog({ welderId, homeLocation, onClose }: { welderId: string; homeLocation: string; onClose: () => void }) {
-  const { rows, label } = useWorkspace(); const files = useFiles();
+  const { rows, allRows, label } = useWorkspace(); const files = useFiles();
   const welder = (rows.welders || []).find(row => row.id === welderId);
   if (!welder) return null;
   const documents = welderDocuments(rows.welder_certificates, welderId);
@@ -137,7 +137,7 @@ export function WelderShowDialog({ welderId, homeLocation, onClose }: { welderId
         <dl className="welder-show-details">{details.map(([title, value]) => <div key={title}><dt>{title}</dt><dd>{value || <span className="muted">—</span>}</dd></div>)}</dl>
       </div>
       <TableScroll><table className="data-table"><thead><tr><th>#</th><th>Document</th><th>WQ No</th><th>WPS</th><th>Note</th><th>Expire</th><th>Notify days</th></tr></thead>
-        <tbody>{documents.map((document, index) => { const file = files('welder_certificates', document.id)[0], wps = documentWps(document, rows.wps);
+        <tbody>{documents.map((document, index) => { const file = files('welder_certificates', document.id)[0], wps = documentWps(document, allRows.wps || rows.wps);
           return <tr key={document.id}><td>{index + 1}</td><td>{file ? <a href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer"><Download size={13}/> {String(document.name)}</a> : String(document.name)}</td><td>{wqNoOf(document)}</td><td>{wps.join(', ') || 'Not selected'}</td><td>{documentNote(document) || '-'}</td>
             <td>{document.expiresAt ? <>{formatDate(String(document.expiresAt))} {expired(document) && <AlertTriangle size={13} className="welder-expired-icon" aria-label="Expired"/>}</> : '-'}</td><td>{notifyDays(document)} days</td></tr>; })}</tbody></table></TableScroll>
       {!documents.length && <p className="muted">No documents recorded for this welder.</p>}
@@ -203,7 +203,7 @@ function DocumentFields({ draft, setDraft, current }: { draft: DocumentDraft; se
 
 /** "Personel's certificates and files" (the reference's spelling): one document list per welder with an always-open add row. */
 export function WelderFilesDialog({ welderId, onClose }: { welderId: string; onClose: () => void }) {
-  const { rows, canRecord, refresh, notify } = useWorkspace(); const files = useFiles();
+  const { rows, allRows, canRecord, refresh, notify } = useWorkspace(); const files = useFiles();
   const [draft, setDraft] = useState<DocumentDraft>(() => emptyDraft()); const [editing, setEditing] = useState<{ record: Row; draft: DocumentDraft } | null>(null);
   const welder = (rows.welders || []).find(row => row.id === welderId);
   const [welderNote, setWelderNote] = useState(() => String(welder?.description ?? '')); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -229,7 +229,7 @@ export function WelderFilesDialog({ welderId, onClose }: { welderId: string; onC
       {writable && <form onSubmit={add}><DocumentFields draft={draft} setDraft={setDraft}/><div className="welder-card-buttons"><button className="btn primary" disabled={busy}>Add</button></div></form>}
       {writable && canRecord('welders', 'edit', welder) && <form className="welder-note-form" onSubmit={saveNote}><div className="field"><label htmlFor="welder-note">Note</label><input id="welder-note" type="text" value={welderNote} onChange={event => setWelderNote(event.target.value)}/></div><button className="btn primary" disabled={busy}>Save</button></form>}
       <TableScroll><table className="data-table"><thead><tr><th>#</th><th>Document 1</th><th>WQ No</th><th>WPS</th><th>Note</th><th>Expire</th><th>Notify days</th><th><span className="sr-only">Options</span></th></tr></thead>
-        <tbody>{documents.map((item, index) => { const on = notificationsOn(item), file = files('welder_certificates', item.id)[0], wps = documentWps(item, rows.wps), name = String(item.name);
+        <tbody>{documents.map((item, index) => { const on = notificationsOn(item), file = files('welder_certificates', item.id)[0], wps = documentWps(item, allRows.wps || rows.wps), name = String(item.name);
           return <tr key={item.id}><td>{index + 1}</td><td>{file ? <a href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer"><Download size={13}/> {name}</a> : name}</td><td>{wqNoOf(item)}</td><td>{wps.join(', ') || 'Nothing selected'}</td><td>{documentNote(item) || '-'}</td>
             <td>{item.expiresAt ? <>{formatDate(String(item.expiresAt))} {expired(item) && <AlertTriangle size={13} className="welder-expired-icon" aria-label="Expired"/>}</> : '-'}</td><td>{notifyDays(item)} days</td>
             <td className="actions-cell">{canRecord('welder_certificates', 'edit', item) && !welder._archived && <>

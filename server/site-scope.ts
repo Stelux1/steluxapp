@@ -4,7 +4,7 @@ import { RESOURCE_MAP } from '../shared/resources.ts';
 import { SCOPE_PILOTS, SITE_LINKED, SITE_REFUSED, SITE_RULES, SITE_SCOPE_ALL, USER_SITES, linkedSites, readSiteProfiles, scopeLimited, siteIdsField, siteProfilesField, siteProfilesOf, siteScopeField, type ScopePilot } from '../shared/site-scope.ts';
 import { projectInPilot } from '../shared/project-scope.ts';
 import type { Row } from '../shared/types.ts';
-import { SITE_OWNED, ownerSites } from '../shared/welder-data.ts';
+import { SITE_OWNED, ownerRows, ownerSites, type OwnerRows } from '../shared/welder-data.ts';
 import { AppError, type Store } from './store.ts';
 
 /**
@@ -41,7 +41,7 @@ export function allowedSites(store: Store, account: Row, pilot: ScopePilot): All
 export class SiteScope {
   private rows = new Map<string, Map<string, Row>>();
   private sites = new Map<string, string>();
-  private ownerLists = new Map<string, { links: Row[]; projects: Row[] }>();
+  private ownerLists = new Map<string, OwnerRows>();
   private linkLists = new Map<string, Row[]>();
   /** While the scope resolves a parent itself, its own `store.get` calls are not checked. */
   private resolving = 0;
@@ -73,15 +73,14 @@ export class SiteScope {
     return site;
   }
   /**
-   * A certificate or welding wire saved before it carried its main project: the main projects of its linked projects
-   * (shared/welder-data.ts `ownerSites`); one for all projects stays shared (GLOBAL), one linked to several main
-   * projects is reachable from any of them (SEVERAL).
+   * A record of SITE_OWNED (certificate, welding wire, ITP, WPS, PQR) saved before it carried its main project: the main
+   * projects derived from its links (shared/welder-data.ts `ownerSites`); one that cannot be placed stays shared (GLOBAL),
+   * one of several main projects is reachable from any of them (SEVERAL).
    */
   private ownerSite(key: string, row: Row | Record<string, unknown>): string {
-    const owned = SITE_OWNED[key];
-    // One read of the links and projects per request.
+    // One read of the lists it is derived from per request.
     let lists = this.ownerLists.get(key);
-    if (!lists) { lists = { links: this.store.list(owned.links, true), projects: this.store.list('projects', true) }; this.ownerLists.set(key, lists); }
+    if (!lists) { lists = ownerRows(key, resource => this.store.list(resource, true)); this.ownerLists.set(key, lists); }
     const sites = ownerSites(key, row, lists);
     return sites === 'all' ? GLOBAL : sites.length === 1 ? sites[0] : SEVERAL + sites.join('\u0000');
   }

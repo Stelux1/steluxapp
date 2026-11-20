@@ -294,7 +294,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'insert');
     dropCompletionInput(resource.key, req.body);
     access.input(resource.key, req.body); access.owner((req as unknown as AuthRequest).user, resource.key, req.body); access.complete(resource.key, req.body); access.weldRecord(resource.key, req.body);
-    if (pilots) requireOwnerSite(resource.key, req.body);
+    if (pilots) requireOwnerSite(resource.key, req.body, (req as unknown as AuthRequest).user.siteId || '');
     if (pilots && resource.key === 'punchlists') assertPunchAddAllowed(store, req.body, (req as unknown as AuthRequest).user);
     if (pilots && resource.key === 'users') { assertUserInput((req as unknown as AuthRequest).user, req.body); assertSiteAccessEdit(store, (req as unknown as AuthRequest).user.id, req.body); assertSiteProfiles(store, req.body); checkUserApplications(req.body); }
     const archiveSite = pilots && resource.key === 'sites' ? siteArchiveInput(req.body) : undefined;

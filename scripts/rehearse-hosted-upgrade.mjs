@@ -186,7 +186,7 @@ try {
     if (problems.length || Object.keys(added).length) throw new Error(`The dry run changed the database: ${problems.join('; ')}`);
     dry.created ??= { tables: [], columns: [], foreignKeys: [], indexes: [], rowLevelSecurity: [] };
     const created = dry.created;
-    return `would create ${created.tables.length} table(s) [${created.tables.join(', ')}], ${created.columns.length} reference column(s), ${created.foreignKeys.length} foreign key(s), ${created.indexes.length} index(es), RLS on ${created.rowLevelSecurity.length}; pre-existing: ${Object.entries(dry.counts).map(([name, count]) => `${name}=${count}`).join(' ')}`;
+    return `would create ${created.tables.length} table(s) [${created.tables.join(', ')}], ${created.columns.length} reference column(s), ${created.foreignKeys.length} foreign key(s), ${created.indexes.length} index(es)${created.indexes.length && created.indexes.length <= 8 ? ` [${created.indexes.join('; ')}]` : ''}, RLS on ${created.rowLevelSecurity.length}; pre-existing: ${Object.entries(dry.counts).map(([name, count]) => `${name}=${count}`).join(' ')}`;
   });
   await step('New code: preparation (backup first)', async () => {
     if (dry.upToDate) { prepared = { dataStepTables: {} }; return { skip: 'nothing to prepare: the release adds no schema' }; }

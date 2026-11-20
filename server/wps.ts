@@ -7,6 +7,7 @@ import type { releaseAccess } from './release-access.ts';
 import type { documentStorage } from './documents.ts';
 import { canResource } from '../shared/permissions.ts';
 import type { Row } from '../shared/types.ts';
+import { inOwnerSite, ownerRows } from '../shared/welder-data.ts';
 import {
   PQR_IMPORT_COLUMNS, PQR_NUMBER, pqrImportActionError, pqrImportColumn, pqrImportPreview, pqrImportSummary, wpsCopyRefusal, wpsCopyValues,
   wpsGlobalDeactivation, wpsSiteChange, type PqrImportRow,
@@ -29,7 +30,12 @@ function siteOf(store: Store, value: unknown): Row {
   if (typeof value !== 'string' || !value) throw new AppError(422, 'Choose a project site.', { siteId: 'Choose a project site.' });
   try { return store.get('sites', value); } catch (error) { if ((error as AppError).status === 404) throw new AppError(422, 'Choose an active project site.', { siteId: 'Choose an active project site.' }); throw error; }
 }
-const wpsRows = (store: Store) => Object.fromEntries(['wps', 'wps_sites', 'wps_projects', 'wps_pqr', 'sites', 'projects'].map(key => [key, store.list(key, key === 'wps')]));
+// Archived rows included: the rules read the live ones (shared/wps.ts), the main projects of an older WPS also its deactivated site links.
+const wpsRows = (store: Store) => Object.fromEntries(['wps', 'wps_sites', 'wps_projects', 'wps_pqr', 'sites', 'projects', 'pqr'].map(key => [key, store.list(key, true)]));
+/** Every list `ownerSites` reads, archived rows included (shared/welder-data.ts). */
+const owners = (store: Store, key: string) => ownerRows(key, resource => store.list(resource, true));
+/** The main project the request works in (PQR import adds PQRs there). */
+const activeSite = (req: Request) => { const siteId = String(user(req).siteId || ''); if (!siteId) throw new AppError(422, 'Open a main project before importing PQRs.'); return siteId; };
 
 const MAX_ROWS = 1000, MAX_TEXT = 2000;
 /** The sheet's rows as text by column name (row 1 is the header). */
@@ -56,10 +62,11 @@ async function readSheet(buffer: Buffer): Promise<{ rowNo: number; values: Recor
   return rows;
 }
 /** PQR number → ids of the active PQRs that carry it (case and outer spaces do not matter). */
-function existingNumbers(store: Store): Map<string, string[]> {
+function existingNumbers(store: Store, siteId: string): Map<string, string[]> {
   const options = new Map(store.list('qualification_options', true).map(option => [option.id, String(option.name || '').trim()]));
-  const map = new Map<string, string[]>();
-  for (const pqr of store.list('pqr')) {
+  const map = new Map<string, string[]>(), lists = owners(store, 'pqr');
+  // Only the PQRs of the main project are matched: another main project's PQR with the same number is not updated.
+  for (const pqr of store.list('pqr').filter(row => inOwnerSite('pqr', row, siteId, lists))) {
     const number = options.get(String(pqr[PQR_NUMBER.name] || ''));
     if (number) map.set(number.toLowerCase(), [...(map.get(number.toLowerCase()) || []), pqr.id]);
   }
@@ -78,6 +85,8 @@ export function registerWpsRoutes(app: Application, { store, documents, access }
     const records = store.transaction(() => list.map(id => {
       const wps = access.record('wps', id); allow(req, 'wps', 'edit', wps);
       if (wps._archived) throw new AppError(422, `WPS ${wps.name} is deleted. Restore it first.`);
+      // A WPS belongs to one main project (client 20.11.2026): it is switched on there only; another main project copies it.
+      if (req.body.enabled && !inOwnerSite('wps', wps, site.id, owners(store, 'wps'))) throw new AppError(422, `WPS ${wps.name} belongs to another main project. Copy it to use it on ${site.name}.`);
       return store.update('wps', id, wpsSiteChange(wpsRows(store), wps, site.id, req.body.enabled), wps._version, actor);
     }));
     res.json({ records: records.map(row => access.project('wps', row)) });
@@ -147,8 +156,9 @@ export function registerWpsRoutes(app: Application, { store, documents, access }
   }
   const messages = (error: unknown) => { const e = error as AppError; return e.fields && Object.keys(e.fields).length ? Object.values(e.fields) : [e.message || 'This row could not be saved.']; };
   function save(req: Request, row: PqrImportRow, action: 'import' | 'update', actor: ReturnType<typeof actorOf>) {
-    if (action === 'import') { allow(req, 'pqr', 'insert'); return store.create('pqr', rowData(row), actor); }
+    if (action === 'import') { allow(req, 'pqr', 'insert'); return store.create('pqr', { ...rowData(row), siteId: activeSite(req) }, actor); }
     const target = access.record('pqr', row.targetId); allow(req, 'pqr', 'edit', target);
+    if (!inOwnerSite('pqr', target, activeSite(req), owners(store, 'pqr'))) throw new AppError(422, 'This PQR belongs to another main project.');
     return store.update('pqr', target.id, rowData(row), target._version, actor);
   }
   const respond = (rows: PqrImportRow[]) => ({ rows: rows.map(row => ({ rowNo: row.rowNo, action: row.action, values: row.values, errors: row.errors })), ...pqrImportSummary(rows) });
@@ -156,7 +166,7 @@ export function registerWpsRoutes(app: Application, { store, documents, access }
     importAllowed(req);
     if (!req.file) throw new AppError(422, 'Choose an Excel file.');
     if (!/\.xlsx$/i.test(req.file.originalname)) throw new AppError(422, 'Choose an Excel file (.xlsx).');
-    const rows = pqrImportPreview(await readSheet(req.file.buffer), existingNumbers(store));
+    const rows = pqrImportPreview(await readSheet(req.file.buffer), existingNumbers(store, activeSite(req)));
     dryRun(req, rows);
     res.json(respond(rows));
   });
@@ -170,7 +180,7 @@ export function registerWpsRoutes(app: Application, { store, documents, access }
       return { rowNo: Number.isSafeInteger(row.rowNo) ? Number(row.rowNo) : index + 2, values: values as Record<string, string>, chosen: row.action };
     });
     // The rows are checked again: matching and every rule follow the data as it is now, not as it was at the preview.
-    const rows = pqrImportPreview(parsed, existingNumbers(store));
+    const rows = pqrImportPreview(parsed, existingNumbers(store, activeSite(req)));
     const actor = actorOf(req); const result = { imported: 0, updated: 0, skipped: 0, failed: 0 };
     store.transaction(() => rows.forEach((row, index) => {
       const chosen = parsed[index].chosen;

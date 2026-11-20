@@ -467,7 +467,8 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
       if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0];
       return response;
     };
-    const login = async (email: string) => { const response = await request('/auth/login', { method: 'POST', data: { email, password: PASSWORD } }); assert.equal(response.status, 200, email); return (await response.json()).user as User; };
+    // Every account works in North fabrication yard: ITPs belong to the main project they are added in (client 20.11.2026).
+    const login = async (email: string) => { const response = await request('/auth/login', { method: 'POST', data: { email, password: PASSWORD } }); assert.equal(response.status, 200, email); assert.equal((await request('/auth/site', { method: 'POST', data: { siteId: 'site-north' } })).status, 200); return (await response.json()).user as User; };
     return { request, login };
   };
   const account = (name: string, levels: Record<string, string>, extra: Record<string, unknown> = {}) => {
@@ -478,6 +479,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   };
   const admin = client();
   assert.equal((await admin.request('/auth/setup', { method: 'POST', data: { name: 'Itp admin', email: 'itp-admin@example.test', password: PASSWORD } })).status, 201);
+  assert.equal((await admin.request('/auth/site', { method: 'POST', data: { siteId: 'site-north' } })).status, 200);
   return { store, client, admin, account };
 }
 const body = async <T = Record<string, any>>(response: Response) => await response.json() as T;

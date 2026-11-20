@@ -19,6 +19,7 @@ import { HOSTED_RELEASE_PROFILE, availabilityFor } from '../shared/release.ts';
 import { materialsList } from '../shared/mto-stock.ts';
 import { isoSummariesFor } from './iso-summary.ts';
 import type { Row } from '../shared/types.ts';
+import { SITE_UNIQUE, ownerRows, ownerSites } from '../shared/welder-data.ts';
 
 /**
  * One-off, insert-only demo main project for an existing hosted workspace (`npm run db:demo:hosted`).
@@ -60,7 +61,9 @@ const DEMO_ACTOR: Actor = { id: SYSTEM.id, name: 'Demo project' };
 const SKIPPED = new Set(['users', 'profiles', 'signatures', USER_SITES, 'company_data', 'attachments', 'articles', 'clients', 'tool_stock', 'rentals', 'tool_movements']);
 /** Demo-only even where no reference leads to a site (storehouses, stock side, shared test systems, orders without a project). */
 const ALWAYS_SCOPED = new Set(['sites', 'warehouses', 'stock', 'movements', 'receipts', 'picklists', 'reservations', 'transfer_orders', 'transfer_order_items',
-  'orders', 'order_lines', 'custom_materials', 'test_systems', 'hydrotest_requests', 'hydrotest_results', 'field_packages', 'service_requests', 'material_locations', 'material_location_events', CATALOG_SITES]);
+  'orders', 'order_lines', 'custom_materials', 'test_systems', 'hydrotest_requests', 'hydrotest_results', 'field_packages', 'service_requests', 'material_locations', 'material_location_events', CATALOG_SITES,
+  // ITPs, WPS methods and PQRs belong to one main project (client 20.11.2026): the demo main projects get their own.
+  ...Object.keys(SITE_UNIQUE)]);
 /** Records whose catalog material carries quantities (see the comment above). */
 const QUANTITY_RESOURCES = ['iso_materials', 'stock', 'order_lines', 'receipts', 'movements', 'picklists', 'reservations'];
 /** Matching key of global resources without a unique rule. */
@@ -253,6 +256,8 @@ function plan(target: Store, source: Store, dryRun: boolean): DemoCopyResult {
       }
       if (MATERIAL_NUMBER_COPIES.has(key) && materialNumbers.has(text(data.materialNo))) data.materialNo = materialNumbers.get(text(data.materialNo));
       for (const field of ALWAYS_MARKED[key] || []) if (text(data[field])) { data[field] = mark(field, text(data[field])); note(result.markers, `${key}.${field}`); }
+      // An ITP, WPS or PQR of one sample main project belongs to its demo main project, so its number stays as it is.
+      if (SITE_UNIQUE[key] && !text(data.siteId)) { const sites = ownerSites(key, row, ownerRows(key, name => source.list(name, true))); if (sites !== 'all' && sites.length === 1) data.siteId = copy('sites', sites[0]) ?? ''; }
       for (let attempt = 0, rule = collides(key, data); rule; rule = collides(key, data), attempt++) {
         if (attempt) throw new AppError(409, `The demo ${RESOURCE_MAP[key].singular} ${memoKey} still collides with an existing record on ${rule.join(', ')}.`);
         for (const field of rule) {

@@ -538,40 +538,99 @@ export function linkedToProject(row: Row, links: Row[], ownerKey: string, projec
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// One main project per certificate and welding wire (reference: the lists are per project site)
+// One main project per record: certificates and welding wires (reference: the lists are per project site), and ITPs,
+// WPS methods and PQRs (client 20.11.2026: ITP, WPS and WPQR are filled in anew for every main project)
 // ---------------------------------------------------------------------------------------------------------
-/** Records that belong to one main project, with the link resource of their projects. */
-export const SITE_OWNED: Record<string, { links: string; ownerKey: string }> = {
+/**
+ * Records that belong to one main project: `links` is the link resource of their projects (owner field `ownerKey`),
+ * `lists` the further lists the main projects of an older record are derived from (`ownerSites`).
+ */
+export const SITE_OWNED: Record<string, { links: string; ownerKey: string; lists?: string[] }> = {
   certifications: { links: 'certificate_projects', ownerKey: 'certificateId' },
   welding_wires: { links: 'wire_projects', ownerKey: 'wireId' },
+  itps: { links: 'itp_projects', ownerKey: 'itpId', lists: ['isometrics'] },
+  wps: { links: 'wps_projects', ownerKey: 'wpsId', lists: ['wps_sites'] },
+  pqr: { links: 'wps_pqr', ownerKey: 'pqrId', lists: ['wps', 'wps_sites', 'wps_projects'] },
 };
+/** The lists `ownerSites` reads, by resource key (`links`: the record's own link list, the older name). */
+export type OwnerRows = { links?: Row[]; projects?: Row[] } & Record<string, Row[] | undefined>;
+/** The lists `ownerSites` needs for a resource, read through `read` (a store list with archived rows, or the workspace rows). */
+export function ownerRows(key: string, read: (resource: string) => Row[] | undefined): OwnerRows {
+  const owned = SITE_OWNED[key];
+  if (!owned) return {};
+  const names = [...new Set([owned.links, 'projects', ...(owned.lists || [])])];
+  return { ...Object.fromEntries(names.map(name => [name, read(name) || []])), links: read(owned.links) || [] };
+}
 /**
- * The main projects a certificate or welding wire belongs to: its own `siteId`. A record saved before records had one
- * (derived when reading, nothing is rewritten) belongs to the main projects of its linked projects; it is `'all'` when it
- * is for all projects or links none, so it stays shared as it was until it is saved with a main project.
+ * The main projects a record of SITE_OWNED belongs to: its own `siteId`. A record saved before records had one (derived
+ * when reading, nothing is rewritten) belongs to
+ * - certificate, welding wire: the main projects of its linked projects; one for all projects is shared;
+ * - ITP: the main projects of its linked projects (`itp_projects`) and of the isometrics linked to it (ITP No / ITP Field);
+ * - WPS: the main projects it is or was enabled on (`wps_sites`, deactivated links included, so switching it off on a main
+ *   project keeps it in that main project's Inactive list) and those of its chosen projects (`wps_projects`);
+ * - PQR: the main projects of the WPS methods linked to it (`wps_pqr`); shared when one of them is shared.
+ * It is `'all'` (shared, as it was) when it cannot be placed, until it is saved with a main project.
  */
-export function ownerSites(key: string, row: Record<string, unknown>, rows: { links?: Row[]; projects?: Row[] }): string[] | 'all' {
+export function ownerSites(key: string, row: Record<string, unknown>, rows: OwnerRows): string[] | 'all' {
   const own = text(row.siteId);
   if (own) return [own];
   const owned = SITE_OWNED[key];
-  if (!owned || row.allProjects !== false) return 'all';
+  if (!owned) return 'all';
   // An archived record keeps the links archived together with it.
-  const projectIds = new Set((rows.links || []).filter(link => (!link._archived || row._archived && link.ownerArchived) && link[owned.ownerKey] === row.id).map(link => String(link.projectId)));
-  const sites = [...new Set((rows.projects || []).filter(project => projectIds.has(project.id)).map(project => text(project.siteId)).filter(Boolean))].sort();
-  return sites.length ? sites : 'all';
+  const archived = Boolean(row._archived), ownLinks = rows[owned.links] ?? rows.links;
+  const linked = (links: Row[] | undefined, ownerKey: string) => (links || []).filter(link => (!link._archived || archived && link.ownerArchived) && link[ownerKey] === row.id);
+  const projectSites = (ids: string[]) => { const wanted = new Set(ids); return (rows.projects || []).filter(project => wanted.has(project.id)).map(project => text(project.siteId)); };
+  const sites: string[] = [];
+  if (key === 'certifications' || key === 'welding_wires') {
+    if (row.allProjects !== false) return 'all';
+    sites.push(...projectSites(linked(ownLinks, owned.ownerKey).map(link => String(link.projectId))));
+  } else if (key === 'itps') {
+    const isometrics = (rows.isometrics || []).filter(iso => (!iso._archived || archived) && (iso.itpId === row.id || iso.itp2Id === row.id));
+    sites.push(...projectSites([...linked(ownLinks, owned.ownerKey).map(link => String(link.projectId)), ...isometrics.map(iso => String(iso.projectId))]));
+  } else if (key === 'wps') {
+    sites.push(...(rows.wps_sites || []).filter(link => link.wpsId === row.id).map(link => text(link.siteId)), ...projectSites(linked(ownLinks, owned.ownerKey).map(link => String(link.projectId))));
+  } else if (key === 'pqr') {
+    const methods = new Map((rows.wps || []).map(item => [item.id, item]));
+    const wpsRows: OwnerRows = { ...rows, links: rows.wps_projects };
+    for (const link of linked(ownLinks, owned.ownerKey)) {
+      const method = methods.get(String(link.wpsId));
+      if (!method) continue;
+      const of = ownerSites('wps', method, wpsRows);
+      if (of === 'all') return 'all';
+      sites.push(...of);
+    }
+  }
+  const found = [...new Set(sites.filter(Boolean))].sort();
+  return found.length ? found : 'all';
 }
-/** Whether a certificate or wire is offered in a main project (an empty `siteId` means every main project). */
-export function inOwnerSite(key: string, row: Record<string, unknown>, siteId: string, rows: { links?: Row[]; projects?: Row[] }): boolean {
+/** Whether a record of SITE_OWNED is offered in a main project (an empty `siteId` means every main project). */
+export function inOwnerSite(key: string, row: Record<string, unknown>, siteId: string, rows: OwnerRows): boolean {
   if (!siteId) return true;
   const sites = ownerSites(key, row, rows);
   return sites === 'all' || sites.includes(siteId);
+}
+/** Whether two sets of main projects meet ('all' meets every main project). */
+export const sitesMeet = (a: string[] | 'all', b: string[] | 'all') => a === 'all' || b === 'all' || a.some(site => b.includes(site));
+/**
+ * Numbers and names unique per main project (client 20.11.2026): the same ITP No, WPS number or PQR may be saved once in
+ * every main project. The database index holds (siteId, field); the store refuses a second active record of the same main
+ * project, an older record without a siteId counting for the main projects it belongs to (`siteUniqueClash`).
+ */
+export const SITE_UNIQUE: Record<string, string> = { itps: 'number', wps: 'name', pqr: 'name' };
+const sameValue = (a: unknown, b: unknown) => text(a).toLowerCase() === text(b).toLowerCase();
+/** The other active record of the same main project that already holds the record's number or name, if any. */
+export function siteUniqueClash(key: string, record: Record<string, unknown>, others: Row[], rows: OwnerRows): Row | undefined {
+  const field = SITE_UNIQUE[key];
+  if (!field || !text(record[field])) return undefined;
+  const mine = ownerSites(key, record, rows);
+  return others.find(other => !other._archived && other.id !== record.id && sameValue(other[field], record[field]) && sitesMeet(mine, ownerSites(key, other, rows)));
 }
 /**
  * Next index number within one main project: records of other main projects do not count, shared older ones do.
  * `taken` are values that must stay unique across main projects (a welding wire's index number is its unique name):
  * such a number is skipped, the next free one is given.
  */
-export function nextSiteIndexNumber(key: string, field: string, siteId: string, records: Row[], rows: { links?: Row[]; projects?: Row[] }, taken: Set<string> = new Set()): string {
+export function nextSiteIndexNumber(key: string, field: string, siteId: string, records: Row[], rows: OwnerRows, taken: Set<string> = new Set()): string {
   let next = nextIndexNumber(records.filter(record => inOwnerSite(key, record, siteId, rows)).map(record => record[field]));
   while (taken.has(next)) next = String(Number(next) + 1).padStart(4, '0');
   return next;

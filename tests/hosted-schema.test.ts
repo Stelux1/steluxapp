@@ -10,6 +10,7 @@ import { passwordHash } from '../server/auth.ts';
 import { initializeDocumentStorage } from '../server/documents.ts';
 import { backupPostgres } from '../server/postgres-backup.ts';
 import { inspectHostedSchema, prepareHostedSchema, verifyHostedSchema } from '../server/hosted-schema.ts';
+import { REPLACED_UNIQUE_RULES } from '../server/postgres-schema.ts';
 import { prepareWeldingTraceability, verifyWeldingTraceability } from '../server/welding-schema.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { CATALOG_SITES, enabledOnSite } from '../shared/weld-catalogs.ts';
@@ -231,6 +232,40 @@ test('preparation rolls back when a pre-existing record changes and refuses conf
   assert.throws(() => prepareHostedSchema(db), (error: Error) => /Nothing was changed/.test(error.message) && error.message.includes('users.companyId exists but is not the generated reference') && error.message.includes('Index sites_unique_0 on sites enforces (residence)'));
   assert.throws(() => verifyHostedSchema(db), /Resolve manually first/);
   assert.equal(fingerprint(), conflicted); assert.deepEqual(rows(), { ...records, users: rows(['users']).users });
+});
+
+test('client 20.11.2026: an older hosted database with a global ITP No / WPS / PQR rule gets the rule per main project from the preparation, once, without touching records', { skip: !testUrl }, t => {
+  connect(); t.after(() => db.close());
+  workspace();
+  const fresh = fingerprint();
+  workspace();
+  // As the previous release left it: no siteId reference column, one unique rule over every main project.
+  for (const [name, [key]] of Object.entries(REPLACED_UNIQUE_RULES)) {
+    const table = name.replace(/_unique_0$/, '');
+    db.exec(`DROP INDEX stelux."${name}"; ALTER TABLE stelux."${table}" DROP COLUMN "siteId"; CREATE UNIQUE INDEX "${name}" ON stelux."${table}" ((coalesce(data::jsonb->>'${key}', ''))) WHERE archived=0`);
+  }
+  const records = rows(), older = fingerprint();
+  const replaced = ['itps_unique_0 on itps (siteId, number) replaces the unique rule on (number)', 'wps_unique_0 on wps (siteId, name) replaces the unique rule on (name)', 'pqr_unique_0 on pqr (siteId, name) replaces the unique rule on (name)'];
+  assert.throws(() => verifyHostedSchema(db), (error: Error) => /npm run db:prepare:welding/.test(error.message) && error.message.includes(replaced[0]) && !/Resolve manually/.test(error.message));
+  const dry = prepareHostedSchema(db, { dryRun: true });
+  for (const line of replaced) assert.ok(dry.created.indexes.includes(line), line);
+  for (const key of ['itps', 'wps', 'pqr']) assert.ok(dry.created.columns.includes(`${key}.siteId → sites`), key);
+  assert.equal(fingerprint(), older, 'a dry run rolls back'); assert.deepEqual(rows(), records);
+  const prepared = prepareHostedSchema(db);
+  assert.deepEqual(prepared.created, dry.created);
+  assert.equal(fingerprint(), fresh, 'the prepared schema matches what initializePostgres creates');
+  assert.deepEqual(rows(Object.keys(records)), records, 'existing records are unchanged');
+  verifyHostedSchema(db);
+  const again = prepareHostedSchema(db);
+  assert.equal(again.upToDate, true); assert.deepEqual(Object.values(again.created).flat(), [], 'a second run has nothing to do');
+  // The rule itself: the sample ITP-01 belongs to North; Riverside may hold its own, once.
+  const store = new Store(':memory:', db, { initialize: false });
+  store.create('itps', { siteId: 'site-river', number: 'ITP-01' });
+  assert.throws(() => store.create('itps', { siteId: 'site-river', number: 'ITP-01' }), /already exists in this main project/);
+  assert.throws(() => db.exec(`INSERT INTO stelux.itps(id,data,created_at,updated_at) VALUES ('raw','{"siteId":"site-river","number":"ITP-01"}','x','x')`), /duplicate key|unique/i, 'the index refuses it too');
+  // An index that is not the previous release's rule is still reported and left alone.
+  db.exec(`DROP INDEX stelux."wps_unique_0"; CREATE UNIQUE INDEX "wps_unique_0" ON stelux."wps" ((coalesce(data::jsonb->>'method', ''))) WHERE archived=0`);
+  assert.throws(() => prepareHostedSchema(db), (error: Error) => /Nothing was changed/.test(error.message) && error.message.includes('Index wps_unique_0 on wps enforces (method)'));
 });
 
 test('the visual reports resource (VT reports) is part of the hosted schema: references and one number per main project', () => {

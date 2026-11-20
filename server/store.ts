@@ -6,7 +6,7 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { MATERIAL_FIELDS } from '../shared/materials.ts';
 import { RELATIONS, relationMatches } from '../shared/welding.ts';
 import { SITE_REFUSED } from '../shared/site-scope.ts';
-import { SITE_OWNED } from '../shared/welder-data.ts';
+import { SITE_OWNED, SITE_UNIQUE, inOwnerSite, ownerRows, siteUniqueClash } from '../shared/welder-data.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
@@ -16,7 +16,7 @@ import { isoItpLinks, itpSlotRefresh } from '../shared/itp-dashboard.ts';
 import { nextPunchNumber, normalizePunch, punchInputErrors } from '../shared/punch.ts';
 import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/types.ts';
 import type { Database } from './database.ts';
-import { initializePostgres } from './postgres-schema.ts';
+import { REPLACED_UNIQUE_RULES, initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
 import { EDIT_OPTIONAL, ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
 import { isStandardDefectCode } from '../shared/defect-codes.ts';
@@ -93,6 +93,9 @@ export class Store {
       const columns = new Set((this.db.prepare(`PRAGMA table_xinfo(${table(resource.key)})`).all() as {name:string}[]).map(c => c.name));
       for (const f of resource.fields.filter(f => f.ref && !columns.has(f.name))) this.db.exec(`ALTER TABLE ${table(resource.key)} ADD COLUMN "${f.name}" TEXT GENERATED ALWAYS AS (nullif(json_extract(data, '$.${f.name}'), '')) VIRTUAL REFERENCES "${f.ref}"(id)`);
       for (const [i, keys] of (resource.unique || []).entries()) {
+        // A database of an earlier release keeps the previous index of a replaced unique rule (server/postgres-schema.ts): it is dropped first.
+        const name = `${resource.key}_unique_${i}`, stored = REPLACED_UNIQUE_RULES[name] ? this.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name=?").get(name) as { sql?: string } | undefined : undefined;
+        if (stored?.sql && !keys.every(k => stored.sql!.includes(`'$.${k}'`))) this.db.exec(`DROP INDEX "${name}"`);
         this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "${resource.key}_unique_${i}" ON ${table(resource.key)} (${keys.map(k => `coalesce(json_extract(data, '$.${k}'), '')`).join(',')}) WHERE archived=0;`);
       }
     }
@@ -160,9 +163,22 @@ export class Store {
     // A record that belongs to one main project (certificates, welding wires), or a clash with a record the request may not
     // read: only that the value is in use, not the value or where (sec1-009).
     const clash = others.find(row => keys!.every(name => same(row[name], data[name])));
-    const hidden = Boolean(this.hostedRules && SITE_OWNED[key]) || Boolean(clash && !this.guardAllows(key, clash));
+    // A rule per main project (SITE_UNIQUE) only clashes inside the main project, so the value may be named there.
+    const hidden = Boolean(this.hostedRules && SITE_OWNED[key] && !SITE_UNIQUE[key]) || Boolean(clash && !this.guardAllows(key, clash));
     if (hidden) return Object.assign(new AppError(409, `This ${field.label} is already in use.`, { [field.name]: 'This value is already in use.' }), { kind: 'duplicate' as const });
     return Object.assign(new AppError(409, `${field.label} ${value} already exists.`, { [field.name]: 'This value is already in use.' }), { kind: 'duplicate' as const });
+  }
+  /**
+   * An ITP No, WPS number or PQR is unique per main project (shared/welder-data.ts → SITE_UNIQUE): a second active record of
+   * the same main project is refused at the field; an older record without a main project counts for the ones it belongs to.
+   */
+  private assertSiteUnique(key: string, record: Record<string, unknown>) {
+    const field = SITE_UNIQUE[key];
+    if (!field) return;
+    const clash = siteUniqueClash(key, record, this.list(key), ownerRows(key, name => this.list(name, true)));
+    if (!clash) return;
+    const label = this.resource(key).fields.find(item => item.name === field)?.label || field, value = String(record[field] ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 80);
+    throw Object.assign(new AppError(409, this.guardAllows(key, clash) ? `${label} ${value} already exists in this main project.` : `This ${label} is already in use in this main project.`, { [field]: 'This value is already in use in this main project.' }), { kind: 'duplicate' as const });
   }
   resource(key: string): Resource { const def = RESOURCE_MAP[key]; if (!def) throw new AppError(404, 'This record type does not exist.'); return def; }
   list(key: string, includeArchived = false): Row[] {
@@ -246,6 +262,8 @@ export class Store {
     this.guardTestSystem(key, { ...existing, ...data } as Row); if (existing) this.guardTestSystem(key, existing);
     // A test system is approved only once a signed document (PDF) is uploaded for it; the system user (seeds, imports) is not held to it.
     if (key === 'test_systems' && actor.id !== SYSTEM.id && data.accepted === TS_APPROVED && existing?.accepted !== TS_APPROVED && !(existing && hasSignedDocument(existing.id, { hydrotest_results: this.list('hydrotest_results'), attachments: this.list('attachments') }))) errors.accepted = APPROVAL_NEEDS_DOCUMENT;
+    // An isometric takes ITPs of its own main project only (or shared older ones, shared/welder-data.ts → SITE_OWNED).
+    if (key === 'isometrics' && (data.itpId || data.itp2Id)) Object.assign(errors, this.itpOwnerErrors(data, existing));
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
     if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso, this.list('punchlists'))); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || nextPunchNumber(this.list('punchlists', true)); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
@@ -302,6 +320,19 @@ export class Store {
     if (key === 'iso_materials' && existing && data.isoId !== existing.isoId && ['cut_list', 'calculation_lines'].some(resource => this.list(resource).some(row => row.requirementId === existing.id))) throw new AppError(422, 'This MTO material is used in planning. Remove its calculation and cut-list links before moving it to another isometric.');
     return data;
   }
+  private itpOwnerErrors(data: RecordData, existing?: Row): Record<string, string> {
+    const errors: Record<string, string> = {};
+    let siteId = '';
+    try { siteId = String(this.get('projects', data.projectId, true).siteId ?? ''); } catch { return errors; /* the project is reported with its own field */ }
+    const lists = ownerRows('itps', name => this.list(name, true));
+    for (const name of ['itpId', 'itp2Id']) {
+      const id = String(data[name] ?? '');
+      if (!id || existing && String(existing[name] ?? '') === id && String(existing.projectId ?? '') === String(data.projectId ?? '')) continue;
+      const itp = this.list('itps', true).find(row => row.id === id);
+      if (itp && !inOwnerSite('itps', itp, siteId, lists)) errors[name] = 'Choose an ITP / KNR of this main project.';
+    }
+    return errors;
+  }
   private phaseNumber() {
     const start = nextPhaseNumber(this.list('operation_phases', true));
     const highest = this.db.dialect === 'postgres' ? 'GREATEST' : 'MAX';
@@ -310,6 +341,7 @@ export class Store {
   create(key: string, input: Record<string, unknown>, actor: Actor = SYSTEM, id: string = randomUUID()): Row {
     return this.transaction(() => {
       const data = this.validate(key, input,undefined,actor);
+      this.assertSiteUnique(key, { ...data, id });
       const now = new Date().toISOString();
       this.guardedWrite(key, data, id, () => this.db.prepare(`INSERT INTO ${table(key)}(id,data,created_at,updated_at) VALUES (?,?,?,?)`).run(id, JSON.stringify(data), now, now));
       const result = this.get(key, id);
@@ -325,6 +357,8 @@ export class Store {
       if (existing._version !== expectedVersion) throw conflict('This record changed since you opened it. Refresh and try again.');
       this.guardStandardCode(key, existing, actor, Object.keys(input).some(name => name !== '_version' && !ENABLEMENT_INPUT.includes(name)));
       const data = this.validate(key, input, existing,actor);
+      const unique = SITE_UNIQUE[key];
+      if (unique && (String(data[unique] ?? '').trim() !== String(existing[unique] ?? '').trim() || String(data.siteId ?? '') !== String(existing.siteId ?? ''))) this.assertSiteUnique(key, { ...data, id });
       this.guardedWrite(key, data, id, () => this.db.prepare(`UPDATE ${table(key)} SET data=?,version=version+1,updated_at=? WHERE id=? AND version=?`).run(JSON.stringify(data), new Date().toISOString(), id, expectedVersion));
       if(key==='iso_materials'&&Number(existing.quantity)!==Number(data.quantity)){
         const sequence=this.list('material_quantity_changes',true).filter(r=>r.requirementId===id).reduce((max,r)=>Math.max(max,Number(r.sequence)||0),0)+1;
@@ -380,6 +414,7 @@ export class Store {
           if (dependent) throw conflict(`This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
         }
       }
+      if (row._archived) this.assertSiteUnique(key, { ...row, _archived: false });
       this.guardedWrite(key, row, id, () => this.db.prepare(`UPDATE ${table(key)} SET archived=?,version=version+1,updated_at=? WHERE id=?`).run(row._archived ? 0 : 1, new Date().toISOString(), id));
       if(row._archived&&this.hostedRules&&key==='welders')restoreWelderQualifications(this,id,actor);
       if(row._archived)for(const relation of RELATIONS[key]||[])for(const link of this.list(relation.resource,true).filter(l=>l[relation.ownerKey]===id&&l._archived&&l.ownerArchived)){this.get(relation.target,link[relation.targetKey]);const restored=this.archive(relation.resource,link.id,link._version,actor);this.update(relation.resource,restored.id,{ownerArchived:false},restored._version,actor);}

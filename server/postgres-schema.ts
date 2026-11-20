@@ -32,8 +32,21 @@ export function uniqueIndexes(resources: Resource[] = RESOURCES): UniqueIndex[] 
   if (keys.has('tool_stock')) indexes.push({ name: 'tool_stock_identity', table: 'tool_stock', expressions: ['"articleId"', '"warehouseId"'], where: 'archived=0' });
   return indexes;
 }
+/**
+ * Unique rules a release REPLACED by a looser one under the same index name: index name → the JSON keys the previous
+ * release's index enforced. Client 20.11.2026: an ITP No, WPS number and PQR are unique per main project, no longer over
+ * all main projects. A unique index holds no data, and every existing set of rows that met the old rule meets the new
+ * one, so the preparation drops exactly this previous index and creates its replacement in its one transaction
+ * (server/hosted-schema.ts); any other differing index is still reported and left alone.
+ */
+export const REPLACED_UNIQUE_RULES: Record<string, string[]> = { pqr_unique_0: ['name'], wps_unique_0: ['name'], itps_unique_0: ['number'] };
 export const uniqueIndexStatement = (index: UniqueIndex) => `CREATE UNIQUE INDEX IF NOT EXISTS "${index.name}"
         ON "${index.table}" (${index.expressions.join(',')}) WHERE ${index.where};`;
+/** Drops the previous index of a replaced unique rule (REPLACED_UNIQUE_RULES) when it does not enforce the new keys yet. */
+export function replacedIndexDrop(index: UniqueIndex) {
+  const added = index.expressions.flatMap(expression => [...expression.matchAll(/->>'((?:[^']|'')*)'/g)].map(match => match[1])).filter(key => !REPLACED_UNIQUE_RULES[index.name].includes(key));
+  return `DO $$ BEGIN IF EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='${POSTGRES_SCHEMA}' AND indexname='${index.name}' AND NOT (${added.map(key => `indexdef LIKE '%''${key}''%'`).join(' AND ') || 'true'})) THEN DROP INDEX ${POSTGRES_SCHEMA}."${index.name}"; END IF; END $$;`;
+}
 export const protectStatement = (table: string) => `ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY; REVOKE ALL ON "${table}" FROM PUBLIC;`;
 
 export function initializePostgres(db: Database) {
@@ -52,6 +65,8 @@ export function initializePostgres(db: Database) {
     for (const resource of RESOURCES) {
       for (const field of resource.fields.filter(f => f.ref)) statements.push(referenceColumnStatement(resource.key, field.name, field.ref!));
     }
+    // A database initialized by an earlier release keeps the previous index of a replaced unique rule: it goes first.
+    for (const index of uniqueIndexes().filter(item => REPLACED_UNIQUE_RULES[item.name])) statements.push(replacedIndexDrop(index));
     for (const index of uniqueIndexes()) statements.push(uniqueIndexStatement(index));
     statements.push(`
       CREATE TABLE IF NOT EXISTS credentials(user_id TEXT PRIMARY KEY REFERENCES users(id) DEFERRABLE, hash TEXT NOT NULL);

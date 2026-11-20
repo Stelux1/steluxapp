@@ -136,6 +136,8 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   assert.equal((await request('/api/auth/setup', 'POST', { name: 'Weld data admin', email: 'weld-data-admin@example.test', password: 'Weld-Data-Test-Password' })).status, 201);
+  // The administrator works in North fabrication yard: WPS methods and PQRs belong to the main project they are added in (client 20.11.2026).
+  assert.equal((await request('/api/auth/site', 'POST', { siteId: 'site-north' })).status, 200);
   return { store, request };
 }
 const json = async (response: Response) => await response.json() as Record<string, unknown> & { error?: string; records?: Row[]; record?: Row; rows?: { rowNo: number; action: string; errors: string[]; values: Record<string, string> }[] };

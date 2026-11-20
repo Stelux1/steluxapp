@@ -4,7 +4,7 @@
  * certificate fields of a main project, and the cascade from a welder to its qualifications.
  */
 import type { Row } from '../shared/types.ts';
-import { CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
+import { CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, ownerRows, ownerSites, rangeErrors, sitesMeet } from '../shared/welder-data.ts';
 import { WPS_RANGES } from '../shared/wps.ts';
 import type { Actor, Store } from './store.ts';
 import { qaEngineerCompany } from '../shared/weld-catalogs.ts';
@@ -38,6 +38,7 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
     const taken = key === 'welding_wires' ? new Set(store.list(key).filter(row => row.id !== existing?.id).map(row => String(row.name ?? '').trim())) : undefined;
     if (blank(merged[field])) { next[field] = nextSiteIndexNumber(key, field, siteId, store.list(key, true).filter(row => row.id !== existing?.id), ownership(), taken); merged = { ...merged, [field]: next[field] }; }
   }
+  if (key === 'itps' || key === 'wps' || key === 'pqr') Object.assign(errors, ownedRecordErrors(store, key, next, merged, existing));
   if (key === 'certifications') {
     // The diameter is a Weld diameter; its text is kept on the record for the documents that print it. A typed text
     // (an import, an older certificate) is matched to the Weld diameter of that name.
@@ -95,8 +96,32 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
   return { input: next, errors };
 }
 
-/** Certificate and wire fields of a weld, with the resource they name. */
-const WELD_OWNED: [string, string][] = [['certificate1Id', 'certifications'], ['certificate2Id', 'certifications'], ['wire1Id', 'welding_wires'], ['wire2Id', 'welding_wires']];
+/**
+ * An ITP, WPS or PQR belongs to the main project it was created in (shared/welder-data.ts → SITE_OWNED; client 20.11.2026):
+ * that main project never changes, its linked projects are projects of it, a WPS is enabled there only and takes PQRs of
+ * its own main project (or shared older ones). An older record without a main project is judged by the ones it belongs to.
+ */
+function ownedRecordErrors(store: Store, key: string, next: Record<string, unknown>, merged: Record<string, unknown>, existing?: Row): Record<string, string> {
+  const errors: Record<string, string> = {}, siteId = String(merged.siteId ?? '').trim();
+  if (existing && next.siteId !== undefined && String(next.siteId ?? '').trim() !== String(existing.siteId ?? '').trim()) errors.siteId = 'The main project of this record cannot be changed.';
+  if (!siteId) { if (key === 'wps' && Array.isArray(next.pqrIds)) Object.assign(errors, wpsPqrErrors(store, next.pqrIds, ownerSites('wps', { ...merged, id: existing?.id }, ownerRows('wps', name => store.list(name, true))))); return errors; }
+  if ((key === 'itps' || key === 'wps') && Array.isArray(next.projectIds)) {
+    const projects = new Map(store.list('projects', true).map(row => [row.id, row]));
+    if (next.projectIds.some(id => projects.has(String(id)) && projects.get(String(id))!.siteId !== siteId)) errors.projectIds = 'Choose projects of this main project.';
+  }
+  if (key === 'wps' && Array.isArray(next.siteIds) && next.siteIds.some(id => String(id) !== siteId)) errors.siteIds = 'A WPS method is enabled on its own main project only. Copy it to use it on another main project.';
+  if (key === 'wps' && Array.isArray(next.pqrIds)) Object.assign(errors, wpsPqrErrors(store, next.pqrIds, [siteId]));
+  return errors;
+}
+/** The PQRs a WPS links must belong to one of the WPS's main projects (a shared PQR or WPS meets every one). */
+function wpsPqrErrors(store: Store, pqrIds: unknown[], sites: string[] | 'all'): Record<string, string> {
+  const pqrs = new Map(store.list('pqr', true).map(row => [row.id, row])), lists = ownerRows('pqr', name => store.list(name, true));
+  return pqrIds.some(id => { const pqr = pqrs.get(String(id)); return pqr && !sitesMeet(sites, ownerSites('pqr', pqr, lists)); }) ? { pqrIds: 'Choose PQRs of this main project.' } : {};
+}
+
+/** Certificate, wire and WPS fields of a weld, with the resource they name. */
+const WELD_OWNED: [string, string][] = [['certificate1Id', 'certifications'], ['certificate2Id', 'certifications'], ['wire1Id', 'welding_wires'], ['wire2Id', 'welding_wires'], ['wpsId', 'wps']];
+const WELD_OWNED_MESSAGES: Record<string, string> = { certifications: 'Choose a certificate of this main project.', welding_wires: 'Choose a welding wire of this main project.', wps: 'Choose a WPS of this main project.' };
 /**
  * A weld takes certificates and welding wires of its own main project only (or shared older ones). Checked for the
  * values a write sets, and for all of them when the weld moves to another isometric.
@@ -109,8 +134,7 @@ function weldOwnerErrors(store: Store, input: Record<string, unknown>, merged: R
   try { const iso = store.get('isometrics', merged.isoId, true); siteId = String(store.get('projects', iso.projectId, true).siteId ?? ''); } catch { return errors; /* the isometric is reported with its own field */ }
   for (const [name, key] of checked) {
     let record: Row; try { record = store.get(key, merged[name], true); } catch { continue; }
-    const owned = SITE_OWNED[key];
-    if (!inOwnerSite(key, record, siteId, { links: store.list(owned.links, true), projects: store.list('projects', true) })) errors[name] = key === 'certifications' ? 'Choose a certificate of this main project.' : 'Choose a welding wire of this main project.';
+    if (!inOwnerSite(key, record, siteId, ownerRows(key, resource => store.list(resource, true)))) errors[name] = WELD_OWNED_MESSAGES[key];
   }
   return errors;
 }

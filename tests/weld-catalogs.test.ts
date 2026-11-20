@@ -781,7 +781,7 @@ test('hosted: the edit-only required fields are refused on an update and accepte
   const wps = f.store.get('wps', 'wps-1');
   response = await f.request(`/api/records/wps/${wps.id}`, 'PUT', { method: '', _version: wps._version });
   assert.equal(response.status, 200, 'optional when editing');
-  response = await f.request('/api/records/wps', 'POST', { name: 'NEW-WPS', definition: 'Sample definition' });
+  response = await f.request('/api/records/wps', 'POST', { name: 'NEW-WPS', siteId: 'site-north', definition: 'Sample definition' });
   assert.equal(response.status, 422); assert.ok((await body(response)).fields!.method, 'required when adding');
 });
 
