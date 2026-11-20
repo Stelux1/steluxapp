@@ -46,7 +46,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
 test('the Weld Pilot menu has no Weld process and no Request archive (hidden by design in the reference); the MTO Pilot keeps its service request archive', () => {
   const labels = PILOT_MAP.weld.groups.flatMap(group => group.items.map(item => item.label));
   for (const hidden of ['Weld process', 'Request archive']) assert.ok(!labels.includes(hidden), hidden);
-  assert.deepEqual(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.map(item => item.label), ['PQR', 'WPS methods', 'Weld type', 'Coating', 'Spools']);
+  assert.deepEqual(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.map(item => item.label), ['PQR', 'WPS methods', 'Weld type', 'Coating', 'Spools', 'Customs']);
   assert.ok(PILOT_MAP.mto.groups.flatMap(group => group.items).some(item => item.label === 'Request archive' && item.resource === 'service_requests'));
 });
 

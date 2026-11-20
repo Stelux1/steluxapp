@@ -1,6 +1,6 @@
 import { checkItpLinkAccess } from './itp-dashboard.ts';
 import { assertItpDeletable, checkIsoWrite, registerItpRoutes, syncItpXRay } from './itps.ts';
-import express, { type Request, type Response, type NextFunction } from 'express';
+import express, { type Request, type Response, type NextFunction, type RequestHandler } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
@@ -38,7 +38,10 @@ import { FLAG_BULK_RESOURCES, flagBulkAllowed } from '../shared/welder-data.ts';
 import { withLegacyValues } from './welder-data.ts';
 import { addNotification, bellOf, markAllRead, markRead, notifyTransferOrder, type Viewer } from './notifications.ts';
 import { ADJUST_REFUSED, TRANSFER_ORDER_EVENTS, mayAdjustQuantity } from '../shared/mto-stock.ts';
+import { SITE_REFUSED } from '../shared/site-scope.ts';
 import { siteOfRecord } from './weld-catalogs.ts';
+import { applyDefaultSpoolNames, importSpoolNames } from './spool-catalog.ts';
+import { SPOOL_IMPORT_TEXTS, spoolImportEntries } from '../shared/spool-catalog.ts';
 import { weldEditHistory } from './weld-entry.ts';
 import { companyForDocuments } from './pdf/company.ts';
 import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate.ts';
@@ -300,7 +303,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     // Add material (pilots): it belongs to the main project it is added on; an existing Material No is linked there or refused.
     if (pilots && resource.key === 'materials') { const added = addMaterialOnSite(store, req.body, actorOf(req)); res.status(added.linked ? 200 : 201).json({ record: access.project(resource.key, added.record), linked: added.linked }); return; }
-    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (pilots && resource.key === 'profiles') assertRightsWrite(store, (req as unknown as AuthRequest).user, 'profiles', undefined, row); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
+    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (pilots && resource.key === 'sites') applyDefaultSpoolNames(store, row.id, actorOf(req)); if (pilots && resource.key === 'profiles') assertRightsWrite(store, (req as unknown as AuthRequest).user, 'profiles', undefined, row); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {
@@ -464,6 +467,21 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     const records = store.transaction(() => req.body.rows.map((row: Record<string, unknown>) => store.create(resource.key, row, actorOf(req)))); res.status(201).json({ count: records.length });
   });
   app.get('/api/import/:resource/template', (req, res) => { const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'import'); res.attachment(`blitzkrieg-${resource.key}-template.csv`); res.type('text/csv').send(stringify([], { header: true, columns: [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden),...relationFields(resource.key)].map(f => f.label) })); });
+  // Spools page → Import CSV (shared/spool-catalog.ts): the preview counts, the import enables the names on the chosen main project; the right is Insert on Spools.
+  const spoolFile = keepSiteScope(memory);
+  const spoolImport = (commit: boolean): RequestHandler => (req, res) => {
+    const resource = access.resource('spool_names'); checkResourcePermission(req, resource.key, 'insert');
+    if (!req.file) throw new AppError(422, SPOOL_IMPORT_TEXTS.file);
+    const siteId = typeof req.body?.siteId === 'string' ? req.body.siteId : '';
+    if (!siteId) throw new AppError(422, SPOOL_IMPORT_TEXTS.site, { siteId: SPOOL_IMPORT_TEXTS.site });
+    try { store.get('sites', siteId); } catch (error) { if ((error as { code?: unknown }).code === SITE_REFUSED) throw error; throw new AppError(422, 'Choose an active main project.', { siteId: 'Choose an active main project.' }); }
+    let table: string[][]; try { table = parse(req.file.buffer, { bom: true, skip_empty_lines: true, trim: true, relax_column_count: true, delimiter: [',', ';', '\t'], max_record_size: 10_000 }); } catch { throw new AppError(422, SPOOL_IMPORT_TEXTS.unreadable); }
+    const parsed = spoolImportEntries(table); if ('error' in parsed) throw new AppError(422, parsed.error);
+    const result = importSpoolNames(store, siteId, parsed.entries, req.body?.replace === 'true', actorOf(req), !commit);
+    res.status(commit ? 201 : 200).json({ ...result, duplicates: parsed.duplicates, names: parsed.entries.slice(0, 20).map(entry => entry.name) });
+  };
+  app.post('/api/spool-names/import/preview', spoolFile.single('file'), spoolImport(false));
+  app.post('/api/spool-names/import', spoolFile.single('file'), spoolImport(true));
   const disk = keepSiteScope(documents.upload);
   app.post('/api/revisions',disk.single('file'),(req,res)=>{
     try{

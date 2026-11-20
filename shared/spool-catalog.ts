@@ -37,7 +37,7 @@ export function spoolOptionsForIso(catalog: readonly Row[], enabledOnSite: (row:
   const elsewhere = new Set(spools.filter(row => row.isoId !== isoId).map(row => text(row.name)).filter(name => name && !own.has(name)));
   const options: SpoolOption[] = [], listed = new Set<string>();
   const push = (name: string) => { listed.add(name); options.push(own.has(name) ? { name, spoolId: own.get(name) } : { name }); };
-  for (const row of live(catalog)) { const name = text(row.name); if (name && !listed.has(name) && !elsewhere.has(name) && enabledOnSite(row)) push(name); }
+  for (const row of [...live(catalog)].sort((a, b) => text(a.name).localeCompare(text(b.name), 'en', { numeric: true }))) { const name = text(row.name); if (name && !listed.has(name) && !elsewhere.has(name) && enabledOnSite(row)) push(name); }
   for (const name of [...own.keys()].filter(name => !listed.has(name)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))) push(name);
   return options;
 }
@@ -70,4 +70,50 @@ export function missingSpoolNames(spools: readonly Row[], catalog: readonly Row[
   const added: { name: string; abbreviation: string }[] = [];
   for (const spool of spools) { const name = text(spool.name); if (name && !known.has(name)) { known.add(name); added.push({ name, abbreviation: name }); } }
   return added;
+}
+
+/**
+ * A new main project starts with the spool names A to Z (Spool name = Abbreviation = the letter, in that order) enabled and
+ * every other spool name switched off for it (server/spool-catalog.ts `applyDefaultSpoolNames`).
+ */
+export const SPOOL_LETTERS: readonly string[] = Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index));
+
+/** CSV import of the Spools page: a "Spool name" column (optional "Abbreviation"), at most this many data rows, names up to this long. */
+export const SPOOL_IMPORT_MAX_ROWS = 500;
+export const SPOOL_IMPORT_MAX_LENGTH = 100;
+export const SPOOL_IMPORT_TEXTS = {
+  file: 'Choose a CSV file.',
+  unreadable: 'This CSV file could not be read. Check its headings and delimiters.',
+  heading: 'The file needs a "Spool name" column.',
+  empty: 'The file has no spool names.',
+  site: 'Choose a main project first.',
+  tooMany: `Import at most ${SPOOL_IMPORT_MAX_ROWS} spool names at a time.`,
+  replace: 'Replace the list of this main project',
+};
+export interface SpoolImportEntry { name: string; abbreviation: string }
+const heading = (value: unknown) => text(value).replace(/^﻿/, '').toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * The names of a CSV table (first row = headings): the "Spool name" column and the optional "Abbreviation" column (default = the
+ * name). An empty name, a name that is too long or too many rows refuse the whole file; the same name twice counts once.
+ * The row number of a message is the line in the file (the heading is line 1).
+ */
+export function spoolImportEntries(table: readonly (readonly unknown[])[]): { entries: SpoolImportEntry[]; duplicates: number } | { error: string } {
+  const lines = table.map((cells, index) => ({ cells, rowNo: index + 1 })).filter(line => line.cells.some(cell => text(cell)));
+  if (!lines.length) return { error: SPOOL_IMPORT_TEXTS.empty };
+  const headings = lines[0].cells.map(heading);
+  const nameAt = headings.indexOf('spool name'), abbreviationAt = headings.indexOf('abbreviation');
+  if (nameAt < 0) return { error: SPOOL_IMPORT_TEXTS.heading };
+  const body = lines.slice(1);
+  if (!body.length) return { error: SPOOL_IMPORT_TEXTS.empty };
+  if (body.length > SPOOL_IMPORT_MAX_ROWS) return { error: SPOOL_IMPORT_TEXTS.tooMany };
+  const entries: SpoolImportEntry[] = [], seen = new Set<string>(); let duplicates = 0;
+  for (const { cells, rowNo } of body) {
+    const name = text(cells[nameAt]), abbreviation = abbreviationAt >= 0 ? text(cells[abbreviationAt]) || name : name;
+    if (!name) return { error: `Row ${rowNo}: the Spool name is empty.` };
+    if (name.length > SPOOL_IMPORT_MAX_LENGTH || abbreviation.length > SPOOL_IMPORT_MAX_LENGTH) return { error: `Row ${rowNo}: a name or abbreviation is longer than ${SPOOL_IMPORT_MAX_LENGTH} characters.` };
+    if (seen.has(name)) { duplicates++; continue; }
+    seen.add(name); entries.push({ name, abbreviation });
+  }
+  return { entries, duplicates };
 }

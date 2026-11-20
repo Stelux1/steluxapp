@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Check, ChevronDown, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Check, ChevronDown, Loader2, ToggleLeft, ToggleRight, Upload } from 'lucide-react';
 import type { Field, Row } from '../shared/types.ts';
 import { ENABLED_COLUMN, FORM_ENABLEMENT, NORM_BAR_NORMS, OPTIONS_WORDING, codesOfNorm, enableLabel, enabledOnSite, enablementKey, formEnablement } from '../shared/weld-catalogs.ts';
 import { useWorkspace } from './context.tsx';
-import { post } from './api.ts';
+import { api, post } from './api.ts';
+import { SPOOL_IMPORT_MAX_ROWS, SPOOL_IMPORT_TEXTS } from '../shared/spool-catalog.ts';
 import { Badge, Dropdown, Modal } from './components.tsx';
 
 /**
@@ -77,4 +78,41 @@ export function DefectNormBar({ norm, onNorm }: { norm: string; onNorm: (value: 
     <span className="defect-norm-help">Tick rows and use Options, or pick a norm and activate all its codes on this site.</span>
     {error && <span className="catalog-options-error" role="alert">{error}</span>}
   </div>;
+}
+
+/**
+ * Spools page → Import CSV: a file with a "Spool name" column (and an optional "Abbreviation") adds those names, enabled on the active
+ * main project; "Replace the list of this main project" switches every other spool name off there. A preview counts what would change.
+ */
+interface SpoolImportCounts { total: number; created: number; enabled: number; alreadyEnabled: number; switchedOff: number; duplicates: number; names: string[] }
+export function SpoolImportButton() {
+  const { siteId, siteName } = useSiteEnablement('spool_names');
+  const { refresh, notify } = useWorkspace();
+  const [open, setOpen] = useState(false); const [file, setFile] = useState<File | null>(null); const [replace, setReplace] = useState(false);
+  const [preview, setPreview] = useState<SpoolImportCounts | null>(null); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const close = () => { if (busy) return; setOpen(false); setFile(null); setReplace(false); setPreview(null); setError(''); };
+  const body = (chosen: File, replaceList: boolean) => { const data = new FormData(); data.set('file', chosen); data.set('siteId', siteId); data.set('replace', String(replaceList)); return data; };
+  async function check(chosen: File | null, replaceList: boolean) {
+    setFile(chosen); setReplace(replaceList); setPreview(null); setError(''); if (!chosen) return;
+    setBusy(true);
+    try { setPreview(await api<SpoolImportCounts>('/spool-names/import/preview', { method: 'POST', body: body(chosen, replaceList) })); } catch (failure) { setError((failure as Error).message); } finally { setBusy(false); }
+  }
+  async function commit() {
+    if (!file) return; setBusy(true); setError('');
+    try { const done = await api<SpoolImportCounts>('/spool-names/import', { method: 'POST', body: body(file, replace) }); await refresh(); notify(`${done.total} spool ${done.total === 1 ? 'name' : 'names'} imported on ${siteName}.`); setBusy(false); close(); }
+    catch (failure) { setError((failure as Error).message); setBusy(false); }
+  }
+  return <>
+    <button type="button" className="btn subtle small" onClick={() => setOpen(true)}><Upload size={15}/>Import CSV</button>
+    {open && <Modal title="Import spool names" subtitle={`CSV with a "Spool name" column and an optional "Abbreviation" column · up to ${SPOOL_IMPORT_MAX_ROWS} rows. The names are enabled on ${siteName}.`} onClose={close}>
+      <div className="modal-body">
+        {error && <div className="alert error" role="alert">{error}</div>}
+        <label className="upload-zone"><Upload size={28}/><strong>{busy && !preview ? 'Checking your file…' : file?.name || 'Choose a CSV file'}</strong><span>Maximum 5 MB</span><input type="file" accept=".csv,text/csv" disabled={busy} onChange={event => void check(event.target.files?.[0] ?? null, replace)}/></label>
+        <label className="check-field"><input type="checkbox" checked={replace} disabled={busy} onChange={event => void check(file, event.target.checked)}/>{SPOOL_IMPORT_TEXTS.replace}</label>
+        <small>Nothing is deleted and other main projects are not changed. Spools already used on welds stay.</small>
+        {preview && <div className="alert success" role="status"><Check size={18}/><span>{preview.total} {preview.total === 1 ? 'name' : 'names'} in the file · {preview.created} new · {preview.enabled} switched on · {preview.alreadyEnabled} already on{replace ? ` · ${preview.switchedOff} switched off` : ''}{preview.duplicates ? ` · ${preview.duplicates} repeated ${preview.duplicates === 1 ? 'name' : 'names'} skipped` : ''}</span></div>}
+      </div>
+      <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={close}>Cancel</button><button type="button" className="btn primary" disabled={busy || !preview} onClick={() => void commit()}>{busy && preview && <Loader2 size={15} className="spin"/>}Import {preview?.total || ''} names</button></div>
+    </Modal>}
+  </>;
 }

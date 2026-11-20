@@ -113,6 +113,10 @@ test('the hosted profile delivers the welder and material data pages with the re
   for (const key of ['welder_certificates', 'welder_sites', 'welder_customs', 'certificate_projects', 'wire_projects']) assert.ok(hosted.resources[key], key);
   // Every menu item of these flows opens a delivered page.
   const items = PILOT_MAP.weld.groups.filter(group => ['Welder data', 'Material data'].includes(group.title)).flatMap(group => group.items);
+  // Customs describe welding process groups: they sit under Weld data (after Spools), not under Welder data.
+  const groupItems = (title: string) => PILOT_MAP.weld.groups.find(group => group.title === title)!.items.map(item => item.label);
+  assert.deepEqual(groupItems('Welder data'), ['Welders', 'Roles', 'Certificates']); assert.deepEqual(groupItems('Weld data').slice(-2), ['Spools', 'Customs']);
+  assert.equal(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.find(item => item.label === 'Customs')!.resource, 'welder_customs_catalog'); assert.equal(RESOURCE_MAP.welder_customs_catalog.group, 'Weld data');
   for (const item of items.filter(item => item.label !== 'Material supplier')) for (const key of pilotItemResources(item)) assert.ok(hosted.navigation.includes(key), `${item.label}: ${key}`);
   const view = (key: string) => projectResource(hosted, RESOURCE_MAP[key]);
   const labels = (key: string) => view(key).columns.map(name => view(key).fields.find(field => field.name === name)?.label);
