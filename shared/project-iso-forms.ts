@@ -37,7 +37,7 @@ const sortBy = <T extends { name: string }>(fields: T[], order: string[]): T[] =
 export function hostedProjectResource(resource: Resource): Resource {
   const fields = resource.fields.map((field): Field => {
     const base = PROJECT_LABELS[field.name] ? { ...field, label: PROJECT_LABELS[field.name] } : field;
-    if (field.name === 'weldPilot' || field.name === 'mtoPilot') return { ...base, section: undefined, hint: field.name === 'weldPilot' ? 'Application Visibility: show this project in Weld Pilot.' : 'Application Visibility: show this project in MTO Pilot.' };
+    if (field.name === 'weldPilot' || field.name === 'mtoPilot') return { ...base, section: undefined, hint: field.name === 'weldPilot' ? 'Application Visibility: show this project in Weld Core.' : 'Application Visibility: show this project in Material Core.' };
     if (field.name === 'description') return { ...base, section: undefined };
     if (PROJECT_MORE_FIELDS.includes(field.name)) return { ...base, section: PROJECT_MORE };
     return base;

@@ -67,7 +67,7 @@ export function IsometricExecution() {
   }
   const lines = list.map(entry => [label('projects', entry.iso.projectId), entry.iso.isoNo, entry.iso.pipingClass || '-', entry.priority, entry.iso.drawingNo || '-', entry.iso.chemicalClean || '-', `${entry.percent}%`]);
   const togglePaging = () => { const next = !paged; setPaged(next); setPage(0); try { window.localStorage.setItem(PAGING_KEY, next ? 'paged' : 'all'); } catch { /* the choice is only kept for this visit */ } };
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · PROJECTS DATA" title="Isometric execution">
+  return <div className="page mto-page"><Heading eyebrow="MATERIAL CORE · PROJECTS DATA" title="Isometric execution">
       <PdfDocumentButton document="reserved-materials" report="pdf-reserved-materials" params={{}} label="Reserved materials" title="Print" submit="Go" fileName="Reserved-materials" options={[{ name: 'grouped', label: 'Group by materials', kind: 'checkbox' }]}/>
       <button className="btn" onClick={() => void reload()} disabled={refreshing}>{refreshing ? <Loader2 size={15} className="spin"/> : <RefreshCw size={15}/>}Refresh all</button>
     </Heading>
@@ -138,7 +138,7 @@ export function PickListArchive() {
   const current = open ? pickListReports(rows).find(report => report.reportNo === open) : undefined;
   // The Pick list archive export (reference topbar link): an Excel file the server writes after the Export right of area 21; it follows the filter that was applied.
   const exportList = async () => { try { saveBlob('pick-list-archive.xlsx', await apiBlob(`/mto/picklist-archive-export?${new URLSearchParams(Object.entries(applied).filter(([, value]) => value) as [string, string][])}`)); } catch (problem) { setError(failure(problem)); } };
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · PROJECTS DATA" title="Pick List archive">{canExport('picklist-archive') && <button className="btn" onClick={() => void exportList()} disabled={!reports.length}><Download size={15}/>Pick list archive export</button>}</Heading>
+  return <div className="page mto-page"><Heading eyebrow="MATERIAL CORE · PROJECTS DATA" title="Pick List archive">{canExport('picklist-archive') && <button className="btn" onClick={() => void exportList()} disabled={!reports.length}><Download size={15}/>Pick list archive export</button>}</Heading>
     <section className="panel execution-panel">
       <form className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied(draft); }}>
         <div className="field"><label htmlFor="picklist-project">Project</label><div className="select-wrap"><select id="picklist-project" value={draft.projectId} onChange={event => setDraft(old => ({ ...old, projectId: event.target.value }))}><option value="">All projects</option>{activeRows(rows, 'projects').map(row => <option key={row.id} value={row.id}>{label('projects', row.id)}</option>)}</select></div></div>
@@ -239,7 +239,7 @@ export function ServiceRequestSpools() {
   const choose = (name: keyof SpoolFilters, value: string) => setDraft(old => ({ ...old, [name]: value }));
   const select = (name: keyof SpoolFilters, title: string, options: [string, string][]) => <div className="field"><label htmlFor={`spool-filter-${name}`}>{title}</label><div className="select-wrap"><select id={`spool-filter-${name}`} value={String(draft[name] ?? '')} onChange={event => choose(name, event.target.value)}>{options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></div></div>;
   const text = (name: keyof SpoolFilters, title: string) => <div className="field"><label htmlFor={`spool-filter-${name}`}>{title}</label><input id={`spool-filter-${name}`} type="text" placeholder="..." value={String(draft[name] ?? '')} onChange={event => choose(name, event.target.value)}/></div>;
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Service request">
+  return <div className="page mto-page"><Heading eyebrow="MATERIAL CORE · LOGISTIC" title="Service request">
       <button className="btn" aria-expanded={panel} aria-controls="spool-filter-panel" onClick={() => setPanel(open => !open)}><SlidersHorizontal size={15}/>Filter</button>
       {canRecord('spools', 'export') && <a className="btn" href={exportUrl} download><Download size={15}/>Export</a>}</Heading>
     <section className="panel execution-panel">
@@ -339,7 +339,7 @@ export function LaydownContent() {
   if (!laydown) return <div className="page mto-page"><EmptyState title="Laydown not found" description="Choose a laydown area from the list." action={<Link className="btn" to="/materials/laydowns">Laydown areas</Link>}/></div>;
   const past = params.get('type') === 'history';
   const lines = (past ? laydownHistory(rows, id) : laydownContent(rows, id)).filter(line => includes([label('projects', line.projectId), line.iso.isoNo, line.spool.name, line.treatments.chemicalClean], query));
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title={String(laydown.name)}>
+  return <div className="page mto-page"><Heading eyebrow="MATERIAL CORE · LOGISTIC" title={String(laydown.name)}>
       <Link className="btn subtle" to="/materials/laydowns">Laydown areas</Link>
       <button className="btn" aria-pressed={past} onClick={() => setParams(past ? {} : { type: 'history' })}>{past ? 'Content' : 'History'}</button></Heading>
     <section className="panel execution-panel">
@@ -374,7 +374,7 @@ export function ServiceMaterials() {
   const choose = (name: keyof MaterialServiceFilters, value: string) => setDraft(old => ({ ...old, [name]: value }));
   const reset = () => { setDraft(first); setApplied(first); setSelected([]); setPage(0); };
   const close = () => { setDialog(null); setSelected([]); };
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Service req. - Materials">
+  return <div className="page mto-page"><Heading eyebrow="MATERIAL CORE · LOGISTIC" title="Service req. - Materials">
       {canRun('move-materials') && <button className="btn" disabled={!checked.length} onClick={() => setDialog('laydown')}><ArrowRight size={15}/>Move to laydown</button>}
       {canRun('service-materials') && <button className="btn" disabled={!checked.length} onClick={() => setDialog('service')}><Play size={15}/>Service request</button>}
       <button className="btn" aria-expanded={panel} aria-controls="materials-filter-panel" onClick={() => setPanel(open => !open)}><SlidersHorizontal size={15}/>Filter</button></Heading>
@@ -507,7 +507,7 @@ export function RequestArchive() {
   if (!canRecord('service_requests')) return <Restricted what="the request archive"/>;
   const list = requestArchive(rows, applied);
   const open = dialog ? requestArchive(rows).find(request => request.key === dialog.key) : undefined;
-  return <div className="page mto-page"><Heading eyebrow="MTO PILOT · LOGISTIC" title="Request archive"/>
+  return <div className="page mto-page"><Heading eyebrow="MATERIAL CORE · LOGISTIC" title="Request archive"/>
     <section className="panel execution-panel">
       <form className="execution-scope" onSubmit={event => { event.preventDefault(); setApplied(draft); }}>
         <div className="field"><label htmlFor="archive-order">Order</label><div className="select-wrap"><select id="archive-order" value={draft.sort} onChange={event => { const sort = event.target.value as 'desc' | 'asc'; setDraft(old => ({ ...old, sort })); setApplied(old => ({ ...old, sort })); }}><option value="desc">Order by date desc.</option><option value="asc">Order by date asc.</option></select></div></div>

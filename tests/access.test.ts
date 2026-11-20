@@ -89,7 +89,7 @@ async function requestKinds(as: { request: (path: string, options?: Options) => 
     read: () => as.request('/records/iso_materials', { pilot }),
     write: () => { const row = store.list('iso_materials')[0]; return as.request(`/records/iso_materials/${row.id}`, { method: 'PUT', pilot, data: { chargeNo: `CH-${pilot}`, _version: row._version } }); },
     bulk: () => as.request('/bulk/isometrics', { method: 'POST', pilot, data: { ids: [iso.id], changes: { area: `Bulk ${pilot}` }, versions: { [iso.id]: store.get('isometrics', iso.id)._version } } }),
-    // MTO Pilot's Add material form always sends a Type (and the newest ISO revision while the isometric has one).
+    // Material Core's Add material form always sends a Type (and the newest ISO revision while the isometric has one).
     action: () => as.request('/actions/add-iso-material', { method: 'POST', pilot, data: { isoId: iso.id, source: 'Custom', materialNo: `ACCESS-${pilot}`, description: 'Access test pipe', quantity: 1, uom: 'M', phaseId: store.list('operation_phases')[0]?.id, ...newestIsoRevision(store, iso.id) } }),
     report: () => as.request('/reports/mto', { pilot }),
     export: () => as.request('/export/iso_materials?format=csv', { pilot }),
@@ -122,7 +122,7 @@ test('the pilot boundary and the pilot list follow the per-pilot flags; areas sh
   assert.ok(canResource({ ...internal, permissions: { ...base.permissions, settings: 1 } }, 'users'));
   // The user form shows the access section only where pilots are delivered.
   const hostedUsers = projectResource(hosted, RESOURCE_MAP.users);
-  assert.deepEqual(hostedUsers.columns, ['email', 'name', 'title', 'companyId', 'phone', 'mtoEnabled', 'weldEnabled'], 'reference order: MTO Pilot before Weld Pilot, no Account active column');
+  assert.deepEqual(hostedUsers.columns, ['email', 'name', 'title', 'companyId', 'phone', 'mtoEnabled', 'weldEnabled'], 'reference order: Material Core before Weld Core, no Account active column');
   assert.ok(hostedUsers.fields.filter(f => ['weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'title', 'companyId'].includes(f.name)).every(f => !f.hidden));
   assert.ok(RESOURCE_MAP.users.fields.filter(f => ['weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'title', 'address', 'phone', 'companyId'].includes(f.name)).every(f => f.hidden), 'hidden outside pilots');
   assert.deepEqual(RESOURCE_MAP.users.columns, ['name', 'email', 'profileId', 'active']);
@@ -168,20 +168,20 @@ test('weld-only, MTO-only and different-profile accounts: every request kind is 
     }
     for (const [name, run] of Object.entries(await requestKinds(as, f.store, own, own, fileId))) assert.ok([200, 201].includes(await status(await run())), `${user.name} ${name} in ${own}`);
   }
-  // Different profiles: Read & write in Weld Pilot, read only in MTO Pilot.
-  const both = f.account('Both pilots', { profileId: viewer, weldEnabled: true, weldProfileId: writer, mtoEnabled: true, mtoProfileId: viewer });
+  // Different profiles: Read & write in Weld Core, read only in Material Core.
+  const both = f.account('Both cores', { profileId: viewer, weldEnabled: true, weldProfileId: writer, mtoEnabled: true, mtoProfileId: viewer });
   const as = f.client(); assert.deepEqual((await as.login(both.email)).pilots, ['weld', 'mto']);
   const weld = f.store.get('welds', 'weld-20');
   assert.equal(await status(await as.request(`/records/welds/${weld.id}`, { method: 'PUT', pilot: 'weld', data: { description: 'Edited weld', _version: weld._version } })), 200);
   let iso = f.store.get('isometrics', 'iso-3');
-  assert.equal(await status(await as.request(`/records/isometrics/${iso.id}`, { method: 'PUT', pilot: 'weld', data: { priority: 'Prio 2', _version: iso._version } })), 200, 'header editable in Weld Pilot');
+  assert.equal(await status(await as.request(`/records/isometrics/${iso.id}`, { method: 'PUT', pilot: 'weld', data: { priority: 'Prio 2', _version: iso._version } })), 200, 'header editable in Weld Core');
   iso = f.store.get('isometrics', 'iso-3');
-  assert.equal(await status(await as.request(`/records/isometrics/${iso.id}`, { method: 'PUT', pilot: 'mto', data: { priority: 'Prio 1', _version: iso._version } })), 403, 'header read-only in MTO Pilot');
+  assert.equal(await status(await as.request(`/records/isometrics/${iso.id}`, { method: 'PUT', pilot: 'mto', data: { priority: 'Prio 1', _version: iso._version } })), 403, 'header read-only in Material Core');
   const requirement = f.store.list('iso_materials')[0];
   assert.equal(await status(await as.request('/records/iso_materials', { pilot: 'mto' })), 200);
   assert.equal(await status(await as.request(`/records/iso_materials/${requirement.id}`, { method: 'PUT', pilot: 'mto', data: { chargeNo: 'NO', _version: requirement._version } })), 403);
   assert.equal(await status(await as.request('/actions/add-iso-material', { method: 'POST', pilot: 'mto', data: { isoId: 'iso-1', source: 'Custom', materialNo: 'NO', description: 'No', quantity: 1, uom: 'M' } })), 403);
-  // Even where the MTO profile allows reading, Weld Pilot does not open MTO records (the pilot is the boundary).
+  // Even where the MTO profile allows reading, Weld Core does not open MTO records (the pilot is the boundary).
   assert.equal(await status(await as.request('/records/iso_materials', { pilot: 'weld' })), 403);
   assert.equal(await status(await as.request('/reports/mto', { pilot: 'weld' })), 403);
   const weldView = await json<{ user: User }>(await as.request('/bootstrap', { pilot: 'weld' })), mtoView = await json<{ user: User }>(await as.request('/bootstrap', { pilot: 'mto' }));
@@ -228,7 +228,7 @@ test('an account disabled for a pilot mid-session is refused on its next request
   assert.deepEqual((await json<{ user: User }>(await as.request('/auth/status'))).user.pilots, ['weld']);
   assert.equal(await status(await as.request('/bootstrap', { pilot: 'weld' })), 200);
   // Entering depends on the application being enabled only (access-users-profiles-020): a profile without welding
-  // rights enters Weld Pilot, and every welding route refuses it.
+  // rights enters Weld Core, and every welding route refuses it.
   const blind = f.profile('No welding', { generalPermission: RW, materialsPermission: RW, weldingPermission: NONE });
   const next = f.store.get('users', user.id); f.store.update('users', user.id, { weldProfileId: blind }, next._version);
   assert.equal(await status(await as.request('/bootstrap', { pilot: 'weld' })), 200);
@@ -272,11 +272,11 @@ test('only administrators manage users and profiles; an administrator creates a 
     assert.equal(await status(await f.admin.request(`/records/users/${self.id}`, { method: 'PUT', pilot, data: { ...data, _version: self._version } })), code, JSON.stringify(data));
   }
   assert.equal(f.store.get('users', self.id)._version, self._version, 'nothing stored');
-  // Last-administrator protection covers access per pilot: with Only review in Weld Pilot the account is still an
-  // administrator in MTO Pilot, and taking the administrator rights off its MTO profile is refused.
+  // Last-administrator protection covers access per pilot: with Only review in Weld Core the account is still an
+  // administrator in Material Core, and taking the administrator rights off its MTO profile is refused.
   f.store.update('users', self.id, { weldProfileId: reviewer }, self._version, { id: 'test', name: 'test' });
-  assert.equal(await status(await f.admin.request('/records/users', { pilot: 'weld' })), 403, 'no administrator in Weld Pilot any more');
-  assert.equal(await status(await f.admin.request('/records/users', { pilot: 'mto' })), 200, 'still an administrator in MTO Pilot');
+  assert.equal(await status(await f.admin.request('/records/users', { pilot: 'weld' })), 403, 'no administrator in Weld Core any more');
+  assert.equal(await status(await f.admin.request('/records/users', { pilot: 'mto' })), 200, 'still an administrator in Material Core');
   const adminProfile = f.store.get('profiles', String(self.profileId));
   assert.equal(await status(await f.admin.request(`/records/profiles/${adminProfile.id}`, { method: 'PUT', pilot: 'mto', data: { settingsPermission: NONE, description: 'Administrator', _version: adminProfile._version } })), 409);
 });
@@ -298,7 +298,7 @@ test('signatures: own records only, administrators view but never write; images 
   const first = await f.upload(a, 'weld', 'signatures', signature.id, PNG, 'full-signature.png', 'image/png'); assert.equal(first.status, 201);
   const firstFile = (await json<{ record: Row }>(first)).record; assert.equal(firstFile.documentType, 'Full signature');
   await new Promise(resolve => setTimeout(resolve, 5));
-  // Signatures are a Weld Pilot page (area 96 belongs to Weld Pilot only).
+  // Signatures are a Weld Core page (area 96 belongs to Weld Core only).
   assert.equal(await status(await f.upload(a, 'mto', 'signatures', signature.id, JPEG, 'scan.jpeg', 'image/jpeg')), 403);
   const second = await f.upload(a, 'weld', 'signatures', signature.id, JPEG, 'scan.jpeg', 'image/jpeg'); assert.equal(second.status, 201);
   const secondFile = (await json<{ record: Row }>(second)).record;
@@ -315,7 +315,7 @@ test('signatures: own records only, administrators view but never write; images 
   assert.equal(bobView.rows.signatures.length, 0); assert.ok(!bobView.rows.attachments.some(row => row.entityType === 'signatures'));
   assert.equal(await status(await f.admin.request(`/files/${secondFile.id}`, { pilot: 'weld' })), 200);
   assert.ok((await json<{ rows: Record<string, Row[]> }>(await f.admin.request('/bootstrap', { pilot: 'weld' }))).rows.signatures.some(row => row.id === signature.id));
-  assert.equal((await json<{ rows: Record<string, Row[]> }>(await f.admin.request('/bootstrap', { pilot: 'mto' }))).rows.signatures, undefined, 'MTO Pilot has no signatures');
+  assert.equal((await json<{ rows: Record<string, Row[]> }>(await f.admin.request('/bootstrap', { pilot: 'mto' }))).rows.signatures, undefined, 'Material Core has no signatures');
   // Writing on behalf of another user: refused for that user and for the administrator.
   for (const as of [b, f.admin]) {
     assert.equal(await status(await f.upload(as, 'weld', 'signatures', signature.id, PNG, 'forged.png', 'image/png')), 403);
@@ -395,17 +395,17 @@ function assertAggregates(value: unknown, path = 'summary') {
 test('one isometric summary for both pilots: the same numbers under Weld and MTO, aggregates only, scoped like the isometrics', async t => {
   const f = await fixture(t);
   const writer = f.profile('Writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
-  const both = f.account('Both pilots', { profileId: writer }), mtoOnly = f.account('MTO only', { profileId: writer, weldEnabled: false });
+  const both = f.account('Both cores', { profileId: writer }), mtoOnly = f.account('MTO only', { profileId: writer, weldEnabled: false });
   const bootstrap = async (as: ReturnType<typeof f.client>, pilot: string) => json<BootstrapBody>(await as.request('/bootstrap', { pilot }));
   const a = f.client(); await a.login(both.email);
   const weld = await bootstrap(a, 'weld'), mto = await bootstrap(a, 'mto');
-  // Every sample project is on in both pilots, so every isometric of MTO Pilot has the same summary in Weld Pilot.
+  // Every sample project is on in both pilots, so every isometric of Material Core has the same summary in Weld Core.
   const inMto = mto.rows.isometrics.map(iso => iso.id).sort();
   assert.ok(inMto.includes('iso-7'));
   assert.deepEqual(Object.keys(mto.isoSummaries!).sort(), inMto);
   assert.deepEqual(Object.keys(weld.isoSummaries!).sort(), weld.rows.isometrics.map(iso => iso.id).sort());
   for (const id of inMto) assert.deepEqual(mto.isoSummaries![id], weld.isoSummaries![id], id);
-  // The numbers are the shared formulas over every record (here: what Weld Pilot reads for this account).
+  // The numbers are the shared formulas over every record (here: what Weld Core reads for this account).
   const iso2 = weld.rows.isometrics.find(iso => iso.id === 'iso-2')!, site = weld.rows.sites.find(row => row.id === 'site-north');
   const input = { iso: iso2, site, welds: weld.rows.welds, weldTypes: weld.rows.weld_types, diameters: weld.rows.diameters, results: weld.rows.inspection_results, releases: weld.rows.releases, punch: weld.rows.punchlists, testSystems: weld.rows.test_systems, hydrotestRequests: weld.rows.hydrotest_requests };
   const summary = mto.isoSummaries!['iso-2'];
@@ -413,8 +413,8 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   assert.deepEqual(summary.blockers.groups, isoBlockers(input).groups.map(group => ({ key: group.key, count: group.count })));
   assert.equal(summary.quality.percent, isoQuality(input).percent); assert.equal(summary.progress.total, isoProgress(input).total);
   assert.equal(summary.progress.configured, true); assert.notEqual(summary.progress.total, null);
-  assert.deepEqual([mto.isoSummaries!['iso-3'].flags.pfb, mto.isoSummaries!['iso-3'].flags.fld, mto.isoSummaries!['iso-3'].kpi.prefabComplete], [true, true, true], 'releases count in MTO Pilot too');
-  assert.equal(mto.rows.releases, undefined, 'while the release records stay in Weld Pilot');
+  assert.deepEqual([mto.isoSummaries!['iso-3'].flags.pfb, mto.isoSummaries!['iso-3'].flags.fld, mto.isoSummaries!['iso-3'].kpi.prefabComplete], [true, true, true], 'releases count in Material Core too');
+  assert.equal(mto.rows.releases, undefined, 'while the release records stay in Weld Core');
   // The MTO-only account: the same numbers, no weld records in any response.
   const m = f.client(); await m.login(mtoOnly.email);
   const raw = await (await m.request('/bootstrap', { pilot: 'mto' })).text(), view = JSON.parse(raw) as BootstrapBody;
@@ -435,7 +435,7 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
     assertAggregates(aggregates, id);
   }
   // Material status %, the MTO budgets, punch counts and the hydrotest state are the shared formulas over every record,
-  // and reach Weld Pilot too although it reads no material line, order, stock or pick list.
+  // and reach Weld Core too although it reads no material line, order, stock or pick list.
   const all = (key: string) => f.store.list(key);
   const rowsOf = { isometrics: all('isometrics'), projects: all('projects'), reservations: all('reservations'), iso_materials: all('iso_materials'), materials: all('materials'), custom_materials: all('custom_materials'), operation_phases: all('operation_phases'), orders: all('orders'), order_lines: all('order_lines'), stock: all('stock'), picklists: all('picklists') };
   for (const id of inMto) {
@@ -448,7 +448,7 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   }
   assert.ok(weld.isoSummaries!['iso-1'].budgets, 'the first isometric has pipe, supports and appendage budgets');
   assert.notEqual(weld.isoSummaries!['iso-1'].materialStatus.percent, null);
-  assert.equal(weld.rows.iso_materials, undefined, 'while Weld Pilot reads no material lines');
+  assert.equal(weld.rows.iso_materials, undefined, 'while Weld Core reads no material lines');
   for (const path of ['/records/welds', '/records/inspection_results', '/records/releases', '/history/welds/weld-1', '/reports/lisl', '/export/welds']) assert.equal(await status(await m.request(path, { pilot: 'mto' })), 403, path);
   // The isometrics export gives the same rows in both pilots: the reference's columns, without the flag columns.
   const exportedIn = async (as: ReturnType<typeof f.client>, pilot: string) => (await (await as.request('/export/isometrics?format=csv&ids=iso-3', { pilot })).text()).trim();
@@ -494,28 +494,28 @@ test('copy isometrics across the boundary: each part follows the account in the 
   const weldOnly = f.client(); await weldOnly.login(f.account('Weld only writer', { profileId: writer, mtoEnabled: false }).email);
   const weldParts = await parts(weldOnly, 'weld');
   assert.deepEqual([weldParts.copyWelds.allowed, weldParts.copyMaterials.allowed, weldParts.copyCalculations.allowed], [true, false, false]);
-  assert.equal(weldParts.copyMaterials.reason, 'You are not enabled in MTO Pilot.');
+  assert.equal(weldParts.copyMaterials.reason, 'You are not enabled in Material Core.');
   const weldSource = source('CP-WELD-ONLY'), isos = f.store.list('isometrics').length;
   for (const forged of [{ copyMaterials: true }, { copyMaterials: true, copyCalculations: true }, ALL]) {
     const refused = await copy(weldOnly, 'weld', weldSource, forged); assert.equal(refused.status, 403, JSON.stringify(forged));
-    assert.equal((await json(refused)).error, 'You are not enabled in MTO Pilot.');
+    assert.equal((await json(refused)).error, 'You are not enabled in Material Core.');
   }
   assert.equal(f.store.list('isometrics').length, isos, 'nothing is written');
-  assert.equal(await status(await copy(weldOnly, 'mto', weldSource, { copyMaterials: true })), 403, 'and MTO Pilot stays closed');
+  assert.equal(await status(await copy(weldOnly, 'mto', weldSource, { copyMaterials: true })), 403, 'and Material Core stays closed');
   assert.equal(await status(await copy(weldOnly, 'weld', weldSource, { copyWelds: true })), 201); assert.deepEqual(copied('CP-WELD-ONLY'), [2, 0, 0]);
-  // Read only in MTO Pilot: materials refused from Weld Pilot; in MTO Pilot the isometric itself is refused.
+  // Read only in Material Core: materials refused from Weld Core; in Material Core the isometric itself is refused.
   const readOnly = f.client(); await readOnly.login(f.account('MTO reader', { profileId: writer, mtoProfileId: viewer }).email);
   const readParts = await parts(readOnly, 'weld');
-  assert.deepEqual([readParts.copyWelds.allowed, readParts.copyMaterials.allowed], [true, false]); assert.equal(readParts.copyMaterials.reason, 'Your MTO Pilot profile cannot add material requirements.');
+  assert.deepEqual([readParts.copyWelds.allowed, readParts.copyMaterials.allowed], [true, false]); assert.equal(readParts.copyMaterials.reason, 'Your Material Core profile cannot add material requirements.');
   const readSource = source('CP-READER');
   const refused = await copy(readOnly, 'weld', readSource, { copyWelds: true, copyMaterials: true }); assert.equal(refused.status, 403);
-  assert.equal((await json(refused)).error, 'Your MTO Pilot profile cannot add material requirements.');
+  assert.equal((await json(refused)).error, 'Your Material Core profile cannot add material requirements.');
   assert.equal(await status(await copy(readOnly, 'mto', readSource, {})), 403, 'the MTO profile cannot add isometrics');
   assert.equal(copied('CP-READER'), null);
   assert.equal(await status(await copy(readOnly, 'weld', readSource, { copyWelds: true })), 201); assert.deepEqual(copied('CP-READER'), [2, 0, 0]);
   // An MTO-only account: welds refused (also forged), materials and calculations copied.
   const mtoOnly = f.client(); await mtoOnly.login(f.account('MTO only writer', { profileId: writer, weldEnabled: false }).email);
-  assert.deepEqual((await parts(mtoOnly, 'mto')).copyWelds, { allowed: false, pilot: 'weld', reason: 'You are not enabled in Weld Pilot.' });
+  assert.deepEqual((await parts(mtoOnly, 'mto')).copyWelds, { allowed: false, pilot: 'weld', reason: 'You are not enabled in Weld Core.' });
   const mtoSource = source('CP-MTO-ONLY');
   assert.equal(await status(await copy(mtoOnly, 'mto', mtoSource, { copyWelds: true })), 403);
   assert.equal(await status(await copy(mtoOnly, 'mto', mtoSource, { copyMaterials: true, copyCalculations: true })), 201); assert.deepEqual(copied('CP-MTO-ONLY'), [0, 1, 1]);
@@ -573,7 +573,7 @@ test('the area list has Visual inspection 116 and ITPs 120; stored local rules a
   for (const key of ['85', '86', '89', '99', '37']) assert.deepEqual(areaPilots(key), ['weld', 'mto'], key);
   assert.deepEqual(areaPilots('96'), ['weld']); assert.deepEqual(areaPilots('93'), []); assert.deepEqual(areaPilots('71'), ['mto']);
   assert.deepEqual(areaPilots('116'), ['weld']); assert.deepEqual(areaPilots('120'), ['weld']); assert.deepEqual(areaPilots('local-itps'), ['weld']);
-  // Release prefab / field now cross into MTO Pilot; Signatures do not.
+  // Release prefab / field now cross into Material Core; Signatures do not.
   const both: User = { ...viewer, capabilities: { '86': ['show'], '89': ['show'], '96': ['show', 'insert'] } };
   assert.ok(canResource(pilotBoundary(both, 'mto'), 'releases', 'show', { id: 'r', type: 'Prefab' } as unknown as Row));
   assert.equal(canResource(pilotBoundary(both, 'mto'), 'signatures', 'insert'), false);
@@ -616,7 +616,7 @@ test('page areas gate their page: the Weld dashboard (35), Export welds (81) and
   assert.equal(await status(await c.request('/mto/materials-list', { pilot: 'mto' })), 200);
 });
 
-test('signatures follow the Signatures area 96 and exist in Weld Pilot only', async t => {
+test('signatures follow the Signatures area 96 and exist in Weld Core only', async t => {
   const f = await fixture(t);
   const none = f.account('No signatures', { profileId: detailed(f.store, 'Without 96', { '63': ['show'] }) });
   const view = f.account('Sees signatures', { profileId: detailed(f.store, 'Show 96', { '63': ['show'], '96': ['show'] }) });
@@ -626,10 +626,10 @@ test('signatures follow the Signatures area 96 and exist in Weld Pilot only', as
     const as = f.client(); await as.login(user.email);
     assert.equal(await status(await as.request('/records/signatures', { pilot: 'weld' })), read, `${user.name} list`);
     assert.equal(await status(await as.request('/records/signatures', { method: 'POST', pilot: 'weld', data: signature(user) })), write, `${user.name} save`);
-    assert.equal(await status(await as.request('/records/signatures', { pilot: 'mto' })), 403, `${user.name} in MTO Pilot`);
-    assert.equal(await status(await as.request('/records/signatures', { method: 'POST', pilot: 'mto', data: { ...signature(user), kind: 'Short signature' } })), 403, `${user.name} save in MTO Pilot`);
+    assert.equal(await status(await as.request('/records/signatures', { pilot: 'mto' })), 403, `${user.name} in Material Core`);
+    assert.equal(await status(await as.request('/records/signatures', { method: 'POST', pilot: 'mto', data: { ...signature(user), kind: 'Short signature' } })), 403, `${user.name} save in Material Core`);
   }
-  // Module levels (hosted): Signatures follow the Weld Pilot level; Read only views, Read & write saves.
+  // Module levels (hosted): Signatures follow the Weld Core level; Read only views, Read & write saves.
   const reader = f.account('Weld reader signs', { profileId: f.profile('Weld read only', { generalPermission: RO, materialsPermission: RO, weldingPermission: RO }) });
   const r = f.client(); await r.login(reader.email);
   assert.equal(await status(await r.request('/records/signatures', { pilot: 'weld' })), 200);
@@ -675,7 +675,7 @@ test('entering a pilot depends on the application being enabled; with no area ri
 // ---- access-users-profiles-004 / 005 / 006 / 008 / 009 / 007 / 015 / 016 / 023 / delta-I2b-004 (w3-access-ui) ----
 const hostedView = (key: string) => projectResource(availabilityFor(HOSTED_RELEASE_PROFILE)!, RESOURCE_MAP[key]);
 
-test('new user form of the hosted pilots: no application ticked, one profile always chosen, Full rights first, MTO Pilot block before Weld Pilot', () => {
+test('new user form of the hosted pilots: no application ticked, one profile always chosen, Full rights first, Material Core block before Weld Core', () => {
   const users = hostedView('users');
   const field = (name: string) => users.fields.find(f => f.name === name)!;
   assert.deepEqual([field('weldEnabled').default, field('mtoEnabled').default], [false, false]);
@@ -698,7 +698,7 @@ test('a new hosted account has no application ticked; a ticked application needs
   const created = await json<{ record: Row }>(await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: body }));
   assert.deepEqual([created.record.weldEnabled, created.record.mtoEnabled], [false, false]);
   // A ticked application needs a profile: its own, or the account's permission profile, which the server works under where no pilot profile is chosen
-  // (security-review sec1-001 ticks MTO Pilot with the permission profile only). Without either it is refused.
+  // (security-review sec1-001 ticks Material Core with the permission profile only). Without either it is refused.
   const { profileId: _general, ...withoutProfile } = body;
   const refused = await f.admin.request('/records/users', { method: 'POST', pilot: 'weld', data: { ...withoutProfile, email: 'two@example.test', weldEnabled: true } });
   assert.equal(refused.status, 422); assert.ok((await json<{ fields?: Record<string, string> }>(refused)).fields?.weldProfileId);
@@ -720,7 +720,7 @@ test('a new hosted account has no application ticked; a ticked application needs
 test('user list columns, inactive switch, profiles page title and columns, and the Add / Update wording of the hosted profile', () => {
   const users = hostedView('users');
   assert.deepEqual(users.columns, ['email', 'name', 'title', 'companyId', 'phone', 'mtoEnabled', 'weldEnabled']);
-  assert.deepEqual(HOSTED_COLUMN_LABELS.users, { mtoEnabled: 'MTO Pilot', weldEnabled: 'Weld Pilot' });
+  assert.deepEqual(HOSTED_COLUMN_LABELS.users, { mtoEnabled: 'Material Core', weldEnabled: 'Weld Core' });
   assert.ok(accountListed({ active: true }, false) && accountListed({}, false) && !accountListed({ active: false }, false) && accountListed({ active: false }, true) && !accountListed({ active: true }, true));
   const profiles = hostedView('profiles');
   assert.equal(profiles.title, 'Profiles'); assert.deepEqual(profiles.columns, ['name', 'description']);
@@ -763,7 +763,7 @@ test('profile table of the hosted pilots: one alphabetical list of both applicat
   assert.ok(all.some(a => areaPilots(a.key).includes('weld')) && all.some(a => areaPilots(a.key).includes('mto')));
   const weld = hostedProfileAreas(PERMISSION_AREAS, areaPilots, 'weld'), mto = hostedProfileAreas(PERMISSION_AREAS, areaPilots, 'mto');
   assert.ok(weld.every(a => areaPilots(a.key).includes('weld')) && mto.every(a => areaPilots(a.key).includes('mto')) && weld.length < all.length && mto.length < all.length);
-  assert.deepEqual(PROFILE_APP_FILTER.map(o => o.label), ['All apps', 'MTOPilot', 'WeldPilot']);
+  assert.deepEqual(PROFILE_APP_FILTER.map(o => o.label), ['All apps', 'Material Core', 'Weld Core']);
   assert.deepEqual(PERMISSION_VERBS.map(v => HOSTED_VERB_LABELS[v]), ['Show', 'Insert', 'Edit', 'Delete', 'Export', 'Import', 'Print']);
 });
 
@@ -902,7 +902,7 @@ test('an account cannot widen its own profile, its own applications or its own s
   assert.equal(await status(await as.request(`/records/profiles/${managerProfile}`, { method: 'PUT', pilot: 'weld', data: { permissionRules: JSON.stringify({ '26': ALL_26, '53': ALL_53 }), _version: profile._version } })), 200);
   // The last administrator: once the manager is the only one, it cannot narrow itself away.
   const admin = f.store.list('users').find(item => item.email === 'access-admin@example.test')!;
-  // The manager is not enabled in MTO Pilot, so it may not archive an account that reaches MTO Pilot (security-review sec1-001); the sample administrator is archived directly.
+  // The manager is not enabled in Material Core, so it may not archive an account that reaches Material Core (security-review sec1-001); the sample administrator is archived directly.
   assert.equal(await status(await as.request(`/records/users/${admin.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: admin._version } })), 403, 'an account reaching more than the manager');
   f.store.archive('users', admin.id, admin._version, { id: 'test', name: 'test' });
   const last = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { profileId: narrower, _version: own()._version } });
@@ -911,7 +911,7 @@ test('an account cannot widen its own profile, its own applications or its own s
 });
 
 // ----- wave 3 integration (E1): the rules of w3-security-fixes, w3-access-session-sites and w3-access-ui hold together ------
-test('E1: an own narrowing is refused like an own widening, a manager without MTO Pilot creates no MTO account, and a new account starts with both applications off', async t => {
+test('E1: an own narrowing is refused like an own widening, a manager without Material Core creates no MTO account, and a new account starts with both applications off', async t => {
   const f = await fixture(t);
   const managerProfile = detailed(f.store, 'Account manager', { '26': ALL_26, '53': ALL_53, '63': ['show'] });
   const narrower = detailed(f.store, 'Account viewer', { '26': ['show'], '53': ['show'] });
@@ -925,11 +925,11 @@ test('E1: an own narrowing is refused like an own widening, a manager without MT
   const widen = await as.request(`/records/users/${manager.id}`, { method: 'PUT', pilot: 'weld', data: { weldProfileId: 'profile-admin', _version: own()._version } });
   assert.equal(widen.status, 403); assert.match((await json<{ error: string }>(widen)).error, /cannot widen your own access/);
   assert.deepEqual([own().weldProfileId, own().mtoEnabled], [managerProfile, false], 'nothing stored');
-  // Not enabled in MTO Pilot: no account that reaches MTO Pilot (sec1-001), even with Edit on User accounts and Profiles.
+  // Not enabled in Material Core: no account that reaches Material Core (sec1-001), even with Edit on User accounts and Profiles.
   const users = f.store.list('users').length;
   assert.equal(await status(await as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'MTO planner', email: 'mto-planner@example.test', profileId: narrower, active: true, mtoEnabled: true, mtoProfileId: narrower, password: PASSWORD } })), 403);
   assert.equal(f.store.list('users').length, users, 'no account was created');
-  // A new account starts with both applications off (w3-access-ui); ticking Weld Pilot needs a profile, the permission profile counts.
+  // A new account starts with both applications off (w3-access-ui); ticking Weld Core needs a profile, the permission profile counts.
   const created = await json<{ record: Row }>(await as.request('/records/users', { method: 'POST', pilot: 'weld', data: { name: 'Weld viewer', email: 'weld-viewer@example.test', profileId: narrower, active: true, password: PASSWORD } }));
   assert.deepEqual([created.record.weldEnabled, created.record.mtoEnabled], [false, false]);
   const row = f.store.get('users', created.record.id);
@@ -937,18 +937,18 @@ test('E1: an own narrowing is refused like an own widening, a manager without MT
   assert.equal(await status(await as.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { weldEnabled: true, weldProfileId: narrower, _version: row._version } })), 200);
 });
 
-// ----- w1-left-6: storehouses are MTO Pilot records -----------------------------------------------------------------------
-test('a Weld Pilot session gets no storehouses, even for an account with MTO rights; MTO Pilot keeps them', async t => {
+// ----- w1-left-6: storehouses are Material Core records -----------------------------------------------------------------------
+test('a Weld Core session gets no storehouses, even for an account with MTO rights; Material Core keeps them', async t => {
   const f = await fixture(t);
-  const both = f.account('Both pilots writer', { profileId: f.profile('All rights writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW }) });
+  const both = f.account('Both cores writer', { profileId: f.profile('All rights writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW }) });
   const as = f.client(); await as.login(both.email);
   const weld = await json<{ rows: Record<string, Row[]>; activity: { entityType: string }[] }>(await as.request('/bootstrap', { pilot: 'weld' }));
-  assert.deepEqual(weld.rows.warehouses ?? [], [], 'no storehouse rows in the Weld Pilot bootstrap');
+  assert.deepEqual(weld.rows.warehouses ?? [], [], 'no storehouse rows in the Weld Core bootstrap');
   assert.ok(!weld.activity.some(event => event.entityType === 'warehouses'));
   const warehouse = f.store.list('warehouses')[0]; assert.ok(warehouse, 'sample storehouse');
   for (const path of ['/records/warehouses', `/history/warehouses/${warehouse.id}`, '/export/warehouses?format=csv']) assert.equal(await status(await as.request(path, { pilot: 'weld' })), 403, path);
   assert.equal(await status(await as.request(`/records/warehouses/${warehouse.id}`, { method: 'PUT', pilot: 'weld', data: { phone: '1', _version: warehouse._version } })), 403);
   const mto = await json<{ rows: Record<string, Row[]> }>(await as.request('/bootstrap', { pilot: 'mto' }));
-  assert.ok(mto.rows.warehouses.length > 0, 'MTO Pilot unchanged');
+  assert.ok(mto.rows.warehouses.length > 0, 'Material Core unchanged');
   assert.equal(await status(await as.request('/records/warehouses', { pilot: 'mto' })), 200);
 });

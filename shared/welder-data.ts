@@ -137,7 +137,7 @@ export const HOSTED_COLUMN_LABELS: Record<string, Record<string, string>> = {
   welding_wires: { controlled: 'Ctrl.', accepted: 'Accp.' },
   certifications: { materialId: 'Material No', diameter: 'Dia.', controlled: 'Ctrl.', accepted: 'Accp.' },
   profiles: { name: 'Name' },
-  users: { mtoEnabled: 'MTO Pilot', weldEnabled: 'Weld Pilot' },
+  users: { mtoEnabled: 'Material Core', weldEnabled: 'Weld Core' },
 };
 /**
  * Default order of a list in the hosted profile, the reference's DataTable order (a field name; ascending, numbers by value):

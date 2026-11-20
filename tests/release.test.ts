@@ -45,14 +45,14 @@ test('hosted Add / Edit project: the reference field order, our own fields in "M
   assert.deepEqual(projects.wording, { add: 'Add project', edit: 'Edit project', remove: 'Delete project' });
   const form = shownFields('projects');
   assert.deepEqual(form.slice(0, PROJECT_FORM_ORDER.length).map(field => field.name), PROJECT_FORM_ORDER);
-  assert.deepEqual(form.slice(0, 8).map(field => field.label), ['Sub Projects', 'Plant location', 'Contact name', 'Phone', 'Authority', 'Project description', 'Weld Pilot', 'MTO Pilot']);
+  assert.deepEqual(form.slice(0, 8).map(field => field.label), ['Sub Projects', 'Plant location', 'Contact name', 'Phone', 'Authority', 'Project description', 'Weld Core', 'Material Core']);
   // The reference fields are in the open first section; the description is no longer behind a collapsed "Notes".
   assert.ok(form.slice(0, 8).every(field => !field.section));
   assert.equal(form[0].required, true);
   assert.deepEqual(form.slice(8).filter(field => field.section !== 'More').map(field => field.name), []);
   assert.deepEqual(form.filter(field => field.section === 'More').map(field => field.name).slice(0, 5), ['siteId', 'companyId', 'status', 'startdate', 'enddate']);
-  // Weld Pilot and MTO Pilot are ticked by default; there are no boxes for applications we do not run.
-  assert.deepEqual(form.filter(field => field.type === 'checkbox' && /Pilot/.test(field.label)).map(field => [field.name, field.default]), [['weldPilot', true], ['mtoPilot', true]]);
+  // Weld Core and Material Core are ticked by default; there are no boxes for applications we do not run.
+  assert.deepEqual(form.filter(field => field.type === 'checkbox' && / Core$/.test(field.label)).map(field => [field.name, field.default]), [['weldPilot', true], ['mtoPilot', true]]);
   assert.ok(!form.some(field => /civil|est/i.test(field.name)));
   // Other profiles keep the shared order and the Applications section.
   const prototype = projectResource(availabilityFor('access-prototype'), RESOURCES.find(resource => resource.key === 'projects')!);

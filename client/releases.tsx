@@ -110,7 +110,7 @@ function ReleaseList({ type }: { type: ReleasePhase }) {
   const file = `${type.toLowerCase()}-release.`;
 
   return <div className="page releases-page" aria-busy={busy}>
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES</div><h1>{title}<span className="heading-count">{base.length}</span></h1>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · RELEASES</div><h1>{title}<span className="heading-count">{base.length}</span></h1>
       <p>Isometrics of the active main project marked {type} complete on the isometric. Choose one ITP in the filter, tick the isometrics and release them as one document.</p></div>
       <div className="heading-actions">
         {allowed && checked.length > 0 && <button className="btn primary" type="button" onClick={() => setDialog('release')}>Release selected ({checked.length})</button>}
@@ -364,7 +364,7 @@ export function FieldPackagesPage() {
   const tab = requested === 'assign' && canAssign ? 'assign' : requested === 'packages' && canPackages ? 'packages' : canPackages ? 'packages' : 'assign';
   const tabs = [['packages', 'Field Work Packages', canPackages], ['assign', 'Assign Iso to FWP', canAssign]] as const;
   return <div className="page releases-page">
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES</div><h1>{tab === 'packages' ? 'Field work packages' : 'Assign Iso to FWP'}</h1><p>{tab === 'packages' ? 'Name the packages that field crews work from.' : 'Assign the isometrics of the active main project to a field work package.'}</p></div></div>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · RELEASES</div><h1>{tab === 'packages' ? 'Field work packages' : 'Assign Iso to FWP'}</h1><p>{tab === 'packages' ? 'Name the packages that field crews work from.' : 'Assign the isometrics of the active main project to a field work package.'}</p></div></div>
     <div className="table-tabs fwp-tabs" role="tablist" aria-label="Field work packages">{tabs.filter(([, , allowed]) => allowed).map(([key, title]) => <button key={key} type="button" role="tab" id={`fwp-tab-${key}`} aria-selected={tab === key} aria-controls={`fwp-panel-${key}`} className={tab === key ? 'selected' : ''} onClick={() => setParams({ tab: key })}>{title}</button>)}</div>
     <div role="tabpanel" id={`fwp-panel-${tab}`} aria-labelledby={`fwp-tab-${tab}`}>{tab === 'packages' ? <PackagesTab/> : <AssignTab/>}</div>
   </div>;

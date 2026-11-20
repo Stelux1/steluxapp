@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BadgeCheck, Boxes, Building2, Calculator, ChevronDown, ClipboardList, Flame, FolderKanban, HardHat, Layers3, LayoutDashboard, LayoutGrid, Loader2, LogOut, ScanLine, ScanSearch, Settings2, ShieldAlert, ShoppingCart, Truck } from 'lucide-react';
-import { NO_RIGHTS_TEXT, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemState, pilotPageState, splitPilotPath, type MenuRights, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey } from '../shared/pilots.ts';
+import { ArrowRight, BadgeCheck, Boxes, Building2, Calculator, ChevronDown, ClipboardList, Flame, FolderKanban, HardHat, Layers3, LayoutDashboard, LayoutGrid, Loader2, LogOut, Package, ScanLine, ScanSearch, Settings2, ShieldAlert, ShoppingCart, Truck, Users, Wrench } from 'lucide-react';
+import { COMING_CORES, NO_RIGHTS_TEXT, PILOTS, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemState, pilotPageState, splitPilotPath, type MenuRights, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey, type ComingCore } from '../shared/pilots.ts';
 import { pageAvailable } from '../shared/release.ts';
 import type { User } from '../shared/types.ts';
 import { RESOURCES, RESOURCE_MAP } from './catalog.ts';
@@ -27,7 +27,9 @@ const PilotContext = createContext<PilotState | null>(null);
 /** The current pilot, or null in profiles without pilots. */
 export const usePilot = () => useContext(PilotContext);
 
-const ICONS: Record<PilotKey, typeof ScanLine> = { weld: ScanLine, mto: Boxes };
+const ICONS: Record<PilotKey, typeof ScanLine> = { weld: ScanLine, mto: Package };
+/** Icons of the Cores that are not built yet (selector only). */
+const COMING_ICONS: Record<ComingCore['icon'], typeof ScanLine> = { tools: Wrench, finance: Calculator, teams: Users };
 /** Icons of the menu groups: beside the group title, and alone when the menu is collapsed to icons. */
 const GROUP_ICONS: Record<PilotGroupIcon, typeof ScanLine> = {
   general: Building2, start: LayoutDashboard, welders: HardHat, weld: Flame, material: Layers3, ndt: ScanSearch, welding: ClipboardList, releases: BadgeCheck,
@@ -44,7 +46,8 @@ export function PilotRoot({ user, onLogout, children }: { user: User; onLogout: 
   const go = useCallback((next: string, replace = false) => { window.history[replace ? 'replaceState' : 'pushState'](null, '', next); setPath(new URL(next, window.location.origin).pathname); window.scrollTo(0, 0); }, []);
   const allowed = allowedPilots(user);
   const { pilot } = splitPilotPath(path);
-  const redirect = pilot ? '' : path !== '/' ? legacyPilotPath(path, allowed.map(p => p.key)) + window.location.search + window.location.hash : allowed.length === 1 ? `/${allowed[0].key}` : '';
+  // `/` is always the Core selector, also for an account with one Core: the Core is chosen at every sign-in (client 20.11.2026).
+  const redirect = pilot ? '' : path !== '/' ? legacyPilotPath(path, allowed.map(p => p.key)) + window.location.search + window.location.hash : '';
   useLayoutEffect(() => { if (redirect) go(redirect, true); }, [redirect, go]);
   if (redirect) return <div className="screen-center" role="status"><Wordmark dark/><p>Opening your workspace…</p></div>;
   if (!pilot) return <PilotSelector user={user} pilots={allowed} onOpen={key => go(`/${key}`)} onLogout={onLogout}/>;
@@ -66,7 +69,7 @@ function PilotRefused({ user, pilot, onSelect, onLogout }: { user: User; pilot: 
   const others = allowedPilots(user).length;
   return <div className="pilot-select-page">
     <AccountBar user={user} onLogout={onLogout}/>
-    <main className="pilot-select-main" id="main-content"><section className="panel pilot-select-empty" role="alert"><span className="pilot-no-access-icon"><ShieldAlert size={22}/></span><EmptyState title={`You do not have access to ${pilot.title}`} description={others ? 'Your account is not enabled for this workspace. Choose a workspace that is open to your account.' : 'Your account is not enabled for any workspace. Ask your administrator to enable Weld Pilot or MTO Pilot for your account.'} action={others ? <button className="btn primary" onClick={onSelect}>Select a workspace</button> : undefined}/></section></main>
+    <main className="pilot-select-main" id="main-content"><section className="panel pilot-select-empty" role="alert"><span className="pilot-no-access-icon"><ShieldAlert size={22}/></span><EmptyState title={`You do not have access to ${pilot.title}`} description={others ? 'Your account is not enabled for this workspace. Choose a workspace that is open to your account.' : 'Your account is not enabled for any workspace. Ask your administrator to enable Weld Core or Material Core for your account.'} action={others ? <button className="btn primary" onClick={onSelect}>Select a workspace</button> : undefined}/></section></main>
   </div>;
 }
 
@@ -86,21 +89,34 @@ function useCompanyLogo(enabled: boolean) {
 /** The inline style of the selector's logo from the Company data sizing (pixels). */
 export const logoStyle = (sizing?: LogoSizing): React.CSSProperties | undefined => sizing ? { maxHeight: sizing.maxHeight, paddingTop: sizing.paddingTop, paddingBottom: sizing.paddingBottom } : undefined;
 
-/** `logo`: the logo to show (a URL), or '' for none; left out, the selector loads the company logo itself. */
+/**
+ * The Core selector (client design 20.11.2026): Weld Core and Material Core open when the account may enter them; the Cores
+ * that are not built yet are shown with "Coming soon" and never open. `pilots`: the Cores the account may enter.
+ * `logo`: the logo to show (a URL), or '' for none; left out, the selector loads the company logo itself.
+ */
 export function PilotSelector({ user, pilots, onOpen, onLogout, logo, sizing }: { user: User; pilots: Pilot[]; onOpen: (key: PilotKey) => void; onLogout: () => void; logo?: string; sizing?: LogoSizing }) {
   const loaded = useCompanyLogo(logo === undefined), source = logo ?? loaded.url, size = sizing ?? (logo === undefined ? loaded.sizing : undefined);
+  const card = (title: string, description: string, Icon: typeof ScanLine, badge?: string) => <>
+    <span className="pilot-tile-icon"><Icon size={26}/></span><span className="pilot-tile-divider" aria-hidden="true"/>
+    <span className="pilot-tile-text"><strong>{title}</strong><small>{description}</small>{badge && <span className="pilot-tile-badge">{badge}</span>}</span><ArrowRight size={18} aria-hidden="true"/>
+  </>;
+  const closed = (key: string, color: string, body: ReactNode, label: string) => <li key={key}><div className="pilot-tile is-disabled" role="link" aria-disabled="true" aria-label={label} style={{ '--pilot-color': color } as React.CSSProperties}>{body}</div></li>;
   return <div className="pilot-select-page">
     <AccountBar user={user} onLogout={onLogout}/>
     <main className="pilot-select-main" id="main-content">
       {source && <img className="pilot-select-logo" src={source} alt="Company logo" style={logoStyle(size)}/>}
-      <div className="eyebrow">BLITZKRIEG · WORKSPACES</div>
+      <div className="eyebrow">BLITZKRIEG · CORES</div>
       <h1>Select your application workspace</h1>
-      <p>Projects, isometrics, spools and certificates are shared. Choose where you want to work now; you can switch at any time.</p>
-      {pilots.length ? <ul className="pilot-tiles">{pilots.map(pilot => { const Icon = ICONS[pilot.key]; return <li key={pilot.key}>
-        <a className="pilot-tile" href={`/${pilot.key}`} style={{ '--pilot-color': pilot.color } as React.CSSProperties} onClick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return; event.preventDefault(); onOpen(pilot.key); }}>
-          <span className="pilot-tile-icon"><Icon size={26}/></span><span className="pilot-tile-text"><strong>{pilot.title}</strong><small>{pilot.description}</small></span><ArrowRight size={18}/>
-        </a></li>; })}</ul>
-        : <section className="panel pilot-select-empty"><EmptyState title="No workspace is open to your account" description="Your account is not enabled for Weld Pilot or MTO Pilot. Ask your administrator to enable a workspace for your account."/></section>}
+      <p>Projects, isometrics, spools and certificates are shared between the Cores. Choose where you want to work now; you can switch at any time.</p>
+      {pilots.length ? <ul className="pilot-tiles">
+        {PILOTS.map(pilot => { const Icon = ICONS[pilot.key], open = pilots.some(entry => entry.key === pilot.key);
+          if (!open) return closed(pilot.key, pilot.color, card(pilot.title, pilot.description, Icon, 'Not enabled'), `${pilot.title}: not enabled for your account`);
+          return <li key={pilot.key}><a className="pilot-tile" href={`/${pilot.key}`} style={{ '--pilot-color': pilot.color } as React.CSSProperties} onClick={event => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return; event.preventDefault(); onOpen(pilot.key); }}>
+            {card(pilot.title, pilot.description, Icon)}
+          </a></li>; })}
+        {COMING_CORES.map(core => closed(core.key, core.color, card(core.title, core.description, COMING_ICONS[core.icon], 'Coming soon'), `${core.title}: coming soon`))}
+      </ul>
+        : <section className="panel pilot-select-empty"><EmptyState title="No workspace is open to your account" description="Your account is not enabled for Weld Core or Material Core. Ask your administrator to enable a workspace for your account."/></section>}
     </main>
   </div>;
 }

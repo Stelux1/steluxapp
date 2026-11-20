@@ -34,7 +34,7 @@ export function NdtBatchImport() {
   const [tab, setTab] = useState<NdtBatchTab>('file');
   if (!hasFeature('inspections') || !canArea(NDT_BATCH_AREA) || !canRecord('welds') || !canRecord('inspection_results')) return <EmptyState title="This area is restricted" description="You do not have rights to open this page."/>;
   return <div className="page ndt-batch-page">
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · WELDING DATA</div><h1>{NDT_BATCH_TITLE}</h1><p>Import NDT results in bulk from a file, or enter the results of one NDT request per isometric.</p></div></div>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · WELDING DATA</div><h1>{NDT_BATCH_TITLE}</h1><p>Import NDT results in bulk from a file, or enter the results of one NDT request per isometric.</p></div></div>
     <section className="panel">
       <div className="table-tabs inspection-tabs" role="tablist" aria-label={NDT_BATCH_TITLE}>{NDT_BATCH_TABS.map(item => <button key={item.key} id={`ndt-batch-tab-${item.key}`} type="button" role="tab" aria-selected={tab === item.key} aria-controls={`ndt-batch-panel-${item.key}`} className={tab === item.key ? 'selected' : ''} onClick={() => setTab(item.key)}>{item.label}</button>)}</div>
       <div id={`ndt-batch-panel-${tab}`} role="tabpanel" aria-labelledby={`ndt-batch-tab-${tab}`}>{tab === 'file' ? <ViaFile/> : <ViaRequest/>}</div>

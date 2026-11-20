@@ -75,7 +75,7 @@ function FlangeManagement({ embedded = false }: { embedded?: boolean }) {
 
   return <div className={embedded ? 'flanges-page flanges-embedded' : 'page records-page flanges-page'}>
     {embedded ? <div className="flange-section-heading"><h2>Flanges<span className="heading-count">{items.length}</span></h2>{actions}</div>
-      : <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES</div><h1>Flange Management<span className="heading-count">{items.length}</span></h1><p>Bolted connections per isometric: bolting, tightening, inspection and commissioning.</p></div>{actions}</div>}
+      : <div className="page-heading"><div><div className="eyebrow">WELD CORE · RELEASES</div><h1>Flange Management<span className="heading-count">{items.length}</span></h1><p>Bolted connections per isometric: bolting, tightening, inspection and commissioning.</p></div>{actions}</div>}
     <div className="table-card">
       {open && <div id="flange-filters" className="filters-panel" role="group" aria-label="Flange filters">
         <div className="field"><label htmlFor="flange-project">Project</label><select id="flange-project" value={filters.projectId} onChange={e => change({ projectId: e.target.value })}><option value="">All</option>{projects.map(row => <option key={row.id} value={row.id}>{String(row.internnumber || row.description)}</option>)}</select></div>
@@ -154,7 +154,7 @@ function FlangeDetail({ flange }: { flange: Row }) {
   const latest = latestRecord(rows.flange_records, flange.id), evidenceOpen = !(latest && recordSignatures(rows.flange_signatures, latest.id)['QA/QC']);
   const [editing, setEditing] = useState(false);
   return <div className="page flange-detail">
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES · FLANGE MANAGEMENT</div><h1>Flange ID: {text(flange.flange_id) || '—'}</h1><p>{[item.projectName, item.isoNo].filter(Boolean).join(' · ')}</p></div>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · RELEASES · FLANGE MANAGEMENT</div><h1>Flange ID: {text(flange.flange_id) || '—'}</h1><p>{[item.projectName, item.isoNo].filter(Boolean).join(' · ')}</p></div>
       <div className="heading-actions">
         <PdfDocumentButton document="flange-labels" report="pdf-flanges" params={{ ids: flange.id }} label="Print QR label" title="Print QR label" subtitle={`Flange ${text(flange.flange_id) || item.isoNo}`} submit="Go" fileName={`Flange-label-${text(flange.flange_id) || flange.id}`}/>
         {editable && <button className="btn" onClick={() => setEditing(true)}><Pencil size={15}/>Edit</button>}

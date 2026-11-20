@@ -348,7 +348,7 @@ export function assertCopyInScope(store: Store, account: Row, input: Record<stri
   for (const [part, pilot] of parts) {
     if (input[part] !== true) continue;
     let project: Row; try { project = store.get('projects', input.projectId); } catch { continue; }
-    const title = pilot === 'weld' ? 'Weld Pilot' : 'MTO Pilot';
+    const title = pilot === 'weld' ? 'Weld Core' : 'Material Core';
     // A part of a pilot the target project is switched off for is never copied into it (sec2-007).
     if (!projectInPilot(project, pilot)) throw new AppError(403, `This project is switched off for ${title}: its part of the isometrics cannot be copied into it.`);
     const scope = siteScopeFor(store, account, pilot);

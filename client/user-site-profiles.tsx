@@ -4,7 +4,7 @@ import { siteIdsField, siteProfilesField, siteProfilesOf, type ScopePilot } from
 import { useWorkspace, activeRows } from './context.tsx';
 import { TableScroll } from './components.tsx';
 
-const TITLES: Record<ScopePilot, string> = { weld: 'Weld Pilot', mto: 'MTO Pilot' };
+const TITLES: Record<ScopePilot, string> = { weld: 'Weld Core', mto: 'Material Core' };
 
 /**
  * User form, one application with 'Specific project site(s)': the reference 'Home location | Profile' table. Each main

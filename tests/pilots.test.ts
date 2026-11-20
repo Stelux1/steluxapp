@@ -27,15 +27,15 @@ const items = PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items.
 const account = (permissions: Partial<Record<Module, number>>, availability = hosted): User => ({ id: 'u', name: 'Test', email: 't@example.test', profileId: 'p', availability, permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0, ...permissions } });
 
 test('both pilots carry the reference titles, module colours and menu groups in order', () => {
-  assert.deepEqual(PILOTS.map(pilot => [pilot.key, pilot.title, pilot.module]), [['weld', 'Weld Pilot', 'welding'], ['mto', 'MTO Pilot', 'materials']]);
-  assert.equal(PILOT_MAP.weld.color, '#6d9a54'); assert.equal(PILOT_MAP.mto.color, '#de8d35');
+  assert.deepEqual(PILOTS.map(pilot => [pilot.key, pilot.title, pilot.module]), [['weld', 'Weld Core', 'welding'], ['mto', 'Material Core', 'materials']]);
+  assert.equal(PILOT_MAP.weld.color, '#e11d2e'); assert.equal(PILOT_MAP.mto.color, '#f07a1a');
   assert.deepEqual(PILOT_MAP.weld.groups.map(group => group.title), ['General data', 'Start', 'Welder data', 'Weld data', 'Material data', 'NDT data', 'Welding data', 'Releases', 'System']);
   assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'System']);
-  // Calculations leave MTO Pilot (client, 20.11.2026): they become a pilot of their own later.
+  // Calculations leave Material Core (client, 20.11.2026): they become a pilot of their own later.
   assert.ok(!PILOT_MAP.mto.groups.some(group => group.title === 'Calculations'));
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);
-  // Iso overview: Weld Pilot "Welding data" right after ITPs (the reference's ITP templates are not built) and before
-  // NDT/PWHT Manager; MTO Pilot "Projects data" last, after Pick List archive. Both open the Iso overview page of all isometrics of the main project.
+  // Iso overview: Weld Core "Welding data" right after ITPs (the reference's ITP templates are not built) and before
+  // NDT/PWHT Manager; Material Core "Projects data" last, after Pick List archive. Both open the Iso overview page of all isometrics of the main project.
   const labels = (key: 'weld' | 'mto', title: string) => PILOT_MAP[key].groups.find(group => group.title === title)!.items.map(item => item.label);
   const weldData = labels('weld', 'Welding data');
   assert.equal(weldData[weldData.indexOf('ITPs') + 1], 'Iso overview'); assert.ok(weldData.indexOf('Iso overview') < weldData.indexOf('NDT/PWHT Manager'));
@@ -45,7 +45,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
 
-test('the Weld Pilot menu has no Weld process and no Request archive (hidden by design in the reference); the MTO Pilot keeps its service request archive', () => {
+test('the Weld Core menu has no Weld process and no Request archive (hidden by design in the reference); the Material Core keeps its service request archive', () => {
   const labels = PILOT_MAP.weld.groups.flatMap(group => group.items.map(item => item.label));
   for (const hidden of ['Weld process', 'Request archive']) assert.ok(!labels.includes(hidden), hidden);
   assert.deepEqual(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.map(item => item.label), ['PQR', 'WPS methods', 'Weld type', 'Coating', 'Welding wire', 'Spools', 'Customs']);
@@ -79,7 +79,7 @@ test('every menu item resolves to a real page and resource items use resourcePat
   for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders', 'roles', 'inspection_results', 'calculation_norms', 'cut_fittings'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   // Inspection results: NDT results are attached on the weld itself (client, 20.11.2026); calculation norms go with the Calculations pilot.
   assert.ok(!listed.has(resourcePath('inspection_results')) && !listed.has(resourcePath('calculation_norms')));
-  // Roles has no function in Weld Pilot (client, 20.11.2026): no menu item; the welder keeps its Welder role on the server.
+  // Roles has no function in Weld Core (client, 20.11.2026): no menu item; the welder keeps its Welder role on the server.
   assert.ok(!listed.has(resourcePath('roles')), 'Roles has no menu item');
   assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
   assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(!listed.has('/welding/lisl'), 'Data LISL opens from Iso overview, not from the menu'); assert.ok(!listed.has('/materials/planning'));
@@ -182,7 +182,7 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   const status = await (await f.request('/api/auth/status')).json(); assert.deepEqual(allowedPilots(status.user).map((p: { key: string }) => p.key), ['weld']);
   for (const key of ['certifications', 'spools', 'welds']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   for (const key of ['iso_materials', 'operation_phases', 'calculation_lines', 'custom_materials', 'uoms', 'orders', 'order_lines', 'receipts', 'stock', 'movements', 'transfer_orders', 'reservations', 'picklists']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
-  // The Material database is read-only in Weld Pilot (the material of certificates and welds); see tests/certifications.test.ts.
+  // The Material database is read-only in Weld Core (the material of certificates and welds); see tests/certifications.test.ts.
   assert.equal((await f.request('/api/records/materials')).status, 200);
   // Material part, type of material and supplier are shared catalogs of both pilots.
   for (const key of ['material_parts', 'material_types', 'suppliers']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
@@ -192,14 +192,14 @@ test('a weld-only account sees shared catalogs through the API but stays out of 
   const data = await (await f.request('/api/bootstrap')).json() as Bootstrap;
   assert.ok(data.rows.certifications.some(row => row.name === 'Weld pilot cert')); assert.ok(data.rows.spools.length);
   for (const key of ['iso_materials', 'orders', 'stock']) assert.equal(data.rows[key], undefined, key);
-  assert.ok(data.rows.materials.length, 'the Material database is read in Weld Pilot');
+  assert.ok(data.rows.materials.length, 'the Material database is read in Weld Core');
 });
 
 test('an MTO-only account sees shared catalogs through the API but stays out of weld and inspection records', async t => {
   const f = await hostedFixture(t); await f.setup();
   const user = await f.signIn('MTO only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
   assert.deepEqual(allowedPilots(user).map(p => p.key), ['mto']);
-  assert.equal((await f.request('/api/records/certifications')).status, 403, 'not enabled for Weld Pilot');
+  assert.equal((await f.request('/api/records/certifications')).status, 403, 'not enabled for Weld Core');
   f.usePilot('mto');
   for (const key of ['certifications', 'spools', 'iso_materials', 'materials']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, key);
   for (const key of ['welds', 'inspection_requests', 'inspection_results', 'welders', 'wps', 'diameters', 'test_systems']) assert.equal((await f.request(`/api/records/${key}`)).status, 403, key);
@@ -211,12 +211,12 @@ test('an MTO-only account sees shared catalogs through the API but stays out of 
   assert.ok(data.rows.certifications); assert.ok(data.rows.spools);
 });
 
-test('PQR is a Weld Pilot page of the hosted profile: an administrator reads and creates PQRs, an MTO-only account cannot', async t => {
+test('PQR is a Weld Core page of the hosted profile: an administrator reads and creates PQRs, an MTO-only account cannot', async t => {
   const f = await hostedFixture(t); await f.setup();
   // PQRs and WPS methods belong to the main project they are created in (client 20.11.2026).
   assert.equal((await f.request('/api/auth/site', 'POST', { siteId: 'site-north' })).status, 200);
   const weld = (await (await f.request('/api/auth/status')).json()).user as User;
-  assert.ok(weld.availability!.navigation.includes('pqr'), 'the PQR page is delivered in Weld Pilot');
+  assert.ok(weld.availability!.navigation.includes('pqr'), 'the PQR page is delivered in Weld Core');
   assert.ok(pageAvailable(weld.availability, '/weld/welding/pqr', RESOURCES));
   assert.equal((await f.request('/weld/welding/pqr')).status, 200);
   assert.equal((await f.request('/api/records/pqr')).status, 200);
@@ -226,14 +226,14 @@ test('PQR is a Weld Pilot page of the hosted profile: an administrator reads and
   const wps = await f.request('/api/records/wps', 'POST', { name: 'STX-WPS-HOSTED', method: '141', definition: 'Hosted PQR link', allProjects: true, pqrIds: [pqr.id] }); assert.equal(wps.status, 201, await wps.clone().text());
   const wpsId = (await wps.json()).record.id as string;
   assert.deepEqual(f.store.list('wps_pqr').filter(row => row.wpsId === wpsId).map(row => row.pqrId), [pqr.id], 'the WPS keeps its PQR link');
-  assert.ok(((await (await f.request('/api/bootstrap')).json()) as Bootstrap).rows.wps_pqr.some(row => row.wpsId === wpsId), 'the links reach Weld Pilot');
+  assert.ok(((await (await f.request('/api/bootstrap')).json()) as Bootstrap).rows.wps_pqr.some(row => row.wpsId === wpsId), 'the links reach Weld Core');
   f.usePilot('mto');
   const menuKeys = (key: 'weld' | 'mto') => PILOT_MAP[key].groups.flatMap(group => group.items.map(item => item.resource));
-  assert.ok(menuKeys('weld').includes('pqr')); assert.ok(!menuKeys('mto').includes('pqr'), 'MTO Pilot has no PQR menu entry');
-  assert.equal((await f.request('/api/records/pqr')).status, 403, 'MTO Pilot does not read PQRs');
+  assert.ok(menuKeys('weld').includes('pqr')); assert.ok(!menuKeys('mto').includes('pqr'), 'Material Core has no PQR menu entry');
+  assert.equal((await f.request('/api/records/pqr')).status, 403, 'Material Core does not read PQRs');
   f.usePilot('weld');
   await f.signIn('MTO only PQR', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'No access' });
-  assert.equal((await f.request('/api/records/pqr')).status, 403, 'not enabled for Weld Pilot');
+  assert.equal((await f.request('/api/records/pqr')).status, 403, 'not enabled for Weld Core');
   f.usePilot('mto');
   assert.equal((await f.request('/api/records/pqr')).status, 403);
   assert.equal((await f.request('/api/records/pqr', 'POST', { name: 'DENIED' })).status, 403);
@@ -251,7 +251,7 @@ test('read-only welding never writes a shared catalog and detailed permission pr
   assert.equal((await f.request('/api/records/spools')).status, 403);
 });
 
-test('mto-procurement-stock-010: MTO Order / Take in has the seven reference items and no Transfer orders; the list keeps its page in MTO Pilot', () => {
+test('mto-procurement-stock-010: MTO Order / Take in has the seven reference items and no Transfer orders; the list keeps its page in Material Core', () => {
   const items = PILOT_MAP.mto.groups.find(group => group.title === 'Order / Take in')!.items.map(item => item.label);
   assert.deepEqual(items, ['Request for Quotation', 'Order materials', 'Pending order', 'Material take in', 'Material inventory', 'Materials list', 'Order archive', 'Certifications']);
   assert.equal(PILOTS.flatMap(pilot => pilot.groups.flatMap(group => group.items)).some(item => item.label === 'Transfer orders'), false);

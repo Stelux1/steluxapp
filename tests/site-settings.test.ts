@@ -80,7 +80,7 @@ test('the hosted profile delivers every site setting and both pilot switches, ot
   assert.deepEqual(sections.slice(-4), ['Project settings', 'Document settings', 'Iso progress', 'ISO Book']);
   assert.deepEqual(site.fields.filter(field => field.section === 'Iso progress').map(field => field.name), PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(activity => activity.field)]));
   const project = projectResource(hosted, RESOURCE_MAP.projects);
-  assert.deepEqual(project.fields.filter(field => field.name === 'weldPilot' || field.name === 'mtoPilot').map(field => [field.name, field.label, field.default]), [['weldPilot', 'Weld Pilot', true], ['mtoPilot', 'MTO Pilot', true]]);
+  assert.deepEqual(project.fields.filter(field => field.name === 'weldPilot' || field.name === 'mtoPilot').map(field => [field.name, field.label, field.default]), [['weldPilot', 'Weld Core', true], ['mtoPilot', 'Material Core', true]]);
   assert.deepEqual(availabilityFor('full'), undefined);
 });
 
@@ -110,7 +110,7 @@ test('sample data carries a configured site; every sample project is enabled for
   assert.equal(repairPerformanceLimit(north), 4); assert.equal(defectNorm(north), 'ISO 6520-1'); assert.equal(mandatoryFields(north), true);
   assert.equal(repairPerformanceLimit(store.get('sites', 'site-river')), 5);
   const projects = store.list('projects');
-  // STX-2403 carries the sample MTO requirements, orders and reservations, so it is on for MTO Pilot too.
+  // STX-2403 carries the sample MTO requirements, orders and reservations, so it is on for Material Core too.
   assert.deepEqual(projects.filter(project => !projectInPilot(project, 'mto')).map(project => project.id), []);
   assert.ok(projects.every(project => projectInPilot(project, 'weld')));
 });
@@ -120,7 +120,7 @@ test('a project switched off for a pilot disappears from that pilot together wit
   const skid = store.get('projects', 'project-skid'); store.update('projects', skid.id, { mtoPilot: false }, skid._version);
   const rows = allRows(store);
   assert.equal(pilotScope(rows), rows); assert.equal(pilotScope(rows, undefined), rows);
-  assert.equal(pilotScope(rows, 'weld'), rows, 'everything is enabled for Weld Pilot');
+  assert.equal(pilotScope(rows, 'weld'), rows, 'everything is enabled for Weld Core');
   const mto = pilotScope(rows, 'mto');
   assert.ok(!mto.projects.some(project => project.id === 'project-skid') && mto.projects.length === rows.projects.length - 1);
   const skidIsos = rows.isometrics.filter(iso => iso.projectId === 'project-skid').map(iso => iso.id);

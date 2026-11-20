@@ -75,7 +75,7 @@ export function MtoDashboard() {
 
   return <div className="md-dashboard">
     <section className="panel md-header" aria-label="Dashboard scope">
-      <div><span className="eyebrow">MTO PILOT · START</span><h2>{String(site?.name || 'All main projects')}</h2>
+      <div><span className="eyebrow">MATERIAL CORE · START</span><h2>{String(site?.name || 'All main projects')}</h2>
         <p className="md-meta"><span>Date {formatDate(day)}</span>{siteId && <span>Site ID {siteId}</span>}<span>{kpis.inScope} isometric{kpis.inScope === 1 ? '' : 's'} in scope</span></p></div>
       <div className="md-controls">
         {phases.length > 0 && <div className="field md-field"><label htmlFor={phaseSelect}>Operation phase</label><select id={phaseSelect} value={filters.phaseId} onChange={event => setPhase(event.target.value)}><option value="">All operation phases</option>{phases.map(row => <option key={row.id} value={row.id}>{String(row.name)}</option>)}</select></div>}

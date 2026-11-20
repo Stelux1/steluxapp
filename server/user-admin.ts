@@ -22,7 +22,7 @@ export const RIGHTS_REFUSED = 'Changing the profile of an account or the rights 
 export const PASSWORD_REFUSED = 'Setting the password of another account needs the Edit right on both User accounts and Profiles.';
 export const SELF_REFUSED = 'You cannot widen your own access. Ask another administrator.';
 export const NEW_PROFILE_REFUSED = 'A new profile cannot grant a right that your own profiles do not hold.';
-export const STOREHOUSE_REFUSED = 'Only an administrator with access to all project sites of MTO Pilot can tick Storehouse manager.';
+export const STOREHOUSE_REFUSED = 'Only an administrator with access to all project sites of Material Core can tick Storehouse manager.';
 export const PROFILE_REACH_REFUSED = 'This profile is used by accounts that reach main projects outside your project site access. Ask an administrator with access to all project sites.';
 
 const PROFILE_FIELDS = ['profileId', 'weldProfileId', 'mtoProfileId'];

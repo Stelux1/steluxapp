@@ -10,8 +10,8 @@ import type { PermissionRules, PermissionVerb, Row } from './types.ts';
 export const HOSTED_VERB_LABELS: Record<PermissionVerb, string> = { show: 'Show', insert: 'Insert', edit: 'Edit', delete: 'Delete', export: 'Export', import: 'Import', print: 'Print' };
 export const SELECT_ALL_LABEL = 'Select / deselect all';
 /** The 'Filter app' select of the profile form; only our two applications (the reference lists its other apps too). */
-export const PROFILE_APP_FILTER = [{ value: '', label: 'All apps' }, { value: 'mto', label: 'MTOPilot' }, { value: 'weld', label: 'WeldPilot' }] as const;
-export const PILOT_BADGES: Record<string, { letter: string; title: string }> = { weld: { letter: 'W', title: 'WeldPilot' }, mto: { letter: 'M', title: 'MTOPilot' } };
+export const PROFILE_APP_FILTER = [{ value: '', label: 'All apps' }, { value: 'mto', label: 'Material Core' }, { value: 'weld', label: 'Weld Core' }] as const;
+export const PILOT_BADGES: Record<string, { letter: string; title: string }> = { weld: { letter: 'W', title: 'Weld Core' }, mto: { letter: 'M', title: 'Material Core' } };
 /** The sample profile every new account starts with (reference: the first profile of the list). */
 export const FULL_RIGHTS_PROFILE = 'Full rights';
 

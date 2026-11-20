@@ -109,7 +109,7 @@ test('quantity budgets do not exist yet: isoBudgets returns none and entered qua
   assert.equal(isoBudgets(row('iso')), undefined);
   const errors = isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 5 }, row('iso', { isoNo: 'ISO-1' }), undefined);
   assert.equal(errors.shopPipeM, 'No Shop-typed material on this ISO.');
-  assert.equal(isoInputErrors({ isoNo: 'ISO-1', fieldSupportsPcs: 2 }, row('iso', { isoNo: 'ISO-1' }), undefined).fieldSupportsPcs, 'No MTO budget — add materials with this component code in MTOPilot. (CC 2)');
+  assert.equal(isoInputErrors({ isoNo: 'ISO-1', fieldSupportsPcs: 2 }, row('iso', { isoNo: 'ISO-1' }), undefined).fieldSupportsPcs, 'No MTO budget — add materials with this component code in Material Core. (CC 2)');
   assert.deepEqual(isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 0, fieldPipeM: null, fieldSupportsPcs: '' }, row('iso', { isoNo: 'ISO-1' }), undefined), {}, 'zero or empty never needs a budget');
   assert.match(isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 120.5 }, row('iso', { isoNo: 'ISO-1' }), { shop: { materialPipe: 100 } }).shopPipeM, /above the MTO budget of 100 m/);
   assert.deepEqual(isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 100 }, row('iso', { isoNo: 'ISO-1' }), { shop: { materialPipe: 100 } }), {}, 'the ceiling itself is allowed');
@@ -293,7 +293,7 @@ test('the hosted profile delivers every isometric field and the records the head
   for (const key of ['releases', 'punchlists', 'revisions']) assert.ok(hosted.resources[key], key);
   assert.ok(hosted.actions.revision);
   // They are delivered as data for the header only: no menu entry is added for them.
-  // Releases and punch lists have their own pages (Weld Pilot → Releases); revisions have none.
+  // Releases and punch lists have their own pages (Weld Core → Releases); revisions have none.
   for (const key of ['revisions']) assert.ok(!hosted.navigation.includes(key), key);
   assert.ok(hosted.navigation.includes('punchlists'));
   // Other profiles are unchanged: the ordinary profile has no progress fields in its delivered list.
@@ -402,9 +402,9 @@ test('Field pipe is measured against the whole ISO and capped by the picked quan
 });
 
 test('Progress card texts follow the reference', () => {
-  assert.equal(noBudgetText('field', 'supports'), 'No MTO budget — add materials with this component code in MTOPilot. (CC 2)');
-  assert.equal(noBudgetText('field', 'materialPipe'), 'No MTO budget — add materials with this component code in MTOPilot. (CC 1)');
-  assert.equal(noBudgetText('field', 'appendages'), 'No MTO budget — add materials with this component code in MTOPilot. (CC 3)');
+  assert.equal(noBudgetText('field', 'supports'), 'No MTO budget — add materials with this component code in Material Core. (CC 2)');
+  assert.equal(noBudgetText('field', 'materialPipe'), 'No MTO budget — add materials with this component code in Material Core. (CC 1)');
+  assert.equal(noBudgetText('field', 'appendages'), 'No MTO budget — add materials with this component code in Material Core. (CC 3)');
   assert.equal(noBudgetText('shop', 'materialPipe'), 'No Shop-typed material on this ISO.');
   assert.deepEqual([quantityBarText('shop', 0, null), quantityBarText('field', 0, null), quantityBarText('field', 100, 0.7)], ['N/A', '0%', '70%']);
   assert.deepEqual(PROGRESS_CARD_TEXTS.budgetColumn, { shop: 'Ceiling: Shop issued / Shop MTO', field: 'Budget (MTO)' });

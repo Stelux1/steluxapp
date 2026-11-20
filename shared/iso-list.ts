@@ -246,14 +246,14 @@ export type Tri = '' | 'yes' | 'no';
 export interface IsoListFilters { ndt: Tri; pwht: Tri; mto: Tri; est: Tri; weld: Tri; text: Partial<Record<IsoTextColumn, string>> }
 export const NO_ISO_FILTERS: IsoListFilters = { ndt: '', pwht: '', mto: '', est: '', weld: '', text: {} };
 /** What M / E / W mean: the column tooltips and the Filter dialog hints. */
-export const FLAG_HINTS = { m: 'MTOPilot: started (pick list issued)', e: 'ESTPilot: calculation present', w: 'WeldPilot: welds present' } as const;
+export const FLAG_HINTS = { m: 'Material Core: started (pick list issued)', e: 'ESTPilot: calculation present', w: 'Weld Core: welds present' } as const;
 /** The yes / no choices of the Filter dialog, labelled as in the reference (filterIsoList), in its order. */
 export const ISO_FILTER_CHOICES: { key: 'ndt' | 'pwht' | 'mto' | 'est' | 'weld'; label: string; hint: string }[] = [
   { key: 'ndt', label: 'NDT', hint: 'Has welds that require NDT' },
   { key: 'pwht', label: 'PWHT', hint: 'Isometric requires PWHT' },
-  { key: 'mto', label: 'MTOPilot ready', hint: FLAG_HINTS.m },
+  { key: 'mto', label: 'Material Core ready', hint: FLAG_HINTS.m },
   { key: 'est', label: 'ESTPilot ready', hint: FLAG_HINTS.e },
-  { key: 'weld', label: 'WeldPilot ready', hint: FLAG_HINTS.w },
+  { key: 'weld', label: 'Weld Core ready', hint: FLAG_HINTS.w },
 ];
 /** How many filters are active (each column text and each dialog choice counts once). */
 export const isoFilterCount = (filters: IsoListFilters) => (['ndt', 'pwht', 'mto', 'est', 'weld'] as const).filter(key => filters[key]).length + Object.values(filters.text).filter(value => value?.trim()).length;

@@ -121,7 +121,7 @@ export function isoInputErrors(input: Record<string, unknown>, existing?: Row, b
 /** The component code (CC) that feeds each quantity driver: 1 = pipe, 2 = supports, 3 = appendages. */
 export const DRIVER_COMPONENT_CODE: Record<QuantityKey, '1' | '2' | '3'> = { materialPipe: '1', supports: '2', appendages: '3' };
 /** Why a quantity row cannot be entered (reference progress card tooltips, weld__iso__0001__progress-card.txt:11-19). */
-export const noBudgetText = (phase: QuantityPhase, key: QuantityKey) => phase === 'shop' ? 'No Shop-typed material on this ISO.' : `No MTO budget — add materials with this component code in MTOPilot. (CC ${DRIVER_COMPONENT_CODE[key]})`;
+export const noBudgetText = (phase: QuantityPhase, key: QuantityKey) => phase === 'shop' ? 'No Shop-typed material on this ISO.' : `No MTO budget — add materials with this component code in Material Core. (CC ${DRIVER_COMPONENT_CODE[key]})`;
 
 // ----- shared row helpers --------------------------------------------------------------------------------------
 

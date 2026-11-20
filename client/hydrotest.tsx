@@ -48,7 +48,7 @@ export function HydrotestRelease() {
   const tabs: [Tab, string][] = [['systems', 'Test systems'], ['spools', 'Spools']];
   const keyMove = (event: React.KeyboardEvent) => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') { const next = tab === 'systems' ? 'spools' : 'systems'; go(next); document.getElementById(`hydrotest-tab-${next}`)?.focus(); } };
   return <div className="page hydrotest-page">
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · RELEASES</div><h1>Hydrotest release</h1><p>Compose test systems from spools, print the Pressure Test Plan and enter the signed results.</p></div>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · RELEASES</div><h1>Hydrotest release</h1><p>Compose test systems from spools, print the Pressure Test Plan and enter the signed results.</p></div>
       {tab === 'systems' && canRecord('test_systems', 'insert') && <div className="heading-actions"><button className="btn primary" onClick={() => setDialog({ kind: 'system' })}><Plus size={16}/>Add test system</button></div>}</div>
     <section className="panel hydrotest-panel">
       <div className="table-card-top"><div className="table-tabs" role="tablist" aria-label="Hydrotest release" onKeyDown={keyMove}>{tabs.map(([key, title]) => <button key={key} id={`hydrotest-tab-${key}`} role="tab" aria-selected={tab === key} aria-controls={`hydrotest-panel-${key}`} tabIndex={tab === key ? 0 : -1} className={tab === key ? 'selected' : ''} onClick={() => go(key)}>{title}</button>)}</div></div>

@@ -1,4 +1,4 @@
-import { MODULES, RESOURCE_MAP } from './resources.ts';
+import { RESOURCE_MAP } from './resources.ts';
 import { PILOT_KEYS, splitPilotPath, type PilotKey } from './release.ts';
 import type { Module, User } from './types.ts';
 import { MANAGER_PATH } from './inspections.ts';
@@ -40,9 +40,16 @@ const ISO_OVERVIEW = p('Iso overview', ISO_OVERVIEW_PATH, { resources: ['project
 const WELD_DASHBOARD: PilotItem = { ...DASHBOARD, area: '35' };
 const WELD_ISO_OVERVIEW: PilotItem = { ...ISO_OVERVIEW, area: '92' };
 
+/**
+ * Core colours (client colour revision 20.11.2026): Weld Core red, Material Core orange. The sidebar, the selector cards and
+ * the isometric header cards take them from the pilot; the module colours of the other profiles stay as they are.
+ */
+export const WELD_CORE_COLOR = '#e11d2e';
+export const MATERIAL_CORE_COLOR = '#f07a1a';
+
 /** Menus in the reference order and wording. Reference items without a page here are left out until they exist. */
 export const PILOTS: Pilot[] = [
-  { key: 'weld', title: 'Weld Pilot', module: 'welding', color: MODULES.welding.color, description: 'Welds, inspections and releases for every isometric.', groups: [
+  { key: 'weld', title: 'Weld Core', module: 'welding', color: WELD_CORE_COLOR, description: 'Welds, inspections and releases for every isometric.', groups: [
     { title: 'General data', icon: 'general', items: [PROJECT_SITES, r('Companies', 'companies'), r('Attachment names', 'attachment_names'), r('Documents', 'attachments')] },
     { title: 'Start', icon: 'start', items: [WELD_DASHBOARD] },
     { title: 'Welder data', icon: 'welders', items: [r('Welders', 'welders'), r('Certificates', 'certificate_types')] },
@@ -53,7 +60,7 @@ export const PILOTS: Pilot[] = [
     { title: 'Releases', icon: 'releases', items: [p('Prefab release', '/welding/releases?view=prefab', { resources: ['releases'] }), p('Field release', '/welding/releases?view=field', { resources: ['releases'] }), p('Assign Iso to FWP', '/welding/field_packages?tab=assign', { resources: ['field_packages'] }), r('Hydrotest release', 'test_systems'), r('Punch lists', 'punchlists'), r('Flange Management', 'flanges')] },
     { title: 'System', icon: 'system', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Signatures', 'signatures'), r('Company data', 'company_data')] },
   ] },
-  { key: 'mto', title: 'MTO Pilot', module: 'materials', color: MODULES.materials.color, description: 'Material take-off, ordering, stock and logistics.', groups: [
+  { key: 'mto', title: 'Material Core', module: 'materials', color: MATERIAL_CORE_COLOR, description: 'Material take-off, ordering, stock and logistics.', groups: [
     { title: 'General data', icon: 'general', items: [PROJECT_SITES, r('Storehouses', 'warehouses'), r('Documents', 'attachments')] },
     { title: 'Start', icon: 'start', items: [DASHBOARD] },
     { title: 'Materials', icon: 'materials', items: [r('Material database', 'materials'), r('Material part', 'material_parts'), r('Type of material', 'material_types'), r('UOMs', 'uoms'), r('Spools', 'spool_names'), r('Operation Phases', 'operation_phases'), r('Material supplier', 'suppliers')] },
@@ -132,3 +139,28 @@ export function pilotPageState(pilot: Pilot, pathname: string, rights: MenuRight
   return states.includes('open') ? 'open' : states.includes('no-rights') ? 'no-rights' : 'unlisted';
 }
 export const NO_RIGHTS_TEXT = 'You do not have rights to open this page.';
+
+// ----- the Core selector -------------------------------------------------------------------------------------------------
+/**
+ * Cores announced on the selector that are not built yet (client design 20.11.2026): shown with "Coming soon", never opened.
+ * `icon` is drawn by the client (`client/pilot.tsx`).
+ */
+export interface ComingCore { key: string; title: string; color: string; description: string; icon: 'tools' | 'finance' | 'teams' }
+export const COMING_CORES: ComingCore[] = [
+  { key: 'tools', title: 'Tools & Equipment Core', color: '#2563eb', description: 'Tools and equipment inventory, allocation, maintenance and certification.', icon: 'tools' },
+  { key: 'finance', title: 'Finance & Calculation Core', color: '#16a34a', description: 'Cost estimation, calculations, budgets and financial tracking.', icon: 'finance' },
+  { key: 'teams', title: 'Teams Core', color: '#7c3aed', description: 'Team management, roles, permissions and workload.', icon: 'teams' },
+];
+
+/** Pages that are only the start of a Core: a sign-in that lands on one of them shows the selector instead. */
+const CORE_START = /^\/(?:|dashboard|workspace\/main-projects)\/?$/;
+/**
+ * Where the browser goes right after a successful sign-in (client request 20.11.2026: "Choosing the Core must appear at
+ * log-in"). The Core is chosen at every sign-in, so an address that only names a Core (`/weld`, `/mto/dashboard`, the main
+ * project choice), e.g. the tab of an earlier session, opens the selector `/`. A deep link to a page inside a Core
+ * (`/weld/workspace/isometrics/x`, `/mto/materials/stock`) keeps working: that page opens after sign-in.
+ */
+export function pathAfterSignIn(pathname: string): string {
+  const { pilot, path } = splitPilotPath(pathname);
+  return CORE_START.test(pilot ? path : pathname) ? '/' : pathname;
+}

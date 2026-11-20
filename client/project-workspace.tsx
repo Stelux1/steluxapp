@@ -2,7 +2,7 @@ import { useState, lazy, Suspense, type FormEvent } from 'react';
 import { IsoFlangesCard } from './flanges.tsx';
 import { isoDrawingTitle, latestIsoFile } from '../shared/iso-pages.ts';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ExternalLink, ArrowLeft, ArrowRight, ChevronDown, ChevronLeft, ChevronRight, FileStack, FolderKanban, MapPin, Pencil, Plus, ScanLine, Upload, FileText, Download, Loader2 } from 'lucide-react';
+import { ExternalLink, ArrowLeft, ArrowRight, ChevronDown, ChevronLeft, ChevronRight, FileStack, FolderKanban, LayoutGrid, List, MapPin, Pencil, Plus, ScanLine, Upload, FileText, Download, Loader2 } from 'lucide-react';
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Badge, Dropdown, EmptyState, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
@@ -34,6 +34,16 @@ import { ProjectIsoOverview } from './project-iso-overview.tsx';
 export { ProjectIsoOverview };
 import type { Row } from '../shared/types.ts';
 
+/** Main projects as cards or as a list (client design 20.11.2026); the choice is kept per browser. */
+export type MainProjectView = 'grid' | 'list';
+const MAIN_PROJECT_VIEW_KEY = 'blitzkrieg.mainProjects.view';
+/** The remembered view of the main projects page: 'list' only when that was chosen, otherwise the cards (also when storage is blocked). */
+export function readMainProjectView(storage?: Pick<Storage, 'getItem'>): MainProjectView {
+  try { return (storage ?? window.localStorage).getItem(MAIN_PROJECT_VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+}
+function writeMainProjectView(view: MainProjectView) { try { window.localStorage.setItem(MAIN_PROJECT_VIEW_KEY, view); } catch { /* the choice just is not remembered */ } }
+const siteAddress = (site: Row) => [site.address, [site.zip, site.residence].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+
 export function MainProjects() {
   const { allRows, canRecord, selectSite, user } = useWorkspace();
   const navigate = useNavigate(); const pilot = usePilot();
@@ -41,26 +51,43 @@ export function MainProjects() {
   const limited = Boolean(user.siteLimited);
   const [query, setQuery] = useState(''), [editor, setEditor] = useState<Row | 'new' | null>(null);
   const [archived, setArchived] = useState(false), [archiving, setArchiving] = useState<Row | null>(null);
-  // Weld counts and WDI only where this pilot reads welds (MTO Pilot receives none, so they would always show 0).
+  const [view, setView] = useState<MainProjectView>(() => readMainProjectView());
+  const chooseView = (next: MainProjectView) => { setView(next); writeMainProjectView(next); };
+  // Weld counts and WDI only where this pilot reads welds (Material Core receives none, so they would always show 0).
   const weldData = canRecord('welds');
   const sites = (allRows.sites || []).filter(site => site._archived === archived).filter(site => [site.name, site.residence, site.address].some(value => String(value || '').toLowerCase().includes(query.toLowerCase())));
+  const entries = sites.map(site => {
+    const projects = activeRows(allRows, 'projects').filter(project => project.siteId === site.id);
+    const isos = activeRows(allRows, 'isometrics').filter(iso => projects.some(project => project.id === iso.projectId));
+    const welds = weldData ? activeRows(allRows, 'welds').filter(weld => isos.some(iso => iso.id === weld.isoId)) : [];
+    return { site, projects, isos, welds };
+  });
+  const open = (site: Row) => { selectSite(site.id); navigate('/dashboard'); };
+  const actions = (site: Row) => <>{!site._archived && canRecord('sites', 'edit', site) && <button className="icon-btn" aria-label={`Edit main project ${site.name}`} onClick={() => setEditor(site)}><Pencil size={16}/></button>}<ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/></>;
   return <div className="page workflow-page main-projects-page">
     <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>{pilot?.pilot.key === 'mto' ? 'Open a project to work with its subprojects, isometrics, and materials.' : 'Open a project to work with its subprojects, isometrics, and weld records.'}</p></div>{canRecord('sites', 'insert') && !limited && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div>
     <div className="table-tabs" role="group" aria-label="Main project visibility"><button className={!archived ? "selected" : ""} aria-pressed={!archived} onClick={() => setArchived(false)}>Active projects</button><button className={archived ? "selected" : ""} aria-pressed={archived} onClick={() => setArchived(true)}>Archived projects</button></div>
-    <div className="project-picker-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search main projects…"/><span>{sites.length} main projects</span></div>
-    <div className="main-project-grid">{sites.map(site => {
-      const projects = activeRows(allRows, 'projects').filter(project => project.siteId === site.id);
-      const isos = activeRows(allRows, 'isometrics').filter(iso => projects.some(project => project.id === iso.projectId));
-      const welds = activeRows(allRows, 'welds').filter(weld => isos.some(iso => iso.id === weld.isoId));
-      return <section className="panel main-project-card" key={site.id}>
-        <div className="main-project-card-top"><span className="project-card-icon"><FolderKanban size={25}/></span><div className="heading-actions">{!site._archived && canRecord('sites', 'edit', site) && <button className="icon-btn" aria-label={`Edit main project ${site.name}`} onClick={() => setEditor(site)}><Pencil size={16}/></button>}<ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/></div></div>
+    <div className="project-picker-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search main projects…"/><div className="project-picker-tools"><span>{sites.length} main projects</span>
+      <div className="segmented main-project-view" role="group" aria-label="Show main projects as">{([['grid', 'Grid', LayoutGrid], ['list', 'List', List]] as const).map(([key, text, Icon]) => <button key={key} type="button" className={view === key ? 'selected' : ''} aria-pressed={view === key} onClick={() => chooseView(key)}><Icon size={15} aria-hidden="true"/>{text}</button>)}</div></div></div>
+    {view === 'grid' ? <div className="main-project-grid">{entries.map(({ site, projects, isos, welds }) =>
+      <section className="panel main-project-card" key={site.id}>
+        <div className="main-project-card-top"><span className="project-card-icon"><FolderKanban size={25}/></span><div className="heading-actions">{actions(site)}</div></div>
         <h2>{String(site.name)}{site._archived && <Badge>Archived</Badge>}</h2>
-        <p className="project-location"><MapPin size={14}/>{[site.address, [site.zip, site.residence].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Address not recorded'}</p>
+        <p className="project-location"><MapPin size={14}/>{siteAddress(site) || 'Address not recorded'}</p>
         <div className="project-card-counts"><div><strong>{projects.length}</strong><span>Subprojects</span></div><div><strong>{isos.length}</strong><span>Isometrics</span></div>{weldData && <div><strong>{welds.length}</strong><span>Welds</span></div>}</div>
         {weldData && <WdiProgress compact welds={welds} diameters={allRows.diameters || []}/>}
-        {!site._archived && <button className="btn primary" onClick={() => { selectSite(site.id); navigate('/dashboard'); }}>Open project<ArrowRight size={16}/></button>}
-      </section>;
-    })}</div>
+        {!site._archived && <button className="btn primary" onClick={() => open(site)}>Open project<ArrowRight size={16}/></button>}
+      </section>)}</div>
+    : entries.length > 0 && <section className="panel main-project-list"><TableScroll><table className="data-table">
+      <thead><tr><th scope="col">Main project</th><th scope="col">Address</th><th scope="col" className="numeric">Subprojects</th><th scope="col" className="numeric">Isometrics</th>{weldData && <><th scope="col" className="numeric">Welds</th><th scope="col">WDI progress</th><th scope="col" className="numeric">WDI completed</th><th scope="col" className="numeric">WDI remaining</th><th scope="col" className="numeric">WDI total</th></>}<th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+      <tbody>{entries.map(({ site, projects, isos, welds }) => { const wdi = weldData ? wdiProgress(welds, allRows.diameters || []) : null; return <tr key={site.id}>
+        <th scope="row"><span className="main-project-list-name">{String(site.name)}{site._archived && <Badge>Archived</Badge>}</span></th>
+        <td>{siteAddress(site) || <span className="main-project-list-muted">Address not recorded</span>}</td>
+        <td className="numeric">{projects.length}</td><td className="numeric">{isos.length}</td>
+        {wdi && <><td className="numeric">{welds.length}</td><td><div className="main-project-list-wdi"><Progress value={wdi.percent}/><span>{wdi.percent}%</span></div></td><td className="numeric">{formatNumber(wdi.completed)}</td><td className="numeric">{formatNumber(wdi.remaining)}</td><td className="numeric">{formatNumber(wdi.total)}</td></>}
+        <td><div className="main-project-list-actions">{!site._archived && <button className="btn primary small" onClick={() => open(site)} aria-label={`Open project ${site.name}`}>Open project<ArrowRight size={14}/></button>}{actions(site)}</div></td>
+      </tr>; })}</tbody>
+    </table></TableScroll>{weldData && <p className="field-hint main-project-list-note">WDI in dia-inch. Completed: welder and weld date filled · Remaining: welder or weld date empty</p>}</section>}
     {!sites.length && (limited && !query && !archived && !(allRows.sites || []).length
       ? <SiteScopeEmpty pilotTitle={pilot?.pilot.title}/>
       : <EmptyState title={query ? 'No matching main projects' : archived ? 'No archived main projects' : limited ? 'No other main projects' : 'Create your first main project'} description={query ? 'Try another project name or location.' : limited ? 'Your account works only on the main projects an administrator assigned to it.' : 'Add a main project, then create its numbered subprojects and isometrics.'}/>)}

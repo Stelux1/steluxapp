@@ -274,11 +274,11 @@ test('each part needs its own import right: an account without it is refused (40
   response = await commit(noWelds, await sheet('full', withRange, { withWelds: false }));
   assert.equal(response.status, 201, await response.clone().text());
   assert.equal(counts(f.store).welds, before.welds);
-  // Material lines belong to MTO Pilot: in Weld Pilot they follow the account's MTO Pilot profile.
+  // Material lines belong to Material Core: in Weld Core they follow the account's Material Core profile.
   const noMaterials = await f.account('No material import', { ...base, '63': ['show', 'insert', 'import'], '70': ['show', 'insert'] });
   const withLine = [{ 'projects.internnumber': 'R-002', 'isometrics.isoNo': 'R-ISO-2', 'iso_materials.materialNo': 'R-LINE', 'iso_materials.description': 'Line', 'iso_materials.quantity': '1' }];
   response = await commit(noMaterials, await sheet('full', withLine));
-  assert.equal(response.status, 403); assert.match((await json(response)).error, /MTO Pilot profile does not allow importing materials in isometrics/);
+  assert.equal(response.status, 403); assert.match((await json(response)).error, /Material Core profile does not allow importing materials in isometrics/);
   assert.ok(!f.store.list('projects').some(project => project.internnumber === 'R-002'), 'the refused import wrote nothing');
   // Without the import right on projects the project part is refused, even for a file of isometrics.
   const noProjects = await f.account('No project import', { ...base, '5': ['show', 'insert', 'edit'], '63': ['show', 'insert', 'import'], '70': ['show', 'insert', 'import'] });

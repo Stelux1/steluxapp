@@ -286,7 +286,7 @@ test('notifications: a new transfer order notifies the other storehouse managers
   assert.equal((await json<Bell>(await f.admin.request('/notifications', 'GET', undefined, 'mto'))).unread, 0, 'the account that made the order is not told about it');
   assert.deepEqual(f.store.list('notifications').map(item => item.userId).sort(), [river.user.id, free.user.id].sort());
   // Another pilot never shows it; the generic record routes do not deliver notifications at all.
-  assert.equal((await river.as.request('/notifications', 'GET', undefined, 'weld')).status, 403, 'River planner is not enabled in Weld Pilot');
+  assert.equal((await river.as.request('/notifications', 'GET', undefined, 'weld')).status, 403, 'River planner is not enabled in Weld Core');
   assert.equal((await f.admin.request('/records/notifications', 'GET', undefined, 'mto')).status, 404);
   const boot = await json<Bootstrap>(await river.as.request('/bootstrap', 'GET', undefined, 'mto')); assert.equal(boot.rows.notifications, undefined);
   // Reading: one account can neither mark nor read another account's notification.
@@ -418,7 +418,7 @@ test('pilots say Logout and Change site; the selector no longer mentions profile
   const user = { id: 'u', name: 'Uma', email: 'uma@example.test', profileId: 'p', permissions: { general: 0, materials: 0, welding: 0, tools: 0, settings: 0 } } as User;
   const selector = renderToStaticMarkup(createElement(PilotSelector, { user, pilots: [], onOpen: () => undefined, onLogout: () => undefined, logo: '' }));
   assert.match(selector, />Logout</); assert.doesNotMatch(selector, /Sign out/);
-  assert.match(selector, /Your account is not enabled for Weld Pilot or MTO Pilot\. Ask your administrator/); assert.doesNotMatch(selector, /welding or materials access/);
+  assert.match(selector, /Your account is not enabled for Weld Core or Material Core\. Ask your administrator/); assert.doesNotMatch(selector, /welding or materials access/);
   const source = (file: string) => readFileSync(join(process.cwd(), 'client', file), 'utf8');
   assert.match(source('shell-parts.tsx'), /user-menu-heading">Change site</);
   assert.match(source('App.tsx'), /pilot \? 'Change site' : 'Change project'/); assert.match(source('App.tsx'), /pilot \? 'Logout' : 'Sign out'/);

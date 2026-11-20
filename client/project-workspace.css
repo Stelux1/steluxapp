@@ -53,3 +53,20 @@
 .sort-buttons { display: inline-flex; gap: 2px; }
 .sort-empty { padding: 22px 16px; text-align: center; color: var(--muted); }
 @media (max-width: 640px) { .sort-row { flex-wrap: wrap; } .sort-flags { order: 3; width: 100%; } }
+
+/* Main projects: Grid | List toggle and the list view (client design 20.11.2026). */
+.project-picker-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.project-picker-tools > span { color: var(--muted); font-size: 13px; }
+.main-project-view button { display: inline-flex; align-items: center; gap: 6px; }
+.main-project-view button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.main-project-list { padding: 0; overflow: hidden; }
+.main-project-list .data-table th[scope="row"] { font-weight: 600; color: var(--ink); text-align: left; }
+.main-project-list .numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.main-project-list-name { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.main-project-list-muted { color: var(--muted); }
+.main-project-list-wdi { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.main-project-list-wdi .progress { flex: 1; }
+.main-project-list-wdi > span { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); min-width: 4ch; text-align: right; }
+.main-project-list-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
+.main-project-list-note { margin: 0; padding: 10px 16px 14px; }
+@media (max-width: 560px) { .project-picker-tools { width: 100%; justify-content: space-between; } }

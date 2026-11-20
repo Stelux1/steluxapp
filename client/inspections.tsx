@@ -723,7 +723,7 @@ export function InspectionManager() {
   const shownWelds = weldTab ? filterManagerWelds(managerWelds(tab, welds, rows.inspection_results), filter, projectOf).filter(weld => { const context = weldContext(rows, weld); return match([context.projectName, context.isoName, weld.weldNo, welderNames(rows, weld), weldRequestNumbers(rows, weld, tab)]); }) : [];
   const selectRight = weldTab && (canRun('mass-inspection-request', { type: tab.types[0] }) || canRun(tab.kind === 'PWHT' ? 'pwht-upload' : 'inspection-upload', { type: tab.types[0] }));
   return <div className="page inspection-manager">
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · WELDING DATA</div><h1>NDT/PWHT Manager</h1><p>Welds that need NDT Pre, NDT or heat treatment, and every request and result already recorded.</p></div></div>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · WELDING DATA</div><h1>NDT/PWHT Manager</h1><p>Welds that need NDT Pre, NDT or heat treatment, and every request and result already recorded.</p></div></div>
     <section className="panel">
       <div className="table-tabs inspection-tabs" role="tablist" aria-label="NDT/PWHT Manager">{tabs.map(item => <button key={item.key} type="button" role="tab" aria-selected={tab.key === item.key} className={tab.key === item.key ? 'selected' : ''} onClick={() => switchTab(item.key)}>{item.label}<span className="count-pill">{count(item)}</span></button>)}</div>
       {weldTab && <div className="inspection-toolbar"><div className="field"><label htmlFor="manager-search">Search</label><input id="manager-search" type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search"/></div>

@@ -277,7 +277,7 @@ export function releaseAccess(store: Store, availability?: Availability) {
       // The owning pilot's profile for the request's main project (where that pilot limits the account to it).
       const reach = owner ? allowedSites(store, store.get('users', id), owner) : 'all';
       const account = !owner || !enterable(id).includes(owner) ? null : inPilot(id, owner, reach !== 'all' && siteId && reach.has(siteId) ? siteId : undefined);
-      const title = owner ? PILOT_MAP[owner].title : 'its pilot';
+      const title = owner ? PILOT_MAP[owner].title : 'its core';
       output[part] = !account ? { allowed: false, pilot: owner, reason: `You are not enabled in ${title}.` }
         : canScope(account, area, 'insert') ? { allowed: true, pilot: owner }
         : { allowed: false, pilot: owner, reason: `Your ${title} profile cannot add ${COPY_PART_NAMES[part]}.` };

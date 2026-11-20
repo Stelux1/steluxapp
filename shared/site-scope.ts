@@ -18,7 +18,7 @@ export const SITE_REFUSED = 'site';
 export const USER_SITES = 'user_sites';
 export type ScopePilot = 'weld' | 'mto';
 export const SCOPE_PILOTS: readonly ScopePilot[] = ['weld', 'mto'];
-const TITLES: Record<ScopePilot, string> = { weld: 'Weld Pilot', mto: 'MTO Pilot' };
+const TITLES: Record<ScopePilot, string> = { weld: 'Weld Core', mto: 'Material Core' };
 export const siteScopeField = (pilot: ScopePilot) => `${pilot}SiteScope`;
 export const siteIdsField = (pilot: ScopePilot) => `${pilot}SiteIds`;
 export const siteScopeLabel = (pilot: ScopePilot) => `${TITLES[pilot]} project site access`;

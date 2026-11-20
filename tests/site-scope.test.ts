@@ -130,7 +130,7 @@ test('the isometric summary names the test system for an MTO-only account, only 
   const mtoOnly = f.account('North MTO only', { profileId: reader, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
   await mtoOnly.login();
   const raw = await (await mtoOnly.as.request('/bootstrap', { pilot: 'mto' })).text(), body = JSON.parse(raw) as Bootstrap & { isoSummaries: Record<string, { testSystemName?: string }> };
-  assert.equal(body.rows.test_systems, undefined, 'MTO Pilot reads no test systems');
+  assert.equal(body.rows.test_systems, undefined, 'Material Core reads no test systems');
   assert.equal(body.isoSummaries['iso-1'].testSystemName, 'CW-01', 'its own isometric carries the name');
   assert.equal(body.isoSummaries['iso-7']?.testSystemName, undefined, 'an isometric without a test system has none');
   assert.equal(body.isoSummaries['iso-4'], undefined, 'no summary for an isometric outside its main projects');
@@ -139,7 +139,7 @@ test('the isometric summary names the test system for an MTO-only account, only 
   assert.equal((await json<{ isoSummaries: Record<string, { testSystemName?: string }> }>(await f.admin.request('/bootstrap', { pilot: 'mto' }))).isoSummaries['iso-4'].testSystemName, 'RIVER-TS-07');
 });
 
-test('Weld Pilot limited to one main project: every read path returns nothing of the other one; MTO Pilot (all sites) returns everything', async t => {
+test('Weld Core limited to one main project: every read path returns nothing of the other one; Material Core (all sites) returns everything', async t => {
   const f = await fixture(t);
   const writer = f.profile('Site writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
   const scoped = f.account('North welder', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC, mtoSiteScope: SITE_SCOPE_ALL }, { weld: [NORTH] });
@@ -201,7 +201,7 @@ test('Weld Pilot limited to one main project: every read path returns nothing of
   const pdf = await scoped.as.request('/pdf/lisl?isoId=iso-1', { pilot: 'weld' }); assert.equal(pdf.status, 200); assert.equal(pdf.headers.get('content-type'), 'application/pdf');
 });
 
-test('Weld Pilot limited to one main project: every write path naming the other one is refused with 403 and changes nothing', async t => {
+test('Weld Core limited to one main project: every write path naming the other one is refused with 403 and changes nothing', async t => {
   const f = await fixture(t);
   const writer = f.profile('Site writer', { generalPermission: RW, materialsPermission: RW, weldingPermission: ADMIN });
   const scoped = f.account('North welder', { profileId: writer, weldSiteScope: SITE_SCOPE_SPECIFIC }, { weld: [NORTH] });
@@ -271,13 +271,13 @@ test('Weld Pilot limited to one main project: every write path naming the other 
   const wps = await scoped.as.request('/records/wps/wps-1', { method: 'PUT', pilot: 'weld', data: { siteIds: [NORTH], description: 'North only edit', _version: version('wps', 'wps-1') } });
   assert.equal(wps.status, 200);
   assert.deepEqual(f.store.list('wps_sites').filter(row => row.wpsId === 'wps-1').map(row => row.siteId).sort(), [NORTH, RIVER]);
-  // MTO Pilot has no limit for this account: the other main project's records are writable there.
+  // Material Core has no limit for this account: the other main project's records are writable there.
   const requirement = f.store.get('iso_materials', 'requirement-4');
   assert.equal((await scoped.as.request('/records/iso_materials/requirement-4', { method: 'PUT', pilot: 'mto', data: { chargeNo: 'CH-RIVER', _version: requirement._version } })).status, 200);
   assert.equal((await f.upload(scoped.as, 'mto', 'isometrics', 'iso-4')).status, 201);
-  // … but Copy isometrics from MTO Pilot may not carry welds into a main project outside the Weld Pilot scope.
+  // … but Copy isometrics from Material Core may not carry welds into a main project outside the Weld Core scope.
   const copy = await scoped.as.request('/actions/copy-isometrics', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-4'], projectId: 'project-steam', copyWelds: true } });
-  assert.equal(copy.status, 403); assert.match((await json<{ error: string }>(copy)).error, /Weld Pilot access/);
+  assert.equal(copy.status, 403); assert.match((await json<{ error: string }>(copy)).error, /Weld Core access/);
   // None of the refused requests left a trace in the other main project.
   for (const id of RIVER_ISOS) assert.notEqual(f.store.get('isometrics', id).area, 'Forged');
   assert.equal(f.store.get('welds', 'weld-4').description, JSON.parse(before).welds.find((row: Row) => row.id === 'weld-4').description);
@@ -286,7 +286,7 @@ test('Weld Pilot limited to one main project: every write path naming the other 
   assert.equal(f.store.get('isometrics', 'iso-1').projectId, 'project-cooling');
 });
 
-test('MTO Pilot limited to the other main project: materials list, inventory and MTO actions follow the scope', async t => {
+test('Material Core limited to the other main project: materials list, inventory and MTO actions follow the scope', async t => {
   const f = await fixture(t);
   const writer = f.profile('MTO writer', { generalPermission: RW, materialsPermission: ADMIN, weldingPermission: RW });
   const river = f.account('River preparator', { profileId: writer, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [RIVER] });
@@ -313,7 +313,7 @@ test('MTO Pilot limited to the other main project: materials list, inventory and
     assert.ok([403].includes(response.status), `${path} → ${response.status} ${JSON.stringify(await response.json())}`);
   }
   assert.equal(snapshot(f.store), before);
-  // Weld Pilot has no limit for this account.
+  // Weld Core has no limit for this account.
   assert.ok((await json<Bootstrap>(await river.as.request('/bootstrap', { pilot: 'weld' }))).rows.isometrics.some(row => row.id === 'iso-1'));
 });
 
@@ -375,7 +375,7 @@ test('administrators set project site access per pilot in the user form; it cann
   const f = await fixture(t);
   const reviewer = f.profile('Reviewer', { generalPermission: RW, materialsPermission: RW, weldingPermission: RW });
   const target = f.account('Field engineer', { profileId: reviewer });
-  // An unlimited administrator limits Weld Pilot to North and leaves MTO Pilot on all sites.
+  // An unlimited administrator limits Weld Core to North and leaves Material Core on all sites.
   const row = f.store.get('users', target.user.id);
   const saved = await f.admin.request(`/records/users/${row.id}`, { method: 'PUT', pilot: 'weld', data: { weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteIds: [NORTH], _version: row._version } });
   assert.equal(saved.status, 200);
@@ -421,7 +421,7 @@ test('administrators set project site access per pilot in the user form; it cann
   assert.deepEqual(siteAccessChanges(f.store, { mtoSiteIds: [NORTH] }, f.store.get('users', row.id)), ['mto']);
 });
 
-test('the sample workspace has an account limited to North fabrication yard in Weld Pilot', () => {
+test('the sample workspace has an account limited to North fabrication yard in Weld Core', () => {
   const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-site-seed-'));
   const store = new Store(join(dir, 'test.sqlite')); seed(store);
   try {
@@ -515,7 +515,7 @@ test('a profile per project site: the active main project decides the profile, a
   assert.deepEqual(river.siteRows!.sites.map(row => row.id).sort(), [NORTH, RIVER]);
   const north = await json<Bootstrap>(await both.as.request('/bootstrap', { pilot: 'weld', site: NORTH }));
   assert.equal(north.user.permissions.welding, 1, 'North reads with Only review');
-  // The selector lists both main projects; the account enters Weld Pilot only once one is chosen.
+  // The selector lists both main projects; the account enters Weld Core only once one is chosen.
   assert.deepEqual((await json<Bootstrap>(await both.as.request('/bootstrap'))).mainProjects!.filter(site => site.pilots.includes('weld')).map(site => site.id).sort(), [NORTH, RIVER]);
   // An account with one main project needs no header: its only main project applies.
   const single = f.account('One site', { profileId: review, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteProfiles: JSON.stringify({ [RIVER]: writer }) }, { weld: [RIVER] });
@@ -577,7 +577,7 @@ test('welders, their qualifications and certificates follow the main project for
 test('a project switched off for a pilot is not delivered or changed there (scn-SC-N9); the Request archive follows the open main project (scn-SC-D6)', async t => {
   const f = await fixture(t);
   seedMtoLogistics(f.store, SYSTEM);
-  // Switch STX-2403 (iso-7 … iso-10) off for MTO Pilot (the sample data has it on in both pilots).
+  // Switch STX-2403 (iso-7 … iso-10) off for Material Core (the sample data has it on in both pilots).
   const skidProject = f.store.get('projects', 'project-skid'); f.store.update('projects', skidProject.id, { mtoPilot: false }, skidProject._version, SYSTEM);
   const skid = ['iso-7', 'iso-8', 'iso-9', 'iso-10'];
   const mto = await json<Bootstrap>(await f.admin.request('/bootstrap', { pilot: 'mto' }));
@@ -588,7 +588,7 @@ test('a project switched off for a pilot is not delivered or changed there (scn-
   assert.equal((await f.admin.request('/history/isometrics/iso-8', { pilot: 'mto' })).status, 404);
   assert.equal((await f.admin.request('/actions/add-iso-material', { method: 'POST', pilot: 'mto', data: { isoId: 'iso-8', source: 'Custom', materialNo: 'OFF', description: 'Off', quantity: 1, uom: 'M' } })).status, 404);
   assert.ok(!(await (await f.admin.request('/export/isometrics?format=csv', { pilot: 'mto' })).text()).includes('STX-SK-'));
-  // Weld Pilot still delivers it.
+  // Weld Core still delivers it.
   const weld = await json<Bootstrap>(await f.admin.request('/bootstrap', { pilot: 'weld' }));
   assert.ok(skid.every(id => weld.rows.isometrics.some(row => row.id === id)));
   // Switching the project off in the pilot itself still saves (the project leaves that pilot's lists afterwards).
@@ -726,7 +726,7 @@ test('SC2 D9: every PDF of an isometric out of reach answers 403 `site`, as the 
   const f = await fixture(t);
   const review = f.profile('Only review here', { generalPermission: 'Read only', materialsPermission: NONE, weldingPermission: 'Read only' });
   const admin = f.profile('Admin here', { generalPermission: ADMIN, materialsPermission: ADMIN, weldingPermission: ADMIN, settingsPermission: ADMIN });
-  // As the scenario's account: profile and Weld Pilot profile set, North ticked with its own read-only profile.
+  // As the scenario's account: profile and Weld Core profile set, North ticked with its own read-only profile.
   const reader = f.account('SC2 Weld Reader', { profileId: review, weldEnabled: true, weldProfileId: admin, mtoEnabled: false, mtoProfileId: admin, weldSiteScope: SITE_SCOPE_SPECIFIC, weldSiteProfiles: JSON.stringify({ [NORTH]: review }) }, { weld: [NORTH] });
   await reader.login();
   const record = await reader.as.request('/records/isometrics/iso-4', { method: 'PUT', pilot: 'weld', data: { description: 'x', _version: f.store.get('isometrics', 'iso-4')._version } });

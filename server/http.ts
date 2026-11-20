@@ -157,7 +157,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
         else if (header !== undefined && query !== undefined && header !== query) throw pilotRefused();
         else if ((header ?? query) === undefined) {
           // Selector requests see identity, the pilots and the main projects (bootstrap only); everything else needs a pilot.
-          if (route !== 'GET /bootstrap' && route !== 'GET /company-logo') throw pilotRefused('Open Weld Pilot or MTO Pilot to continue.');
+          if (route !== 'GET /bootstrap' && route !== 'GET /company-logo') throw pilotRefused('Open Weld Core or Material Core to continue.');
           (req as AuthRequest).user = access.present(id);
         } else {
           // The main project the request works in (server/site-scope.ts `activeSite`): a limited account works with that

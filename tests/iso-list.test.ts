@@ -161,8 +161,8 @@ test('list wording, page sizes, export columns and the Filter dialog follow the 
   assert.deepEqual(ISO_LIST_PAGE_SIZES, { sizes: [10, 20, 50, 100, 500], initial: 20 });
   assert.deepEqual(ISO_EXPORT_COLUMNS.map(column => column.label), ['Project', 'ISO No', 'IRN', 'ITP No', 'ITP No 2', 'P.Class', 'Prio.']);
   assert.deepEqual(ISO_LIST_COLUMNS.map(column => column.label), ['Project', 'ISO No', 'IRN', 'ITP No', 'ITP No 2', 'P.Class', 'NoBo', 'PWHT', 'M', 'E', 'W', 'Pfb', 'Fld', 'Doc.', 'Prio.']);
-  assert.deepEqual(ISO_LIST_COLUMNS.filter(column => ['m', 'e', 'w'].includes(column.flag || '')).map(column => column.title), ['MTOPilot: started (pick list issued)', 'ESTPilot: calculation present', 'WeldPilot: welds present']);
-  assert.deepEqual(ISO_FILTER_CHOICES.map(choice => choice.label), ['NDT', 'PWHT', 'MTOPilot ready', 'ESTPilot ready', 'WeldPilot ready']);
+  assert.deepEqual(ISO_LIST_COLUMNS.filter(column => ['m', 'e', 'w'].includes(column.flag || '')).map(column => column.title), ['Material Core: started (pick list issued)', 'ESTPilot: calculation present', 'Weld Core: welds present']);
+  assert.deepEqual(ISO_FILTER_CHOICES.map(choice => choice.label), ['NDT', 'PWHT', 'Material Core ready', 'ESTPilot ready', 'Weld Core ready']);
   assert.deepEqual(['Prio 1', 'Prio 3', 'Prio 5', 'Critical', 'Normal', '', 'No priority', undefined].map(priorityShort), ['P1', 'P3', 'P5', 'P1', 'P3', '-', '-', '-']);
 });
 
@@ -428,8 +428,8 @@ test('hosted API: copy and phases work for a writer, a missing right is a 403 an
   const copy = (data: Record<string, unknown>) => f.request('/api/actions/copy-isometrics', 'POST', { isoIds: ['iso-9'], projectId: 'project-cooling', ...data });
   await f.signIn('Welding read only', { generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read only' });
   assert.equal((await copy({ copyWelds: true })).status, 403, 'no add right on welds');
-  // Material requirements belong to MTO Pilot: from Weld Pilot they follow the account's MTO profile (here the same one, Read & write).
-  assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 201, 'materials are copied from Weld Pilot with the MTO right');
+  // Material requirements belong to Material Core: from Weld Core they follow the account's MTO profile (here the same one, Read & write).
+  assert.equal((await copy({ copyMaterials: true, copyWelds: false })).status, 201, 'materials are copied from Weld Core with the MTO right');
   assert.equal(f.store.list('welds').filter(w => copyOfProject(f.store, w.isoId as string)).length, 0);
   await f.signIn('General read only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'Read & write' });
   assert.equal((await copy({ projectId: 'project-skid', isoIds: ['iso-1'] })).status, 403);
@@ -455,21 +455,21 @@ test('hosted export gives the reference columns only (Project, ISO No, IRN, ITP 
   assert.deepEqual(by('STX-CW-003'), { Project: 'STX-2401', 'ISO No': 'STX-CW-003', IRN: 'IRN-103', 'ITP No': 'ITP-01', 'ITP No 2': by('STX-CW-003')['ITP No 2'], 'P.Class': 'CS150', 'Prio.': 'P1' });
   assert.deepEqual([by('STX-CW-001')['Prio.'], by('STX-SK-010')['Prio.']], ['P3', 'P3'], 'Prio. as the list writes it');
   await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
-  assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Pilot');
+  assert.equal((await f.request('/api/export/isometrics?format=csv&ids=iso-3')).status, 403, 'not enabled for Weld Core');
   f.usePilot('mto');
-  assert.deepEqual((await table('iso-3')).rows, [by('STX-CW-003')], 'MTO Pilot exports the same row');
+  assert.deepEqual((await table('iso-3')).rows, [by('STX-CW-003')], 'Material Core exports the same row');
 });
 
-test('hosted Projects list: MTO Pilot carries the same Status (%) per project as Weld Pilot, from the server', async t => {
+test('hosted Projects list: Material Core carries the same Status (%) per project as Weld Core, from the server', async t => {
   const f = await hostedFixture(t); await f.setup();
   type Body = { rows: Record<string, Row[]>; projectStatus?: Record<string, number> };
   const weld = await (await f.request('/api/bootstrap')).json() as Body;
   await f.signIn('Materials only', { generalPermission: 'Read only', materialsPermission: 'Read & write', weldingPermission: 'No access' }, { weldEnabled: false });
   f.usePilot('mto');
   const mto = await (await f.request('/api/bootstrap')).json() as Body;
-  assert.equal(mto.rows.welds, undefined, 'MTO Pilot reads no welds');
+  assert.equal(mto.rows.welds, undefined, 'Material Core reads no welds');
   assert.ok(mto.rows.projects?.length, 'but sees the projects');
-  // By hand: weld completion in inches per project (the WDI formula of Weld Pilot), from every weld of its isometrics.
+  // By hand: weld completion in inches per project (the WDI formula of Weld Core), from every weld of its isometrics.
   const isoProject = new Map(f.store.list('isometrics').map(iso => [iso.id, iso.projectId]));
   const inches = new Map(f.store.list('diameters').map(row => [row.id, Number(row.sizeinch)]));
   for (const project of mto.rows.projects) {

@@ -138,7 +138,7 @@ export function FormError({ message, fields }: { message: string; fields?: Recor
   return message ? <div ref={banner} className="alert error" role="alert"><AlertCircle size={18}/><span>{message}</span></div> : null;
 }
 /** The empty option of a select: "Select …" in lower case, keeping acronyms (UOM, QA/QC) and the pilot names. */
-export const selectPrompt = (label: string) => `Select ${label.replace(/\b(?:Weld|MTO) Pilot\b|\S+/g, word => /Pilot$/.test(word) || /[A-Z].*[A-Z]/.test(word) ? word : word.toLowerCase())}`;
+export const selectPrompt = (label: string) => `Select ${label.replace(/\b(?:Weld|Material) Core\b|\S+/g, word => / Core$/.test(word) || /[A-Z].*[A-Z]/.test(word) ? word : word.toLowerCase())}`;
 /** With main projects on, a Project select reads "Subproject"; the multi-select with ALL (welding wire, certification) keeps the reference's "Project". */
 export function subprojectField<T extends Field | ActionField>(field: T, scoped: boolean): T {
   return scoped && field.ref === 'projects' && !('allField' in field && field.allField) && /^(Project|Project scope)$/.test(field.label) ? { ...field, label: 'Subproject' } : field;

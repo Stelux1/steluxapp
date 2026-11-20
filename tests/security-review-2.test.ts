@@ -148,12 +148,12 @@ test('sec2-004: Storehouse manager is an access change: never on one\'s own acco
   const other = f.account('Store hand', { profileId: keeper, weldEnabled: false });
   const tick = (as: ReturnType<typeof f.client>, id: string) => as.request(`/records/users/${id}`, { method: 'PUT', pilot: 'mto', data: { storehouseManager: true, _version: f.store.get('users', id)._version } });
   assert.equal((await tick(self.as, other.user.id)).status, 403, 'without Edit on Profiles');
-  // An administrator limited to North in MTO Pilot does not tick it on a North account, nor on a new one.
+  // An administrator limited to North in Material Core does not tick it on a North account, nor on a new one.
   const adminProfile = f.profile('Site admin', adminLevels);
   const limited = f.account('North admin', { profileId: adminProfile, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
   await limited.login();
   const northHand = f.account('North hand', { profileId: keeper, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC }, { mto: [NORTH] });
-  assert.equal((await tick(limited.as, northHand.user.id)).status, 403, 'limited in MTO Pilot');
+  assert.equal((await tick(limited.as, northHand.user.id)).status, 403, 'limited in Material Core');
   const users = f.store.list('users').length;
   const created = await limited.as.request('/records/users', { method: 'POST', pilot: 'mto', data: { name: 'North manager', email: 'north-manager@example.test', profileId: keeper, active: true, weldEnabled: false, mtoSiteScope: SITE_SCOPE_SPECIFIC, mtoSiteIds: [NORTH], storehouseManager: true, password: 'North-Manager-Password-1' } });
   assert.equal(created.status, 403, await created.clone().text());
@@ -226,43 +226,43 @@ async function importSheet(mode: 'full' | 'projects', lines: Record<string, stri
 test('sec2-006: a project switched off for a pilot is neither archived by a clean import nor by its archive route from that pilot', async t => {
   const f = await fixture(t);
   assert.equal((await f.admin.request('/auth/site', { method: 'POST', data: { siteId: NORTH } })).status, 200);
-  // A blank North project, switched off for Weld Pilot; and a blank one that is on.
+  // A blank North project, switched off for Weld Core; and a blank one that is on.
   const off = f.store.create('projects', { internnumber: 'OFF-WELD-1', siteId: NORTH, weldPilot: false }, SYSTEM);
   const on = f.store.create('projects', { internnumber: 'ON-WELD-1', siteId: NORTH }, SYSTEM);
   const clean = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'weld', data: await importSheet('projects', [{ 'projects.internnumber': 'STX-2401', 'projects.authority': 'Inspector' }], { clean: true }) });
   assert.equal(clean.status, 201, await clean.clone().text());
   assert.equal(f.store.get('projects', off.id, true)._archived, false, 'the switched-off project stays');
   assert.equal(f.store.get('projects', on.id, true)._archived, true, 'a blank project of the pilot is still cleaned');
-  // The archive route from Weld Pilot answers as if the project did not exist there.
+  // The archive route from Weld Core answers as if the project did not exist there.
   const archived = await f.admin.request(`/records/projects/${off.id}/archive`, { method: 'POST', pilot: 'weld', data: { _version: off._version } });
   assert.equal(archived.status, 404, await archived.clone().text());
   assert.equal(f.store.get('projects', off.id, true)._archived, false);
-  // From MTO Pilot, where it is switched on, it is archived as before.
+  // From Material Core, where it is switched on, it is archived as before.
   const fromMto = await f.admin.request(`/records/projects/${off.id}/archive`, { method: 'POST', pilot: 'mto', data: { _version: off._version } });
   assert.equal(fromMto.status, 200, await fromMto.clone().text());
 });
 
-test('sec2-007: Project import writes welds only into projects switched on for Weld Pilot and material lines only into projects switched on for MTO Pilot', async t => {
+test('sec2-007: Project import writes welds only into projects switched on for Weld Core and material lines only into projects switched on for Material Core', async t => {
   const f = await fixture(t);
   assert.equal((await f.admin.request('/auth/site', { method: 'POST', data: { siteId: NORTH } })).status, 200);
   const noWeld = f.store.create('projects', { internnumber: 'NO-WELD-1', siteId: NORTH, weldPilot: false }, SYSTEM);
   const noMto = f.store.create('projects', { internnumber: 'NO-MTO-1', siteId: NORTH, mtoPilot: false }, SYSTEM);
   const counts = () => [f.store.list('welds').length, f.store.list('iso_materials').length, f.store.list('isometrics').length];
   const before = counts();
-  // From MTO Pilot: welds for a project switched off for Weld Pilot.
+  // From Material Core: welds for a project switched off for Weld Core.
   const welds = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'mto', data: await importSheet('full', [{ 'projects.internnumber': String(noWeld.internnumber), 'isometrics.isoNo': 'NO-WELD-ISO', 'welds.start': '1', 'welds.end': '2' }], { withWelds: true }) });
   assert.equal(welds.status, 403, await welds.clone().text());
-  assert.match((await welds.json() as { error: string }).error, /Weld Pilot/);
-  // From Weld Pilot: a material line for a project switched off for MTO Pilot.
+  assert.match((await welds.json() as { error: string }).error, /Weld Core/);
+  // From Weld Core: a material line for a project switched off for Material Core.
   const line = { 'projects.internnumber': String(noMto.internnumber), 'isometrics.isoNo': 'NO-MTO-ISO', 'iso_materials.componentCode': '1', 'iso_materials.materialNo': 'NO-MTO-PIPE', 'iso_materials.description': 'Pipe', 'iso_materials.uom': 'M', 'iso_materials.quantity': '2', 'iso_materials.phase': 'Shop' };
   const materials = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'weld', data: await importSheet('full', [line], { withWelds: false }) });
   assert.equal(materials.status, 403, await materials.clone().text());
-  assert.match((await materials.json() as { error: string }).error, /MTO Pilot/);
+  assert.match((await materials.json() as { error: string }).error, /Material Core/);
   // Copy isometrics has the same rule for the welds it copies.
   const copied = await f.admin.request('/actions/copy-isometrics', { method: 'POST', pilot: 'mto', data: { isoIds: ['iso-1'], projectId: noWeld.id, copyWelds: true } });
   assert.equal(copied.status, 403, await copied.clone().text());
   assert.deepEqual(counts(), before, 'no weld, material line or isometric was written');
-  // The same material line into a project switched on for MTO Pilot still imports.
+  // The same material line into a project switched on for Material Core still imports.
   const fine = await f.admin.request('/project-import/commit', { method: 'POST', pilot: 'weld', data: await importSheet('full', [{ ...line, 'projects.internnumber': String(noWeld.internnumber) }], { withWelds: false }) });
   assert.equal(fine.status, 201, await fine.clone().text());
 });

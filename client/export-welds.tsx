@@ -47,7 +47,7 @@ export function ExportWelds() {
   }
   const submit = (full: boolean) => (event: FormEvent) => { event.preventDefault(); void download(full); };
   return <div className="page export-welds-page" aria-busy={Boolean(busy)}>
-    <div className="page-heading"><div><div className="eyebrow">WELD PILOT · WELDING DATA</div><h1>{EXPORT_WELDS_TEXTS.title}</h1><p>{EXPORT_WELDS_TEXTS.intro}</p></div></div>
+    <div className="page-heading"><div><div className="eyebrow">WELD CORE · WELDING DATA</div><h1>{EXPORT_WELDS_TEXTS.title}</h1><p>{EXPORT_WELDS_TEXTS.intro}</p></div></div>
     {!exportable && <div className="alert info" role="note"><span>Your permission profile opens this page but does not include Export on Export welds.</span></div>}
     <section className="panel">
       <form onSubmit={submit(false)} className="form-grid">
