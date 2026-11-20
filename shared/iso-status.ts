@@ -2,7 +2,7 @@ import type { Row } from './types.ts';
 import { hydrotestState } from './hydrotest.ts';
 import { hasPunchProgress, punchBlocking, punchKind, punchListLink, punchProgress } from './punch.ts';
 import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
-import { ndtAccepted, nextRepairNumber, notAccepted, repairChain, repairParent } from './inspections.ts';
+import { ndtAccepted, nextRepairNumber, notAccepted, openRejection, repairChain, repairParent } from './inspections.ts';
 import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 
 /**
@@ -180,12 +180,9 @@ function missingWeldFields(weld: Row): string[] {
   return missing;
 }
 
-/**
- * The repair rules of the inspections flow (shared/inspections.ts): a rejection is a latest NDT / NDT PRE outcome NA, or
- * ReWeld? ticked on the request of that outcome (also on its NA round); accepted is an accepted outcome without either.
- */
-const rejection = (weld: Row, results: Row[]) => notAccepted(weld, results);
-const acceptedWeld = (weld: Row, results: Row[]) => ndtAccepted(weld, results);
+/** The fields "Prefab complete" / "Field complete" requires on a welded weld besides the type: WPS, weld date and both charge numbers (client answer 17.11.2026: they are mandatory, not optional). */
+export const missingCompleteFields = (weld: Row): string[] => missingWeldFields(weld).filter(name => name === 'WPS' || name === 'weld date' || name.startsWith('charge number'));
+
 /** Order of creation, as the reference lists blockers (a repair 010R1 follows weld 012); equal times by weld number. */
 const byCreation = (a: Row, b: Row) => text(a._createdAt).localeCompare(text(b._createdAt)) || text(a.weldNo).localeCompare(text(b.weldNo), 'en', { numeric: true });
 
@@ -205,9 +202,8 @@ export function isoBlockers(input: IsoStatusInput): IsoBlockers {
   // A rejection is closed once a repair later in its chain (`repairOfId`) has an accepted result.
   const all = live(input.welds), results = live(input.results);
   add('repair', welds.flatMap(weld => {
-    if (!rejection(weld, results)) return [];
+    if (!openRejection(weld, all, results)) return [];
     const chain = repairChain(weld, all);
-    if (chain.some(repair => acceptedWeld(repair, results))) return [];
     // The repair weld once it exists (Edit weld of it, read-only when locked); until then the NDT dialog of the rejected weld.
     const target: BlockerTarget = chain[0] ? { kind: 'edit-weld', weldId: chain[0].id } : { kind: notAccepted(weld, results.filter(row => row.type === 'NDT')) ? 'ndt' : 'ndt-pre', weldId: weld.id };
     return [{ weldId: weld.id, message: `Rejection on weld ${weld.weldNo}, repair ${chain[0] ? text(chain[0].weldNo) : nextRepairNumber(weld, all)} is still open`, target }];

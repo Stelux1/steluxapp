@@ -492,7 +492,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   // Options of the isometric page: Attachments (several PDFs, delete) and the Audit trail of the isometric with its welds (server/iso-dialogs.ts).
   if (pilots) registerIsoDialogRoutes(app, { store, documents, access });
   // WPS per project site, copies, PQR attribute values and Import PQR (server/wps.ts).
-  if (pilots) registerWpsRoutes(app, { store, access });
+  if (pilots) registerWpsRoutes(app, { store, documents, access });
   // NDT Batch Import: results by file or by request number, written through the NDT cell's action (server/ndt-batch.ts).
   if (pilots) registerNdtBatchRoutes(app, { store, documents, access });
   if (pilots) registerMaterialDbRoutes(app, { store, access });

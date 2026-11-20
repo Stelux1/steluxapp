@@ -36,25 +36,37 @@ export const WPS_GROUP_FIELDS: { name: string; label: string; options: string[] 
 ];
 export const WPS_GROUP_HINT = 'Optional. You can leave this empty. Choose a value or type one that is not in the list.';
 /**
+ * The diameter range the WPS covers, entered by hand (client answer 17.11.2026): outside diameter in inches, both optional.
+ * With "Validation on WPS" on, a weld takes only a WPS whose range holds its diameter (`sizeinch`); no range = not limited.
+ */
+export const WPS_RANGE_FIELDS: Field[] = [
+  { name: 'diameterFrom', label: 'Diameter from (inch)', type: 'number', min: 0, step: 0.001, hint: 'Optional. Smallest diameter this WPS covers. Empty: no lower limit.' },
+  { name: 'diameterTo', label: 'Diameter to (inch)', type: 'number', min: 0, step: 0.001, hint: 'Optional. Largest diameter this WPS covers. Empty: no upper limit.' },
+];
+export const WPS_RANGE_NAMES = WPS_RANGE_FIELDS.map(field => field.name);
+/** The pair `rangeErrors` (shared/welder-data.ts) checks on a WPS save: numbers, and "to" not below "from". */
+export const WPS_RANGES: [string, string, string][] = [['diameterFrom', 'diameterTo', 'Diameter']];
+/**
  * Fields the WPS record gains (hidden in the shared definition; the hosted profile shows the group fields). The values of
  * a group field are stored as one text, separated by ", ". The copy fields are written by the copy action only.
  */
 export const WPS_EXTRA_FIELDS: Field[] = [
   ...WPS_GROUP_FIELDS.map(({ name, label }): Field => ({ name, label, type: 'text', hidden: true })),
+  ...WPS_RANGE_FIELDS,
   { name: 'sourceId', label: 'Copy of', type: 'ref', ref: 'wps', hidden: true, readonly: true },
   { name: 'copySiteId', label: 'Copied to project site', type: 'ref', ref: 'sites', hidden: true, readonly: true },
 ];
 /** Written only by the copy action: a plain record write may not set or change them. */
 export const WPS_COPY_FIELDS = ['sourceId', 'copySiteId'];
 /** The fields the hosted profile delivers for a WPS in addition to the earlier ones. */
-export const WPS_HOSTED_FIELDS = [...WPS_GROUP_FIELDS.map(field => field.name), ...WPS_COPY_FIELDS];
+export const WPS_HOSTED_FIELDS = [...WPS_GROUP_FIELDS.map(field => field.name), ...WPS_RANGE_NAMES, ...WPS_COPY_FIELDS];
 
 /** The values of a group field: split on commas, trimmed, without empty or repeated values. */
 export const tagValues = (value: unknown): string[] => [...new Set(text(value).split(',').map(item => item.trim()).filter(Boolean))];
 export const tagText = (values: string[]) => [...new Set(values.map(item => item.trim()).filter(Boolean))].join(', ');
 
 /** Reference form order of the hosted WPS form (the project, PQR, document and site controls follow "Joint type"). */
-export const WPS_FORM_FIELDS = ['name', 'method', 'definition', ...WPS_GROUP_FIELDS.map(field => field.name), 'jointType'];
+export const WPS_FORM_FIELDS = ['name', 'method', 'definition', ...WPS_GROUP_FIELDS.map(field => field.name), 'jointType', ...WPS_RANGE_NAMES];
 /** Shared WPS fields the hosted form does not show (the reference has no such inputs). Stored values stay as they are. */
 export const WPS_HOSTED_HIDDEN = ['allProjects', 'active', 'processId', 'standard', 'description'];
 export const WPS_HOSTED_COLUMNS = ['name', 'method', 'definition', 'jointType'];
@@ -137,7 +149,7 @@ export function wpsCopyRefusal(rows: Rows, wps: Row, siteId: string): string {
 export function wpsCopyValues(rows: Rows, wps: Row, siteId: string): Record<string, unknown> {
   const site = live(rows.sites).find(row => row.id === siteId);
   const projects = new Set(live(rows.projects).filter(project => project.siteId === siteId).map(project => project.id));
-  const copied = ['method', 'definition', 'jointType', ...WPS_GROUP_FIELDS.map(field => field.name), 'processId', 'standard', 'description'];
+  const copied = ['method', 'definition', 'jointType', ...WPS_GROUP_FIELDS.map(field => field.name), ...WPS_RANGE_NAMES, 'processId', 'standard', 'description'];
   return {
     ...Object.fromEntries(copied.filter(name => wps[name] !== undefined && wps[name] !== null && wps[name] !== '').map(name => [name, wps[name]])),
     name: `${text(wps.name)} (${text(site?.name) || siteId})`,

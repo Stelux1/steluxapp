@@ -1,5 +1,5 @@
 import type { Row } from '../shared/types.ts';
-import { COMPLETION_FIELDS, ITP_MISSING, RELEASE_PHASES, activeRelease, fwpAccepts, nextReportNo, phaseCompleted, releaseCheck, releaseDocumentData, releaseItpOf, releaseItpsOf, type ReleasePhase } from '../shared/releases.ts';
+import { COMPLETION_FIELDS, ITP_MISSING, openPrePunch, prePunchReason, RELEASE_PHASES, activeRelease, fwpAccepts, nextReportNo, phaseCompleted, releaseCheck, releaseDocumentData, releaseItpOf, releaseItpsOf, type ReleasePhase } from '../shared/releases.ts';
 import { itpLatest } from '../shared/itps.ts';
 import { AppError, SYSTEM, validDate, type Actor, type Store } from './store.ts';
 
@@ -54,12 +54,14 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
   const isometrics = ids(data.isoIds, 'isometric').map(id => store.get('isometrics', id));
   let itp = '';
   if (type !== 'Hydrotest') {
-    const phase = type as ReleasePhase; const releases = store.list('releases'); const itps = store.list('itps'), itpsOf = (iso: Row) => releaseItpsOf(iso, phase, itps);
+    const phase = type as ReleasePhase; const releases = store.list('releases'), punch = store.list('punchlists'); const itps = store.list('itps'), itpsOf = (iso: Row) => releaseItpsOf(iso, phase, itps);
     if (actor.id !== SYSTEM.id) {
       // The release document follows the phase's Complete on the isometric: only completed isometrics are released.
       const refused = isometrics.flatMap(iso => {
         if (activeRelease(releases, iso.id, phase)) return [{ iso, message: `${phase} is already released.` }];
         if (!phaseCompleted(iso, phase, releases)) return [{ iso, message: `${phase} is not complete yet. Mark it ${phase} complete on the isometric first.` }];
+        const prePunch = openPrePunch(punch, iso.id).length;
+        if (prePunch) return [{ iso, message: prePunchReason(prePunch) }];
         return itpsOf(iso).length ? [] : [{ iso, message: ITP_MISSING[phase] }];
       });
       if (refused.length) {
@@ -101,8 +103,8 @@ const phaseOf = (data: Input) => {
 
 /**
  * The `complete-phase` action ("Prefab complete" / "Field complete" on the isometric): a confirmation only. Refused
- * when the phase is completed already or not ready (`releaseCheck`: Field needs Prefab complete first; open punch
- * never holds it). It stores who and when on the isometric, which locks the phase's welds and lists the isometric
+ * when the phase is completed already or not ready (`releaseCheck`: Field needs Prefab complete first; a welded weld
+ * without WPS, weld date or charge numbers and an open pre-punch hold it). It stores who and when on the isometric, which locks the phase's welds and lists the isometric
  * on the phase's release page. No release record and no number are made. The system actor is not checked.
  */
 export function completePhase(store: Store, data: Input, actor: Actor): ActionResult {

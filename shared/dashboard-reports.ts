@@ -1,7 +1,7 @@
 import type { Row } from './types.ts';
 import { share, weldWelderIds, isWelded, isTracerWeld, isNdtCompleted, isRepairedWeld, weldTypeLabel, type DashboardFilters } from './weld-dashboard.ts';
 import { weldItpId } from './itp-dashboard.ts';
-import { notAccepted } from './inspections.ts';
+import { openRejection } from './inspections.ts';
 import { isNonWeldCode } from './weld-codes.ts';
 import { newest } from './iso-status.ts';
 import { repairPerformanceLimit } from './site-settings.ts';
@@ -227,12 +227,12 @@ export interface Totals {
 const examinedWeld = (item: ReportWeld, results: Row[]) => isWelded(item.weld) && !isTracerWeld(item.weld) && isNdtCompleted(results, item.weld);
 /**
  * Figures of a set of welds with the dashboard's predicates: welded = a welder is recorded; examined = welded, no tracer,
- * NDT completed; rejected = examined and the latest NDT outcome is not accepted (the dashboard's notAccepted).
+ * NDT completed; rejected = examined, the latest NDT outcome is not accepted and no repair of it is accepted yet (`openRejection`).
  */
 export function totals(items: ReportWeld[], rows: Record<string, Row[]>): Totals {
-  const results = rows.inspection_results || [];
+  const results = rows.inspection_results || [], allWelds = live(rows.welds);
   const welded = items.filter(item => isWelded(item.weld)), examined = welded.filter(item => examinedWeld(item, results));
-  const rejected = examined.filter(item => notAccepted(item.weld, results)).length, repaired = welded.filter(item => isRepairedWeld(item.weld));
+  const rejected = examined.filter(item => openRejection(item.weld, allWelds, results)).length, repaired = welded.filter(item => isRepairedWeld(item.weld));
   const mm = (list: ReportWeld[]) => round(list.reduce((sum, item) => sum + weldLength(item.weld, rows), 0));
   return {
     welds: items.length, welded: welded.length, examined: examined.length, examinedPercent: share(examined.length, items.length), examinedMm: mm(examined),
@@ -381,13 +381,13 @@ export function tracerWelds(data: ReportData): TracerLine[] {
   })).sort((a, b) => naturally(a.project, b.project) || naturally(a.iso, b.iso) || naturally(a.weld, b.weld));
 }
 export function welderTracer(data: ReportData, filters: ReportScopeFilters): { groups: TracerGroup[]; tracers: TracerLine[] } {
-  const { rows } = data, welders = byId(rows.welders), wps = byId(rows.wps), results = rows.inspection_results || [];
+  const { rows } = data, welders = byId(rows.welders), wps = byId(rows.wps), results = rows.inspection_results || [], allWelds = live(rows.welds);
   const groups: TracerGroup[] = [];
   for (const welderId of welderIdsOf(data.welds, filters)) {
     const mine = data.welds.filter(item => item.welderIds.includes(welderId) && isWelded(item.weld));
     for (const wpsId of [...new Set(mine.map(item => item.wpsId))]) {
       const pair = mine.filter(item => item.wpsId === wpsId), plain = pair.filter(item => !isTracerWeld(item.weld)), tracers = pair.filter(item => isTracerWeld(item.weld));
-      const done = plain.filter(item => examinedWeld(item, results)), examined = done.length, rejected = done.filter(item => notAccepted(item.weld, results)).length;
+      const done = plain.filter(item => examinedWeld(item, results)), examined = done.length, rejected = done.filter(item => openRejection(item.weld, allWelds, results)).length;
       const open = tracers.filter(item => !isNdtCompleted(results, item.weld)).length;
       // Every rejected weld wants a tracer; tracers still without a result are open.
       const status = !rejected && !tracers.length ? '-' : tracers.length < rejected ? `${rejected - tracers.length} tracer${rejected - tracers.length === 1 ? '' : 's'} missing` : open ? `${open} open` : 'Complete';

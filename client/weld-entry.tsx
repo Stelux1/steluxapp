@@ -24,7 +24,7 @@ import {
   CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
   chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
   RANGE_DIALOG, WELDER_PLACEHOLDER, chargeMaterialGroup, chargesForWelders, diameterRowSize, diameterSizeMm, groupWeldersForDia, materialGroupWarnings, suggestOnDia, welderFieldsDisabled, welderOptionList, weldersForWps, weldersQualifiedForDiameter,
-  wpsChangeClearsWelders, wpsMatchesDiameter, rangeSkippedMessage, type SelectOption,
+  diameterSizeInch, wpsChangeClearsWelders, wpsDiameterErrors, wpsMatchesDiameter, wpsOfferedForDiameters, weldDiameterOf, rangeSkippedMessage, type SelectOption,
 } from '../shared/weld-entry.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -103,22 +103,6 @@ function groupWarnings(data: WeldData, certificate1: Row | undefined, certificat
   if (!certificate1 || !certificate2 || !wps) return [];
   return materialGroupWarnings(chargeMaterialGroup(certificate1, data.materialTypes), chargeMaterialGroup(certificate2, data.materialTypes), wps, str(wps.name));
 }
-/** The scope texts (EN Ø, ASME IX Ø) of the PQRs linked to a WPS: what its diameter match reads. */
-function useWpsScopes() {
-  const { rows } = useWorkspace();
-  return useMemo(() => {
-    const options = new Map((rows.qualification_options || []).map(row => [row.id, str(row.name)]));
-    const pqr = new Map((rows.pqr || []).map(row => [row.id, row]));
-    const scopes = new Map<string, string[]>();
-    for (const link of rows.wps_pqr || []) {
-      if (link._archived) continue;
-      const row = pqr.get(str(link.pqrId)); if (!row) continue;
-      const texts = [row.attribute15Id, row.attribute18Id].map(id => options.get(str(id)) || '').filter(Boolean);
-      scopes.set(str(link.wpsId), [...(scopes.get(str(link.wpsId)) || []), ...texts]);
-    }
-    return scopes;
-  }, [rows]);
-}
 /**
  * The Spool select of the hosted form (shared/spool-catalog.ts): catalog names enabled on the main project minus names used on
  * another isometric of the project, then this isometric's own spools; the weld's current spool stays listed. null elsewhere.
@@ -193,11 +177,13 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
   const hasPrev = weld ? Boolean(neighbourOf(order, weld.id, 'prev')) : false, hasNext = weld ? Boolean(neighbourOf(order, weld.id, 'next')) : false;
   const set = (patch: Values) => setValues(current => ({ ...current, ...patch })); const set1 = (name: string) => (value: unknown) => set({ [name]: value });
   const explicit = values.lengthMode === 'Length in mm';
-  const scopes = useWpsScopes();
   const diameterRow = data.diameters.get(str(values.diameterId)), diaSize = explicit ? '' : diameterRowSize(diameterRow), diaMm = explicit ? null : diameterSizeMm(diameterRow);
-  const matchingWps = diaMm === null ? [] : activeRows(rows, 'wps').filter(row => row.id === values.wpsId || (row.active !== false && data.project && availableWps(rows, row, data.project.id))).filter(row => wpsMatchesDiameter(scopes.get(row.id) || [], diaMm)).map(row => row.id);
+  // "Validation on WPS" on: only WPS whose own diameter range (inches, entered on the WPS) holds the weld's diameter are offered (the chosen one stays).
+  const wpsOffered = (row: Row, inch: number | null) => row.id === values.wpsId || (row.active !== false && data.project && availableWps(rows, row, data.project.id) && wpsOfferedForDiameters(data.site, row, [inch]));
+  const diaInch = explicit ? null : diameterSizeInch(diameterRow);
+  const matchingWps = diaInch === null ? [] : activeRows(rows, 'wps').filter(row => wpsOffered(row, diaInch)).filter(row => wpsMatchesDiameter(row, diaInch)).map(row => row.id);
   // After Dia.: the WPS that match it move to the top.
-  const wpsOptions = activeRows(rows, 'wps').filter(row => row.id === values.wpsId || (row.active !== false && data.project && availableWps(rows, row, data.project.id))).map(row => ({ value: row.id, label: wpsLabel(row), match: matchingWps.includes(row.id) })).sort((a, b) => Number(b.match) - Number(a.match));
+  const wpsOptions = activeRows(rows, 'wps').filter(row => wpsOffered(row, diaInch)).map(row => ({ value: row.id, label: wpsLabel(row), match: matchingWps.includes(row.id) })).sort((a, b) => Number(b.match) - Number(a.match));
   const selectedCharge = (side: 1 | 2) => data.certs.get(str(values[`certificate${side}Id`]));
   // Catalog records switched off on the active main project are left out, except the value the weld already stores.
   const enabled = (key: string, keep?: unknown) => enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows, keep);
@@ -208,7 +194,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
   const welders = rows.welders || [];
   const welderCertificates = rows.welder_certificates as Row[] | undefined, chosenWps = data.wps.get(str(values.wpsId)), onDate = str(values.date) || todayText();
   // Add weld lists welders only once a WPS is chosen; Edit weld opens with the full list until then.
-  const welderFor = (name: string) => mode === 'edit' && !chosenWps ? welders.filter(row => !row._archived && (row.status !== 'Inactive' || row.id === values[name])) : weldersForWps(data.site, welders, welderCertificates, chosenWps, onDate, [values[name]]);
+  const welderFor = (name: string) => mode === 'edit' && !chosenWps ? welders.filter(row => !row._archived && (row.status !== 'Inactive' || row.id === values[name])) : weldersForWps(data.site, welders, welderCertificates, chosenWps, onDate, [values[name]], [diaMm]);
   const qualifiedForDia = useMemo(() => weldersQualifiedForDiameter(welderCertificates, diaMm, onDate), [welderCertificates, diaMm, onDate]);
   const welderGroups = (options: SelectOption[]) => diaMm !== null && qualifiedForDia.size ? groupWeldersForDia(options, qualifiedForDia) : undefined;
   // With "Validation on WPS" on, Charge number 1/2 hold only the certificates usable by the chosen welders and WPS.
@@ -238,7 +224,8 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
     const row = data.diameters.get(value), size = diameterRowSize(row), mm = diameterSizeMm(row);
     const index = weld ? order.indexOf(weld.id) : order.length;
     const byId = (id?: string) => id ? data.welds.find(item => item.id === id) ?? null : null;
-    const matches = mm === null ? [] : activeRows(rows, 'wps').filter(item => item.active !== false && data.project && availableWps(rows, item, data.project.id) && wpsMatchesDiameter(scopes.get(item.id) || [], mm)).map(item => item.id);
+    const inch = diameterSizeInch(row);
+    const matches = inch === null ? [] : activeRows(rows, 'wps').filter(item => item.active !== false && data.project && availableWps(rows, item, data.project.id) && wpsMatchesDiameter(item, inch)).map(item => item.id);
     const suggestion = suggestOnDia({ values: next, diameterSize: size, previous: byId(order[index - 1]), next: byId(order[index + 1]), certificates: data.certs, lookups: data.lookups, matchingWps: matches });
     set({ ...next, ...suggestion.patch, ...(suggestion.wpsId ? { wpsId: suggestion.wpsId } : {}) });
   }
@@ -251,7 +238,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
     if (!str(values.weldNo).trim()) found.weldNo = 'Weld no. is required.';
     if (explicit && values.dialen !== '' && !(Number(values.dialen) > 0)) found.dialen = 'Length in mm must be above zero.';
     if (explicit && values.ndoReq && values.ndtpercent !== '' && !(Number(values.ndtpercent) >= 0 && Number(values.ndtpercent) <= 100)) found.ndtpercent = 'NDT percent must be between 0 and 100.';
-    Object.assign(found, duplicateWelderErrors(values), diameterErrors({ ...values, defaultDiameter }, { certificates: data.certs, diameters: data.diameters }));
+    Object.assign(found, duplicateWelderErrors(values), wpsDiameterErrors(data.site, values, chosenWps, weldDiameterOf(values, data.diameters)), diameterErrors({ ...values, defaultDiameter }, { certificates: data.certs, diameters: data.diameters }));
     for (const side of [1, 2]) if (!weld || str(weld[`certificate${side}Id`]) !== str(values[`certificate${side}Id`])) {
       const sides = str(values[`certificate${side}Id`]) ? [side] : [];
       Object.assign(found, certificateSelectionErrors(values, sides, data.certificates), certificateErrors(data.site, values, sides, data.certificates, str(data.project?.id), { links: rows.certificate_projects || [] }));
@@ -386,7 +373,10 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
   const options = (key: string, label: (row: Row) => string = row => str(row.name)) => sortByName(enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows), 'name').map(row => ({ value: row.id, label: label(row) }));
   const diameters = useDiameterOptions();
   // Mass edit shows the WPS as "process | number (designation)" (reference, wpsLabel 'mass').
-  const wpsOptions = activeRows(rows, 'wps').filter(row => row.active !== false && data.project && availableWps(rows, row, data.project.id)).map(row => ({ value: row.id, label: wpsLabel(row, 'mass') }));
+  // With "Validation on WPS" on, only WPS whose range holds the diameter of every checked weld (or the diameter set here) are offered, and welders qualified for it.
+  const newDiameter = changes.diameterId ? weldDiameterOf({ diameterId: changes.diameterId }, data.diameters) : null;
+  const diametersOf = selected.map(weld => changes.dialen !== undefined ? null : newDiameter ?? weldDiameterOf(weld, data.diameters));
+  const wpsOptions = activeRows(rows, 'wps').filter(row => row.active !== false && data.project && availableWps(rows, row, data.project.id) && wpsOfferedForDiameters(data.site, row, diametersOf.map(item => item?.inch ?? null))).map(row => ({ value: row.id, label: wpsLabel(row, 'mass') }));
   const flag = (name: string, label: string) => <SelectField key={name} label={label} value={changes[name] === undefined ? '' : changes[name] ? 'yes' : 'no'} placeholder="Keep current" options={[{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }]} onChange={value => set(name)(value === '' ? '' : value === 'yes')}/>;
   const chargeField = (entry: MassEditItem) => { const side = entry.side!; return <SelectField key={entry.name} label={entry.label} value={chargeValue(changes, side)} placeholder="Keep current" options={chargeOptions(data, str(changes[`certificate${side}Id`]))} error={fields[`chargeNo${side}`] || fields[`certificate${side}Id`]} onChange={value => setChanges(current => { const next = { ...current }; for (const name of [`chargeNo${side}`, `certificate${side}Id`, `material${side}Id`]) delete next[name]; return value ? { ...next, ...chargeSelection(value, side, data.certificates) } : next; })}/>; };
   // A WPS change empties the four welder fields (Mass edit as Add weld; the reference refills their lists).
@@ -397,7 +387,7 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
     if (entry.control === 'charge') return chargeField(entry);
     if (entry.control === 'welder') {
       // Lists are full at once with '-----------------' (keep); a WPS change empties the four welders and refills them, 'Choose Welder' first (reference #wpsNoFormMass).
-      const chosen = data.wps.get(str(changes.wpsId)), list = welderOptionList(chosen ? weldersForWps(data.site, rows.welders || [], rows.welder_certificates as Row[] | undefined, chosen, todayText()) : (rows.welders || []).filter(row => !row._archived && row.status !== 'Inactive'), 'mass');
+      const chosen = data.wps.get(str(changes.wpsId)), list = welderOptionList(chosen ? weldersForWps(data.site, rows.welders || [], rows.welder_certificates as Row[] | undefined, chosen, todayText(), [], diametersOf.map(item => item?.mm ?? null)) : (rows.welders || []).filter(row => !row._archived && row.status !== 'Inactive'), 'mass');
       return <SelectField key={entry.name} label={entry.label} value={changes[entry.name]} error={fields[entry.name]} placeholder={chosen ? WELDER_PLACEHOLDER.add : WELDER_PLACEHOLDER.mass} placeholderDisabled={Boolean(chosen)} options={list} onChange={set(entry.name)}/>;
     }
     const list = entry.control === 'wps' ? wpsOptions : options(entry.catalog!);

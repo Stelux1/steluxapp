@@ -14,7 +14,7 @@ import { PQR_ATTRIBUTES, availableWps } from '../shared/welding.ts';
 import { welderWpsErrors } from '../shared/weld-entry.ts';
 import {
   PQR_HEADER_GROUPS, PQR_IMPORT_COLUMNS, PQR_IMPORT_PATH, WPS_ALL_PROJECTS, WPS_GROUP_FIELDS, pqrColumnTitle, pqrImportDate, pqrImportMessage, pqrImportPreview, pqrNumber,
-  tagText, tagValues, wpsCopyRefusal, wpsCopyValues, wpsProjectSelection, wpsProjectValues, wpsSiteChange, wpsSiteStatus, wpsTabCounts,
+  tagText, tagValues, wpsDocument, wpsCopyRefusal, wpsCopyValues, wpsProjectSelection, wpsProjectValues, wpsSiteChange, wpsSiteStatus, wpsTabCounts,
 } from '../shared/wps.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -91,7 +91,7 @@ test('PQR import: both date formats, the PQR number match, required number and d
 // --- WPS definitions and rules ---------------------------------------------------------------------------------------
 
 test('WPS (hosted): the form follows the reference order with the four material group fields and their own option lists', () => {
-  assert.deepEqual(visible(hostedWps.fields).map(field => field.name), ['name', 'method', 'definition', 'isoGroups', 'isoPairs', 'asmePNumbers', 'asmePairs', 'jointType']);
+  assert.deepEqual(visible(hostedWps.fields).map(field => field.name), ['name', 'method', 'definition', 'isoGroups', 'isoPairs', 'asmePNumbers', 'asmePairs', 'jointType', 'diameterFrom', 'diameterTo']);
   assert.deepEqual(WPS_GROUP_FIELDS.map(field => [field.label, field.options.length]), [['ISO groups on this WPS', 32], ['Allowed dissimilar pairs (ISO)', 5], ['ASME P-Numbers on this WPS', 16], ['Allowed dissimilar pairs (ASME)', 4]]);
   assert.deepEqual(hostedWps.columns, ['name', 'method', 'definition', 'jointType']);
   assert.equal(tagText(tagValues(' 1.1, 5.1 ,1.1,, 12.9 ')), '1.1, 5.1, 12.9', 'a typed value that is not in the list is kept');
@@ -188,10 +188,35 @@ test('hosted WPS: saving with the site box unticked leaves it off; copy to anoth
   assert.equal(availableWps(rows, f.store.get('wps', copy.id), 'project-steam'), false);
   assert.equal((await f.request('/api/wps/site', 'POST', { ids: [], siteId: 'site-north', enabled: true })).status, 422);
 });
-test('copy values: only the projects of the target site stay chosen', () => {
+test('Copy and Mass copy carry the WPS document (a file of its own) and the diameter range (client answer 17.11.2026)', async t => {
+  const f = await hostedFixture(t);
+  const original = f.store.get('wps', 'wps-1');
+  f.store.update('wps', original.id, { diameterFrom: 1, diameterTo: 2 }, original._version, SYSTEM);
+  const upload = async (id: string, name: string, content: string) => {
+    const form = new FormData(); form.set('file', new Blob([content], { type: 'application/pdf' }), name); form.set('entityType', 'wps'); form.set('entityId', id); form.set('documentType', 'WPS document');
+    const response = await f.request('/api/files', 'POST', form); assert.equal(response.status, 201); return (await json(response)).record!;
+  };
+  const first = await upload('wps-1', 'WPS-141-rev1.pdf', '%PDF-1.4 first'), second = await upload('wps-1', 'WPS-141-rev2.pdf', '%PDF-1.4 second');
+  await upload('wps-2', 'WPS-135.pdf', '%PDF-1.4 other');
+  const response = await f.request('/api/wps/copy', 'POST', { ids: ['wps-1', 'wps-2'], siteId: 'site-river' });
+  assert.equal(response.status, 201); const [copy, other] = (await json(response)).records!;
+  assert.deepEqual([copy.diameterFrom, copy.diameterTo], [1, 2], 'the range is copied');
+  const files = (id: string) => f.store.list('attachments').filter(file => file.entityType === 'wps' && file.entityId === id);
+  assert.deepEqual(files(copy.id).map(file => [file.name, file.documentType, file.mime]).sort(), [['WPS-141-rev1.pdf', 'WPS document', 'application/pdf'], ['WPS-141-rev2.pdf', 'WPS document', 'application/pdf']]);
+  assert.deepEqual(files(other.id).map(file => file.name), ['WPS-135.pdf'], 'Mass copy carries the document of every WPS');
+  assert.ok(wpsDocument(f.store.list('attachments'), copy.id), 'the number of the copy links to a document');
+  assert.deepEqual(files('wps-1').map(file => file.id).sort(), [first.id, second.id].sort(), 'the original keeps its own documents');
+  // The copy's file has bytes of its own: it downloads, and removing the original's file does not touch it.
+  const copied = files(copy.id).find(file => file.name === 'WPS-141-rev2.pdf')!, download = await f.request(`/api/files/${copied.id}`);
+  assert.equal(download.status, 200); assert.equal(await download.text(), '%PDF-1.4 second');
+  assert.notEqual(copied.id, second.id);
+});
+
+test('copy values: only the projects of the target site stay chosen, the range is copied', () => {
   const rows = { sites: [row('b', { name: 'B' })], projects: [row('pa', { siteId: 'a' }), row('pb', { siteId: 'b' })], wps_projects: [row('x', { wpsId: 'w', projectId: 'pa' }), row('y', { wpsId: 'w', projectId: 'pb' })], wps_pqr: [row('z', { wpsId: 'w', pqrId: 'q' })] };
   const values = wpsCopyValues(rows, row('w', { name: 'W', method: '141', allProjects: false }), 'b');
   assert.deepEqual([values.projectIds, values.pqrIds, values.siteIds, values.sourceId], [['pb'], ['q'], ['b'], 'w']);
+  assert.deepEqual([wpsCopyValues(rows, row('w', { name: 'W', diameterFrom: 1, diameterTo: 2 }), 'b').diameterFrom, wpsCopyValues(rows, row('w', { name: 'W', diameterFrom: 1, diameterTo: 2 }), 'b').diameterTo], [1, 2]);
 });
 
 async function workbook(rows: (string | Date)[][]) {
