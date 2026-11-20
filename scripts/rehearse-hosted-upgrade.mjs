@@ -178,14 +178,18 @@ try {
   await step('Record a row snapshot of the old database', async () => { before = await snapshot(); return `${Object.keys(before).length} tables, ${Object.values(before).reduce((sum, rows) => sum + rows.size, 0)} rows`; });
   await step('New code: dry run', async () => {
     dry = run('dry run', join(root, 'server/prepare-welding.ts'), { cwd: runDir, args: ['--dry-run'], json: true });
-    if (!dry.dryRun || dry.upToDate) throw new Error('The dry run found nothing to prepare.');
+    if (!dry.dryRun) throw new Error('The dry run did not report as a dry run.');
+    // A release that adds no table, column or data step finds nothing to prepare; --allow-up-to-date accepts that (the database must stay unchanged).
+    if (dry.upToDate && !flag('allow-up-to-date')) throw new Error('The dry run found nothing to prepare (pass --allow-up-to-date for a release without schema changes).');
     if (existsSync(join(runDir, 'backups'))) throw new Error('The dry run wrote a backup.');
     const { problems, added } = compareSnapshots(before, await snapshot(), new Set());
     if (problems.length || Object.keys(added).length) throw new Error(`The dry run changed the database: ${problems.join('; ')}`);
+    dry.created ??= { tables: [], columns: [], foreignKeys: [], indexes: [], rowLevelSecurity: [] };
     const created = dry.created;
     return `would create ${created.tables.length} table(s) [${created.tables.join(', ')}], ${created.columns.length} reference column(s), ${created.foreignKeys.length} foreign key(s), ${created.indexes.length} index(es), RLS on ${created.rowLevelSecurity.length}; pre-existing: ${Object.entries(dry.counts).map(([name, count]) => `${name}=${count}`).join(' ')}`;
   });
   await step('New code: preparation (backup first)', async () => {
+    if (dry.upToDate) { prepared = { dataStepTables: {} }; return { skip: 'nothing to prepare: the release adds no schema' }; }
     const result = prepared = run('preparation', join(root, 'server/prepare-welding.ts'), { cwd: runDir, json: true });
     if (!existsSync(join(result.backup, 'stelux-postgres.sql')) || !existsSync(join(result.backup, 'preparation.json'))) throw new Error('The backup or its preparation record is missing.');
     if (JSON.stringify(result.created) !== JSON.stringify(dry.created)) throw new Error('The preparation differs from its dry run.');
