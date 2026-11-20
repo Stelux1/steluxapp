@@ -26,6 +26,7 @@ import { isWelderRole } from '../shared/welder-data.ts';
 import { archiveWelderQualifications, prepareWelderData, restoreWelderQualifications } from './welder-data.ts';
 import { HOSTED_OPTIONAL, hostedFreeValue } from '../shared/welder-data.ts';
 import { pqrNumber } from '../shared/wps.ts';
+import { prepareCutListInput, prepareFittingInput } from './cut-list.ts';
 import { UOM_IN_USE, nextPhaseNumber, resolveMaterialUom, uomOfMaterial } from '../shared/material-db.ts';
 
 export class AppError extends Error {
@@ -215,6 +216,9 @@ export class Store {
     const errors: Record<string, string> = {};
     const prepared = this.hostedRules ? prepareWelderData(this, key, input, existing) : { input, errors: {} as Record<string, string> };
     input = prepared.input;
+    // Cut list: take-offs, cut length and line number are worked out here, never taken from the request (server/cut-list.ts).
+    if (key === 'cut_list') input = prepareCutListInput(this, input, existing);
+    if (key === 'cut_fittings') input = prepareFittingInput(input, existing);
     for (const field of resource.fields) {
       if (field.type === 'password') continue;
       let value: unknown = input[field.name] ?? existing?.[field.name] ?? field.default ?? (field.type === 'checkbox' ? false : '');

@@ -96,10 +96,10 @@ test('hosted planning CRUD, formula spreadsheets, scoped exports and viewer perm
   assert.equal(response.status, 201); const norm = (await response.json()).record;
   assert.equal((await request('/records/calculation_lines', 'POST', { name: 'HTTP work', isoId: 'iso-1', requirementId: material.id, normId: norm.id })).status, 201);
   assert.equal((await request('/records/cut_list', 'POST', { name: 'HTTP cut', isoId: 'iso-1', requirementId: material.id, quantity: 2, lengthMm: 1000.25 })).status, 201);
-  for (const [key, output, expected, formula] of [['calculation', 'hours', 1.25, 'E2*H2'], ['cut-list', 'totalMm', 2000.5, 'F2*G2']] as const) {
+  for (const [key, output, expected, formula] of [['calculation', 'hours', 1.25, 'E2*H2'], ['cut-list', 'totalMm', 2000.5, 'Q2*P2']] as const) {
     response = await request(`/reports/${key}?isoId=iso-1&format=xlsx`); assert.equal(response.status, 200);
     const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(await response.arrayBuffer());
-    assert.equal(workbook.worksheets[0].name, key === 'cut-list' ? 'MSPS_Cut_list' : 'M25001_Project_cal_MSPS');
+    assert.equal(workbook.worksheets[0].name, key === 'cut-list' ? 'Cut_list' : 'M25001_Project_cal_MSPS');
     const report = buildReport(key, rows(store), { isoId: 'iso-1' });
     const column = report.columns.findIndex(column => column.key === output) + 1;
     assert.deepEqual(workbook.worksheets[0].getCell(2, column).value, { formula, result: expected });

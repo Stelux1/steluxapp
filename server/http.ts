@@ -48,6 +48,7 @@ import { assertNdtUnlocked, weldEditHistory } from './weld-entry.ts';
 import { companyForDocuments } from './pdf/company.ts';
 import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate.ts';
 import { reportWorkbook, registerExportRoutes } from './report-export.ts';
+import { registerCutListRoutes } from './cut-list.ts';
 import { SPOOL_EXPORT_COLUMNS, spoolExportLines } from '../shared/mto-logistics.ts';
 import { registerPdfRoutes } from './pdf/routes.ts';
 import { assertRequestFileKept, assertRequestFileUpload, registerServiceRequestRoutes, storeServiceRequestDocuments } from './service-requests.ts';
@@ -290,6 +291,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerMtoStockRoutes(app, store, availability, access);
   registerMtoLogisticsRoutes(app, availability);
   registerExportRoutes({ app, store, availability, readableRows });
+  registerCutListRoutes({ app, store, availability, readableRows });
   if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   if (pilots) registerMemoTemplateRoutes(app, { store, access });
   app.post('/api/records/:resource', (req, res) => {

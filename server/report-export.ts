@@ -12,7 +12,7 @@ import type { Availability, Row } from '../shared/types.ts';
 export function reportWorkbook(report: Report) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Blitzkrieg';
-  const sheet = workbook.addWorksheet(report.definition.key === 'cut-list' ? 'MSPS_Cut_list' : report.definition.key === 'calculation' ? 'M25001_Project_cal_MSPS' : report.definition.title.slice(0, 31));
+  const sheet = workbook.addWorksheet(report.definition.key === 'cut-list' ? 'Cut_list' : report.definition.key === 'calculation' ? 'M25001_Project_cal_MSPS' : report.definition.title.slice(0, 31));
   sheet.columns = report.columns.map(column => ({ header: column.label, key: column.key, width: column.type === 'number' ? 18 : 26 }));
   for (const source of report.rows) {
     const row = sheet.addRow(source.values);

@@ -334,8 +334,11 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
           for (const line of store.list('calculation_lines').filter(row => row.isoId === source.id && requirements.has(String(row.requirementId)))) {
             add('calculation_lines', { name: line.name, isoId: copy.id, requirementId: requirements.get(String(line.requirementId)), normId: line.normId, quantity: line.quantity ?? null, description: line.description ?? '' }); lines++;
           }
-          for (const line of store.list('cut_list').filter(row => row.isoId === source.id && requirements.has(String(row.requirementId)))) {
-            add('cut_list', { name: line.name, isoId: copy.id, requirementId: requirements.get(String(line.requirementId)), spoolId: spoolFor(line.spoolId), quantity: line.quantity, lengthMm: line.lengthMm, description: line.description ?? '' }); lines++;
+          // Cut list lines: an earlier line follows its copied MTO material; a line of the calculation table (no material) is copied
+          // with its fittings, and its take-offs and cut length are worked out again (server/cut-list.ts).
+          for (const line of store.list('cut_list').filter(row => row.isoId === source.id && (!row.requirementId || requirements.has(String(row.requirementId))))) {
+            const calculation = Object.fromEntries(['sheet', 'dia', 'material', 'schedule', 'totalLength', 'bevel', 'extraLength', 'fit1Id', 'fit2Id', 'fit3Id', 'fit4Id'].filter(name => line[name] !== undefined).map(name => [name, line[name]]));
+            add('cut_list', { name: line.name, isoId: copy.id, requirementId: line.requirementId ? requirements.get(String(line.requirementId)) : '', spoolId: spoolFor(line.spoolId), quantity: line.quantity, lengthMm: line.lengthMm, ...calculation, description: line.description ?? '' }); lines++;
           }
           counts.push(`${lines} calculation line${lines === 1 ? '' : 's'}`);
         }

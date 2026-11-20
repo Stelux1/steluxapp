@@ -207,7 +207,7 @@ test('hosted preparation never touches a counter or any other stored row: upgrad
     };
     const report = runHostedPreparation(parts, false);
     assert.deepEqual(report.projectHoldings, { holdings: 2, quantity: 10 });
-    assert.deepEqual(report.dataStepTables, { catalogData: ['ndt_defect_codes'], diameterCatalog: ['diameters'], projectHoldings: ['stock', 'movements'], spoolNames: ['spool_names'] }, 'the report names the tables its data steps insert into');
+    assert.deepEqual(report.dataStepTables, { catalogData: ['ndt_defect_codes'], diameterCatalog: ['diameters'], projectHoldings: ['stock', 'movements'], spoolNames: ['spool_names'], fittingCatalog: ['cut_fittings'] }, 'the report names the tables its data steps insert into');
     const after = snapshot();
     for (const [name, rows] of before) for (const [key, stored] of rows) assert.equal(after.get(name)!.get(key), stored, `${name} ${key} is unchanged`);
     const added = Object.fromEntries([...after].map(([name, rows]) => [name, [...rows.keys()].filter(key => !before.get(name)!.has(key)).length]).filter(([, count]) => count));
@@ -244,7 +244,7 @@ test('hosted preparation never touches a counter or any other stored row: upgrad
 test('E7: the data steps after wave 3 are the three insert-only steps; the standard defect codes are the 98 of the reference (58 added in wave 3), inserted only when missing', () => {
   const store = new Store(':memory:'); seed(store);
   try {
-    assert.deepEqual(hostedDataSteps(() => store).map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings', 'spoolNames'], 'a new data step needs its own insert-only review (spoolNames: tests/spool-catalog.test.ts)');
+    assert.deepEqual(hostedDataSteps(() => store).map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings', 'spoolNames', 'fittingCatalog'], 'a new data step needs its own insert-only review (spoolNames: tests/spool-catalog.test.ts, fittingCatalog: tests/cut-list.test.ts)');
     assert.equal(STANDARD_DEFECT_CODES.length, 98);
     const norms = STANDARD_DEFECT_CODES.reduce<Record<string, number>>((counts, code) => ({ ...counts, [code[4]]: (counts[code[4]] || 0) + 1 }), {});
     assert.deepEqual(norms, { 'ISO 6520-1': 63, 'ASME B31.3': 9, 'API 1104': 15, 'Current list': 11 });
@@ -281,7 +281,7 @@ test('wave 4 merge: on a workspace from before wave 4 the four data steps only a
     });
     const before = snapshot(), readsBefore = spoolReads();
     const steps = hostedDataSteps(() => store);
-    assert.deepEqual(steps.map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings', 'spoolNames'], 'wave 4 adds one data step, spoolNames');
+    assert.deepEqual(steps.map(step => step.name), ['catalogData', 'diameterCatalog', 'projectHoldings', 'spoolNames', 'fittingCatalog'], 'wave 4 adds one data step, spoolNames (the cut list fitting catalog came later and the sample already holds it)');
     const distinct = [...new Set(store.list('spools').map(spool => String(spool.name ?? '').trim()).filter(Boolean))];
     assert.ok(distinct.length > 0, 'the sample holds spools');
     assert.deepEqual(steps[3].run({ dryRun: true }), { spoolNamesAdded: distinct.length }, 'the dry run counts');
