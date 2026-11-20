@@ -121,11 +121,11 @@ test('Add project site through the app gives the new main project the 36 sizes o
   const edit = await f.json(`/api/records/diameters/${record.id}`, 'PUT', { diameter: 'DN 55', size: 67, sizeinch: 2.2, _version: record._version }); assert.equal(edit.status, 200, await edit.clone().text() + 'existing records edit normally');
 });
 
-test('the date filter is gone from Weld diameters and stays on the other lists', () => {
+test('the date filter is gone from Weld diameters and the MTO catalogs and stays on the other lists', () => {
   const source = readFileSync(new URL('../client/records.tsx', import.meta.url), 'utf8');
-  const pieces = source.split("{resourceKey !== 'diameters' && ");
-  assert.equal(pieces.length, 3, 'the Filters button and the From / To date inputs are both skipped for diameters');
-  assert.ok(pieces[1].startsWith('<button className={`btn small ${filtersOpen'), 'Filters button'); assert.ok(pieces[2].startsWith("<><FieldInput field={{name:'_from',label:'From date'"), 'date inputs');
+  assert.match(source, /const NO_DATE_FILTER = \['diameters', 'material_parts', 'material_types', 'uoms', 'spool_names', 'operation_phases', 'suppliers'\];/);
+  assert.ok(source.includes("{!NO_DATE_FILTER.includes(resourceKey) && <><FieldInput field={{name:'_from',label:'From date'"), 'date inputs skipped for those lists');
+  assert.ok(source.includes("{resourceKey !== 'diameters' && (isoList || !NO_DATE_FILTER.includes(resourceKey) || refFields.length > 0"), 'Filters button only where something can be filtered');
   assert.ok(source.includes("name:'_to',label:'To date'"), 'the other lists keep their date range');
 });
 
