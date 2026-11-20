@@ -123,9 +123,11 @@ test('Add project site through the app gives the new main project the 36 sizes o
 
 test('the date filter is gone from Weld diameters and stays on the other lists', () => {
   const source = readFileSync(new URL('../client/records.tsx', import.meta.url), 'utf8');
-  const pieces = source.split("{resourceKey !== 'diameters' && ");
-  assert.equal(pieces.length, 3, 'the Filters button and the From / To date inputs are both skipped for diameters');
-  assert.ok(pieces[1].startsWith('<button className={`btn small ${filtersOpen'), 'Filters button'); assert.ok(pieces[2].startsWith("<><FieldInput field={{name:'_from',label:'From date'"), 'date inputs');
+  // Weld diameters (and the MTO catalogs, client 20.11.2026) are listed in NO_DATE_FILTER: no From / To inputs, no Filters button for the date alone.
+  const list = /const NO_DATE_FILTER = \[([^\]]*)\]/.exec(source);
+  assert.ok(list && list[1].includes("'diameters'"), 'Weld diameters are a list without the date filter');
+  assert.ok(source.includes("{!NO_DATE_FILTER.includes(resourceKey) && <><FieldInput field={{name:'_from',label:'From date'"), 'date inputs');
+  assert.ok(source.includes('NO_DATE_FILTER.includes(resourceKey) ||'), 'Filters button');
   assert.ok(source.includes("name:'_to',label:'To date'"), 'the other lists keep their date range');
 });
 

@@ -116,14 +116,16 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
       operation_phases: fields('name sort description'),
       calculation_norms: fields('name uom hoursPerUnit description'),
       calculation_lines: fields('name isoId requirementId normId quantity description'),
-      cut_list: fields('name isoId requirementId spoolId quantity lengthMm description'),
+      cut_list: fields('name isoId requirementId spoolId quantity lengthMm description sheet dia material schedule totalLength bevel extraLength fit1Id fit2Id fit3Id fit4Id takeoff1 takeoff2 takeoff3 takeoff4'),
     });
+    // The fitting catalog of the cut list: its page opens from the Cut list of an isometric (no menu item, shared/pilots.ts).
+    deliverResource(availability, 'cut_fittings');
     availability.actions['add-iso-material'] = fields('isoId source materialId phaseId quantity materialNo description materialGroup articleNo legacyNo dia lbs uom price chargeNo addToDB');
     Object.assign(availability.reports, {
       mto: fields('project iso revision group article material dia lbs description quantity uom phase charge'),
       'weld-cards': fields('project iso revision weld type spool wps diameter'),
       calculation: fields('project iso name material quantity uom norm hoursPerUnit hours status'),
-      'cut-list': fields('project iso name material spool quantity lengthMm totalMm'),
+      'cut-list': fields('project iso name sheet spool dia material schedule totalLength bevel extraLength fit1 fit2 fit3 fit4 lengthMm quantity totalMm'),
     });
     availability.navigation.push('iso_materials', 'operation_phases', 'calculation_norms', 'calculation_lines', 'cut_list');
     deliverResource(availability, 'sites');

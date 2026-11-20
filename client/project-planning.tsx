@@ -8,9 +8,10 @@ import { formatNumber, apiUrl } from './api.ts';
 import { Badge, EmptyState, FieldInput, SearchInput, TableScroll } from './components.tsx';
 import { RecordEditor, WorkflowDialog } from './dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
+import { usePilot } from './pilot.tsx';
 
 type PlanningMode = 'mto' | 'calculation' | 'cut-list';
-const modes = { mto: { title: 'MTO · Material list', resource: 'iso_materials', singular: 'material' }, calculation: { title: 'Project calculation · MSPS', resource: 'calculation_lines', singular: 'calculation line' }, 'cut-list': { title: 'MSPS cut list', resource: 'cut_list', singular: 'cut list item' } };
+const modes = { mto: { title: 'MTO · Material list', resource: 'iso_materials', singular: 'material' }, calculation: { title: 'Project calculation · MSPS', resource: 'calculation_lines', singular: 'calculation line' }, 'cut-list': { title: 'Cut list', resource: 'cut_list', singular: 'cut list line' } };
 
 export function ProjectPlanning() {
   const { canReadReport } = useWorkspace();
@@ -21,7 +22,7 @@ export function ProjectPlanning() {
 }
 
 export function PlanningRegister({ mode, scopeIsoId = '', scopeProjectId = '' }: { mode: PlanningMode; scopeIsoId?: string; scopeProjectId?: string }) {
-  const { rows, siteId, canRecord, canReadReport, openRecord } = useWorkspace();
+  const { rows, siteId, canRecord, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
   const [projectId, setProject] = useState(scopeProjectId), [isoId, setIso] = useState(scopeIsoId), [query, setQuery] = useState('');
   const [editor, setEditor] = useState<Row | 'new' | 'norm' | null>(null), [archive, setArchive] = useState<Row | null>(null), [page, setPage] = useState(0);
   const info = modes[mode];
@@ -35,7 +36,7 @@ export function PlanningRegister({ mode, scopeIsoId = '', scopeProjectId = '' }:
   const defaults = { ...(isoId ? { isoId } : {}), ...(projectId ? { projectId } : {}) };
   return <section className="planning-register">
     <div className="page-heading"><div><h2>{info.title}</h2><p>{report.definition.description}</p></div><div className="heading-actions">
-      {mode === 'calculation' && canRecord('calculation_norms', 'insert') && <button className="btn" onClick={() => setEditor('norm')}><Plus size={15}/>Add norm</button>}
+      {mode === 'calculation' && !pilot && canRecord('calculation_norms', 'insert') && <button className="btn" onClick={() => setEditor('norm')}><Plus size={15}/>Add norm</button>}
       {canReadReport(mode, 'export') && <><a className="btn" href={exportUrl}><Download size={15}/>CSV</a><a className="btn" href={`${exportUrl}&format=xlsx`}><Download size={15}/>Excel</a></>}
       {canReadReport(mode, 'print') && <button className="btn" onClick={() => window.print()}><Printer size={15}/>Print</button>}
       {canRecord(info.resource, 'insert') && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={15}/>Add {info.singular}</button>}
@@ -49,7 +50,7 @@ export function PlanningRegister({ mode, scopeIsoId = '', scopeProjectId = '' }:
       })}</tbody></table></TableScroll>
       {!filtered.length && <EmptyState title={`No ${mode === 'mto' ? 'materials' : 'planning lines'} in this scope`} description={mode === 'calculation' ? 'Add your norms, then add operations with an MTO material or a manual quantity.' : mode === 'cut-list' ? 'Add MTO materials first, then enter the pieces and measured cutting lengths.' : 'Add a catalog material or a custom item with its required quantity.'}/>}
       <div className="table-footer"><span>{filtered.length} {filtered.length === 1 ? 'line' : 'lines'}</span><div><button className="btn small" disabled={!current} onClick={() => setPage(current - 1)}>Previous</button><span>{current + 1} / {Math.max(1, Math.ceil(filtered.length / 50))}</span><button className="btn small" disabled={(current + 1) * 50 >= filtered.length} onClick={() => setPage(current + 1)}>Next</button></div></div>
-    </div><p className="planning-note"><Link to={`/materials/${info.resource}`}>Manage records and restore archived items</Link>{mode === 'calculation' && <> · <Link to="/materials/calculation_norms">Manage calculation norms</Link></>}</p>
+    </div><p className="planning-note"><Link to={`/materials/${info.resource}`}>Manage records and restore archived items</Link>{mode === 'calculation' && !pilot && <> · <Link to="/materials/calculation_norms">Manage calculation norms</Link></>}</p>
     {editor === 'new' && mode === 'mto' ? <WorkflowDialog actionKey="add-iso-material" defaults={defaults} onClose={() => setEditor(null)}/> : editor && <RecordEditor resourceKey={editor === 'norm' ? 'calculation_norms' : info.resource} record={typeof editor === 'object' ? editor : undefined} defaults={editor === 'norm' ? {} : defaults} onClose={() => setEditor(null)}/>}
     {archive && <ArchiveRecordDialog resourceKey={info.resource} record={archive} onClose={() => setArchive(null)}/>}
   </section>;

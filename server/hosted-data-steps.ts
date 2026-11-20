@@ -4,6 +4,7 @@ import { upgradeWeldCatalogs } from './catalog-upgrade.ts';
 import { loadDiameterCatalog, missingDiameterCatalog } from './diameter-catalog.ts';
 import { migrateProjectHoldings } from './mto-stock.ts';
 import { seedSpoolNames } from './spool-catalog.ts';
+import { loadFittingCatalog, missingFittingCatalog } from './cut-list.ts';
 
 /**
  * The data steps of the hosted preparation (server/prepare-welding.ts), in order. Every step only inserts, into the
@@ -23,4 +24,6 @@ export const hostedDataSteps = (store: () => Store): DataStep[] => [
   { name: 'projectHoldings', inserts: ['stock', 'movements'], run: options => migrateProjectHoldings(store(), options) },
   // The spool name catalog (Weld data → Spools): one name per distinct name of the existing spools, added only; spools and welds stay as stored.
   { name: 'spoolNames', inserts: ['spool_names'], run: options => seedSpoolNames(store(), options) },
+  // The cut list fitting catalog (the client's sheet Codes): adds the fittings the workspace does not hold, never changes one (server/cut-list.ts).
+  { name: 'fittingCatalog', inserts: ['cut_fittings'], run: ({ dryRun: counting }) => ({ added: counting ? missingFittingCatalog(store()).length : loadFittingCatalog(store()) }) },
 ];

@@ -111,7 +111,7 @@ export const SITE_RULES: Record<string, SiteRule> = {
   [USER_SITES]: via(SITE),
   // Materials catalogs (global)
   suppliers: 'global', material_parts: 'global', material_types: 'global', uoms: 'global', operation_phases: 'global',
-  calculation_norms: 'global', materials: 'global', custom_materials: 'global', material_laydowns: 'global', service_companies: 'global',
+  calculation_norms: 'global', cut_fittings: 'global', materials: 'global', custom_materials: 'global', material_laydowns: 'global', service_companies: 'global',
   // A certificate belongs to one main project (its siteId); one saved before that follows its linked projects (server/site-scope.ts).
   certifications: shared(SITE),
   laydowns: shared(SITE),

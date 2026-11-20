@@ -8,6 +8,7 @@ import { seedSpoolNames } from './spool-catalog.ts';
 export { seedInspectionSamples } from './inspections-seed.ts';
 import { seedMtoStock } from './mto-stock-seed.ts';
 import { loadDiameterCatalog } from './diameter-catalog.ts';
+import { loadFittingCatalog } from './cut-list.ts';
 import { SAMPLE_PROFILES } from './sample-profiles.ts';
 
 /**
@@ -117,6 +118,8 @@ export function seed(store: Store, options: { hostedSample?: boolean } = {}) {
     [['1/2"', 21.3, 0.5, 66.9], ['3/4"', 26.7, 0.75, 83.8], ['1"', 33.4, 1, 104.9], ['1.1/4"', 42.2, 1.25, 132.5], ['1.1/2"', 48.3, 1.5, 151.7], ['2"', 60.3, 2, 189.3], ['2.1/2"', 73, 2.5, 229.2], ['3"', 88.9, 3, 279.1], ['4"', 114.3, 4, 358.9], ['6"', 168.3, 6, 528.5], ['8"', 219.1, 8, 688]].forEach(([diameter, size, sizeinch, outline], i) => add('diameters', `diameter-${i + 1}`, { diameter, size, sizeinch, outline, sorting: i + 1 }));
     // The rest of the reference diameter catalog (reducer pairs, mm sizes): only what the rows above do not already hold.
     loadDiameterCatalog(store);
+    // The cut list fitting catalog (the client's sheet Codes, server/cut-list.ts).
+    loadFittingCatalog(store);
     add('pqr', 'pqr-1', { name: 'STX-PQR-001', standard: 'ISO 15614-1', processId: 'process-0' });
     add('wps', 'wps-1', { name: 'STX-WPS-141-01', method: '141', definition:'Sample procedure — see the attached specification',jointType:'BW',allProjects:true,siteIds:['site-north','site-river'], processId: 'process-0', pqrId: 'pqr-1', standard: 'ISO 15609-1' });
     add('welding_wires', 'wire-1', { siteId: 'site-north', name: 'WIRE-316L-01', classification: 'ER316L', diameter: 2.4, manufacturer: 'Sample Filler Co.', chargeNo: 'H-1042', materialTypeId: 'material-type-a312-316l', typeMaterial: 'A312 TP316L', norm: 'EN ISO 14343-A', certType: '3.1', attestNo: 'ATT-W-2291', supplierId: 'supplier-steel', allProjects: true, controlled: true, accepted: true });

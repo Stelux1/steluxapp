@@ -34,6 +34,7 @@ import '../client/pdf-documents.css';
 import '../client/iso-book.css';
 import '../client/certifications.css';
 import '../client/ndt-batch-import.css';
+import '../client/cut-list.css';
 
 export default function WorkspaceApp({ Component, pageProps }: AppProps) {
   return <Component {...pageProps}/>;
