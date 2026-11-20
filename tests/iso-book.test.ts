@@ -211,7 +211,9 @@ test('Welder\'s summary: welders, their welds and the qualification validity at 
   assert.equal(model.welders.reduce((sum, welder) => sum + welder.welds.length, 0), welds.length, 'every weld appears under its welder');
   assert.deepEqual(model.welders.map(welder => welder.welder.id).sort(), [...new Set(welds.map(weld => String(weld.welder1Id)))].sort());
   const w002 = model.welders.find(entry => entry.welder.id === 'welder-2')!;
-  assert.equal(w002.welds[0].status, 'Valid'); assert.equal(w002.welds[0].validUntil, '2027-07-14');
+  // The seed dates certificates from today, so the expected end date is read from the seeded certificate that covers the weld.
+  const covering = f.store.list('welder_certificates').filter(row => row.welderId === 'welder-2' && !row.isDocument && String(row.issuedAt || '') <= String(w002.welds[0].date) && String(w002.welds[0].date) <= String(row.expiresAt || '9999')).map(row => String(row.expiresAt).slice(0, 10)).sort().at(-1);
+  assert.equal(w002.welds[0].status, 'Valid'); assert.equal(w002.welds[0].validUntil, covering);
   const standalone = await texts(await f.admin.request('/pdf/welders-summary?isoId=iso-1', { pilot: 'weld' }));
   for (const label of ["ISO STX-CW-001 - Welder's summary", 'Welder', 'Weld', 'Weld date', 'WPS', 'Qualification', 'Valid until', 'At weld date', 'W001', 'Valid']) assert.ok(standalone.all.includes(label), label);
   assert.equal((await f.admin.request('/pdf/welders-summary?isoId=iso-1', { pilot: 'mto' })).status, 403, 'weld register report: Weld Pilot only');

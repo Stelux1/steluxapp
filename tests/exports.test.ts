@@ -52,6 +52,29 @@ const sheetOf = async (response: Response) => {
 };
 const post = (f: Awaited<ReturnType<typeof hostedFixture>>, table: string, format: string, columns: string[], rows: unknown[][]) => f.request('/api/export/table', 'POST', { table, format, columns, rows });
 
+/** Row 1 of the client's Export weld data file of 17.11.2026 (Export-site2-user226-20261117-112325.xlsx). */
+const CLIENT_EXPORT_HEADER = ['Project Site', 'Project', 'Iso No', 'ITP no', 'IRN', 'Asset Tag', 'Drawing No', 'xRay', 'X-axis', 'Y-axis', 'Piping Class', 'Test Pressure', 'Test System', 'Test Medium', 'PED', 'Nom Diameter', 'Paint Spec', 'Insulation', 'Eelevation', 'Chemical Clean', 'Tracing', 'Zone', 'Material', 'Weld no', 'Weld type', 'Joint Type', 'Welder', 'Welder 2', 'Welder 3', 'Welder 4', 'Wire 1', 'Wire 2', 'Date fit', 'Date', 'Spool', 'VT', 'VT no', 'VT doc', 'NDT', 'NDT 1 Process', 'NDT 1 result', 'NDT 1 Report', 'NDT 2 Process', 'NDT 2 result', 'NDT 1 Report', 'NDT 3 Process', 'NDT 3 result', 'NDT 3 Report', 'NDT 4 Process', 'NDT 4 result', 'NDT 4 Report', 'Defect', 'Defect type', 'PWHT Pre Location', 'PWHT Pre Process', 'PWHT Pre Date', 'PWHT Pre Request No', 'PWHT Pre Report No', 'PWHT Location', 'PWHT Process', 'PWHT Date', 'PWHT Request No', 'PWHT Report No', 'Index No 1', 'Pos 1', 'Charge No 1', 'Material 1', 'Article No 1', 'Index No 2', 'Pos 2', 'Charge no 2', 'Material 2', 'Article No 2', 'WT 1', 'WT 2', 'Schedule 1', 'S chedule 2', 'Welding Process', 'Wps No', 'Coating 1', 'Size inch', 'Outline', 'Diameter', 'Diameter mm', 'Tracer', 'Created', 'Last edit date'];
+
+test('Export weld data: the columns and value formats of the client file', t => {
+  const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  const rows = rowsOf(store);
+  assert.equal(CLIENT_EXPORT_HEADER.length, 87);
+  const report = buildWeldExport(rows, {});
+  assert.deepEqual(report.columns.map(column => column.label), CLIENT_EXPORT_HEADER);
+  assert.equal(new Set(report.columns.map(column => column.key)).size, 87, 'keys stay unique although two labels repeat');
+  for (const line of report.rows) {
+    const values = line.values;
+    for (const name of ['Welder', 'Welder 2', 'Welder 3', 'Welder 4', 'Wire 1', 'Wire 2']) assert.ok(String(values[name]).length > 0, `${name} is never empty ("------" when not set)`);
+    for (const i of [1, 2, 3, 4]) assert.ok(['', 'YES', 'NO'].includes(String(values[`NDT ${i} result`])), 'NDT results are YES / NO');
+    assert.ok(['', 'Yes'].includes(String(values.Tracer)));
+    assert.match(String(values['Material 1']), /^[^/]*\/[^/]*\/[^/]*\/[^/]*\/.+$/, 'size/schedule/wall/type/part');
+  }
+  const weld = rows.welds.find(row => row.welder1Id && !row.welder2Id)!;
+  const values = report.rows.find(line => line.source?.id === weld.id)!.values;
+  assert.match(String(values.Welder), / \| /); assert.equal(values['Welder 2'], '------');
+  assert.match(String(values['Last edit date']), /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+});
+
 // ---- weld-dashboard-reports-022 / -023: Export weld data ---------------------------------------------------------------
 
 test('weld-dashboard-reports-023: weld numbers coded GAP, SP, E or B are left out of the export unless their code is ticked', t => {
@@ -94,7 +117,11 @@ test('Export weld data: the server writes the workbook for Export on Export weld
   assert.equal((await f.request('/api/export-welds?projectId=all')).status, 403, 'Show on 81 is not Export');
   await f.signIn('Welds exporter', rules(true));
   const plain = await sheetOf(await f.request(`/api/export-welds?projectId=all&siteId=${encodeURIComponent(String(f.store.get('projects', String(iso.projectId)).siteId))}`));
-  assert.ok(plain.lines > 0); assert.equal(plain.header[0], 'Project site');
+  assert.ok(plain.lines > 0); assert.equal(plain.sheet.name, 'Sheet1');
+  assert.deepEqual(plain.header, CLIENT_EXPORT_HEADER, 'the 87 headers of the client file, in its order');
+  const firstWeld = (plain.sheet.getRow(2).values as unknown[]).slice(1).map(String);
+  const cell = (label: string) => firstWeld[CLIENT_EXPORT_HEADER.indexOf(label)];
+  assert.ok(['Yes', 'No'].includes(cell('VT')) && ['Yes', 'No'].includes(cell('NDT')) && ['Yes', 'No'].includes(cell('VT doc')), 'flags are Yes / No');
   const textOf = (sheet: ExcelJS.Worksheet) => JSON.stringify(sheet.getSheetValues());
   assert.equal(textOf(plain.sheet).includes('E01'), false, 'E01 is left out without includeCodes');
   const withE = await sheetOf(await f.request('/api/export-welds?projectId=all&includeCodes=E'));

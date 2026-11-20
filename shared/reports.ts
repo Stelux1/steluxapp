@@ -3,6 +3,7 @@ import { RESOURCE_MAP } from './resources.ts';
 import { materialName, materialRecord } from './materials.ts';
 import { active, weldingStats } from './module-metrics.ts';
 import { LISL_COLUMNS, lislValues } from './lisl.ts';
+import { WELD_EXPORT_COLUMNS, weldExportValues } from './weld-export.ts';
 import { calculationEntries, cutListEntries } from './planning.ts';
 import { NON_WELD_CODES, isNonWeldCode, type NonWeldCode } from './weld-codes.ts';
 
@@ -65,14 +66,15 @@ export function buildReport(key:string,rows:Record<string,Row[]>,filters:ReportF
 }
 /**
  * Export weld data (Weld Pilot → Welding data → Export weld data): the weld register of the chosen project, or of every
- * project of the site, in the columns of the Data LISL. Weld numbers that carry a GAP, SP, E or B code are left out of the
+ * project of the site, in the 87 columns of the client's own export file (shared/weld-export.ts). Weld numbers that carry a GAP, SP, E or B code are left out of the
  * file unless their code is ticked under "Also export these records" (`includeCodes`; shared/weld-codes.ts).
  */
 export interface WeldExportOptions {siteId?:string;projectId?:string;includeCodes?:readonly string[];}
 export function buildWeldExport(rows:Record<string,Row[]>,options:WeldExportOptions={}):Report{
   const report=buildReport('lisl',rows,{siteId:options.siteId||'',projectId:options.projectId||''});
-  const weldNo=new Map((rows.welds||[]).map(weld=>[weld.id,weld.weldNo]));
-  return {...report,rows:report.rows.filter(row=>!isNonWeldCode(weldNo.get(row.source?.id??row.id),options.includeCodes))};
+  const welds=new Map((rows.welds||[]).map(weld=>[weld.id,weld]));
+  // The columns and value formats of the client's own export file (shared/weld-export.ts), not the Data LISL ones.
+  return {...report,columns:WELD_EXPORT_COLUMNS,rows:report.rows.filter(row=>!isNonWeldCode(welds.get(row.source?.id??row.id)?.weldNo,options.includeCodes)).map(row=>({...row,values:weldExportValues(welds.get(row.source?.id??row.id)!,rows)}))};
 }
 /** The codes of a comma-separated `includeCodes` query value: only GAP, SP, E and B, each once, in that order. */
 export const parseIncludeCodes=(value:unknown):NonWeldCode[]=>{

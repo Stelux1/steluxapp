@@ -3,7 +3,6 @@ import type { Express, Request } from 'express';
 import { AppError, type Store } from './store.ts';
 import type { AuthRequest } from './auth.ts';
 import { buildWeldExport, parseIncludeCodes, type Report } from '../shared/reports.ts';
-import { projectReport } from '../shared/release.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import { REPORT_RESOURCES, canReport, canResource } from '../shared/permissions.ts';
 import { EXPORT_TABLES, EXPORT_WELDS_AREA, PICKLIST_ARCHIVE_EXPORT_AREA, areaRight, tableCsv } from '../shared/export-tables.ts';
@@ -30,6 +29,15 @@ export function reportWorkbook(report: Report) {
   sheet.views = [{ state: 'frozen', ySplit: 1 }];
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: sheet.rowCount, column: report.columns.length } };
   workbook.calcProperties.fullCalcOnLoad = true;
+  return workbook;
+}
+
+/** Export weld data as the client's own file writes it: one sheet "Sheet1", a plain header row, every value as text. */
+export function weldExportWorkbook(report: Report) {
+  const workbook = new ExcelJS.Workbook(); workbook.creator = 'Blitzkrieg';
+  const sheet = workbook.addWorksheet('Sheet1');
+  sheet.addRow(report.columns.map(column => column.label));
+  for (const source of report.rows) sheet.addRow(report.columns.map(column => String(source.values[column.key] ?? '')));
   return workbook;
 }
 
@@ -69,10 +77,12 @@ export function registerExportRoutes({ app, store, availability, readableRows }:
     const rows = Object.fromEntries(RESOURCES.filter(resource => canResource(user, resource.key)).map(resource => [resource.key, readableRows(req, resource.key, true).filter(row => !primary.includes(resource.key) || canResource(user, resource.key, 'export', row))]));
     // "Export all data" (full=ok) is every project site the account may see; otherwise one project, or All projects of the chosen site.
     const full = query(req, 'full') === 'ok'; const projectId = query(req, 'projectId');
-    const report = projectReport(availability, buildWeldExport(rows, { siteId: full ? '' : query(req, 'siteId'), projectId: full || projectId === 'all' ? '' : projectId, includeCodes: parseIncludeCodes(req.query.includeCodes) }));
+    // The export has its own 87 columns (shared/weld-export.ts); the release profile only decides whether the LISL data is offered at all.
+    if (availability && !(availability.reports.lisl || []).length) throw new AppError(404, 'This resource could not be found.');
+    const report = (buildWeldExport(rows, { siteId: full ? '' : query(req, 'siteId'), projectId: full || projectId === 'all' ? '' : projectId, includeCodes: parseIncludeCodes(req.query.includeCodes) }));
     if (!report.rows.length) throw new AppError(404, 'No welds found for this export.');
     res.setHeader('Cache-Control', 'no-store'); res.attachment('blitzkrieg-export-welds.xlsx');
-    await reportWorkbook(report).xlsx.write(res); res.end();
+    await weldExportWorkbook(report).xlsx.write(res); res.end();
   });
   app.post('/api/export/table', async (req, res) => {
     if (!pilots) throw new AppError(404, 'This resource could not be found.');
