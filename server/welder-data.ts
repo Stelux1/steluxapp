@@ -5,7 +5,7 @@
  */
 import type { Row } from '../shared/types.ts';
 import { composeDiameter, unitErrors, unitPrefill } from '../shared/diameter-standard.ts';
-import { CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, ownerRows, ownerSites, rangeErrors, sitesMeet } from '../shared/welder-data.ts';
+import { catalogMaterialType, materialTypeName, CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, ownerRows, ownerSites, rangeErrors, sitesMeet } from '../shared/welder-data.ts';
 import { WPS_RANGES } from '../shared/wps.ts';
 import type { Actor, Store } from './store.ts';
 import { qaEngineerCompany } from '../shared/weld-catalogs.ts';
@@ -30,6 +30,8 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
       merged = { ...existing, ...next };
     }
   }
+  // Type of material (catalog columns): the name is the specification and grade, kept up to date when either changes.
+  if (key === 'material_types' && catalogMaterialType(merged) && (!existing || ['materialSpec', 'materialGrade', 'standardSystem'].some(name => name in input) || blank(merged.name))) { next.name = materialTypeName(merged); merged = { ...merged, name: next.name }; }
   const errors: Record<string, string> = { ...hostedRequiredErrors(key, merged), ...unitErrorsOf };
   // Add storehouse (MTO Pilot, reference #addLager type=1): a new storehouse holds materials; the form does not show Used for.
   if (key === 'warehouses' && !existing && next.use === undefined) next.use = 'Materials';

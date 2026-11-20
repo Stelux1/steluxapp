@@ -7,6 +7,7 @@
  * field order, with the index number first as in the reference preview (a point to confirm with the client).
  */
 import type { Row } from './types.ts';
+import { materialTypeParts } from './welder-data.ts';
 
 const text = (value: unknown) => value === null || value === undefined ? '' : String(value).trim();
 const key = (value: unknown) => text(value).replace(/\s+/g, ' ').toLowerCase();
@@ -38,7 +39,7 @@ export const CERTIFICATE_PREVIEW_COLUMNS = ['indexNo', 'chargeNo', 'certType', '
 export const IMPORT_ROW_LIMIT = 1000;
 
 /** The option text of a type of material in the reference ("A234 Gr WPB/CS/Fitting/"). */
-export const materialTypeOption = (row: Row) => [text(row.name), text(row.typeOfSteel), text(row.materialDescription), text(row.basicMaterial)].join('/');
+export const materialTypeOption = (row: Row) => materialTypeParts(row).map(text).join('/');
 /** How a sheet value names a record of each lookup. */
 const NAMES: Record<ImportLookup, (row: Row) => string[]> = {
   materials: row => [text(row.materialNo)],

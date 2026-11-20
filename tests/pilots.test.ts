@@ -46,7 +46,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
 test('the Weld Pilot menu has no Weld process and no Request archive (hidden by design in the reference); the MTO Pilot keeps its service request archive', () => {
   const labels = PILOT_MAP.weld.groups.flatMap(group => group.items.map(item => item.label));
   for (const hidden of ['Weld process', 'Request archive']) assert.ok(!labels.includes(hidden), hidden);
-  assert.deepEqual(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.map(item => item.label), ['PQR', 'WPS methods', 'Weld type', 'Coating', 'Spools', 'Customs']);
+  assert.deepEqual(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.map(item => item.label), ['PQR', 'WPS methods', 'Weld type', 'Coating', 'Welding wire', 'Spools', 'Customs']);
   assert.ok(PILOT_MAP.mto.groups.flatMap(group => group.items).some(item => item.label === 'Request archive' && item.resource === 'service_requests'));
 });
 
@@ -74,9 +74,11 @@ test('every menu item resolves to a real page and resource items use resourcePat
   // isometric itself (the reference's Order / Take in menu has no Isometric materials, mto-procurement-stock-011).
   // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025). Transfer orders open from the Transfer Orders button on Storehouses and from the bell (mto-procurement-stock-010).
   // Weld data / Materials → Spools open the spool name catalog (w4-spool-catalog); an isometric's own spools open from its Spools tab and the Service request page.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders', 'roles'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
+  // Roles has no function in Weld Pilot (client, 20.11.2026): no menu item; the welder keeps its Welder role on the server.
+  assert.ok(!listed.has(resourcePath('roles')), 'Roles has no menu item');
   assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
-  assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(listed.has('/welding/lisl')); assert.ok(listed.has('/materials/planning'));
+  assert.ok(!listed.has('/workspace/main-projects'), 'Project sites is the table, the card screen is the choice after sign-in'); assert.ok(listed.has('/workspace/sites')); assert.ok(!listed.has('/welding/lisl'), 'Data LISL opens from Iso overview, not from the menu'); assert.ok(listed.has('/materials/planning'));
 });
 
 test('pilot membership keeps shared pages in both pilots and pilot pages in their own', () => {

@@ -1,4 +1,5 @@
 import type { Row } from './types.ts';
+import { materialTypeParts } from './welder-data.ts';
 import { requirementExecution } from './materials.ts';
 
 /**
@@ -87,7 +88,7 @@ export function massEditRefusal(changes: Record<string, unknown>): string {
   return Object.keys(changes).length ? '' : 'Fill in at least one field to change.';
 }
 /** Type of material in the material forms: "type / steel / description / basic material", empty parts kept. */
-export const materialTypeLabel = (row: Record<string, unknown>) => [row.name, row.typeOfSteel, row.materialDescription, row.basicMaterial].map(text).join(' / ');
+export const materialTypeLabel = (row: Record<string, unknown>) => materialTypeParts(row).map(text).join(' / ');
 /** Options of a catalog select in the reference order (the record's own number, i.e. the order it was made in). */
 export const catalogOrder = (rows: Row[] | undefined) => active(rows).sort(byCreation);
 

@@ -25,6 +25,9 @@ export const CERT_TYPES = ['2.1', '2.2', '3.1', '3.2'];
 export const WELD_POSITIONS = ['PA', 'PB', 'PC', 'PD', 'PE', 'PF', 'PG', 'H-L045', 'J-L045', '1G', '2G', '3G', '4G', '5G', '6G', '1F', '2F', '3F', '4F'];
 export const WELD_KINDS = ['BW', 'FW'];
 export const STANDARD_SYSTEMS = ['ASME', 'EN'];
+/** Type of material → Standard system and Product form: the values of the client's material catalog (Oil & Gas material catalog, 20.11.2026); a typed value is also taken. */
+export const MATERIAL_STANDARD_SYSTEMS = ['ASME / ASTM', 'API', 'EN', 'JIS', 'GOST'];
+export const MATERIAL_PRODUCT_FORMS = ['Pipe', 'Fitting', 'Forging', 'Plate', 'Other'];
 /**
  * The seven lists of "Weldercard settings" in the reference's order (type=wire, process, dia, pos, bw, dikte, asme): `key` is the
  * list a value belongs to, `field` the card line field that holds it and `filter` its name in the "Filter" dialog.
@@ -78,7 +81,7 @@ export const WELDER_DATA_PAGES: Record<string, string[]> = {
   diameters: names('diameter size sizeinch outline sorting'),
   material_parts: names('name custom'),
   suppliers: names('name address zip residence mailbox mnzip mnresidence phone fax email'),
-  material_types: names('name typeOfSteel materialDescription basicMaterial materialGroup lucefinGroup iso15608 asmePNumber asmeGroup isoAsme'),
+  material_types: names('name standardSystem materialSpec materialGrade productForm materialDescription iso15608 typeOfSteel basicMaterial materialGroup lucefinGroup asmePNumber asmeGroup isoAsme'),
   welding_wires: names('name classification diameter chargeNo description materialTypeId typeMaterial norm certType attestNo supplierId allProjects controlled accepted projectIds'),
   certifications: names('name indexNo chargeNo certType materialId materialTypeId materialPartId basicMaterial diameter diameterId schedule wallThickness hotYield impactStrength supplierId allProjects controlled accepted description projectIds siteId'),
 };
@@ -124,7 +127,7 @@ export const HOSTED_COLUMNS: Record<string, string[]> = {
   welder_customs_catalog: ['name', 'abbreviation'],
   diameters: ['diameter', 'size', 'sizeinch', 'outline', 'sorting'],
   material_parts: ['name', 'custom'],
-  material_types: ['name', 'typeOfSteel', 'materialDescription', 'basicMaterial', 'materialGroup', 'isoAsme'],
+  material_types: ['name', 'standardSystem', 'materialSpec', 'materialGrade', 'productForm', 'materialDescription', 'iso15608'],
   welding_wires: ['name', 'chargeNo', 'classification', 'typeMaterial', 'diameter', 'certType', 'attestNo', 'supplierId', 'controlled', 'accepted'],
   certifications: ['indexNo', 'chargeNo', 'certType', 'name', 'materialId', 'materialTypeId', 'materialPartId', 'basicMaterial', 'diameter', 'schedule', 'wallThickness', 'supplierId', 'controlled', 'accepted'],
   suppliers: ['name', 'address', 'email', 'phone'],
@@ -176,7 +179,7 @@ export function hostedFieldOrder<T extends { name: string; section?: string }>(r
   return FLAT_FORMS.includes(resource) ? sorted.map(field => { const { section: _section, ...flat } = field; return flat as T; }) : sorted;
 }
 /** Selects of the hosted profile that also take a value typed by the user (no fixed list on the server). */
-export const HOSTED_FREE_VALUES: Record<string, string[]> = { material_types: ['iso15608', 'asmePNumber', 'asmeGroup'], welding_wires: ['certType'], certifications: ['certType'], diameters: ['unit'] };
+export const HOSTED_FREE_VALUES: Record<string, string[]> = { material_types: ['standardSystem', 'productForm', 'iso15608', 'asmePNumber', 'asmeGroup'], welding_wires: ['certType'], certifications: ['certType'], diameters: ['unit'] };
 export const hostedFreeValue = (resource: string, name: string) => Boolean(HOSTED_FREE_VALUES[resource]?.includes(name));
 /** Longest value of a free select (a group or P-Number is a short designation). */
 export const FREE_VALUE_MAX = 50;
@@ -208,9 +211,11 @@ export const PROJECT_TOOLBAR_RESOURCES = ['certifications', 'welding_wires'];
  */
 export const HOSTED_HIDDEN: Record<string, string[]> = {
   certifications: names('diameter basicMaterial date standard materialCode materialDescription'),
+  // Type of material: only the six catalog columns are inputs (client, 20.11.2026); the name is made of specification and grade, the older fields keep their stored values.
+  material_types: names('name typeOfSteel basicMaterial materialGroup lucefinGroup asmePNumber asmeGroup'),
 };
 /** Optional in the hosted profile although the shared definition requires them (the reference form has no required mark). */
-export const HOSTED_OPTIONAL: Record<string, string[]> = { certifications: ['name'], materials: ['description'] };
+export const HOSTED_OPTIONAL: Record<string, string[]> = { certifications: ['name'], materials: ['description'], material_types: ['name'] };
 /** The Add certification form of the reference, in its order (capture weld__material__certifications.txt:69-118). */
 export const CERTIFICATE_FORM_FIELDS = names('chargeNo name materialId diameterId materialPartId materialTypeId schedule wallThickness hotYield impactStrength certType supplierId allProjects projectIds controlled accepted description');
 /** Required in the hosted profile (the shared definitions stay as they were for the other profiles). */
@@ -219,7 +224,7 @@ export const HOSTED_REQUIRED: Record<string, [string, string][]> = {
   certificate_types: [['abbreviation', 'Abbreviation']],
   welder_customs_catalog: [['abbreviation', 'Abbreviation']],
   diameters: [['size', 'Size in mm']],
-  material_types: [['typeOfSteel', 'Type of steel']],
+  material_types: [['standardSystem', 'Standard system'], ['materialGrade', 'Material grade']],
 };
 /** Qualification-only fields: a welder document ("Summary list") has none of them (see `isDocument`). */
 const QUALIFICATION_ONLY = names('certificateTypeId processId standard issuedAt customId wireId position weldKind system diameterFrom diameterTo thicknessFrom thicknessTo');
@@ -249,7 +254,7 @@ export function hostedField(resource: string, field: Field): Field {
   if (resource === 'diameters' && (DIAMETER_DECIMALS as readonly string[]).includes(field.name)) return { ...base, decimal: true };
   // Type of material: group, P-Number and group number are choose-or-type; the help line sits above the three.
   if (resource === 'diameters' && field.name === 'unit') return { ...base, free: true, blank: 'Choose or type' };
-  if (resource === 'material_types' && hostedFreeValue(resource, field.name)) return { ...base, free: true, blank: 'Choose or type', ...(field.name === 'iso15608' ? { intro: FREE_VALUE_INTRO } : {}) };
+  if (resource === 'material_types' && hostedFreeValue(resource, field.name)) return { ...base, free: true, blank: 'Choose or type', ...(field.name === 'standardSystem' ? { intro: MATERIAL_FREE_INTRO } : {}) };
   // Certificate-type is free text on the welding wire and the certificate (the full profile keeps its EN 10204 list).
   if (hostedFreeValue(resource, field.name) && field.name === 'certType') return { ...base, type: 'text', options: undefined };
   if (resource === 'welding_wires') {
@@ -260,6 +265,8 @@ export function hostedField(resource: string, field: Field): Field {
   }
   return base;
 }
+/** Help line above the Type of material form: its three selects also take a typed value. */
+export const MATERIAL_FREE_INTRO = 'Standard system, Product form and ISO 15608 group: choose a value or type one that is not in the list.';
 export const FREE_VALUE_INTRO = 'Optional. You can leave this empty. Choose a value or type one that is not in the list.';
 
 // ---------------------------------------------------------------------------------------------------------
@@ -301,7 +308,13 @@ export function diameterNumbers(input: Record<string, unknown>): { values: Recor
 /** Supplier in a select (wire, certificate): the name and, when filled, the residence (`PFF BV Klundert`). */
 export const supplierOptionLabel = (row: Record<string, unknown>) => [text(row.name), text(row.residence)].filter(Boolean).join(' ');
 /** Type of material in a select: type / steel / description / basic material, empty parts left empty (`A234 Gr WPB/CS/Fitting/`). */
-export const materialTypeOptionLabel = (row: Record<string, unknown>) => [row.name, row.typeOfSteel, row.materialDescription, row.basicMaterial].map(text).join('/');
+/** A type of material entered with the catalog columns (standard system, specification, grade) rather than the older fields. */
+export const catalogMaterialType = (row: Record<string, unknown>) => [row.standardSystem, row.materialSpec, row.materialGrade].some(value => text(value) !== '');
+/** Name of a catalog type of material: specification and grade ("ASTM A106 / ASME SA-106 B"), the grade alone when there is no specification. */
+export const materialTypeName = (row: Record<string, unknown>) => [row.materialSpec, row.materialGrade].map(text).filter(Boolean).join(' ');
+/** The parts of a type of material shown in its option label: catalog types name / product form / description, older ones name / type of steel / description / basic material. */
+export const materialTypeParts = (row: Record<string, unknown>) => catalogMaterialType(row) ? [row.name, row.productForm, row.materialDescription] : [row.name, row.typeOfSteel, row.materialDescription, row.basicMaterial];
+export const materialTypeOptionLabel = (row: Record<string, unknown>) => materialTypeParts(row).map(text).join('/');
 
 // ---------------------------------------------------------------------------------------------------------
 // Derived values

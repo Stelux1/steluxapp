@@ -109,18 +109,19 @@ test('material part Custom is text; the five catalogs lose the Description box; 
   assert.equal((await f.request('/api/records/material_parts', 'POST', { name: 'Reducer 2', custom: 'Special' })).status, 201);
 });
 
-test('type of material: the ISO 15608 and P-Number lists are the reference lists and the three selects take a typed value', async t => {
+test('type of material: the ISO 15608 and P-Number lists are the reference lists; Standard system, Product form and the groups take a typed value', async t => {
   assert.deepEqual(ISO_15608_GROUPS, ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '3.1', '3.2', '3.3', '4.1', '4.2', '5.1', '5.2', '5.3', '5.4', '6.1', '6.2', '6.3', '6.4', '7.1', '7.2', '7.3', '8.1', '8.2', '8.3', '9.1', '9.2', '9.3', '10.1', '10.2', '10.3', '11.1']);
   assert.deepEqual(ASME_P_NUMBERS, ['P-1', 'P-3', 'P-4', 'P-5A', 'P-5B', 'P-5C', 'P-6', 'P-7', 'P-8', 'P-9A', 'P-9B', 'P-10A', 'P-10H', 'P-10I', 'P-15E', 'P-34']);
   const free = hostedFields('material_types').filter(field => field.free);
-  assert.deepEqual(free.map(field => field.name), ['iso15608', 'asmePNumber', 'asmeGroup']);
+  assert.deepEqual(free.map(field => field.name), ['standardSystem', 'productForm', 'iso15608', 'asmePNumber', 'asmeGroup']);
+  assert.deepEqual(free.filter(field => !field.hidden).map(field => field.name), ['standardSystem', 'productForm', 'iso15608'], 'ASME P-Number and Group Number are no longer inputs');
   assert.ok(free.every(field => field.blank === 'Choose or type'));
-  assert.match(free[0].intro!, /^Optional\. You can leave this empty\. Choose a value or type one that is not in the list\.$/);
+  assert.match(free[0].intro!, /^Standard system, Product form and ISO 15608 group: choose a value or type one that is not in the list\.$/);
   assert.equal(RESOURCE_MAP.material_types.fields.some(field => field.free), false);
   const f = await fixture(t); await f.setup();
-  const response = await f.request('/api/records/material_types', 'POST', { name: 'X52', typeOfSteel: 'Carbon steel', iso15608: '12.4', asmePNumber: 'P-99', asmeGroup: '7' });
+  const response = await f.request('/api/records/material_types', 'POST', { standardSystem: 'API', materialSpec: 'API 5L', materialGrade: 'X52', productForm: 'Line pipe', iso15608: '12.4', asmePNumber: 'P-99', asmeGroup: '7' });
   assert.equal(response.status, 201); assert.match((await json(response)).record.isoAsme, /^12\.4 \/ P-99 Gr 7$/);
-  assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'X53', typeOfSteel: 'Carbon steel', iso15608: 'x'.repeat(60) })).status, 422);
+  assert.equal((await f.request('/api/records/material_types', 'POST', { standardSystem: 'API', materialGrade: 'X53', iso15608: 'x'.repeat(60) })).status, 422);
 });
 
 test('supplier form has the ten reference fields in order; selects label suppliers and types of material like the reference', async t => {

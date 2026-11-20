@@ -115,7 +115,9 @@ test('the hosted profile delivers the welder and material data pages with the re
   const items = PILOT_MAP.weld.groups.filter(group => ['Welder data', 'Material data'].includes(group.title)).flatMap(group => group.items);
   // Customs describe welding process groups: they sit under Weld data (after Spools), not under Welder data.
   const groupItems = (title: string) => PILOT_MAP.weld.groups.find(group => group.title === title)!.items.map(item => item.label);
-  assert.deepEqual(groupItems('Welder data'), ['Welders', 'Roles', 'Certificates']); assert.deepEqual(groupItems('Weld data').slice(-2), ['Spools', 'Customs']);
+  // Roles has no function in Weld Pilot (client, 20.11.2026); Welding wire is a consumable of the welding process and sits under Weld data.
+  assert.deepEqual(groupItems('Welder data'), ['Welders', 'Certificates']); assert.deepEqual(groupItems('Weld data').slice(-3), ['Welding wire', 'Spools', 'Customs']);
+  assert.ok(!groupItems('Material data').includes('Welding wire'));
   assert.equal(PILOT_MAP.weld.groups.find(group => group.title === 'Weld data')!.items.find(item => item.label === 'Customs')!.resource, 'welder_customs_catalog'); assert.equal(RESOURCE_MAP.welder_customs_catalog.group, 'Weld data');
   for (const item of items.filter(item => item.label !== 'Material supplier')) for (const key of pilotItemResources(item)) assert.ok(hosted.navigation.includes(key), `${item.label}: ${key}`);
   const view = (key: string) => projectResource(hosted, RESOURCE_MAP[key]);
@@ -126,14 +128,16 @@ test('the hosted profile delivers the welder and material data pages with the re
   assert.equal(RESOURCE_MAP.roles.title, 'Welder roles');
   assert.deepEqual(labels('diameters'), ['Diameter', 'Size in mm', 'Size in inches', 'Outline in mm', 'Sorting']);
   assert.deepEqual(labels('material_parts'), ['Part', 'Custom']);
-  assert.deepEqual(labels('material_types'), ['Type of material', 'Type of steel', 'Material description', 'Basic material', 'Material group', 'ISO / ASME']);
+  assert.deepEqual(labels('material_types'), ['Type of material', 'Standard system', 'Material specification', 'Material grade', 'Product form', 'Material description', 'ISO 15608 group']);
+  // The form: the six columns of the client's material catalog; ASME P-Number / Group Number and the older fields are not inputs.
+  assert.deepEqual(view('material_types').fields.filter(field => !field.hidden && !field.readonly && field.name !== 'note').map(field => field.label), ['Standard system', 'Material specification', 'Material grade', 'Product form', 'Material description', 'ISO 15608 group']);
   assert.deepEqual(labels('welding_wires'), ['Index number', 'Charge number', 'Rod type', 'Type of material', 'mm', 'Certificate-type', 'Attest number', 'Supplier', 'Controlled', 'Accepted']);
   // The certificate list headers of the reference are shorter than the form labels (Material No, Dia., Ctrl., Accp.).
   const headers = (key: string) => view(key).columns.map(name => view(key).columnLabels?.[name] ?? view(key).fields.find(field => field.name === name)?.label);
   assert.deepEqual(headers('certifications'), ['Index number', 'Charge number', 'Certificate-type', 'Attest number', 'Material No', 'Type of material', 'Material part', 'Basic material', 'Dia.', 'Schedule', 'Wall thickness', 'Supplier', 'Ctrl.', 'Accp.']);
   assert.deepEqual(labels('certifications').slice(-2), ['Controlled', 'Accepted'], 'the form keeps Controlled / Accepted');
   const requiredOf = (key: string) => view(key).fields.filter(field => field.required).map(field => field.label);
-  assert.deepEqual(requiredOf('roles'), ['Role', 'Abbreviation']); assert.deepEqual(requiredOf('diameters'), ['Diameter', 'Size in mm']); assert.deepEqual(requiredOf('material_types'), ['Type of material', 'Type of steel']);
+  assert.deepEqual(requiredOf('roles'), ['Role', 'Abbreviation']); assert.deepEqual(requiredOf('diameters'), ['Diameter', 'Size in mm']); assert.deepEqual(requiredOf('material_types'), ['Standard system', 'Material grade']);
   assert.deepEqual(view('welders').fields.filter(field => field.required).map(field => field.label), ['ID nr.']);
   // The shared definitions (other profiles) keep their old requirements.
   assert.deepEqual(RESOURCE_MAP.roles.fields.filter(field => field.required).map(field => field.name), ['name']);
@@ -172,12 +176,14 @@ test('hosted rules: required abbreviations, ranges, index numbers and the ISO / 
   assert.equal((await f.request('/api/records/welder_customs_catalog', 'POST', { name: 'W10 Custom', abbreviation: 'W10', diameterFrom: '50', diameterTo: '100', wtFrom: '3', wtTo: '12' })).status, 201);
   assert.equal((await f.request('/api/records/diameters', 'POST', { diameter: '99"' })).status, 422);
   assert.equal((await f.request('/api/records/diameters', 'POST', { diameter: '99"', size: 273.1, sizeinch: 99, outline: 858 })).status, 201);
-  // Type of material: type of steel is required and the list column is derived.
-  assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'A105' })).status, 422);
-  response = await f.request('/api/records/material_types', 'POST', { name: 'A105', typeOfSteel: 'Carbon steel', iso15608: '1.2', asmePNumber: 'P-1', asmeGroup: '2', isoAsme: 'client value' });
-  assert.equal(response.status, 201); assert.equal((await json(response)).record.isoAsme, '1.2 / P-1 Gr 2');
+  // Type of material: standard system and grade are required; the name is specification + grade.
+  assert.equal((await f.request('/api/records/material_types', 'POST', { materialSpec: 'ASTM A105 / ASME SA-105' })).status, 422);
+  response = await f.request('/api/records/material_types', 'POST', { standardSystem: 'ASME / ASTM', materialSpec: 'ASTM A105 / ASME SA-105', materialGrade: 'A105', productForm: 'Forging', materialDescription: 'Carbon / alloy steel; forging / flange applications', iso15608: '1.2', isoAsme: 'client value' });
+  assert.equal(response.status, 201); const created = (await json(response)).record; assert.equal(created.name, 'ASTM A105 / ASME SA-105 A105'); assert.equal(created.isoAsme, '1.2');
+  response = await f.request(`/api/records/material_types/${created.id}`, 'PUT', { materialGrade: 'A105N', _version: created._version });
+  assert.equal((await json(response)).record.name, 'ASTM A105 / ASME SA-105 A105N', 'the name follows the grade');
   // The group is choose-or-type: a value that is not in the list is accepted (see tests/material-data.test.ts).
-  assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'Bad', typeOfSteel: 'Carbon steel', iso15608: '99.9' })).status, 201);
+  assert.equal((await f.request('/api/records/material_types', 'POST', { standardSystem: 'EN', materialGrade: 'Bad', iso15608: '99.9' })).status, 201);
   // Welding wire index numbers are generated when left empty.
   response = await f.request('/api/records/welding_wires', 'POST', { siteId: 'site-north', classification: 'ER70S-6', diameter: 1.6, chargeNo: 'C-1', certType: '3.1', controlled: true, allProjects: true });
   assert.equal(response.status, 201); const first = (await json(response)).record.name; assert.match(first, /^\d{4}$/);
@@ -265,7 +271,7 @@ test('pilot boundary: welder data stays in Weld Pilot, shared catalogs open in b
   for (const key of ['material_parts', 'material_types', 'certifications', 'certificate_projects']) assert.equal((await f.request(`/api/records/${key}`)).status, 200, `mto ${key}`);
   const bootstrap = await json(await f.request('/api/bootstrap')) as unknown as Bootstrap;
   for (const key of ['welders', 'welder_certificates', 'welding_wires', 'roles']) assert.equal(bootstrap.rows[key], undefined, key);
-  assert.equal((await f.request('/api/records/material_types', 'POST', { name: 'A234 WPB', typeOfSteel: 'Carbon steel', iso15608: '1.1' })).status, 201, 'material data is shared');
+  assert.equal((await f.request('/api/records/material_types', 'POST', { standardSystem: 'ASME / ASTM', materialSpec: 'ASTM A234 / ASME SA-234', materialGrade: 'WPB', iso15608: '1.1' })).status, 201, 'material data is shared');
   f.usePilot('weld');
   await f.signIn('Weld viewer', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'Read only' });
   assert.equal((await f.request('/api/records/welders')).status, 200);

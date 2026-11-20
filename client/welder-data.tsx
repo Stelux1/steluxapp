@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowUpDown, Bell, BellOff, Pause, Play, ChevronLeft, ChevronRight, ChevronDown, CreditCard, Download, FileText, MoreHorizontal, Paperclip, Pencil, Plus, Printer, RotateCcw, Settings, SlidersHorizontal, Trash2, User } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
-import { DEFAULT_WELDER_PAGE_SIZE, NO_WELDER_FILTER, SUMMARY_LIST, WELDER_DEACTIVATE_CONFIRM, WELDERCARD_LINE_COLUMNS, WELDERCARD_LISTS, WELDERCARD_PATH, WELDER_FILTER_ORDER, WELDER_PAGE_SIZES, activeText, cardLineCells, cardOptions, cardOptionsListed, customsOfWelder, defaultWelderSite, documentNameOptions, documentNote, documentWps, expiringQualifications, filterWelders, joinIds, joinWqNos, notificationsOn, notifyDays, roleText, splitIds, splitWqNos, summaryListOf, todayIso, welderCardHeading, welderCardLines, welderDocuments, welderFilterCount, welderOnSite, welderTab, welderTabCounts, welderWqNumbers, wpsChoices, wqNoOf, type WelderCardFilter, type WelderTab } from '../shared/welder-data.ts';
+import { DEFAULT_WELDER_PAGE_SIZE, NO_WELDER_FILTER, SUMMARY_LIST, WELDER_DEACTIVATE_CONFIRM, WELDERCARD_LINE_COLUMNS, WELDERCARD_LISTS, WELDERCARD_PATH, WELDER_FILTER_ORDER, WELDER_PAGE_SIZES, activeText, cardLineCells, cardOptions, cardOptionsListed, customsOfWelder, defaultWelderSite, documentNameOptions, documentNote, documentWps, expiringQualifications, filterWelders, joinIds, joinWqNos, notificationsOn, notifyDays, splitIds, splitWqNos, summaryListOf, todayIso, welderCardHeading, welderCardLines, welderDocuments, welderFilterCount, welderOnSite, welderTab, welderTabCounts, welderWqNumbers, wpsChoices, wqNoOf, type WelderCardFilter, type WelderTab } from '../shared/welder-data.ts';
 import { RELATIONS, relationIds } from './catalog.ts';
 import { activeRows, useWorkspace } from './context.tsx';
 import { api, apiUrl, formatDate, formatNumber, post } from './api.ts';
@@ -11,7 +11,7 @@ import { RecordEditor } from './dialogs.tsx';
 import { ArchiveRecordDialog } from './archive-record.tsx';
 
 const TABS: { key: WelderTab; label: string }[] = [{ key: 'active', label: 'Active' }, { key: 'inactive', label: 'Inactive' }, { key: 'deleted', label: 'Deleted' }];
-const COLUMNS = [['number', 'ID nr.'], ['name', 'Name'], ['company', 'Company'], ['role', 'Role'], ['customs', 'Customs'], ['projects', 'Active on projects'], ['currentlyOn', 'Currently on'], ['description', 'Note'], ['status', 'Active']] as const;
+const COLUMNS = [['number', 'ID nr.'], ['name', 'Name'], ['company', 'Company'], ['customs', 'Customs'], ['projects', 'Active on projects'], ['currentlyOn', 'Currently on'], ['description', 'Note'], ['status', 'Active']] as const;
 type Column = typeof COLUMNS[number][0];
 type Dialog = { kind: 'show' | 'files' | 'card'; welder: Row } | null;
 
@@ -33,7 +33,7 @@ export function WeldersPage() {
   const sites = RELATIONS.welders?.find(relation => relation.field === 'siteIds');
   const linkedSites = (welder: Row) => sites ? relationIds(allRows, sites, welder.id) : [];
   const projectNames = (welder: Row) => linkedSites(welder).map(id => label('sites', id));
-  const textOf = (welder: Row, column: Column): string => column === 'company' ? String(welder.companyId ? label('companies', welder.companyId) : '') : column === 'role' ? roleText((rows.roles || []).find(role => role.id === welder.roleId)) : column === 'customs' ? customsOfWelder(rows.welder_certificates, welder.id, rows.welder_customs_catalog).join(', ') : column === 'projects' ? projectNames(welder).join(', ') : String(welder[column] ?? '');
+  const textOf = (welder: Row, column: Column): string => column === 'company' ? String(welder.companyId ? label('companies', welder.companyId) : '') : column === 'customs' ? customsOfWelder(rows.welder_certificates, welder.id, rows.welder_customs_catalog).join(', ') : column === 'projects' ? projectNames(welder).join(', ') : String(welder[column] ?? '');
   const welders = rows.welders || [];
   const scoped = useMemo(() => {
     const query = q.toLowerCase().trim();
