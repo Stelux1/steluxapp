@@ -90,11 +90,14 @@ const quantityOf = (value: unknown) => {
 
 // ----- input checks used by the forms and by the server -------------------------------------------------------
 
-/** ISO numbers: letters, digits, `.`, `_` and `-`. */
-export const ISO_NUMBER_PATTERN = /^[A-Za-z0-9._-]+$/;
+/**
+ * ISO numbers: letters, digits, `.`, `_`, `-` and single spaces between them ("KH-034708-SHEET 5"; the client's own
+ * export of 17.11.2026 has 72 of 7621 ISO numbers with a space and no other character, client request of 20.11.2026).
+ */
+export const ISO_NUMBER_PATTERN = /^[A-Za-z0-9._-]+(?: [A-Za-z0-9._-]+)*$/;
 /** The field message and the field's help text, as in the reference (weld__iso__0001__edit-isometric.txt:17-18). */
 export const ISO_NUMBER_MESSAGE = 'Special characters are not allowed in the ISO number';
-export const ISO_NUMBER_HINT = 'Special characters are not allowed in the ISO number. Only letters, numbers, dots, - and _ are allowed.';
+export const ISO_NUMBER_HINT = 'Special characters are not allowed in the ISO number. Only letters, numbers, dots, -, _ and spaces are allowed.';
 export const isoNumberError = (value: unknown) => { const text = typeof value === 'string' ? value.trim() : ''; return !text || ISO_NUMBER_PATTERN.test(text) ? '' : ISO_NUMBER_MESSAGE; };
 
 /**

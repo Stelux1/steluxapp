@@ -250,13 +250,14 @@ test('priority: old values map to the reference list, nothing is rewritten, and 
   } finally { store.close(); }
 });
 
-test('ISO numbers: letters, digits . _ - only, checked when created or changed, never on stored records', () => {
+test('ISO numbers: letters, digits . _ - and single spaces only, checked when created or changed, never on stored records', () => {
   for (const good of ['STX-CW-001', 'A.B_c-9', '1', 'iso.2026_01']) assert.deepEqual(isoInputErrors({ isoNo: good }, undefined), {}, good);
-  for (const bad of ['STX CW 001', 'ISO/1', 'ISO#1', 'ISÖ-1', 'A,B']) assert.equal(isoInputErrors({ isoNo: bad }, undefined).isoNo, 'Special characters are not allowed in the ISO number', bad);
+  for (const good of ['KH-034708-SHEET 5', 'SE-2406 SHEET 03 OF 45', '  STX CW 001  ']) assert.equal(isoInputErrors({ isoNo: good }, undefined).isoNo, undefined, `${good}: single spaces between the parts are allowed`);
+  for (const bad of ['STX  CW', 'ISO/1', 'ISO#1', 'ISÖ-1', 'A,B']) assert.equal(isoInputErrors({ isoNo: bad }, undefined).isoNo, 'Special characters are not allowed in the ISO number', bad);
   const store = new Store(':memory:'); seed(store);
   try {
     const project = store.list('projects')[0];
-    assert.throws(() => store.create('isometrics', { isoNo: 'BAD NUMBER', projectId: project.id }), (error: unknown) => error instanceof AppError && error.status === 422 && Boolean(error.fields?.isoNo));
+    assert.throws(() => store.create('isometrics', { isoNo: 'BAD/NUMBER', projectId: project.id }), (error: unknown) => error instanceof AppError && error.status === 422 && Boolean(error.fields?.isoNo));
     assert.throws(() => store.create('isometrics', { isoNo: '', projectId: project.id }), (error: unknown) => error instanceof AppError && Boolean(error.fields?.isoNo));
     const iso = store.create('isometrics', { isoNo: 'OLD-1', projectId: project.id });
     store.db.prepare('UPDATE "isometrics" SET data=json_set(data, \'$.isoNo\', \'OLD NO/1\') WHERE id=?').run(iso.id);
