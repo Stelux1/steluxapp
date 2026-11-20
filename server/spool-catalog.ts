@@ -1,6 +1,8 @@
 import { CATALOG_SITES, enabledOnSite } from '../shared/weld-catalogs.ts';
-import { SPOOL_NAMES, firstUseSpool, missingSpoolNames, spoolChoiceError } from '../shared/spool-catalog.ts';
+import { SPOOL_LETTERS, SPOOL_NAMES, firstUseSpool, missingSpoolNames, spoolChoiceError, type SpoolImportEntry } from '../shared/spool-catalog.ts';
 import { AppError, SYSTEM, type Actor, type Store } from './store.ts';
+import { setAvailability } from './weld-catalogs.ts';
+import { withEveryMainProject } from './site-scope.ts';
 
 /**
  * Server side of the spool name catalog (shared/spool-catalog.ts): the weld form's Spool choice and the upgrade step that
@@ -46,4 +48,53 @@ export function seedSpoolNames(store: Store, options: { dryRun?: boolean; actor?
   const plan = () => missingSpoolNames(store.list('spools'), store.list(SPOOL_NAMES, true));
   if (options.dryRun) return { spoolNamesAdded: plan().length };
   return store.transaction(() => { const added = plan(); for (const entry of added) store.create(SPOOL_NAMES, entry, actor); return { spoolNamesAdded: added.length }; });
+}
+
+/** The catalog record a name stands for: the first live one of that exact name, else a new one that is off on every other main project (it is not enabled here yet). */
+function catalogRecordOf(store: Store, name: string, abbreviation: string, siteId: string, actor: Actor): string {
+  const found = store.list(SPOOL_NAMES).find(row => String(row.name ?? '').trim() === name);
+  if (found) return found.id;
+  const created = store.create(SPOOL_NAMES, { name, abbreviation }, actor);
+  for (const site of store.list('sites', true)) if (site.id !== siteId) setAvailability(store, SPOOL_NAMES, created.id, site.id, false, SYSTEM);
+  return created.id;
+}
+
+/**
+ * A new main project (Add project site; Duplicate project site without its Spools list ticked): the spool names A to Z are
+ * enabled for it (a catalog record of that exact name is reused, else it is created and kept off on every other main project)
+ * and every other spool name gets an explicit "off" link for it. Other main projects and the spools used on welds are untouched.
+ */
+export function applyDefaultSpoolNames(store: Store, siteId: string, actor: Actor): void {
+  withEveryMainProject(store, () => {
+    const keep = new Set<string>();
+    for (const letter of SPOOL_LETTERS) { const id = catalogRecordOf(store, letter, letter, siteId, actor); keep.add(id); setAvailability(store, SPOOL_NAMES, id, siteId, true, SYSTEM); }
+    for (const row of store.list(SPOOL_NAMES, true)) if (!keep.has(row.id)) setAvailability(store, SPOOL_NAMES, row.id, siteId, false, SYSTEM);
+  });
+}
+
+/** What an import of spool names does (or would do) on one main project. */
+export interface SpoolImportResult { total: number; created: number; enabled: number; alreadyEnabled: number; switchedOff: number }
+
+/**
+ * Spools page → Import CSV: each name is added to the catalog when it is missing (Abbreviation as given, default the name) and
+ * enabled on this main project; a name that exists keeps its record and is only switched on here. With `replace`, every other
+ * spool name is switched off for this main project. Nothing is deleted, no other main project changes (a new record is off
+ * there), and the spools used on welds stay. `dryRun` writes nothing and returns the same counts.
+ */
+export function importSpoolNames(store: Store, siteId: string, entries: readonly SpoolImportEntry[], replace: boolean, actor: Actor, dryRun = false): SpoolImportResult {
+  const result: SpoolImportResult = { total: entries.length, created: 0, enabled: 0, alreadyEnabled: 0, switchedOff: 0 };
+  const run = () => withEveryMainProject(store, () => {
+    const enabledHere = (id: string) => enabledOnSite(SPOOL_NAMES, { id }, siteId, { [CATALOG_SITES]: store.list(CATALOG_SITES) });
+    const kept = new Set<string>();
+    for (const entry of entries) {
+      const matches = store.list(SPOOL_NAMES).filter(row => String(row.name ?? '').trim() === entry.name);
+      if (!matches.length) { result.created++; if (!dryRun) { const id = catalogRecordOf(store, entry.name, entry.abbreviation, siteId, actor); kept.add(id); setAvailability(store, SPOOL_NAMES, id, siteId, true, SYSTEM); } continue; }
+      let changed = false;
+      for (const row of matches) { kept.add(row.id); if (!enabledHere(row.id)) { changed = true; if (!dryRun) setAvailability(store, SPOOL_NAMES, row.id, siteId, true, SYSTEM); } }
+      if (changed) result.enabled++; else result.alreadyEnabled++;
+    }
+    if (replace) for (const row of store.list(SPOOL_NAMES)) if (!kept.has(row.id) && enabledHere(row.id)) { result.switchedOff++; if (!dryRun) setAvailability(store, SPOOL_NAMES, row.id, siteId, false, SYSTEM); }
+  });
+  if (dryRun) { run(); return result; }
+  return store.transaction(() => { run(); return result; });
 }

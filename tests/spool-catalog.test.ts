@@ -8,9 +8,9 @@ import { Store, SYSTEM } from '../server/store.ts';
 import { runAction } from '../server/workflows.ts';
 import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
-import { seedSpoolNames } from '../server/spool-catalog.ts';
+import { seedSpoolNames, applyDefaultSpoolNames, importSpoolNames } from '../server/spool-catalog.ts';
 import { hostedDataSteps } from '../server/hosted-data-steps.ts';
-import { SPOOL_CHOICE_MESSAGES, SPOOL_NAMES, firstUseSpool, missingSpoolNames, spoolChoiceError, spoolOptionsForIso } from '../shared/spool-catalog.ts';
+import { SPOOL_CHOICE_MESSAGES, SPOOL_LETTERS, SPOOL_NAMES, spoolImportEntries, firstUseSpool, missingSpoolNames, spoolChoiceError, spoolOptionsForIso } from '../shared/spool-catalog.ts';
 import { CATALOG_SITES, CATALOG_WORDING, ENABLED_COLUMN, FORM_ENABLEMENT, NEW_RECORDS_OFF, SITE_ENABLED_RESOURCES, catalogFormLabels, enabledOnSite, pageSizes, rowDeleteLabel } from '../shared/weld-catalogs.ts';
 import { DUPLICATE_PARTS } from '../shared/site-duplicate.ts';
 import { PILOT_MAP, resourcePagePath } from '../shared/pilots.ts';
@@ -18,10 +18,12 @@ import { HOSTED_RELEASE_PROFILE, availabilityFor, projectResource } from '../sha
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { SITE_RULES } from '../shared/site-scope.ts';
 import { RESOURCE_SCOPES } from '../shared/permissions.ts';
+import { passwordHash } from '../server/auth.ts';
 import type { Row } from '../shared/types.ts';
 
 const row = (id: string, data: Record<string, unknown> = {}) => ({ id, _version: 1, _archived: false, _createdAt: '', _updatedAt: '', ...data }) as Row;
 const actor = { id: 'tester', name: 'Tester' };
+const namesOn = (store: Store, siteId: string) => store.list(SPOOL_NAMES).filter(entry => enabledOnSite(SPOOL_NAMES, entry, siteId, { [CATALOG_SITES]: store.list(CATALOG_SITES) })).map(entry => String(entry.name)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
 const link = (recordId: string, siteId: string, enabled: boolean) => row(`${recordId}-${siteId}`, { resourceKey: SPOOL_NAMES, recordId, siteId, enabled });
 
 // ---------------------------------------------------------------------------------------------------- definitions
@@ -66,10 +68,10 @@ test('weld-iso-welds-037: the Spool list = catalog names enabled on the main pro
   // Project P: iso A uses Spool J, iso B uses SP01 and its own legacy spool "B-OWN"; project Q (other) uses SP14.
   const spools = [row('s1', { isoId: 'A', name: 'Spool J' }), row('s2', { isoId: 'B', name: 'SP01' }), row('s3', { isoId: 'B', name: 'B-OWN' }), row('s4', { isoId: 'A', name: 'SP22', _archived: true })];
   const names = (siteId: string, isoId: string, list = spools) => spoolOptionsForIso(catalog, on(siteId), list, isoId).map(option => option.name);
-  assert.deepEqual(names('site-a', 'A'), ['Spool J', 'SP14', 'SP22'], 'iso A: SP01 is used on iso B of the project; one SP22 for the duplicates; archived names and spools do not count');
-  assert.deepEqual(names('site-a', 'B'), ['SP14', 'SP01', 'SP22', 'B-OWN'], 'iso B: Spool J is used on iso A; its own spools stay offered, catalog or not');
+  assert.deepEqual(names('site-a', 'A'), ['SP14', 'SP22', 'Spool J'], 'iso A: SP01 is used on iso B of the project; one SP22 for the duplicates; names in name order (A, B, C ... SP2 before SP10); archived names and spools do not count');
+  assert.deepEqual(names('site-a', 'B'), ['SP01', 'SP14', 'SP22', 'B-OWN'], 'iso B: Spool J is used on iso A; its own spools stay offered, catalog or not');
   assert.deepEqual(names('site-a', 'C'), ['SP14', 'SP22'], 'a new isometric of the project');
-  assert.deepEqual(names('site-a', 'Q1', []), ['Spool J', 'SP14', 'SP01', 'SP22'], 'an isometric of another project: every enabled name');
+  assert.deepEqual(names('site-a', 'Q1', []), ['SP01', 'SP14', 'SP22', 'Spool J'], 'an isometric of another project: every enabled name');
   assert.deepEqual(names('site-b', 'Q1', []), ['SP01', 'SP22'], 'a name switched off on site B is not offered there');
   assert.deepEqual(names('site-b', 'A'), ['SP22', 'Spool J'], 'a name used on this isometric stays offered even when switched off (after the enabled names)');
   assert.deepEqual(spoolOptionsForIso(catalog, on('site-a'), spools, 'B').find(option => option.name === 'SP01'), { name: 'SP01', spoolId: 's2' }, 'the isometric\'s own spool record');
@@ -186,7 +188,7 @@ test('duplicating a site with Spools copies the spool catalog\'s enablement of t
   const rows = { [CATALOG_SITES]: store.list(CATALOG_SITES) };
   assert.equal(enabledOnSite(SPOOL_NAMES, { id: 'spool-name-sp-010' }, copy.id, rows), false); assert.equal(enabledOnSite(SPOOL_NAMES, { id: 'spool-name-sp-011' }, copy.id, rows), true);
   const without = runAction(store, 'duplicate-site', { siteId: 'site-north', parts: ['weldTypes'] }, SYSTEM).record!;
-  assert.ok(!store.list(CATALOG_SITES).some(entry => entry.siteId === without.id && entry.resourceKey === SPOOL_NAMES), 'not ticked: nothing copied');
+  assert.deepEqual(namesOn(store, without.id), [...SPOOL_LETTERS], 'not ticked: the copy starts as any new main project (A to Z)');
 });
 
 // ---------------------------------------------------------------------------------------------------- through HTTP
@@ -222,4 +224,101 @@ test('hosted: a new spool name starts off on other main projects, the weld form 
   const refused = await request('/api/actions/save-weld', 'POST', { isoId: 'iso-4', weldNo: 'H902', spoolName: 'SP-020' });
   assert.equal(refused.status, 422); assert.equal(((await refused.json()) as { error: string }).error, SPOOL_CHOICE_MESSAGES.notEnabled, 'off on Riverside');
   assert.equal(store.list('spools').length, spools); assert.ok(!store.list('welds').some(entry => entry.weldNo === 'H902'));
+});
+
+// ---------------------------------------------------------------------------------------------------- A to Z for a new main project, CSV import
+
+test('a new main project gets the spool names A to Z only; existing main projects keep what they have; an existing letter record is reused', t => {
+  const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  store.create(SPOOL_NAMES, { name: 'C', abbreviation: 'C' }, SYSTEM);
+  const before = { north: namesOn(store, 'site-north'), river: namesOn(store, 'site-river') };
+  const site = store.create('sites', { name: 'Impala Tank Terminal' }, actor); applyDefaultSpoolNames(store, site.id, actor);
+  assert.deepEqual(namesOn(store, site.id), [...SPOOL_LETTERS], 'A, B, C ... Z in that order, nothing else');
+  const letters = store.list(SPOOL_NAMES).filter(entry => SPOOL_LETTERS.includes(String(entry.name)));
+  assert.equal(letters.length, 26, 'the existing record C is reused, not duplicated'); assert.ok(letters.every(entry => entry.abbreviation === entry.name));
+  assert.deepEqual(namesOn(store, 'site-north'), before.north, 'existing main projects keep their lists'); assert.deepEqual(namesOn(store, 'site-river'), before.river);
+  assert.ok(before.north.includes('C') && !before.north.includes('A') && !namesOn(store, 'site-river').includes('A'), 'a letter created now starts off on the other main projects');
+});
+
+test('Add project site through the app creates the main project with A to Z', async t => {
+  const f = await spoolHttp(t); await f.setup();
+  const north = namesOn(f.store, 'site-north');
+  const response = await f.json('/api/records/sites', 'POST', { name: 'Impala Tank Terminal', address: '1 Quay Road' }); assert.equal(response.status, 201, await response.clone().text());
+  const id = ((await response.json()) as { record: Row }).record.id;
+  assert.deepEqual(namesOn(f.store, id), [...SPOOL_LETTERS]); assert.deepEqual(namesOn(f.store, 'site-north'), north);
+});
+
+test('spool CSV: headings, empty names, duplicates and the size limit', () => {
+  assert.deepEqual(spoolImportEntries([['Spool name', 'Abbreviation'], ['S1', 'X1'], ['S2', ''], ['S1', 'Y']]), { entries: [{ name: 'S1', abbreviation: 'X1' }, { name: 'S2', abbreviation: 'S2' }], duplicates: 1 });
+  assert.deepEqual(spoolImportEntries([['spool  name'], ['Q']]), { entries: [{ name: 'Q', abbreviation: 'Q' }], duplicates: 0 });
+  assert.ok('error' in spoolImportEntries([['Name'], ['Q']]) && 'error' in spoolImportEntries([['Spool name']]) && 'error' in spoolImportEntries([]));
+  assert.match((spoolImportEntries([['Spool name', 'Abbreviation'], ['A', ''], ['', 'x'], ['B', '']]) as { error: string }).error, /Row 3/, 'an empty name refuses the file');
+  assert.ok('error' in spoolImportEntries([['Spool name'], ...Array.from({ length: 501 }, (_, i) => [`N${i}`])]));
+  assert.ok('entries' in spoolImportEntries([['Spool name'], ...Array.from({ length: 500 }, (_, i) => [`N${i}`])]));
+});
+
+test('importing spool names adds and enables them on this main project; replace switches the others off for it only', t => {
+  const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  const spools = store.list('spools').length, welds = store.list('welds').map(weld => weld.spoolId).join();
+  const north = namesOn(store, 'site-north'), river = namesOn(store, 'site-river'), total = store.list(SPOOL_NAMES).length;
+  const entries = [{ name: 'SP-001', abbreviation: 'SP-001' }, { name: 'Pump skid', abbreviation: 'PS' }];
+  const dry = importSpoolNames(store, 'site-north', entries, true, actor, true);
+  assert.deepEqual([dry.created, dry.alreadyEnabled, dry.switchedOff], [1, 1, north.length - 1]);
+  assert.deepEqual(namesOn(store, 'site-north'), north, 'the preview writes nothing'); assert.equal(store.list(SPOOL_NAMES).length, total);
+  const added = importSpoolNames(store, 'site-north', [{ name: 'Pump skid', abbreviation: 'PS' }], false, actor);
+  assert.deepEqual([added.created, added.switchedOff], [1, 0]);
+  assert.equal(store.list(SPOOL_NAMES).find(entry => entry.name === 'Pump skid')!.abbreviation, 'PS');
+  assert.deepEqual(namesOn(store, 'site-north').sort(), [...north, 'Pump skid'].sort()); assert.deepEqual(namesOn(store, 'site-river'), river, 'a new name is off on the other main project');
+  const replaced = importSpoolNames(store, 'site-north', entries, true, actor);
+  assert.deepEqual(namesOn(store, 'site-north').sort(), ['Pump skid', 'SP-001']); assert.equal(replaced.switchedOff, north.length - 1);
+  assert.deepEqual(namesOn(store, 'site-river'), river, 'other main projects are never touched');
+  assert.equal(store.list(SPOOL_NAMES, true).length, total + 1, 'nothing is deleted or archived');
+  assert.equal(store.list('spools').length, spools); assert.equal(store.list('welds').map(weld => weld.spoolId).join(), welds);
+  assert.deepEqual(importSpoolNames(store, 'site-north', entries, true, actor), { total: 2, created: 0, enabled: 0, alreadyEnabled: 2, switchedOff: 0 }, 'a second run changes nothing');
+});
+
+async function spoolHttp(t: { after: (fn: () => Promise<void>) => void }) {
+  const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-spool-import-'));
+  const store = new Store(join(dir, 'test.sqlite')); seed(store);
+  writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Workspace</title>');
+  const server = createApp(store, dir, { releaseProfile: HOSTED_RELEASE_PROFILE, distDir: dir }).listen(0, '127.0.0.1'); await once(server, 'listening');
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`; let cookie = '';
+  t.after(async () => { await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }); store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const send = async (path: string, method: string, data: unknown, json: boolean) => {
+    const response = await fetch(origin + path, { method, headers: { ...(json ? { 'Content-Type': 'application/json' } : {}), 'X-Stelux-Request': '1', 'X-Stelux-Pilot': 'weld', Origin: origin, ...(cookie ? { Cookie: cookie } : {}) }, body: data === undefined ? undefined : json ? JSON.stringify(data) : data as FormData });
+    if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
+  };
+  const password = 'Spool-Import-Test-Password';
+  return {
+    store, json: (path: string, method = 'GET', data?: unknown) => send(path, method, data, true),
+    upload: (path: string, csv: string, fields: Record<string, string>) => { const form = new FormData(); form.set('file', new Blob([csv]), 'spools.csv'); for (const [name, value] of Object.entries(fields)) form.set(name, value); return send(path, 'POST', form, false); },
+    setup: async () => assert.equal((await send('/api/auth/setup', 'POST', { name: 'Spool admin', email: 'spool-admin@example.test', password }, true)).status, 201),
+    signIn: async (name: string, levels: Record<string, string>) => {
+      const profile = store.create('profiles', { name, ...levels }); const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, profileId: profile.id, active: true });
+      store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash(password));
+      assert.equal((await send('/api/auth/login', 'POST', { email: user.email, password }, true)).status, 200);
+    },
+  };
+}
+
+test('hosted: Import CSV previews, enables on the chosen main project, replaces only there, and needs the Insert right', async t => {
+  const f = await spoolHttp(t); await f.setup();
+  const river = namesOn(f.store, 'site-river'), north = namesOn(f.store, 'site-north');
+  const csv = 'Spool name,Abbreviation\nSP-001,\nRiser,R1\nRiser,R2\n';
+  let response = await f.upload('/api/spool-names/import/preview', csv, { siteId: 'site-north', replace: 'true' });
+  assert.equal(response.status, 200, await response.clone().text());
+  const preview = await response.json() as { total: number; created: number; alreadyEnabled: number; switchedOff: number; duplicates: number };
+  assert.deepEqual([preview.total, preview.created, preview.alreadyEnabled, preview.duplicates, preview.switchedOff], [2, 1, 1, 1, north.length - 1]);
+  assert.deepEqual(namesOn(f.store, 'site-north'), north, 'the preview writes nothing');
+  assert.equal((await f.upload('/api/spool-names/import', csv, { replace: 'true' })).status, 422, 'a main project is required');
+  assert.equal((await f.upload('/api/spool-names/import', 'Spool name\n\n', { siteId: 'site-north' })).status, 422, 'no names');
+  assert.equal((await f.upload('/api/spool-names/import', 'Spool name,Other\nSP-001,\n,x\n', { siteId: 'site-north' })).status, 422, 'an empty name refuses the file');
+  response = await f.upload('/api/spool-names/import', csv, { siteId: 'site-north', replace: 'true' }); assert.equal(response.status, 201, await response.clone().text());
+  assert.deepEqual(namesOn(f.store, 'site-north').sort(), ['Riser', 'SP-001']);
+  assert.deepEqual(namesOn(f.store, 'site-river'), river);
+  assert.equal(f.store.list(SPOOL_NAMES).filter(entry => entry.name === 'Riser').length, 1);
+  await f.signIn('Weld reader', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'Read only' });
+  assert.equal((await f.upload('/api/spool-names/import', 'Spool name\nZZ\n', { siteId: 'site-north' })).status, 403);
+  assert.equal((await f.upload('/api/spool-names/import/preview', 'Spool name\nZZ\n', { siteId: 'site-north' })).status, 403);
+  assert.ok(!f.store.list(SPOOL_NAMES).some(entry => entry.name === 'ZZ'));
 });

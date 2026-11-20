@@ -3,6 +3,7 @@ import { copyName, duplicateFields, duplicateParts } from '../shared/site-duplic
 import type { Row } from '../shared/types.ts';
 import { AppError, type Actor, type Store } from './store.ts';
 import { copyMemoTemplates } from './memo-templates.ts';
+import { applyDefaultSpoolNames } from './spool-catalog.ts';
 
 /**
  * Duplicate Project site: a new main project named "<name> (Copy)" with the ticked settings and the ticked lists'
@@ -20,5 +21,7 @@ export function duplicateSite(store: Store, data: Record<string, unknown>, actor
     if (part.records === 'memo-templates') copyMemoTemplates(store, source.id, site.id, actor);
     if (part.links) for (const link of store.list(part.links.resource).filter(row => row.siteId === source.id)) store.create(part.links.resource, { [part.links.ownerKey]: link[part.links.ownerKey], siteId: site.id, ownerArchived: link.ownerArchived === true }, actor);
   }
+  // The Spools list ticked: the copy has the source's spool names (above). Not ticked: the copy starts as any new main project, with the names A to Z.
+  if (!parts.some(part => part.key === 'spools')) applyDefaultSpoolNames(store, site.id, actor);
   return { resource: 'sites', record: site };
 }

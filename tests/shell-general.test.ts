@@ -117,7 +117,7 @@ test('Duplicate Project site copies the ticked settings and lists, names the cop
   assert.equal(copy.irnCode ?? '', '', 'the IRN Code identifies one site and is not copied');
   assert.equal(copy.weightShop ?? null, null, 'Iso progress was not ticked'); assert.equal(copy.hydrotestPlan ?? '', '', 'Document settings were not ticked');
   assert.deepEqual(counts(), before, 'no project, isometric, weld or spool is copied');
-  const copied = store.list('catalog_sites').filter(link => link.siteId === copy.id);
+  const copied = store.list('catalog_sites').filter(link => link.siteId === copy.id && link.resourceKey !== 'spool_names'); // Spools not ticked: the copy gets the default names A to Z (tests/spool-catalog.test.ts)
   assert.ok(copied.length > 0 && copied.every(link => link.resourceKey === 'weld_types'), 'only the ticked list');
   assert.ok(copied.some(link => link.recordId === 'weld-type-1' && link.enabled === false), 'a record switched off on the source stays off');
   assert.equal(copied.length, weldTypeLinks + 1); assert.ok(otherLinks >= 0);
