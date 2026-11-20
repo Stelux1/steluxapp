@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Check, ChevronDown, Download, FileText, Loader2, Play, Plus, Upload } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, Download, ExternalLink, FileText, Loader2, Play, Plus, Upload } from 'lucide-react';
 import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
@@ -20,7 +20,7 @@ import { PunchStatus } from './punch.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
-import { currentRevisionFile } from '../shared/iso-pages.ts';
+import { isoDrawingTitle, itpDrawingTitle, latestIsoFile } from '../shared/iso-pages.ts';
 import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, noBudgetText, quantityProgress, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
 import { priorityLabel } from '../shared/priority.ts';
 import { BLOCKER_TITLES } from '../shared/iso-status.ts';
@@ -46,7 +46,7 @@ interface HeaderProps {
 /** The six cards of the isometric header, identical under Weld Pilot and MTO Pilot. */
 export function IsometricHeader({ iso, project, documents, onUpload }: HeaderProps) {
   const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot(); const parts = statusCardParts(pilot?.pilot.key);
-  const [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false), [opened, setOpened] = useState<BlockerOpening | null>(null);
+  const [details, setDetails] = useState(false), [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false), [opened, setOpened] = useState<BlockerOpening | null>(null);
   const site = rows.sites?.find(row => row.id === project?.siteId);
   // Budgets: the server summary carries them in the hosted profile (Weld Pilot cannot read material lines); elsewhere from the rows.
   const budgets = useMemo(() => isoSummaries?.[iso.id] ? isoSummaries[iso.id].budgets : isoBudgets(iso, rows), [isoSummaries, iso, rows]);
@@ -68,7 +68,7 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
   const canRevise = canRun('revision', { isoId: iso.id }), historyAvailable = canRecord('revisions');
   // MTO Pilot reads no test systems: the server summary carries the name of this isometric's own one.
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);
-  const fileOf = (kind: string) => documents.find(row => row.documentType === `${kind} revision ${currentRevision(rows, iso.id, kind)}` || row.documentType === kind) ?? currentRevisionFile(rows, iso.id, kind, currentRevision(rows, iso.id, kind));
+  const fileOf = (kind: string) => latestIsoFile(rows, documents, iso.id, kind).file;
   // ITPs card: the register ITPs linked to this isometric and their counter (0/2, 1/1 …); typed ITP numbers do not count (shared/iso-itps-card.ts).
   const itpCardState = itpCard(iso, rows.itps, rows.attachments);
   const locks = useMemo(() => lockContext(rows.weld_types, rows.releases, rows.isometrics), [rows.weld_types, rows.releases, rows.isometrics]);
@@ -77,7 +77,7 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     const opening = blockerOpening(item.target, iso, id => { const weld = rows.welds?.find(row => row.id === id); return Boolean(weld) && weldLock(weld!, locks).locked; });
     if (!opening) return;
     setBlockers(false);
-    if (opening.dialog === 'release') requestAnimationFrame(() => { const line = document.getElementById(RELEASE_STATUS_ANCHOR); line?.scrollIntoView({ block: 'center' }); line?.focus({ preventScroll: true }); });
+    if (opening.dialog === 'release') { setDetails(true); requestAnimationFrame(() => { const line = document.getElementById(RELEASE_STATUS_ANCHOR); line?.scrollIntoView({ block: 'center' }); line?.focus({ preventScroll: true }); }); }
     else if (opening.dialog === 'punch') return;
     else setOpened(opening);
   }
@@ -86,7 +86,7 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     const file = fileOf(kind), text = show(number), rev = currentRevision(rows, iso.id, kind);
     return <div className="iso-slot" key={kind}>
       <div className="iso-slot-main"><FileText size={18} aria-hidden="true"/><div><small>{label}</small>
-        {file ? <a className="text-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer">{text}<Download size={13} aria-hidden="true"/></a> : <strong>{text}</strong>}
+        {file ? <a className="text-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer" title={kind === 'ISO' ? isoDrawingTitle(file, rev) : undefined}>{text}<ExternalLink size={13} aria-hidden="true"/></a> : <strong title={kind === 'ISO' ? isoDrawingTitle(undefined, rev) : undefined}>{text}</strong>}
         <span className="iso-slot-meta">{kind === 'ISO' && iso.irn ? <>IRN {String(iso.irn)} · </> : null}
           {historyAvailable ? <button className="text-link" onClick={() => setHistory(true)} aria-label={`${kind} revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}
           {!file && ' · no file'}</span></div></div>
@@ -103,9 +103,9 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     </Card>
     <Card title="ITPs" aside={<span className="iso-card-aside"><span className="iso-count" aria-label={`${itpCardState.count} of ${itpCardState.max} ITP slots linked`}>{itpCardState.counter}</span><ItpCardLinkButton iso={iso} compact/></span>}>
       {itpCardState.rows.length ? <ul className="iso-itp-rows">{itpCardState.rows.map(entry => <li key={entry.slot} className="iso-itp-row">
-        <div><strong>{show(entry.number)}</strong>{entry.scope && <small>{entry.scope}</small>}</div>
+        <div>{entry.file ? <a className="text-link iso-itp-number" href={apiUrl(`/files/${entry.file.id}`)} target="_blank" rel="noreferrer" title={itpDrawingTitle(entry.file, entry.revision)}>{show(entry.number)}<ExternalLink size={13} aria-hidden="true"/></a> : <strong title={itpDrawingTitle(undefined, entry.revision)}>{show(entry.number)}</strong>}{entry.scope && <small>{entry.scope}</small>}</div>
         <div className="iso-itp-title" title={entry.title || undefined}>{entry.titleCut || '—'}</div>
-        <div className="iso-itp-meta"><span>Rev {entry.revision || '—'}</span>{entry.file && <a className="text-link" href={apiUrl(`/files/${entry.file.id}`)} target="_blank" rel="noreferrer">PDF<Download size={13} aria-hidden="true"/></a>}</div>
+        <div className="iso-itp-meta"><span>Rev {entry.revision || '—'}</span></div>
         <ItpLinkControl iso={iso} slot={entry.slot}/>
       </li>)}</ul>
         : <p className="iso-itp-empty"><span aria-hidden="true">—</span> {NO_ITP_LINKED}<ItpCardLinkButton iso={iso}/></p>}
@@ -130,10 +130,12 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
           : <span className="iso-clear"><Check size={14} aria-hidden="true"/>0 open</span>}</Fact>}
         {parts.weldExtras && <Fact label="Priority">{priorityLabel(iso.priority)}</Fact>}
       </dl>
-      {parts.weldExtras && <PhaseFlags iso={iso}/>}
-        {parts.weldExtras && <div id={RELEASE_STATUS_ANCHOR} tabIndex={-1} className="iso-release-anchor"><ReleaseStatus iso={iso}/></div>}
+      {parts.weldExtras && <details className="iso-status-details" open={details} onToggle={event => setDetails(event.currentTarget.open)}><summary>Details<span>phases, release, hydrotest, punch</span></summary>
+      <PhaseFlags iso={iso}/>
+      <div id={RELEASE_STATUS_ANCHOR} tabIndex={-1} className="iso-release-anchor"><ReleaseStatus iso={iso}/></div>
       {pilot?.pilot.key === 'weld' && <HydrotestStep iso={iso} state={summary?.hydrotest ?? hydrotestState(iso, rows)} summaryName={summary?.testSystemName}/>}
-      {parts.weldExtras && <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>}
+      <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
+      </details>}
       {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
     </Card>
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>
