@@ -4,6 +4,7 @@
  * certificate fields of a main project, and the cascade from a welder to its qualifications.
  */
 import type { Row } from '../shared/types.ts';
+import { composeDiameter, unitErrors, unitPrefill } from '../shared/diameter-standard.ts';
 import { CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, ownerRows, ownerSites, rangeErrors, sitesMeet } from '../shared/welder-data.ts';
 import { WPS_RANGES } from '../shared/wps.ts';
 import type { Actor, Store } from './store.ts';
@@ -19,7 +20,17 @@ const blank = (value: unknown) => value === undefined || value === null || Strin
 export function prepareWelderData(store: Store, key: string, input: Record<string, unknown>, existing?: Row): Prepared {
   const next = { ...input };
   let merged: Record<string, unknown> = { ...existing, ...next };
-  const errors: Record<string, string> = { ...hostedRequiredErrors(key, merged) };
+  // Custom diameter (Weld diameters, Add): Unit + Value compose the Diameter text and prefill the sizes the unit allows (a size typed in the same request is kept).
+  const unitErrorsOf: Record<string, string> = {};
+  if (key === 'diameters' && (next.unit !== undefined || next.unitValue !== undefined)) {
+    Object.assign(unitErrorsOf, unitErrors(merged.unit, merged.unitValue));
+    if (!Object.keys(unitErrorsOf).length && !blank(merged.unit)) {
+      next.diameter = composeDiameter(merged.unit, merged.unitValue);
+      for (const [name, value] of Object.entries(unitPrefill(merged.unit, merged.unitValue))) if (blank(input[name]) && (blank(existing?.[name]) || input.unit !== undefined || input.unitValue !== undefined)) next[name] = value;
+      merged = { ...existing, ...next };
+    }
+  }
+  const errors: Record<string, string> = { ...hostedRequiredErrors(key, merged), ...unitErrorsOf };
   // Add storehouse (MTO Pilot, reference #addLager type=1): a new storehouse holds materials; the form does not show Used for.
   if (key === 'warehouses' && !existing && next.use === undefined) next.use = 'Materials';
   if (key === 'certifications' || key === 'welding_wires') {

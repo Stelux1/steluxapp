@@ -35,7 +35,16 @@ const sortByName = (rows: Row[], key = 'name') => [...rows].sort((a, b) => str(a
 
 /** Everything the table, the form and the dialogs read for one isometric, derived once from the workspace rows. */
 /** Dia. options: one per distinct Size in inches of the catalog in the hosted profile (see diameterOptions). */
-function useDiameterOptions() { const { rows, user } = useWorkspace(); return useMemo(() => diameterOptions(activeRows(rows, 'diameters'), Boolean(user.availability?.features.includes('pilots'))), [rows, user]); }
+function useDiameterOptions(textOrder = false, keep?: unknown) {
+  const { rows, user, siteId } = useWorkspace();
+  return useMemo(() => {
+    const hosted = Boolean(user.availability?.features.includes('pilots')), all = activeRows(rows, 'diameters');
+    // A main project with its own diameter list (a new one: its standard's chart sizes plus what was added there) offers those records, each labelled with its text (`2"`, `DN 50`), in the chart's order; the value a weld already holds stays listed. Older main projects keep the grouped list.
+    if (hosted && siteId && (rows.catalog_sites || []).some(link => link.resourceKey === 'diameters' && link.siteId === siteId)) return diameterOptions(enabledOptions('diameters', all, siteId, rows, keep), false, true);
+    const options = diameterOptions(all, hosted);
+    return textOrder ? diameterTextOrder(options) : options;
+  }, [rows, user, siteId, textOrder, keep]);
+}
 function useWeldData(iso: Row) {
   const { rows, allRows, welderStamps } = useWorkspace();
   return useMemo(() => {
@@ -190,7 +199,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
   const options = (key: string, label: (row: Row) => string, filter: (row: Row) => boolean = () => true, keep?: unknown) => sortByName(enabled(key, keep).filter(filter), 'name').map(row => ({ value: row.id, label: label(row) }));
   const nameOf = (row: Row) => str(row.name);
   const wireOf = (row: Row) => wireLabel(row, str(data.lookups.materialTypes.get(str(row.materialTypeId))?.name));
-  const diameters = diameterTextOrder(useDiameterOptions());
+  const diameters = useDiameterOptions(true, values.diameterId);
   const welders = rows.welders || [];
   const welderCertificates = rows.welder_certificates as Row[] | undefined, chosenWps = data.wps.get(str(values.wpsId)), onDate = str(values.date) || todayText();
   // Add weld lists welders only once a WPS is chosen; Edit weld opens with the full list until then.
@@ -335,7 +344,7 @@ function RangeDialog({ iso, data, onClose }: { iso: Row; data: WeldData; onClose
   const { refresh, notify } = useWorkspace();
   const [start, setStart] = useState<string>(RANGE_DIALOG.start), [end, setEnd] = useState<string>(RANGE_DIALOG.end), [diameterId, setDiameter] = useState('');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const diameters = diameterTextOrder(useDiameterOptions());
+  const diameters = useDiameterOptions(true);
   let plan: ReturnType<typeof planWeldRange> | null = null, problem = '';
   if (start.trim() !== '' && end.trim() !== '') { try { plan = planWeldRange(start.trim(), end.trim(), data.welds.map(weld => str(weld.weldNo))); } catch (failure) { problem = (failure as Error).message; } }
   async function submit(event: FormEvent) {

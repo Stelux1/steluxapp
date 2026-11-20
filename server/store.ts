@@ -18,6 +18,7 @@ import type { Row, RecordData, AuditEvent, Resource, Value } from '../shared/typ
 import type { Database } from './database.ts';
 import { REPLACED_UNIQUE_RULES, initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
+import { diameterStandardSaved } from './diameter-standard.ts';
 import { EDIT_OPTIONAL, ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
 import { isStandardDefectCode } from '../shared/defect-codes.ts';
 import { isWelderRole } from '../shared/welder-data.ts';
@@ -370,7 +371,7 @@ export class Store {
       // Taking the approval off a test system reopens it: the acceptance of its results goes with it.
       if (key === 'test_systems' && existing.accepted === TS_APPROVED && data.accepted !== TS_APPROVED) for (const result of this.list('hydrotest_results').filter(row => row.testSystemId === id && row.accepted === true)) this.update('hydrotest_results', result.id, { accepted: false }, result._version, actor);
       applyEnablement(this, key, id, input, actor);
-      if (key === 'sites') defectNormSaved(this, existing, this.get(key, id), actor);
+      if (key === 'sites') { defectNormSaved(this, existing, this.get(key, id), actor); diameterStandardSaved(this, existing, this.get(key, id), actor); }
       // Pilots: renaming a UOM renames it on its materials (they point at the record; ones saved before by their code).
       if (key === 'uoms' && this.hostedRules && String(existing.name ?? '') !== String(data.name ?? '')) for (const material of this.list('materials', true).filter(row => uomOfMaterial(row, existing))) {
         const { id: materialId, _version, _archived, _createdAt, _updatedAt, ...stored } = material;

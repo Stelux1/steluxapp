@@ -4,6 +4,7 @@ import type { Row } from '../shared/types.ts';
 import { AppError, type Actor, type Store } from './store.ts';
 import { copyMemoTemplates } from './memo-templates.ts';
 import { applyDefaultSpoolNames } from './spool-catalog.ts';
+import { applyDefaultDiameters } from './diameter-standard.ts';
 
 /**
  * Duplicate Project site: a new main project named "<name> (Copy)" with the ticked settings and the ticked lists'
@@ -26,5 +27,7 @@ export function duplicateSite(store: Store, data: Record<string, unknown>, actor
   }
   // The Spools list ticked: the copy has the source's spool names (above). Not ticked: the copy starts as any new main project, with the names A to Z.
   if (!parts.some(part => part.key === 'spools')) applyDefaultSpoolNames(store, site.id, actor);
+  // The diameter list is never copied: the copy starts with the 36 sizes of its Diameter standard (copied with Project settings, else ASME (inch)) and every other diameter off.
+  applyDefaultDiameters(store, site.id, actor);
   return { resource: 'sites', record: site };
 }

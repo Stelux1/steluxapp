@@ -79,7 +79,7 @@ export function issModel(rows: Record<string, Row[]>, isoId: string, companyName
     return {
       weldNo: text(entry.weld.weldNo), weldType: text(entry.weldType?.abbreviation || entry.weldType?.name),
       description: lines(...sides.map(side => side.material)),
-      diameter: lines(v['Diameter (inch)'] ? `${v['Diameter (inch)']}"` : '', ...sides.map(side => side.wall)),
+      diameter: lines(v['Diameter label'] || (v['Diameter (inch)'] ? `${v['Diameter (inch)']}"` : ''), ...sides.map(side => side.wall)),
       certificate: lines(...sides.flatMap(side => [side.cert, side.heat])),
       wps: lines(v['WPS No'] ?? '', text(pqr?.name)),
       filler: lines(...wires),

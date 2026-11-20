@@ -35,7 +35,7 @@ test('a record without enablement information is enabled everywhere; a link swit
   assert.equal(enabledOnSite('weld_types', row('a'), '', rows), true, 'without an active site nothing is hidden');
   assert.equal(enabledOnSite('weld_types', row('a'), 'north', {}), true, 'a workspace that cannot read the links hides nothing');
   assert.equal(enabledOnSite('welds', row('a'), 'north', { catalog_sites: [link('welds', 'a', 'north', false)] }), true, 'resources without enablement are never hidden');
-  assert.deepEqual(SITE_ENABLED_RESOURCES.sort(), ['coatings', 'laydowns', 'material_laydowns', 'ndt_defect_codes', 'ndt_locations', 'ndt_processes', 'pwht_locations', 'pwht_processes', 'qa_engineers', 'service_companies', 'suppliers', 'weld_types', 'materials', 'spool_names'].sort());
+  assert.deepEqual(SITE_ENABLED_RESOURCES.sort(), ['coatings', 'laydowns', 'material_laydowns', 'ndt_defect_codes', 'ndt_locations', 'ndt_processes', 'pwht_locations', 'pwht_processes', 'qa_engineers', 'service_companies', 'suppliers', 'weld_types', 'materials', 'spool_names', 'diameters'].sort());
 });
 
 test('a ref select offers the enabled records plus the value already stored', () => {

@@ -20,6 +20,7 @@ import { PqrEditor } from './pqr.tsx';
 import { usePilot } from './pilot.tsx';
 import { DIAMETER_NUMBER_MESSAGE, SITE_OWNED, diameterNumbers, hostedFieldOrder } from '../shared/welder-data.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
+import { composeDiameter, unitPrefill } from '../shared/diameter-standard.ts';
 import { PROGRESS_FIELDS, PROGRESS_HELP, PROGRESS_PHASES, progressSumsOk, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
 import { DuplicateSiteDialog } from './site-duplicate.tsx';
 import { AddNewIsometric } from './iso-add-new.tsx';
@@ -51,6 +52,8 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   const shown = (f: { hidden?: boolean; showIf?: [string, unknown] }) => !f.hidden && (!f.showIf || values[f.showIf[0]] === f.showIf[1]);
   // Main project form: the weights are checked when the main project is new or its weights are in use or were changed here (an older main project that never had weights can still be edited).
   const [initialValues] = useState(values); const [duplicating, setDuplicating] = useState(false); const hosted = Boolean(user.availability?.features.includes('pilots'));
+  // Weld diameters: Unit + Value compose the Diameter and prefill the sizes the unit allows (chart sizes: the outside diameter and outline; mm: the size).
+  useEffect(() => { if (resourceKey !== 'diameters' || !hosted || (String(values.unit ?? '') === String(initialValues.unit ?? '') && String(values.unitValue ?? '') === String(initialValues.unitValue ?? ''))) return; const composed = composeDiameter(values.unit, values.unitValue); if (composed) setValues(old => ({ ...old, diameter: composed, ...Object.fromEntries(Object.entries(unitPrefill(old.unit, old.unitValue)).map(([name, value]) => [name, String(value)])) })); }, [values.unit, values.unitValue]); // eslint-disable-line react-hooks/exhaustive-deps
   const weightsChanged = PROGRESS_FIELDS.some(name => String(values[name] ?? '') !== String(initialValues[name] ?? ''));
   // Isometric (hosted): while the main project numbers its isometrics automatically, the IRN is greyed out (the server refuses a typed one).
   const irnLocked = hosted && resourceKey === 'isometrics' && (rows.sites || []).some(site => site.irnAuto === true && site.id === (rows.projects || []).find(project => project.id === (values.projectId || record?.projectId))?.siteId);

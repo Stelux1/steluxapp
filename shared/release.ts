@@ -42,7 +42,7 @@ const resources: Availability['resources'] = {
   wps_sites: fields('wpsId siteId ownerArchived'),
   weld_processes: fields('name code description'),
   weld_types: fields('name location sort description'),
-  diameters: fields('diameter size sizeinch outline sorting'),
+  diameters: fields('unit unitValue diameter size sizeinch outline sorting'),
   welding_wires: fields('name classification manufacturer diameter chargeNo description'),
   ndt_groups: fields('name description'),
   ndt_processes: fields('name groupId description'),

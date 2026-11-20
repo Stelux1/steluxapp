@@ -1,4 +1,5 @@
 import type { Row, Value } from './types.ts';
+import { diameterPrintLabel } from './diameter-standard.ts';
 
 export interface LislColumn { key: string; label: string; group: string; type?: 'number' | 'date' }
 const group = (name: string, entries: (string | [string, string, ('number' | 'date')?])[]): LislColumn[] => entries.map(entry => typeof entry === 'string' ? { key: entry, label: entry, group: name } : { key: entry[0], label: entry[1], type: entry[2], group: name });
@@ -34,7 +35,7 @@ export function lislValues(weld: Row, rows: Record<string, Row[]>): Record<strin
     'VT Uploade': vt ? (rows.attachments || []).some(file => !file._archived && file.entityType === 'inspection_results' && file.entityId === vt.id) ? 'Yes' : 'No' : '',
     'NDT Req#': weld.ndoReq ? 'Yes' : 'No', 'NA Length': latest('NDT')?.naLength ?? '', 'Defect type': latest('NDT')?.defectType || '',
     'Welding Process': wps?.method || name('weld_processes', wps?.processId), 'WPS No': text(wps, 'name'), 'Coating 1': name('coatings', weld.coating1Id),
-    'Diameter (inch)': text(diameter, 'sizeinch'), Outline: text(diameter, 'outline'), Dia: text(diameter, 'sizeinch'), 'Dia Length': weld.lengthMode === 'Length in mm' ? weld.dialen ?? '' : 0,
+    'Diameter (inch)': text(diameter, 'sizeinch'), 'Diameter label': diameterPrintLabel(diameter, find('sites', project?.siteId)), Outline: text(diameter, 'outline'), Dia: text(diameter, 'sizeinch'), 'Dia Length': weld.lengthMode === 'Length in mm' ? weld.dialen ?? '' : 0,
     Tracer: weld.tracer ? 'Yes' : 'No', Created: weld._createdAt.slice(0, 10), 'Last edit date': weld._updatedAt.slice(0, 10),
   };
   const ndt = requests.filter(request => request.type === 'NDT');

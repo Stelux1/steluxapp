@@ -150,6 +150,7 @@ export const HOSTED_DROPPED_FIELDS: Record<string, string[]> = {
 };
 /** Form order of the reference where it differs from the shared definitions (fields not named follow, in their own order). */
 export const HOSTED_FIELD_ORDER: Record<string, string[]> = {
+  diameters: ['unit', 'unitValue', 'diameter', 'size', 'sizeinch', 'outline', 'sorting'],
   suppliers: ['name', 'address', 'zip', 'residence', 'mailbox', 'mnzip', 'mnresidence', 'phone', 'fax', 'email'],
   welding_wires: ['name', 'chargeNo', 'attestNo', 'diameter', 'classification', 'typeMaterial', 'norm', 'projectIds', 'supplierId', 'certType', 'controlled', 'accepted', 'description'],
   // Add / Edit welder (names of fields and of the relation fields).
@@ -175,7 +176,7 @@ export function hostedFieldOrder<T extends { name: string; section?: string }>(r
   return FLAT_FORMS.includes(resource) ? sorted.map(field => { const { section: _section, ...flat } = field; return flat as T; }) : sorted;
 }
 /** Selects of the hosted profile that also take a value typed by the user (no fixed list on the server). */
-export const HOSTED_FREE_VALUES: Record<string, string[]> = { material_types: ['iso15608', 'asmePNumber', 'asmeGroup'], welding_wires: ['certType'], certifications: ['certType'] };
+export const HOSTED_FREE_VALUES: Record<string, string[]> = { material_types: ['iso15608', 'asmePNumber', 'asmeGroup'], welding_wires: ['certType'], certifications: ['certType'], diameters: ['unit'] };
 export const hostedFreeValue = (resource: string, name: string) => Boolean(HOSTED_FREE_VALUES[resource]?.includes(name));
 /** Longest value of a free select (a group or P-Number is a short designation). */
 export const FREE_VALUE_MAX = 50;
@@ -247,6 +248,7 @@ export function hostedField(resource: string, field: Field): Field {
   // The diameter catalog: Size in mm, inches and outline take a decimal comma or point (numbers on the server).
   if (resource === 'diameters' && (DIAMETER_DECIMALS as readonly string[]).includes(field.name)) return { ...base, decimal: true };
   // Type of material: group, P-Number and group number are choose-or-type; the help line sits above the three.
+  if (resource === 'diameters' && field.name === 'unit') return { ...base, free: true, blank: 'Choose or type' };
   if (resource === 'material_types' && hostedFreeValue(resource, field.name)) return { ...base, free: true, blank: 'Choose or type', ...(field.name === 'iso15608' ? { intro: FREE_VALUE_INTRO } : {}) };
   // Certificate-type is free text on the welding wire and the certificate (the full profile keeps its EN 10204 list).
   if (hostedFreeValue(resource, field.name) && field.name === 'certType') return { ...base, type: 'text', options: undefined };

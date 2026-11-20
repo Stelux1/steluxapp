@@ -197,7 +197,7 @@ const baseColumns = (a3: boolean): LislColumn[] => [
   { key: 'wn', header: ['WN', 'Type'], width: 6.5, cell: entry => [text(entry.weld.weldNo), typeLine(entry)] },
   { key: 'ind', header: ['Ind. no.'], width: 6, cell: entry => side(entry, 'Index No') },
   { key: 'pos', header: ['Pos /', 'Material'], width: 9.5, cell: entry => [1, 2].map(i => [entry.values[`Pos ${i}`], entry.values[`Material ${i}`]].filter(Boolean).join(' ')) as [string, string] },
-  { key: 'dia', header: ['Dia./', 'Length'], width: 6, cell: entry => [entry.values['Diameter (inch)'] ? `${entry.values['Diameter (inch)']}"` : '', entry.weld.lengthMode === 'Length in mm' && entry.weld.dialen ? `${entry.weld.dialen} mm` : ''] },
+  { key: 'dia', header: ['Dia./', 'Length'], width: 6, cell: entry => [entry.values['Diameter label'] || (entry.values['Diameter (inch)'] ? `${entry.values['Diameter (inch)']}"` : ''), entry.weld.lengthMode === 'Length in mm' && entry.weld.dialen ? `${entry.weld.dialen} mm` : ''] },
   { key: 'wt', header: ['WT'], width: 4.5, cell: entry => side(entry, 'Wall thickness') },
   { key: 'sch', header: ['Sch.'], width: 4.5, cell: entry => side(entry, 'Schedule') },
   { key: 'chg', header: ['Chg.No.'], width: 7, record: true, cell: entry => side(entry, 'Charge No') },

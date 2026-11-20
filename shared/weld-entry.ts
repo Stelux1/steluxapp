@@ -1,4 +1,5 @@
 import type { Row } from './types.ts';
+import { chartPosition } from './diameter-standard.ts';
 import { mandatoryFields, projectCertificates, wpsValidation } from './site-settings.ts';
 import { certificatesForProject as projectCertificatesOf, splitIds } from './welder-data.ts';
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
@@ -154,8 +155,10 @@ export interface DiameterOption { value: string; label: string; ids: string[] }
  * reducer pairs and mm sizes of a large catalog do not multiply the list; a row without an inch size keeps its own entry, labelled
  * with its diameter. Otherwise one entry per row. Rows are taken in Sorting order.
  */
-export function diameterOptions(rows: Values[], grouped = true): DiameterOption[] {
-  const rank = (row: Values) => text(row.sorting) !== '' && Number.isFinite(Number(row.sorting)) ? Number(row.sorting) : Number.MAX_SAFE_INTEGER;
+export function diameterOptions(rows: Values[], grouped = true, chartOrder = false): DiameterOption[] {
+  // chartOrder (a main project's own diameter list): the client's chart sizes first in chart order (either standard), then the others by Sorting.
+  const sorting = (row: Values) => text(row.sorting) !== '' && Number.isFinite(Number(row.sorting)) ? Number(row.sorting) : Number.MAX_SAFE_INTEGER;
+  const rank = (row: Values) => chartOrder ? (chartPosition(row.diameter) >= 0 ? chartPosition(row.diameter) - 1e9 : sorting(row)) : sorting(row);
   const ordered = [...rows].sort((a, b) => rank(a) - rank(b));
   const options: DiameterOption[] = [], byKey = new Map<string, DiameterOption>();
   for (const row of ordered) {

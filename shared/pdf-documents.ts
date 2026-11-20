@@ -37,7 +37,7 @@ export function weldLine(weld: Row, rows: Rows): WeldLine {
   const welder = [values.Welder, values['Welder 2'], values['Welder 3'], values['Welder 4']].map(value => text(value).split(' | ')[0].trim()).filter(Boolean).join('/');
   return {
     weld, iso, weldNo: text(weld.weldNo), isoNo: text(iso?.isoNo), type: text(values['Weld Type']),
-    diameter: weld.lengthMode === 'Length in mm' && weld.dialen ? `${weld.dialen} mm` : inch ? `${inch}"` : '',
+    diameter: weld.lengthMode === 'Length in mm' && weld.dialen ? `${weld.dialen} mm` : text(values['Diameter label']) || (inch ? `${inch}"` : ''),
     wall: both('Wall thickness'), material: both('Material'), wps: text(values['WPS No']), welder, date: printDate(values['Weld date']),
   };
 }

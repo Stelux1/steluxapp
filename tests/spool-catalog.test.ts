@@ -183,7 +183,7 @@ test('duplicating a site with Spools copies the spool catalog\'s enablement of t
   store.create(CATALOG_SITES, { resourceKey: SPOOL_NAMES, recordId: 'spool-name-sp-010', siteId: 'site-north', enabled: false }, SYSTEM);
   store.create(CATALOG_SITES, { resourceKey: SPOOL_NAMES, recordId: 'spool-name-sp-011', siteId: 'site-river', enabled: false }, SYSTEM);
   const copy = runAction(store, 'duplicate-site', { siteId: 'site-north', parts: ['spools'] }, SYSTEM).record!;
-  const links = store.list(CATALOG_SITES).filter(entry => entry.siteId === copy.id);
+  const links = store.list(CATALOG_SITES).filter(entry => entry.siteId === copy.id && entry.resourceKey !== 'diameters'); // the diameter list is never copied (tests/diameter-standard.test.ts)
   assert.deepEqual(links.map(entry => [entry.resourceKey, entry.recordId, entry.enabled]), [[SPOOL_NAMES, 'spool-name-sp-010', false]]);
   const rows = { [CATALOG_SITES]: store.list(CATALOG_SITES) };
   assert.equal(enabledOnSite(SPOOL_NAMES, { id: 'spool-name-sp-010' }, copy.id, rows), false); assert.equal(enabledOnSite(SPOOL_NAMES, { id: 'spool-name-sp-011' }, copy.id, rows), true);
