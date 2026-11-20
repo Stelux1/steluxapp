@@ -28,7 +28,7 @@ export function orderProjectIds(rows:Record<string,Row[]>,orderId:string){const 
 export function requirementExecution(rows:Record<string,Row[]>,filters:{projectId?:string;isoId?:string}={}){
   const active=(key:string)=>(rows[key]||[]).filter(r=>!r._archived);
   const isos=new Map(active('isometrics').map(i=>[i.id,i]));const orders=new Map(active('orders').filter(o=>o.status!=='Cancelled').map(o=>[o.id,o]));
-  const lines=active('order_lines').filter(l=>orders.has(String(l.orderId)));const picks=active('picklists').filter(pickIssued);
+  const lines=active('order_lines').filter(l=>orders.has(String(l.orderId))&&!l.additional);const picks=active('picklists').filter(pickIssued);
   // Inv.: the Material inventory of the isometric's project site (rows with locationKind 'site', plus the old-model
   // storehouse rows derived to it; other storehouse lines never count), less what pick lists claim of it and have not
   // taken yet (shared/mto-stock.ts holds the location rules: countedSiteId, inventoryClaims).

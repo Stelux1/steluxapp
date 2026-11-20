@@ -99,7 +99,7 @@ export interface MaterialLineStatus { requirementId: string; required: number; o
 /** The order (not cancelled) a requirement is on: the one its own order line links to, else the first order of its material in its project. */
 function orderOf(rows: Rows, entry: ReturnType<typeof requirementExecution>[number]): Row | undefined {
   const orders = new Map(live(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
-  const lines = live(rows, 'order_lines').filter(line => orders.has(String(line.orderId)));
+  const lines = live(rows, 'order_lines').filter(line => orders.has(String(line.orderId)) && !line.additional);
   const linked = lines.filter(line => lineRequirementIds(line).includes(entry.requirement.id) && materialIdentity(line) === entry.identity);
   const own = linked.length ? linked : lines.filter(line => !lineRequirementIds(line).length && materialIdentity(line) === entry.identity && text(orders.get(String(line.orderId))?.projectId) === text(entry.iso.projectId));
   return own.map(line => orders.get(String(line.orderId))!).sort((a, b) => text(a.date).localeCompare(text(b.date)) || text(a._createdAt).localeCompare(text(b._createdAt)))[0];

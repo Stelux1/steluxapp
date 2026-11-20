@@ -31,6 +31,8 @@ export const PROCUREMENT_RESOURCE_FIELDS: Record<string, string[]> = {
 };
 export const PROCUREMENT_ACTION_FIELDS: Record<string, string[]> = {
   'order-requirements': ['requirementIds', 'supplierId', 'date', 'note'],
+  // Additional order (e.g. a pipe cut wrongly): one material on top of the project need, with a required reason.
+  'order-additional': ['projectId', 'materialId', 'customMaterialId', 'quantity', 'supplierId', 'reason', 'date'],
   receive: ['orderId', 'supplierId', 'warehouseId', 'date', 'note', 'items'],
   'correct-receipt': ['receiptId', 'quantity', 'date', 'note'],
   // Order archive: link an order to a supplier (the take-in supplier stays on the receipts).
@@ -73,7 +75,8 @@ export function openOrderOutstanding(rows: Rows): Map<string, number> {
   const result = new Map<string, number>();
   for (const line of active(rows, 'order_lines')) {
     const order = orders.get(text(line.orderId)); const open = round(Math.max(0, Number(line.quantity) - Number(line.received)));
-    if (!order || open <= 0) continue;
+    // An additional order is on top of the project need: what it still brings never covers the regular need.
+    if (!order || open <= 0 || line.additional) continue;
     const key = `${orderLineSiteId(rows, line, order)}|${materialIdentity(line)}`;
     result.set(key, round((result.get(key) || 0) + open));
   }
@@ -139,7 +142,7 @@ export function pendingLines(rows: Rows, filter: ScopeFilter = {}): PendingLine[
 }
 
 export interface ReceiptEntry { receipt: Row; order: Row | undefined; material: Row | undefined; supplierId: string }
-/** Material take in: the log of receipts, newest first. Negative quantities are corrections. */
+/** Material take in: the log of receipts, newest first. A take-in is always positive; older entries with a negative quantity are corrections. */
 export function receiptLog(rows: Rows, filter: ScopeFilter = {}): ReceiptEntry[] {
   const orders = new Map(active(rows, 'orders').map(order => [order.id, order]));
   return active(rows, 'receipts').flatMap(receipt => {
@@ -206,20 +209,20 @@ export function orderDetail(rows: Rows, orderId: string) {
 
 /**
  * Client-side check of the "Today rec." quantities of Receive materials. The server repeats it. More than ordered is
- * accepted; a negative value corrects an earlier receipt and can take back at most what the line has received.
+ * accepted; a take-in is always a positive quantity (nothing is taken back here; Correct receipt does that).
  */
-export function receiptQuantityErrors(lines: { lineId: string; received: number; quantity: unknown }[]): Record<string, string> {
+export function receiptQuantityErrors(lines: { lineId: string; received?: number; quantity: unknown }[]): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const line of lines) {
     if (line.quantity === '' || line.quantity === undefined || line.quantity === null) continue;
     const quantity = Number(line.quantity);
     if (!Number.isFinite(quantity)) errors[line.lineId] = 'Enter a number.';
-    else if (round(line.received + quantity) < 0) errors[line.lineId] = `At most ${round(line.received)} can be taken back.`;
+    else if (quantity < 0) errors[line.lineId] = 'Enter a positive quantity.';
   }
   return errors;
 }
-/** The lines of a receipt that carry a quantity (empty and zero are left out). */
-export const receiptItems = (quantities: Record<string, unknown>) => Object.entries(quantities).filter(([, value]) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)) && round(Number(value)) !== 0).map(([lineId, value]) => ({ lineId, quantity: round(Number(value)) }));
+/** The lines of a receipt that carry a quantity (empty and zero are left out; a negative value is never taken in). */
+export const receiptItems = (quantities: Record<string, unknown>) => Object.entries(quantities).filter(([, value]) => value !== '' && value !== null && value !== undefined && Number.isFinite(Number(value)) && round(Number(value)) > 0).map(([lineId, value]) => ({ lineId, quantity: round(Number(value)) }));
 
 /** One CSV cell. Text that a spreadsheet would read as a formula is prefixed so it stays text. */
 export function csvCell(value: unknown) {
@@ -228,3 +231,65 @@ export function csvCell(value: unknown) {
   return /[",\n\r]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell;
 }
 export const toCsv = (headers: string[], rows: unknown[][]) => [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+
+export interface OrderedMaterial {
+  identity: string; material: Row; ordered: number; received: number; outstanding: number;
+  /** The orders the material is on (an additional order is marked) and the suppliers assigned to them. */
+  orderNumbers: string[]; supplierIds: string[]; additional: boolean;
+}
+/**
+ * Order materials, "Ordered" view: the materials already on an order (not cancelled) for the same project / isometric filter, one row per
+ * material with ordered, received and what is still outstanding. Kept apart from `orderPlanning`, which lists what is still to be ordered.
+ */
+export function orderedMaterials(rows: Rows, filter: ScopeFilter = {}): OrderedMaterial[] {
+  const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
+  const groups = new Map<string, OrderedMaterial>();
+  for (const line of active(rows, 'order_lines')) {
+    const order = orders.get(text(line.orderId));
+    if (!order || !orderInScope(rows, order, filter) || (filter.isoId && !lineIsoIds(rows, line).includes(filter.isoId))) continue;
+    const material = materialRecord(rows, line);
+    if (!includes([line.materialNo, line.description, material?.materialNo, material?.description, material?.materialGroup, material?.articleNo], filter.query)) continue;
+    const identity = materialIdentity(line);
+    const group = groups.get(identity) || { identity, material: (material || line) as Row, ordered: 0, received: 0, outstanding: 0, orderNumbers: [], supplierIds: [], additional: false };
+    group.ordered = round(group.ordered + Number(line.quantity || 0)); group.received = round(group.received + Number(line.received || 0));
+    group.outstanding = round(group.outstanding + Math.max(0, Number(line.quantity || 0) - Number(line.received || 0)));
+    const number = text(order.number) + (line.additional ? ' (additional)' : '');
+    if (!group.orderNumbers.includes(number)) group.orderNumbers.push(number);
+    if (order.supplierId && !group.supplierIds.includes(text(order.supplierId))) group.supplierIds.push(text(order.supplierId));
+    if (line.additional) group.additional = true;
+    groups.set(identity, group);
+  }
+  return [...groups.values()].map(group => ({ ...group, orderNumbers: group.orderNumbers.sort(naturalCompare) }))
+    .sort((a, b) => naturalCompare(text(a.material.materialGroup), text(b.material.materialGroup)) || naturalCompare(text(a.material.materialNo), text(b.material.materialNo)) || a.identity.localeCompare(b.identity));
+}
+
+export interface AdditionalRow { projectId: string; identity: string; material: Row; required: number; ordered: number; additional: number; percent: number | null }
+export interface AdditionalOverview { rows: AdditionalRow[]; totals: { required: number; ordered: number; additional: number; percent: number | null } }
+const percentOf = (part: number, whole: number) => whole > 0 ? Math.round(part / whole * 1000) / 10 : null;
+/**
+ * "Additional vs required": per project and material, the quantity the isometric requirements ask for, what the regular orders cover, what was
+ * ordered additionally, and the additional as a share of the required quantity (null when nothing is required). Rows are limited to the project
+ * filter; an additional line belongs to the project of its order.
+ */
+export function additionalOverview(rows: Rows, filter: { projectId?: string; query?: string } = {}): AdditionalOverview {
+  const map = new Map<string, AdditionalRow>();
+  const entryOf = (projectId: string, identity: string, material: Row) => { const key = `${projectId}|${identity}`; const row = map.get(key) || { projectId, identity, material, required: 0, ordered: 0, additional: 0, percent: null }; map.set(key, row); return row; };
+  for (const entry of requirementExecution(rows, { projectId: filter.projectId })) {
+    const row = entryOf(text(entry.iso.projectId), entry.identity, entry.material);
+    row.required = round(row.required + entry.required); row.ordered = round(row.ordered + Math.min(entry.ordered, entry.required));
+  }
+  const orders = new Map(active(rows, 'orders').filter(order => order.status !== 'Cancelled').map(order => [order.id, order]));
+  for (const line of active(rows, 'order_lines')) {
+    const order = orders.get(text(line.orderId));
+    if (!line.additional || !order || (filter.projectId && text(order.projectId) !== filter.projectId)) continue;
+    const row = entryOf(text(order.projectId), materialIdentity(line), (materialRecord(rows, line) || line) as Row);
+    row.additional = round(row.additional + Number(line.quantity || 0));
+  }
+  const list = [...map.values()].filter(row => includes([row.material.materialNo, row.material.description, row.material.materialGroup], filter.query))
+    .map(row => ({ ...row, percent: percentOf(row.additional, row.required) }))
+    .sort((a, b) => naturalCompare(a.projectId, b.projectId) || naturalCompare(text(a.material.materialNo), text(b.material.materialNo)) || a.identity.localeCompare(b.identity));
+  const sum = (pick: (row: AdditionalRow) => number) => round(list.reduce((total, row) => total + pick(row), 0));
+  const totals = { required: sum(row => row.required), ordered: sum(row => row.ordered), additional: sum(row => row.additional), percent: null as number | null };
+  totals.percent = percentOf(totals.additional, totals.required);
+  return { rows: list, totals };
+}

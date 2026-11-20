@@ -28,15 +28,16 @@ export const MTO_DASHBOARD_OPTIONAL = ['operation_phases', 'material_location_ev
 
 /**
  * The dashboard's page areas (reference profile areas, mto__system__profiles.txt): "Dashboard - Spools locations" 1,
- * "Dashboard - Pending materials" 2, "Dashboard - Pending orders" 3. Each gates one part of the page:
- * logistics (signal chart, aging chips, the Logistics / aging column and the At service / At laydown / Aging views),
- * materials (KPI cards, Max startable and Free pool chips, Readiness focus, Operations board) and orders (Ordered,
- * Received, Open ordered, Blocking backorder and Not ordered chips, the Backlog by site chart, the Open ordered view).
+ * "Dashboard - Pending materials" 2, "Dashboard - Pending orders" 3. Client answer 17.11.2026: the dashboard is the same for
+ * everyone. An account that holds any of the three areas may open it and sees every panel (logistics: signal chart, aging chips,
+ * the Logistics / aging column and views; materials: KPI cards, chips, Readiness focus, Operations board; orders: Ordered /
+ * Received / Open ordered chips, the Backlog chart, the Open ordered view); the data stays limited to the records it may read.
  */
 export const MTO_DASHBOARD_PANEL_AREAS = { logistics: '1', materials: '2', orders: '3' } as const;
 export type DashboardPanel = keyof typeof MTO_DASHBOARD_PANEL_AREAS;
 export function dashboardPanels(canArea: (key: string) => boolean): Record<DashboardPanel, boolean> {
-  return Object.fromEntries(Object.entries(MTO_DASHBOARD_PANEL_AREAS).map(([panel, area]) => [panel, canArea(area)])) as Record<DashboardPanel, boolean>;
+  const open = Object.values(MTO_DASHBOARD_PANEL_AREAS).some(area => canArea(area));
+  return Object.fromEntries(Object.keys(MTO_DASHBOARD_PANEL_AREAS).map(panel => [panel, open])) as Record<DashboardPanel, boolean>;
 }
 
 export const READINESS = ['STARTED', 'STARTABLE', 'PARTIAL', 'BLOCKED'] as const;
@@ -168,7 +169,7 @@ export function allocateOpenOrders(rows: Rows, lines: ScopeLine[], isoProject: (
   const add = (map: Map<string, number>, key: string, quantity: number) => map.set(key, round((map.get(key) || 0) + quantity));
   const inScope = new Map(lines.map(line => [line.requirementId, line]));
   for (const line of active(rows, 'order_lines')) {
-    const order = orders.get(text(line.orderId)); if (!order) continue;
+    const order = orders.get(text(line.orderId)); if (!order || line.additional) continue;
     const open = round(Number(line.quantity || 0) - Number(line.received || 0)); if (open <= 0) continue;
     const identity = materialIdentity(line), ids = lineRequirementIds(line);
     if (ids.length) {
@@ -203,7 +204,7 @@ export function orderLinesInScope(rows: Rows, identities: Set<string>, filters: 
   const isoProject = new Map(active(rows, 'isometrics').map(iso => [iso.id, text(iso.projectId)]));
   return active(rows, 'order_lines').flatMap(line => {
     const order = orders.get(text(line.orderId)), identity = materialIdentity(line);
-    if (!order || !identities.has(identity)) return [];
+    if (!order || line.additional || !identities.has(identity)) return [];
     if (filters.supplierId && text(order.supplierId) !== filters.supplierId) return [];
     if (filters.projectId && (text(order.projectId) || isoProject.get(text(line.isoId)) || '') !== filters.projectId) return [];
     const ordered = Number(line.quantity || 0), received = Number(line.received || 0);
@@ -285,8 +286,16 @@ export interface MaterialRow { identity: string; materialNo: string; description
 export interface HotMaterial { identity: string; materialNo: string; description: string; isometrics: number; shortage: number; blockingBackorder: number; notOrdered: number }
 export interface BacklogRow { scope: 'Site'; openOrdered: number; blockingBackorder: number; notOrdered: number }
 export interface LocationBar { location: string; label: string; isometrics: number }
+/**
+ * Progress cards (client answer 17.11.2026), over the requirement lines and isometrics the dashboard's filters keep. Additional orders are not
+ * counted. `ordered` is the covered part of each requirement (never above what it requires); `received` is the part of that which the order
+ * lines it is ordered on have received (each line capped at its quantity). The percentages are null when nothing is required / no isometric is in scope.
+ */
+export interface DashboardProgress { required: number; ordered: number; received: number; orderedPercent: number | null; receivedPercent: number | null; isometrics: number; started: number; startedPercent: number | null }
+const percent = (part: number, whole: number) => whole > 0 ? Math.round(part / whole * 1000) / 10 : null;
 export interface MtoDashboard {
   phaseId: string; today: string; filters: DashboardFilters;
+  progress: DashboardProgress;
   board: BoardRow[]; materials: MaterialRow[];
   kpis: { startable: number; started: number; inScope: number; partial: number; blocked: number; reserved: number; blockingQuantity: number; blockingIsometrics: number; notOrderedMaterials: number; notOrderedIsometrics: number; freePoolMaterials: number; openOrdered: number };
   chips: { maxStartable: number; freePoolMaterials: number; ordered: number; received: number; openOrdered: number; blockingBackorder: number; notOrdered: number; aging: Record<AgingBucket, number>; noLogisticsUpdate: number };
@@ -349,7 +358,7 @@ function serverFilterEntries(rows: Rows, entries: Entry[], filters: DashboardFil
   if (filters.spoolId) { const isoId = text(active(rows, 'spools').find(row => row.id === filters.spoolId)?.isoId); kept = kept.filter(entry => entry.iso.id === isoId); }
   if (filters.supplierId) {
     const orders = new Set(active(rows, 'orders').filter(order => order.status !== 'Cancelled' && text(order.supplierId) === filters.supplierId).map(order => order.id));
-    const lines = active(rows, 'order_lines').filter(line => orders.has(text(line.orderId)));
+    const lines = active(rows, 'order_lines').filter(line => orders.has(text(line.orderId)) && !line.additional);
     kept = kept.filter(entry => lines.some(line => lineRequirementIds(line).length ? lineRequirementIds(line).includes(entry.requirement.id) : line.isoId === entry.iso.id && materialIdentity(line) === entry.identity));
   }
   return kept;
@@ -367,7 +376,8 @@ export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { 
   // Picked = the pick-list lines whose stock has left the inventory (taken, or issued at Start: w3-mto-execution's rule,
   // shared/materials.ts pickIssued); a line written before Start and not taken yet is the line's own claim (below).
   const taken = { ...rows, picklists: active(rows, 'picklists').filter(pickIssued) };
-  const entries = serverFilterEntries(rows, requirementExecution(taken).filter(entry => entry.required > 0 && isos.has(entry.iso.id) && (!phaseId || text(entry.requirement.phaseId) === phaseId))
+  const execution = requirementExecution(taken), orderedOf = new Map(execution.map(entry => [entry.requirement.id, entry.ordered]));
+  const entries = serverFilterEntries(rows, execution.filter(entry => entry.required > 0 && isos.has(entry.iso.id) && (!phaseId || text(entry.requirement.phaseId) === phaseId))
     .map(entry => ({ requirement: entry.requirement, iso: entry.iso, material: entry.material, identity: entry.identity, pool: poolKey(isoSiteId(rows, entry.iso), entry.identity), required: entry.required, picked: entry.picked })), filters);
   const reservations = active(rows, 'reservations').filter(row => row.status === 'Reserved');
   const claims = active(rows, 'picklists').filter(pickClaims);
@@ -385,7 +395,7 @@ export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { 
   const scopeIsoMaterials = new Set(entries.map(entry => `${entry.iso.id}|${entry.identity}`));
   const oldestOpen = new Map<string, string>();
   for (const line of active(rows, 'order_lines')) {
-    const order = orders.get(text(line.orderId)); if (!order || Number(line.quantity || 0) - Number(line.received || 0) <= 0) continue;
+    const order = orders.get(text(line.orderId)); if (!order || line.additional || Number(line.quantity || 0) - Number(line.received || 0) <= 0) continue;
     if (filters.supplierId && text(order.supplierId) !== filters.supplierId) continue;
     const ids = lineRequirementIds(line);
     const isoIds = ids.length ? [...new Set(ids.map(id => scopeRequirements.get(id) || '').filter(Boolean))] : scopeIsoMaterials.has(`${text(line.isoId)}|${materialIdentity(line)}`) ? [text(line.isoId)] : [];
@@ -398,6 +408,16 @@ export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { 
     for (const line of own.filter(item => pick(item) > 0)) { const item = byMaterial.get(line.identity) || { materialNo: text(line.material.materialNo) || 'Unavailable material', description: text(line.material.description), quantity: 0 }; item.quantity = round(item.quantity + pick(line)); byMaterial.set(line.identity, item); }
     return [...byMaterial.values()];
   };
+  // Ordered and received against what the requirements ask for (regular orders only).
+  const regular = active(rows, 'order_lines').filter(line => orders.has(text(line.orderId)) && !line.additional);
+  let requiredTotal = 0, orderedTotal = 0, receivedTotal = 0;
+  for (const entry of entries) {
+    const ordered = Math.min(orderedOf.get(entry.requirement.id) || 0, entry.required);
+    const linked = regular.filter(line => materialIdentity(line) === entry.identity && (line.requirementId === entry.requirement.id || lineRequirementIds(line).includes(entry.requirement.id)));
+    const own = linked.length ? linked : regular.filter(line => materialIdentity(line) === entry.identity && !line.requirementId && !lineRequirementIds(line).length && text(orders.get(text(line.orderId))?.projectId) === text(entry.iso.projectId));
+    const quantity = own.reduce((sum, line) => sum + Number(line.quantity || 0), 0), got = own.reduce((sum, line) => sum + Math.min(Number(line.received || 0), Number(line.quantity || 0)), 0);
+    requiredTotal += entry.required; orderedTotal += ordered; receivedTotal += quantity > 0 ? ordered * Math.min(1, got / quantity) : 0;
+  }
   const board: BoardRow[] = [...new Set(entries.map(entry => entry.iso))].map(iso => {
     const own = lines.filter(line => line.isoId === iso.id);
     const required = round(own.reduce((sum, line) => sum + line.required, 0)), covered = round(own.reduce((sum, line) => sum + line.covered, 0));
@@ -446,8 +466,9 @@ export function mtoDashboard(rows: Rows, options: Partial<DashboardFilters> & { 
   }).sort((a, b) => byNumber(a.materialNo, b.materialNo));
 
   const blockingQuantity = sum(row => row.blockingBackorder), notOrderedTotal = sum(row => row.notOrdered);
+  const progress: DashboardProgress = { required: round(requiredTotal), ordered: round(orderedTotal), received: round(receivedTotal), orderedPercent: percent(orderedTotal, requiredTotal), receivedPercent: percent(receivedTotal, requiredTotal), isometrics: board.length, started: count('STARTED'), startedPercent: percent(count('STARTED'), board.length) };
   return {
-    phaseId, today, filters, board, materials,
+    phaseId, today, filters, board, materials, progress,
     kpis: { startable: count('STARTABLE'), started: count('STARTED'), inScope: board.length, partial: count('PARTIAL'), blocked: board.filter(isBlocked).length, reserved: round(lines.reduce((total, line) => total + line.reserved, 0)), blockingQuantity, blockingIsometrics: board.filter(row => row.blockingBackorder > 0).length, notOrderedMaterials: notOrderedMaterials.size, notOrderedIsometrics: board.filter(row => row.notOrdered > 0).length, freePoolMaterials, openOrdered },
     chips: { maxStartable: maxStartable(entries, reservedFor, claimedFor, pools), freePoolMaterials, ordered, received, openOrdered, blockingBackorder: blockingQuantity, notOrdered: notOrderedTotal, aging, noLogisticsUpdate: board.filter(row => row.ageDays === null).length },
     signals, locations,

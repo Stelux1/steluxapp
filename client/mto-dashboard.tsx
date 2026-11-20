@@ -42,7 +42,7 @@ export function MtoDashboard() {
 
   if (!readable) return <section className="panel md-state" role="alert"><EmptyState title="No access to the MTO dashboard" description="Your profile does not include the dashboard areas or the isometrics, requirements, stock, orders and pick lists this dashboard reads. Ask an administrator to open them for you."/></section>;
   if (computed.error || !computed.model) return <section className="panel md-state" role="alert"><EmptyState title="The dashboard could not be calculated" description={computed.error || 'Reload the workspace and try again.'}/></section>;
-  const model = computed.model, { kpis, chips } = model;
+  const model = computed.model, { kpis, chips, progress } = model;
   const phaseName = phases.find(row => row.id === filters.phaseId)?.name;
   const tabs = BOARD_TABS.filter(item => (panels.logistics || !LOGISTICS_TABS.includes(item)) && (panels.orders || item !== MATERIAL_VIEW_TAB));
   const current = tabs.includes(tab) ? tab : 'All';
@@ -69,6 +69,8 @@ export function MtoDashboard() {
   ];
   const kpi = (title: string, value: string | number, caption: string, filter: BoardTab) =>
     <button type="button" className="panel md-kpi" onClick={() => open(filter)} aria-label={`${title} ${value}. ${caption} Show on the operations board.`}><small>{title}</small><strong>{value}</strong><span>{caption}</span></button>;
+  const shownPercent = (value: number | null) => value === null ? '—' : `${formatNumber(value, 1)} %`;
+  const figure = (title: string, value: string, caption: string) => <div className="panel md-kpi" role="group" aria-label={`${title} ${value}. ${caption}`}><small>{title}</small><strong>{value}</strong><span>{caption}</span></div>;
   const columns = materialView ? MATERIAL_VIEW_COLUMNS : BOARD_COLUMNS.filter(column => panels.logistics || column !== 'Logistics / aging');
 
   return <div className="md-dashboard">
@@ -81,6 +83,12 @@ export function MtoDashboard() {
         <button type="button" className="btn" onClick={() => setReport(true)} disabled={!canRecord('material_quantity_changes')} title={canRecord('material_quantity_changes') ? undefined : 'Your profile does not include the quantity log.'}><FileText size={16}/>Material revisions report</button>
       </div>
     </section>
+
+    {panels.materials && <section className="md-kpis" aria-label="MTO progress">
+      {figure('Ordered', shownPercent(progress.orderedPercent), `${qty(progress.ordered)} of ${qty(progress.required)} required quantity ordered.`)}
+      {figure('Received', shownPercent(progress.receivedPercent), `${qty(progress.received)} of ${qty(progress.required)} required quantity received.`)}
+      {figure('Isometrics started', shownPercent(progress.startedPercent), `${progress.started} of ${progress.isometrics} isometrics have an Execution Start.`)}
+    </section>}
 
     {panels.materials && <section className="md-kpis" aria-label="MTO key figures">
       {kpi('Theoretical startable', kpis.startable, `${kpis.inScope} isometrics in scope. Started ${kpis.started}.`, KPI_FILTERS.startable)}
