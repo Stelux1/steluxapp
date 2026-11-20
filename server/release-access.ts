@@ -5,12 +5,12 @@ import { PILOT_MAP } from '../shared/pilots.ts';
 import { SIGNATURE_KINDS } from '../shared/signatures.ts';
 import { punchWriteError } from '../shared/punch.ts';
 import type { Availability, AuditEvent, Module, Row, User } from '../shared/types.ts';
-import { Store, AppError } from './store.ts';
+import { Store, AppError, type Actor } from './store.ts';
 import { effectiveProfileId, pilotHides, publicUser } from './auth.ts';
 import { availableWps, RELATIONS, relationMatches } from '../shared/welding.ts';
 import { WPS_COPY_FIELDS } from '../shared/wps.ts';
 import { ENABLEMENT_INPUT, enablementKey, missingRequired } from '../shared/weld-catalogs.ts';
-import { assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
+import { assertNdtRemovable, assertNdtUnlocked, assertWeldEntry, assertWeldUnlocked } from './weld-entry.ts';
 import { deleteRefusal, guardIrn, guardSiteIrn } from './iso-pages.ts';
 import { allowedSites, inSiteScope, isSiteRefusal, singleSiteScope, siteScopeFor, withSiteScope } from './site-scope.ts';
 import { STANDARD_DOCUMENT_MESSAGE, isStandardAttachmentName } from '../shared/weld-catalogs.ts';
@@ -118,10 +118,11 @@ export function releaseAccess(store: Store, availability?: Availability) {
     }
   }
   /** Weld entry rules and the lock of completed phases for the plain record routes of the hosted profile. */
-  function weldRecord(key: string, value: Record<string, unknown>, existing?: Row) { if (pilots && key === 'welds') assertWeldEntry(store, value, existing); }
+  /** A weld with an NDT request is changed in Edit weld only (administrators, with a comment); `actor` is the account of the request. */
+  function weldRecord(key: string, value: Record<string, unknown>, existing?: Row, actor?: Actor) { if (pilots && key === 'welds') { if (existing && actor) { assertWeldUnlocked(store, existing); assertNdtUnlocked(store, existing, actor, null); } assertWeldEntry(store, value, existing); } }
   /** Deleting or bringing back a weld of a completed phase is refused too. */
-  function archive(key: string, row: Row) {
-    if (pilots && key === 'welds') assertWeldUnlocked(store, row);
+  function archive(key: string, row: Row, actor?: Actor) {
+    if (pilots && key === 'welds') { assertWeldUnlocked(store, row); if (actor) assertNdtRemovable(store, row, actor); }
     // Delete in the reference: an isometric with welds, materials, reservations, calculations or started work, and a project that is not blank, stay (422: its sentence reaches the user).
     if (pilots && !row._archived) { const refusal = deleteRefusal(store, key, row); if (refusal) throw new AppError(422, refusal); }
     // Delete project site (reference "Delete project site" / "Are you sure?"): refused while the site still has projects.

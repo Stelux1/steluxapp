@@ -203,7 +203,7 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer stampedBy stampedAt'));
     availability.actions['save-weld'] = ['weldId', 'isoId', 'expectedVersion', 'updatePrev', 'updateNext', ...WELD_ENTRY_FIELDS, 'tracer', 'note', 'defaultDiameter', 'spoolName'];
     availability.actions['add-welds'] = fields('isoId start end diameterId');
-    availability.actions['mass-edit-welds'] = fields('weldIds changes versions');
+    availability.actions['mass-edit-welds'] = fields('weldIds changes versions note');
     availability.actions['reorder-welds'] = fields('isoId weldIds');
     availability.actions['toggle-weld-sorting'] = fields('isoId enabled');
     availability.actions['stamp-weld'] = fields('weldId stampedBy expectedVersion');

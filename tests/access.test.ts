@@ -76,7 +76,7 @@ async function requestKinds(as: { request: (path: string, options?: Options) => 
   const weldKinds = {
     bootstrap: () => as.request('/bootstrap', { pilot }),
     read: () => as.request('/records/welds', { pilot }),
-    write: () => { const weld = store.get('welds', 'weld-1'); return as.request(`/records/welds/${weld.id}`, { method: 'PUT', pilot, data: { description: `Edited in ${pilot}`, _version: weld._version } }); },
+    write: () => { const weld = store.get('welds', 'weld-19'); /* weld-1 has an NDT request: locked for every account but an administrator */ return as.request(`/records/welds/${weld.id}`, { method: 'PUT', pilot, data: { description: `Edited in ${pilot}`, _version: weld._version } }); },
     bulk: () => as.request('/bulk/isometrics', { method: 'POST', pilot, data: { ids: [iso.id], changes: { area: `Bulk ${pilot}` }, versions: { [iso.id]: store.get('isometrics', iso.id)._version } } }),
     action: () => as.request('/actions/phases', { method: 'POST', pilot, data: { isoIds: [iso.id], field_test: 'Complete' } }),
     report: () => as.request('/reports/lisl', { pilot }),
@@ -171,7 +171,7 @@ test('weld-only, MTO-only and different-profile accounts: every request kind is 
   // Different profiles: Read & write in Weld Pilot, read only in MTO Pilot.
   const both = f.account('Both pilots', { profileId: viewer, weldEnabled: true, weldProfileId: writer, mtoEnabled: true, mtoProfileId: viewer });
   const as = f.client(); assert.deepEqual((await as.login(both.email)).pilots, ['weld', 'mto']);
-  const weld = f.store.get('welds', 'weld-2');
+  const weld = f.store.get('welds', 'weld-20');
   assert.equal(await status(await as.request(`/records/welds/${weld.id}`, { method: 'PUT', pilot: 'weld', data: { description: 'Edited weld', _version: weld._version } })), 200);
   let iso = f.store.get('isometrics', 'iso-3');
   assert.equal(await status(await as.request(`/records/isometrics/${iso.id}`, { method: 'PUT', pilot: 'weld', data: { priority: 'Prio 2', _version: iso._version } })), 200, 'header editable in Weld Pilot');

@@ -3,7 +3,7 @@ import { chartPosition } from './diameter-standard.ts';
 import { mandatoryFields, projectCertificates, wpsValidation } from './site-settings.ts';
 import { certificatesForProject as projectCertificatesOf, splitIds } from './welder-data.ts';
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
-import { INSPECTION_MASS_EDIT_FIELDS, locationField, processField } from './inspections.ts';
+import { INSPECTION_MASS_EDIT_FIELDS, locationField, ndtRequested, processField } from './inspections.ts';
 import { nonWeldCode, type NonWeldCode } from './weld-codes.ts';
 
 /**
@@ -670,6 +670,29 @@ export function editHistoryDate(iso: string): string {
   const two = (value: number) => String(value).padStart(2, '0');
   return `${two(date.getDate())}.${two(date.getMonth() + 1)}.${date.getFullYear()} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
 }
+
+// ----- the NDT lock (chat 17.11.2026): a weld with an NDT request stays as it is
+
+/** Tooltip and banner of a weld locked by its NDT request. */
+export const NDT_LOCK_REASON = 'Locked: an NDT request exists. Only an administrator can change it, with a comment.';
+export const NDT_LOCK_COMMENT_LABEL = 'Change comment (required, shown only here in Edit weld)';
+export const NDT_LOCK_COMMENT_REQUIRED = 'Enter a change comment: this weld has an NDT request.';
+/** Refusal to an account that is no administrator; `weldNo` names the weld. */
+export const ndtLockRefusal = (weldNo: unknown) => `Weld ${text(weldNo)} is locked: an NDT request exists. Only an administrator can change it, with a comment.`;
+/** The plain record routes carry no comment: an administrator changes a locked weld in Edit weld (or Mass edit, which asks for one). */
+export const ndtLockUseEditWeld = (weldNo: unknown) => `Weld ${text(weldNo)} has an NDT request: change it in Edit weld with a change comment.`;
+export interface NdtLock { locked: boolean; /** The account may still change the weld (an administrator, with a comment). */ editable: boolean; reason: string; }
+/**
+ * Whether a weld is locked by an NDT request (shared/inspections.ts `ndtRequested`) and whether this account may still
+ * change it. Recording NDT results is not an edit of the weld and stays open on a locked weld.
+ */
+export function ndtLock(requests: Row[] | null | undefined, weldId: string, administrator: boolean): NdtLock {
+  if (!weldId || !ndtRequested(requests, weldId)) return { locked: false, editable: true, reason: '' };
+  return { locked: true, editable: administrator, reason: NDT_LOCK_REASON };
+}
+/** Approved / Rejected of "Attach NDT result" in Edit weld; stored as the existing results Accepted / Rejected. */
+export const NDT_ATTACH_RESULTS = [{ value: 'Accepted', label: 'Approved' }, { value: 'Rejected', label: 'Rejected' }] as const;
+export const ndtAttachLabel = (stored: unknown) => stored === 'Accepted' ? 'Approved' : stored === 'Rejected' ? 'Rejected' : text(stored) || '—';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Other entry rules

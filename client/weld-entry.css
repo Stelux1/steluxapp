@@ -91,3 +91,16 @@
 .weld-table .weld-stamp-set { color: #0b6b47; }
 .weld-mass-columns > div { min-width: 0; }
 @media (max-width: 560px) { .weld-search { padding-inline: 16px; } }
+
+/* NDT result of Edit weld: the weld's results with their reports, and Attach NDT result. */
+.weld-ndt { margin-top: 18px; border-top: 1px solid var(--line); }
+.weld-ndt-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.weld-ndt-heading .btn { display: inline-flex; align-items: center; gap: 6px; }
+.weld-ndt-empty { margin: 0 0 8px; font-size: 13px; }
+.weld-ndt-file { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; overflow-wrap: anywhere; }
+.weld-ndt-form { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.weld-ndt-result { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0; padding: 0; border: 0; }
+.weld-ndt-result legend { margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+.weld-ndt-result label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.weld-ndt-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.weld-options .weld-lock-ndt { color: var(--ink, inherit); }

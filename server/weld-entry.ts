@@ -5,7 +5,7 @@ import { inOwnerSite } from '../shared/welder-data.ts';
 import {
   MASS_EDIT_FIELDS, MASS_EDIT_MANDATORY_MESSAGE, WELD_ENTRY_FIELDS, WELD_SORTING_MESSAGES, certificateErrors, hasWelder, lockContext, massEditMissingFields, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent,
   orderedWelds, planWeldRange, readMassEdit, weldLock, weldSortingDisabled, welderWpsErrors, wpsDiameterErrors, weldDiameterOf, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_TRACER_HINT, WELDERS, WELD_MANDATORY_MESSAGE, certificateSelectionErrors,
-  diameterErrors, duplicateWelderErrors, editReason, specialWeldCleared, CERTIFICATE_NOT_SELECTABLE,
+  diameterErrors, duplicateWelderErrors, editReason, specialWeldCleared, CERTIFICATE_NOT_SELECTABLE, NDT_LOCK_COMMENT_REQUIRED, ndtLock, ndtLockRefusal, ndtLockUseEditWeld,
 } from '../shared/weld-entry.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
 import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
@@ -62,6 +62,28 @@ export function assertInspectionUnlocked(store: Store, key: string, data: Values
     const lock = weldLock(weld, context);
     if (lock.locked) throw new AppError(423, `Weld ${String(weld.weldNo ?? '')}: ${lock.reason}`);
   }
+}
+
+/**
+ * NDT lock (chat 17.11.2026, owner: administrators only): once a weld has an NDT request it stays as it is. An account
+ * that is no administrator is refused; an administrator changes it only with a change comment (kept in the weld's
+ * Previous edits, shown in Edit weld alone). `comment` is null where the route carries none (record routes): an
+ * administrator is then sent to Edit weld. Returns whether the weld is locked (the caller stores the comment). The system
+ * actor (sample data, imports) is not checked. Recording NDT results is no weld edit and is not checked here.
+ */
+export function assertNdtUnlocked(store: Store, weld: Row, actor: Actor, comment: string | null): boolean {
+  if (actor.id === SYSTEM.id) return false;
+  const lock = ndtLock(store.list('inspection_requests'), String(weld.id), actor.administrator === true);
+  if (!lock.locked) return false;
+  if (!lock.editable) throw new AppError(423, ndtLockRefusal(weld.weldNo));
+  if (comment === null) throw new AppError(423, ndtLockUseEditWeld(weld.weldNo));
+  if (!comment) throw new AppError(422, NDT_LOCK_COMMENT_REQUIRED);
+  return true;
+}
+/** Deleting or bringing back a weld with an NDT request: administrators only (the delete dialog carries no comment). */
+export function assertNdtRemovable(store: Store, weld: Row, actor: Actor) {
+  if (actor.id === SYSTEM.id || actor.administrator === true) return;
+  if (ndtLock(store.list('inspection_requests'), String(weld.id), false).locked) throw new AppError(423, ndtLockRefusal(weld.weldNo));
 }
 
 /**
@@ -160,6 +182,13 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       const existing = data.weldId ? store.get('welds', data.weldId) : undefined;
       if (existing && data.isoId !== undefined && data.isoId !== existing.isoId) throw new AppError(422, 'A weld cannot move to another isometric.');
       if (existing && data.expectedVersion !== undefined && data.expectedVersion !== existing._version) throw new AppError(409, 'This weld changed since you opened it. Refresh and try again.');
+      // Editing a weld with NDT or PWHT in progress needs a reason; it is kept in the weld's history (Previous edits).
+      // The reason is no weld field, so its refusals carry no field hint (the form marks the reason box itself).
+      if (data.note !== undefined && typeof data.note !== 'string') throw new AppError(422, 'Enter the reason for editing as text.');
+      const reason = editReason(data.note);
+      if (reason.length > EDIT_REASON_MAX) throw new AppError(422, `The reason for editing has at most ${EDIT_REASON_MAX} characters.`);
+      // A weld with an NDT request: administrators only, with the reason as change comment (the phase lock answers first).
+      if (existing) { assertWeldUnlocked(store, existing); assertNdtUnlocked(store, existing, actor, reason); }
       if (!existing && !data.isoId) throw new AppError(422, 'Choose an isometric.', { isoId: 'Isometric is required.' });
       const isoId = existing?.isoId ?? data.isoId;
       for (const flag of ['updatePrev', 'updateNext']) if (data[flag] !== undefined && typeof data[flag] !== 'boolean') throw new AppError(422, 'Choose Yes or No.', { [flag]: 'Choose Yes or No.' });
@@ -173,15 +202,10 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       if (!existing) for (const name of Object.keys(input)) if (input[name] === '' && name !== 'weldNo') delete input[name];
       const merged: Values = { ...existing, ...input, isoId };
       if (changed(input, existing, ['lengthMode', 'ndoReq', 'ndtpercent'])) { const percent = normalizedNdtPercent(merged); if (percent !== (merged.ndtpercent === '' || merged.ndtpercent === undefined ? null : merged.ndtpercent)) input.ndtpercent = percent === null ? '' : percent; }
-      // Editing a weld with NDT or PWHT in progress needs a reason; it is kept in the weld's history (Previous edits).
-      // The reason is no weld field, so its refusals carry no field hint (the form marks the reason box itself).
-      if (data.note !== undefined && typeof data.note !== 'string') throw new AppError(422, 'Enter the reason for editing as text.');
-      const reason = editReason(data.note);
-      if (reason.length > EDIT_REASON_MAX) throw new AppError(422, `The reason for editing has at most ${EDIT_REASON_MAX} characters.`);
       const defaultDiameter = data.defaultDiameter === undefined ? {} : { defaultDiameter: String(data.defaultDiameter) };
       assertWeldEntry(store, { ...input, isoId, ...defaultDiameter }, existing, 'form');
       // Neighbours in table order: this weld's charge goes to the adjoining side of the previous / next weld.
-      const neighbours: { weld: Row; patch: Values }[] = [];
+      const neighbours: { weld: Row; patch: Values; locked: boolean }[] = [];
       if (data.updatePrev === true || data.updateNext === true) {
         const order = orderedWelds(activeWelds(store, isoId), sortingOff(store, isoId)).map(weld => weld.id);
         const anchor = existing?.id ?? '', ids = existing ? order : [...order, ''];
@@ -190,7 +214,9 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
           const id = neighbourOf(ids, anchor, which); if (!id) continue;
           const weld = store.get('welds', id);
           const patch: Values = { [`chargeNo${to}`]: merged[`chargeNo${from}`] ?? '', [`certificate${to}Id`]: merged[`certificate${from}Id`] ?? '', [`material${to}Id`]: merged[`material${from}Id`] ?? '' };
-          neighbours.push({ weld, patch });
+          // The neighbour that gets the charge is changed too: its NDT lock applies, with this edit's comment.
+          assertWeldUnlocked(store, weld);
+          neighbours.push({ weld, patch, locked: assertNdtUnlocked(store, weld, actor, reason) });
         }
       }
       for (const { weld, patch } of neighbours) { assertWeldEntry(store, { ...patch, isoId: weld.isoId }, weld, 'neighbour'); }
@@ -198,7 +224,7 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       if (spoolChoice) { const spoolId = applyWeldSpool(store, spoolChoice, actor); if (existing ? spoolId !== String(existing.spoolId ?? '') : spoolId) input.spoolId = spoolId; }
       const record = existing ? store.update('welds', existing.id, input, existing._version, actor) : store.create('welds', { ...input, isoId, sortOrder: nextSortOrder(store, isoId, actor) }, actor);
       if (existing && reason) store.audit('welds', existing.id, EDIT_REASON_ACTION, reason, actor);
-      const updated = neighbours.map(({ weld, patch }) => store.update('welds', weld.id, patch, store.get('welds', weld.id)._version, actor));
+      const updated = neighbours.map(({ weld, patch, locked }) => { const row = store.update('welds', weld.id, patch, store.get('welds', weld.id)._version, actor); if (locked) store.audit('welds', weld.id, EDIT_REASON_ACTION, reason, actor); return row; });
       return { resource: 'welds', record, records: [record, ...updated] };
     }
     if (key === 'add-welds') {
@@ -218,16 +244,24 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       if (unknown.length) throw new AppError(422, 'A field of the mass edit is not available.', Object.fromEntries(unknown.map(name => [name, 'This field cannot be mass edited.'])));
       const { changes, errors } = readMassEdit(data.changes as Values);
       if (Object.keys(errors).length) throw fail(errors);
+      // The change comment for welds with an NDT request (administrators only); stored on each of those welds.
+      if (data.note !== undefined && typeof data.note !== 'string') throw new AppError(422, 'Enter the change comment as text.');
+      const comment = editReason(data.note);
+      if (comment.length > EDIT_REASON_MAX) throw new AppError(422, `The change comment has at most ${EDIT_REASON_MAX} characters.`);
       const versions = (data.versions && typeof data.versions === 'object' ? data.versions : {}) as Record<string, unknown>;
-      const records = (ids as string[]).map(id => {
-        const weld = store.get('welds', id);
+      // Every weld is read first, so a weld the account may not reach is refused before any rule names another one.
+      const welds = (ids as string[]).map(id => store.get('welds', id));
+      const records = welds.map(weld => { const id = weld.id;
         if (versions[id] !== undefined && versions[id] !== weld._version) throw new AppError(409, `Weld ${weld.weldNo} changed since you opened it. Refresh and try again.`);
+        let locked = false; try { assertWeldUnlocked(store, weld); locked = assertNdtUnlocked(store, weld, actor, comment); } catch (error) { if (error instanceof AppError && error.status === 422) throw new AppError(422, `Weld ${weld.weldNo}: ${error.message}`); throw error; }
         // The reference's rule comes first, as it does before the browser sends anything: Weld type, WPS, Weld Date and Dia. must be there when the mass edit sets a welder.
         if (massEditMissingFields(siteOfIso(store, weld.isoId), weld, changes).length) throw new AppError(422, MASS_EDIT_MANDATORY_MESSAGE);
         try { assertWeldEntry(store, changes, weld, 'mass'); } catch (error) { if (error instanceof AppError) throw new AppError(error.status, `Weld ${weld.weldNo}: ${error.message}`, error.fields); throw error; }
         const patch: Values = { ...changes }; const merged = { ...weld, ...patch };
         if (changed(patch, weld, ['lengthMode', 'ndoReq', 'ndtpercent'])) { const percent = normalizedNdtPercent(merged); if (percent === null && weld.ndtpercent !== undefined && weld.ndtpercent !== null && weld.ndtpercent !== '') patch.ndtpercent = ''; }
-        return store.update('welds', weld.id, patch, weld._version, actor);
+        const record = store.update('welds', weld.id, patch, weld._version, actor);
+        if (locked) store.audit('welds', weld.id, EDIT_REASON_ACTION, comment, actor);
+        return record;
       });
       return { resource: 'welds', records };
     }
@@ -237,6 +271,13 @@ export function runWeldEntryAction(store: Store, key: string, data: Values, acto
       if (weldSortingDisabled(iso)) throw new AppError(409, WELD_SORTING_MESSAGES.off);
       const current = activeWelds(store, iso.id);
       if (ids.length !== current.length || new Set(ids).size !== ids.length || !current.every(weld => ids.includes(weld.id))) throw new AppError(409, 'The welds of this isometric changed. Refresh and try again.');
+      // Moving welds changes the place of a weld with an NDT request only for administrators (the order carries no comment).
+      if (actor.id !== SYSTEM.id && actor.administrator !== true) {
+        const requests = store.list('inspection_requests');
+        const before = orderedWelds(current).map(row => row.id);
+        const moved = (ids as string[]).find((id, index) => before[index] !== id && ndtLock(requests, id, false).locked);
+        if (moved) throw new AppError(423, `${ndtLockRefusal(current.find(row => row.id === moved)!.weldNo)} Its place in the table cannot change.`);
+      }
       const records = (ids as string[]).flatMap((id, index) => { const weld = current.find(row => row.id === id)!; return weld.sortOrder === index + 1 ? [] : [store.update('welds', id, { sortOrder: index + 1 }, weld._version, actor)]; });
       return { resource: 'welds', records };
     }

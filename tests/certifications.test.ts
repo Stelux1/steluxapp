@@ -291,6 +291,8 @@ test('main project of certificates and wires over the API: lists, records, welds
   assert.equal((await north.request(`/records/certifications/${own.record.id}`, { method: 'PUT', data: { siteId: 'site-river', _version: own.record._version } })).status, 403);
   assert.equal(f.store.get('certifications', own.record.id).siteId, 'site-north');
   // A weld takes a certificate and a wire of its own main project only (also for an account that reaches both).
+  // Its NDT request is cancelled: a weld with an NDT request is locked (shared/weld-entry.ts ndtLock).
+  for (const request of f.store.list('inspection_requests').filter(row => row.weldId === 'weld-1' && row.type === 'NDT')) f.store.update('inspection_requests', request.id, { status: 'Cancelled' }, request._version, SYSTEM); 
   const weld = f.store.get('welds', 'weld-1');
   let response = await f.admin.request('/records/welds/weld-1', { method: 'PUT', data: { certificate2Id: 'certificate-2', _version: weld._version } });
   assert.equal(response.status, 422); assert.ok((await json(response)).fields.certificate2Id);

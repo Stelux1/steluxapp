@@ -43,7 +43,7 @@ import { siteOfRecord } from './weld-catalogs.ts';
 import { applyDefaultSpoolNames, importSpoolNames } from './spool-catalog.ts';
 import { applyDefaultDiameters } from './diameter-standard.ts';
 import { SPOOL_IMPORT_TEXTS, spoolImportEntries } from '../shared/spool-catalog.ts';
-import { weldEditHistory } from './weld-entry.ts';
+import { assertNdtUnlocked, weldEditHistory } from './weld-entry.ts';
 import { companyForDocuments } from './pdf/company.ts';
 import { duplicateParts, duplicateReadResources } from '../shared/site-duplicate.ts';
 import { reportWorkbook, registerExportRoutes } from './report-export.ts';
@@ -313,7 +313,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to change this record.');
     if (pilots && resource.key === 'materials') { assertMaterialsInScope(store, [String(req.params.id)]); if (ENABLEMENT_INPUT.some(name => req.body[name] !== undefined)) throw new AppError(422, 'Use Home location to change the project sites of a material.'); }
     dropCompletionInput(resource.key, req.body);
-    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)));
+    access.input(resource.key, req.body, false, access.record(resource.key,String(req.params.id))); access.complete(resource.key, req.body, access.record(resource.key,String(req.params.id))); access.owner((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.weldRecord(resource.key, req.body, access.record(resource.key,String(req.params.id)), actorOf(req));
     checkItpLinkAccess((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id))); access.links((req as unknown as AuthRequest).user, resource.key, req.body, access.record(resource.key,String(req.params.id)));
     if (pilots) checkIsoWrite(store, resource.key, req.body, access.record(resource.key, String(req.params.id)));
     if (pilots && resource.key === 'iso_materials') assertIsoMaterialRecordEdit(req.body, access.record(resource.key, String(req.params.id)));
@@ -338,7 +338,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   app.post('/api/records/:resource/:id/archive', (req, res) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'delete',access.record(resource.key,String(req.params.id),true));
     if (resource.readonly) throw new AppError(405, 'Transaction history cannot be archived.');
-    access.archive(resource.key, access.record(resource.key,String(req.params.id),true));
+    access.archive(resource.key, access.record(resource.key,String(req.params.id),true), actorOf(req));
     if (pilots) assertItpDeletable(store, resource.key, String(req.params.id));
     if (pilots) assertRequestFileKept(store, resource.key, String(req.params.id));
     if (pilots && resource.key === 'users') assertAccountReach(store, (req as unknown as AuthRequest).user.id, access.record(resource.key, String(req.params.id), true));
@@ -390,7 +390,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (pilots && FLAG_BULK_RESOURCES.includes(resource.key) && !flagBulkAllowed(req.body.changes)) throw new AppError(404, 'This resource could not be found.');
     if (availability?.features.includes('pilots') && enablementKey(resource.key) && resource.key !== 'materials' && Object.keys(req.body.changes).some(k => !ENABLEMENT_INPUT.includes(k))) throw new AppError(404, 'This resource could not be found.');
     if (Object.keys(req.body.changes).some(k => !resource.fields.some(f => f.name === k && f.type !== 'password') && !(enablementKey(resource.key) && ENABLEMENT_INPUT.includes(k)))) throw new AppError(422, 'An update field is invalid.');
-    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),pilots&&resource.key==='isometrics'&&guardIrn(store, req.body.changes, store.get(resource.key,id)),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
+    const records = store.transaction(() => { const result = req.body.ids.map((id: string) => (checkResourcePermission(req,resource.key,'edit',store.get(resource.key,id)),access.complete(resource.key, req.body.changes, store.get(resource.key,id)),access.links((req as unknown as AuthRequest).user, resource.key, req.body.changes, store.get(resource.key,id)),pilots&&resource.key==='isometrics'&&guardIrn(store, req.body.changes, store.get(resource.key,id)),pilots&&resource.key==='welds'&&assertNdtUnlocked(store, store.get(resource.key,id), actorOf(req), null),store.update(resource.key, id, req.body.changes, req.body.versions?.[id], actorOf(req)))); if (resource.key === 'profiles') ensureAdmin(); return result; }); res.json({ count: records.length });
   });
   /**
    * The isometrics list of the hosted profile exports the reference's columns only, in its order and with its titles:

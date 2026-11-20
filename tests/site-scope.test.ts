@@ -260,7 +260,8 @@ test('Weld Pilot limited to one main project: every write path naming the other 
   assert.equal(JSON.parse(before).welds.length, f.store.list('welds', true).length);
   f.store.archive('punchlists', riverPunch.id, riverPunch._version, SYSTEM);
 
-  // The same kinds of writes inside the allowed main project still work.
+  // The same kinds of writes inside the allowed main project still work (weld-1 without its NDT request, which would lock it).
+  for (const request of f.store.list('inspection_requests').filter(row => row.weldId === 'weld-1' && row.type === 'NDT')) f.store.update('inspection_requests', request.id, { status: 'Cancelled' }, request._version, SYSTEM); 
   const north = await scoped.as.request('/records/welds/weld-1', { method: 'PUT', pilot: 'weld', data: { description: 'North edit', _version: version('welds', 'weld-1') } });
   assert.equal(north.status, 200);
   assert.equal((await scoped.as.request('/actions/phases', { method: 'POST', pilot: 'weld', data: { isoIds: ['iso-1'], field_test: 'Complete' } })).status, 201);
@@ -339,6 +340,7 @@ test('an account limited to no main project sees an explanatory empty state; leg
     assert.equal(allowedSites(f.store, f.store.get('users', legacy.user.id), pilot), 'all');
   }
   assert.equal((await legacy.as.request('/history/welds/weld-4', { pilot: 'weld' })).status, 200);
+  for (const request of f.store.list('inspection_requests').filter(row => row.weldId === 'weld-4' && row.type === 'NDT')) f.store.update('inspection_requests', request.id, { status: 'Cancelled' }, request._version, SYSTEM); 
   const legacyWeld = f.store.get('welds', 'weld-4');
   assert.equal((await legacy.as.request('/records/welds/weld-4', { method: 'PUT', pilot: 'weld', data: { description: 'Legacy edit', _version: legacyWeld._version } })).status, 200);
   // Links without the Specific scope do not limit anyone.
