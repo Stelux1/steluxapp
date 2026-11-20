@@ -132,32 +132,8 @@ export function registerServiceRequestRoutes(app: Application, { store, document
     sendPdf(res, built[kind].name, built[kind].bytes);
   });
 
-  app.post('/api/service-requests/:id/sign', async (req, res) => {
-    const { rows, request } = reach(req, 'edit');
-    const body = (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}) as Record<string, unknown>;
-    if (Object.keys(body).some(name => !SIGN_ONLINE_FIELDS.includes(name))) throw new AppError(404, 'This resource could not be found.');
-    if (request.signOff) throw new AppError(409, 'This service request is already signed.');
-    const user = (req as unknown as AuthRequest).user; const method = text(body.contractorMethod) || 'Draw';
-    const saved = { Signature: currentSignature(store, documents, user.id, SAVED_KIND.Signature), Initials: currentSignature(store, documents, user.id, SAVED_KIND.Initials) };
-    const errors = signOffComplete(body, { Signature: Boolean(saved.Signature), Initials: Boolean(saved.Initials) });
-    const images = { contractor: method === 'Draw' ? drawnSignature(body.contractorSignature) : saved[method as keyof typeof saved]?.content ?? null, client: drawnSignature(body.clientSignature), nobo: drawnSignature(body.noboSignature) };
-    for (const [key, image] of Object.entries(images)) if (!image && !errors[`${key}Signature`] && (key !== 'contractor' || method === 'Draw')) errors[`${key}Signature`] = 'Draw the signature again.';
-    if (Object.keys(errors).length) throw new AppError(422, Object.values(errors)[0], errors);
-    const values = { contractorName: text(body.contractorName), contractorDate: text(body.contractorDate), clientName: text(body.clientName), clientDate: text(body.clientDate), noboName: text(body.noboName), noboDate: text(body.noboDate) };
-    const note = body.note === undefined ? request.note : text(body.note);
-    const signatures: ReleaseSignatures = { contractor: { name: values.contractorName, date: values.contractorDate, image: images.contractor }, client: { name: values.clientName, date: values.clientDate, image: images.client }, nobo: { name: values.noboName, date: values.noboDate, image: images.nobo } };
-    const model = serviceRequestDocumentData(rows, { ...request, note });
-    const { bytes } = await coatingReleasePdf({ model, company: companyForDocuments(store, documents), generatedAt: new Date(), qr: requestQr(origin(req), request.headId), signatures });
-    const actor = actorOf(req); const signedAt = new Date().toISOString();
-    store.transaction(() => {
-      // Read again inside the transaction: a second Sign & save sent at the same time is refused, not stored twice.
-      if (spoolRequest(store, request.headId).request.signOff) throw new AppError(409, 'This service request is already signed.');
-      for (const id of request.ids) { const row = store.get('service_requests', id); store.update('service_requests', id, { ...values, note, signedAt, signedBy: actor.name, signedVia: 'Online' }, row._version, actor); }
-      const file = store.create('attachments', { name: `${fileBase(rows, request)}-${SUFFIX.signed}.pdf`, entityType: 'service_requests', entityId: request.headId, documentType: SERVICE_REQUEST_FILES.signed, mime: 'application/pdf', size: bytes.length, note: '' }, actor);
-      documents.saveBytes(file.id, bytes);
-    });
-    res.status(201).json({ request: spoolRequest(store, request.headId).request });
-  });
+  /** Sign online is gone (client answer 2026-11-17): the printed form carries the Sender and Carrier signature blocks. Documents signed online earlier stay readable. */
+  app.post('/api/service-requests/:id/sign', () => { throw new AppError(410, 'Signing online is not available. Print the service request, sign it on paper and upload the signed scan.'); });
 
   app.post('/api/service-requests/:id/upload', upload.single('file'), (req, res) => {
     try {

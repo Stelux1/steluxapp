@@ -799,3 +799,26 @@ test('SC2 N-D: the Material log names the Pick List of an issue once, for new an
   assert.deepEqual(movementAction(rows, issue({ note: 'PICK-7 · issued' })), { action: 'Isometric execution STX-ST-004', reference: 'Pick List PICK-7' }, 'an older issue keeps its first note part');
   assert.deepEqual(movementAction(rows, issue({ note: '' })), { action: 'Isometric execution STX-ST-004', reference: '-' });
 });
+
+test('reserved stock: Remove and an inventory transfer order need a confirmation when they would cut into what isometrics reserved', () => {
+  const s = fixture();
+  const material = s.create('materials', { materialNo: 'RS-ELB-90', description: 'Reserved test elbow', materialGroup: 'Elbow', uom: 'EA' }, actor, 'material-reserved');
+  s.create('stock', { materialId: material.id, customMaterialId: '', locationKind: 'site', siteId: 'site-north', warehouseId: '', chargeNo: 'RS-1', quantity: 10 }, actor);
+  const requirement = s.create('iso_materials', { isoId: 'iso-1', materialId: material.id, quantity: 8, phaseId: 'phase-0' }, actor);
+  s.create('reservations', { isoId: 'iso-1', requirementId: requirement.id, materialId: material.id, quantity: 6, date: '2026-11-01', status: 'Reserved' }, actor);
+  const remove = (quantity: number, extra: Record<string, unknown> = {}) => run(s, 'inventory-remove', { siteId: 'site-north', materialId: material.id, quantity, comment: 'Count', ...extra });
+  const order = (quantity: number, extra: Record<string, unknown> = {}) => run(s, 'transfer-order-create', { type: 'Inventory - Storehouse', fromSiteId: 'site-north', toWarehouseId: 'warehouse-main', items: [{ materialNo: 'RS-ELB-90', quantity, uom: 'EA' }], ...extra });
+  // 10 in stock, 6 reserved: 4 are free, so 4 goes without a question.
+  remove(4); assert.equal(onSite(s, 'site-north', material.id), 6);
+  // Cutting into the reservation: refused with the code and the reserved quantity, nothing taken.
+  const refusal = (error: unknown) => { assert.equal((error as { status: number }).status, 409); assert.equal((error as { code: string }).code, 'reserved-stock'); assert.match((error as Error).message, /6 EA of RS-ELB-90 are reserved/); return true; };
+  assert.throws(() => remove(1), refusal); assert.equal(onSite(s, 'site-north', material.id), 6);
+  assert.throws(() => remove(1, { confirmReserved: 'yes' }), refusal, 'only true confirms');
+  const before = s.list('transfer_orders').length;
+  assert.throws(() => order(2), refusal); assert.equal(s.list('transfer_orders').length, before);
+  // Confirmed: it goes, and the reservation itself is untouched.
+  remove(1, { confirmReserved: true }); assert.equal(onSite(s, 'site-north', material.id), 5);
+  assert.equal(order(2, { confirmReserved: true }).record!.status, 'Requested');
+  const reservation = s.list('reservations').find(row => row.materialId === material.id)!;
+  assert.deepEqual([reservation.quantity, reservation.status], [6, 'Reserved']);
+});

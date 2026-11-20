@@ -1,7 +1,7 @@
 import type { ActionDefinition, ActionField, Availability, PermissionVerb, Row } from './types.ts';
 import { materialIdentity, materialRecord, pickClaims, pickIssued, requirementExecution } from './materials.ts';
 import { priorityLabel } from './priority.ts';
-import { materialStatusPercent, type CoverageLine } from './mto-materials.ts';
+import { materialStatusPercent, phaseLocation, type CoverageLine } from './mto-materials.ts';
 import { claimSiteId, countedSiteId, countedStock, inventoryClaims, isoSiteId } from './mto-stock.ts';
 
 /**
@@ -112,10 +112,12 @@ export const isTaken = (line: Row) => line.taken !== false;
 export { pickIssued, pickClaims };
 
 /**
- * The Type chips of Isometric execution: Shop, Field and Valves are three single operation phases (reference ids 1, 2
- * and 5). With our own ids, each chip is the phase of exactly that name; a chip whose phase does not exist lists nothing.
+ * The Type chips of Isometric execution. Start belongs to the prefabrication only (client answer 2026-11-17): the board
+ * offers Shop alone; Field and Valves have no execution (no Field pick lists are built). With our own ids the chip is
+ * the phase of exactly that name; a chip whose phase does not exist lists nothing. Start books every Shop line of the
+ * isometric (`isoStatuses` option `shop`), so "Shop missing" or "Support Shop" phases count with it.
  */
-export const EXECUTION_TYPES = ['Shop', 'Field', 'Valves'] as const;
+export const EXECUTION_TYPES = ['Shop'] as const;
 export function executionTypePhaseId(rows: Record<string, Row[]>, type: string): string {
   const wanted = type.trim().toLowerCase();
   return active(rows, 'operation_phases').find(row => String(row.name ?? '').trim().toLowerCase() === wanted)?.id ?? '';
@@ -175,9 +177,10 @@ export interface IsoStatus { iso: Row; lines: StatusLine[]; percent: number | nu
  * handed to the isometric's lines of one material in creation order; percent = floor(Σ covered ÷ Σ Qty. × 100).
  * Open client questions (mto-iso-execution-R1): rounding, own pick-list credit, stock beyond the order, sharing.
  */
-export function isoStatuses(rows: Record<string, Row[]>, options: { phaseId?: string; isoId?: string } = {}): Map<string, IsoStatus> {
+export function isoStatuses(rows: Record<string, Row[]>, options: { phaseId?: string; isoId?: string; shop?: boolean } = {}): Map<string, IsoStatus> {
   const pools = stockPools(rows);
   const phases = new Map(active(rows, 'operation_phases').map(row => [row.id, String(row.name)]));
+  const shopPhases = new Set(active(rows, 'operation_phases').filter(row => phaseLocation(row) === 'shop').map(row => row.id));
   const reservations = active(rows, 'reservations').filter(row => row.status === 'Reserved');
   const claims = active(rows, 'picklists').filter(pickClaims);
   const result = new Map<string, IsoStatus>();
@@ -187,6 +190,8 @@ export function isoStatuses(rows: Record<string, Row[]>, options: { phaseId?: st
     const phase = phases.get(String(entry.requirement.phaseId)) || '';
     // A Type chip is one operation phase: only the lines of that phase count (delta-I3-001).
     if (options.phaseId !== undefined && String(entry.requirement.phaseId || '') !== options.phaseId) continue;
+    // `shop`: only the lines of a Shop phase (phaseLocation: "Shop", "Shop missing", "Support Shop"), the lines Start books.
+    if (options.shop && !shopPhases.has(String(entry.requirement.phaseId || ''))) continue;
     const status = result.get(entry.iso.id) || { iso: entry.iso, lines: [], percent: null };
     const own = (key: Row[]) => key.filter(row => row.isoId === entry.iso.id && materialIdentity(row) === entry.identity).reduce((sum, row) => sum + Number(row.quantity), 0);
     const key = poolKey(isoSiteId(rows, entry.iso), entry.identity), pool = pools.get(key);
@@ -218,9 +223,12 @@ export function planReserve(rows: Record<string, Row[]>, isoId: string) {
   }
   return plan;
 }
-/** UNVERIFIED. Start: per requirement, the quantity available now (own reservations plus free stock), up to what is still needed. */
+/**
+ * UNVERIFIED. Start (Shop only): per Shop requirement line, the quantity available now (own reservations plus free
+ * stock), up to what is still needed. Lines of Field or any other phase are never booked by Start.
+ */
 export function planStart(rows: Record<string, Row[]>, isoId: string) {
-  return (isoStatuses(rows, { isoId }).get(isoId)?.lines || []).filter(line => line.available > 0).map(line => ({ requirement: line.requirement, identity: line.identity, quantity: line.available, reserved: line.reserved }));
+  return (isoStatuses(rows, { isoId, shop: true }).get(isoId)?.lines || []).filter(line => line.available > 0).map(line => ({ requirement: line.requirement, identity: line.identity, quantity: line.available, reserved: line.reserved }));
 }
 /**
  * Whether a pick list can take a quantity of one material from a project site's Material inventory: the site's stock
@@ -295,7 +303,9 @@ export interface BoardRow { iso: Row; status: IsoStatus; percent: number; priori
  */
 export function executionBoard(rows: Record<string, Row[]>, filters: BoardFilters): BoardRow[] {
   if (!filters.phaseId) return [];
-  const statuses = isoStatuses(rows, { phaseId: filters.phaseId });
+  // Only the Shop (prefabrication) executes: a chip phase that is not a Shop phase lists nothing, and the Mat.status is that of the isometric's Shop lines.
+  if (phaseLocation(active(rows, 'operation_phases').find(row => row.id === filters.phaseId)) !== 'shop') return [];
+  const statuses = isoStatuses(rows, { shop: true });
   return active(rows, 'isometrics').flatMap(iso => {
     const status = statuses.get(iso.id); if (!status || status.percent === null) return [];
     if (status.percent < filters.from || status.percent > filters.to) return [];

@@ -8,7 +8,7 @@ import { reportCsv, type Report } from '../shared/reports.ts';
 import { reportWorkbook } from './report-export.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import type { AuthRequest } from './auth.ts';
-import { ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, countedStock, hasLocationKind, isSiteStock, legacyClaimed, legacyStockValues, transferSourceSiteId, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
+import { claimSiteId, ADJUST_REASONS, CORRECTION_REASONS, MATERIALS_LIST_COLUMNS, MAX_LENGTHS, REMOVE_REASONS, TRANSFER_PRIORITIES, TRANSFER_TYPES, blocksRemoval, canAssign, completePlan, countedStock, hasLocationKind, isSiteStock, legacyClaimed, legacyStockValues, transferSourceSiteId, isStorehouseLine, itemCertIds, lineCertificates, materialsList, nextStatus, pickLine, reservedOnOpenOrders, returnToInventoryPlan, reversePlan, siteStock, stockDetails, transferRoute, unmigratedHoldings, validQuantity, type Step } from '../shared/mto-stock.ts';
 import { nextSiteIndexNumber } from '../shared/welder-data.ts';
 
 type Input = Record<string, unknown>;
@@ -97,6 +97,24 @@ export function takeFromSite(store: Store, actor: Actor, siteId: string, refs: R
   return parts;
 }
 
+/** The quantity of one material that isometrics hold reserved in a project site's inventory (reservations still `Reserved`). */
+export function reservedOnSite(store: Store, siteId: string, identity: string): number {
+  const rows = { projects: store.list('projects', true), isometrics: store.list('isometrics', true) };
+  return qty(store.list('reservations').filter(row => row.status === 'Reserved' && materialIdentity(row) === identity && claimSiteId(rows, row) === siteId).reduce((sum, row) => sum + Number(row.quantity), 0));
+}
+/**
+ * Taking material out of a site's inventory (Remove, a transfer order) may leave less than isometrics hold reserved only
+ * when the user confirmed it: otherwise a 409 with the code `reserved-stock` names the reserved quantity and the client asks
+ * "are you sure". Reservations themselves are not changed. `amounts`: the quantity taken per material identity.
+ */
+export function confirmReservedTake(store: Store, siteId: string, amounts: Map<string, { amount: number; label: string; uom: string }>, confirmed: boolean): void {
+  if (confirmed) return;
+  for (const [identity, taken] of amounts) {
+    const reserved = reservedOnSite(store, siteId, identity); if (reserved <= 0) continue;
+    const onHand = qty(siteStock({ stock: store.list('stock') }, siteId, identity).reduce((sum, row) => sum + Number(row.quantity), 0));
+    if (onHand - taken.amount + 1e-9 < reserved) throw new AppError(409, `${reserved}${taken.uom ? ` ${taken.uom}` : ''} of ${taken.label} are reserved for isometrics in this project site. Taking ${taken.amount} leaves ${qty(Math.max(0, onHand - taken.amount))}.`, undefined, 'reserved-stock');
+  }
+}
 /**
  * Hosted preparation data step: what the first version kept as an invisible project "holding" (storehouse Project
  * transfer / Project return movements with a site) is booked into that site's Material inventory, one site-side
@@ -232,7 +250,8 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
     if (Boolean(refs.materialId) === Boolean(refs.customMaterialId)) throw new AppError(422, 'Choose the material to remove.');
     if (refs.materialId) store.get('materials', refs.materialId); else store.get('custom_materials', refs.customMaterialId);
     const amount = positiveQuantity(data.quantity), comment = limited(data.comment, 'Comment', MAX_LENGTHS.comment, true, 'comment');
-    const label = nameOf(refs as unknown as Row);
+    const label = nameOf(refs as unknown as Row), first = siteStock({ stock: store.list('stock') }, target.id, identityOf(refs))[0];
+    confirmReservedTake(store, target.id, new Map([[identityOf(refs), { amount, label, uom: first ? String(stockDetails(catalog(), first).uom || '') : '' }]]), data.confirmReserved === true);
     const parts = takeFromSite(store, actor, target.id, refs, amount, label);
     for (const part of parts) movement('Removal', part.row, { siteId: target.id }, -part.quantity, { reasonText: comment, note: comment });
     const updated = parts.map(part => store.get('stock', part.row.id));
@@ -450,6 +469,15 @@ export function runMtoStock(store: Store, key: string, data: Input, actor: Actor
         quantity: amount, uom: limited(item?.uom ?? details?.uom, `${number}: UOM`, MAX_LENGTHS.uom), stockId: source?.id || '', certIds: certificateIds(item?.certIds, materialNo, number),
       };
     });
+    if (route.from === 'inventory') {
+      const taken = new Map<string, { amount: number; label: string; uom: string }>();
+      for (const item of prepared) {
+        const row = siteStock({ stock: store.list('stock') }, fromSiteId).find(candidate => stockDetails(rows, candidate).materialNo.trim().toLowerCase() === item.materialNo.trim().toLowerCase()); if (!row) continue;
+        const identity = materialIdentity(row), before = taken.get(identity);
+        taken.set(identity, { amount: qty((before?.amount || 0) + item.quantity), label: item.materialNo, uom: item.uom });
+      }
+      confirmReservedTake(store, fromSiteId, taken, data.confirmReserved === true);
+    }
     // To project site lists only active project sites (MTO manual): an archived destination is refused.
     if (siteId && route.to === 'site' && store.get('sites', siteId).archived === true) throw new AppError(422, 'Choose an active project site.', { siteId: 'This project site is archived.' });
     const order = store.create('transfer_orders', { number: store.next('TO'), type, priority, status: 'Requested', fromWarehouseId: fromId, fromSiteId, siteId, toWarehouseId: toId, date, notes: limited(data.notes, 'Notes', 2000), createdByName: actor.name }, actor);

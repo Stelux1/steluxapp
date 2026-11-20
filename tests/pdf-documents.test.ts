@@ -638,6 +638,12 @@ test('mto-logistics-004: a confirmed request with two spools of two projects yie
   for (const label of ['Service request', 'Report no.', 'Company', 'Added by', 'Date', 'Note', 'Pick up Monday', 'Matej Spisak', ...SERVICE_REQUEST_COLUMNS]) assert.ok(texts(serviceRequest.layout).includes(label), label);
   assert.equal(texts(serviceRequest.layout).filter(text => text.startsWith('Project: ')).length, 2, 'two project groups');
   assert.ok(serviceRequest.layout.pages[0].images >= 1, 'the QR code');
+  // The form is signed on paper: a Sender block (company from Company data) and a Carrier block at the end, each with Company, Name, Signature, Date.
+  const withCompany = await serviceRequestPdf({ ...input, company: { company: { name: 'Stelux Construct', addressLines: [], phone: '', email: '', web: '', registration: '', vatId: '' } as never, logo: null } });
+  const last = withCompany.layout.pages[withCompany.layout.pages.length - 1].texts.map(item => item.text);
+  for (const label of ['Sender', 'Carrier (transport company)', 'Stelux Construct']) assert.ok(last.includes(label), label);
+  assert.equal(last.filter(text => text === 'Signature:').length, 2); assert.equal(last.filter(text => text === 'Name:').length, 2); assert.equal(last.filter(text => text === 'Date:').length, 2); assert.equal(last.filter(text => text === 'Company:').length, 2);
+  assert.ok(texts(serviceRequest.layout).includes('Sender') && texts(serviceRequest.layout).includes('Carrier (transport company)'), 'without company data the blocks are still there');
   const release = await coatingReleasePdf(input);
   for (const page of release.layout.pages) for (const title of ['Contractor / Supplier', 'Client', 'NoBo']) assert.ok(page.texts.some(item => item.text === title), `${title} in the footer of every page`);
   assert.equal(texts(release.layout).filter(text => text.startsWith('Project: ')).length, 2);

@@ -38,16 +38,19 @@ function QuantityInput({ label = 'Quantity', value, onChange, error, required = 
 }
 
 /** A dialog around one server action: busy state, the server's message and field errors, success message. */
-export function ActionDialog({ title, subtitle, submit, onSubmit, onClose, children, wide = false }: { title: string; subtitle?: string; submit: string; onSubmit: () => Promise<string>; onClose: () => void; children: (errors: FieldErrors) => ReactNode; wide?: boolean }) {
+export function ActionDialog({ title, subtitle, submit, onSubmit, onClose, children, wide = false, reservedVerb }: { title: string; subtitle?: string; submit: string; onSubmit: (confirmReserved?: boolean) => Promise<string>; onClose: () => void; children: (errors: FieldErrors) => ReactNode; wide?: boolean; reservedVerb?: string }) {
   const { refresh, notify } = useWorkspace();
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [errors, setErrors] = useState<FieldErrors>({});
-  async function send(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError(''); setErrors({});
-    try { const message = await onSubmit(); await refresh(); notify(message); onClose(); }
-    catch (failure) { setError((failure as Error).message); setErrors((failure as ApiError).fields || {}); }
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [errors, setErrors] = useState<FieldErrors>({}), [reserved, setReserved] = useState('');
+  /** `confirmReserved`: the user confirmed taking material that isometrics hold reserved (the server answered `reserved-stock`). */
+  async function run(confirmReserved: boolean) {
+    setBusy(true); setError(''); setErrors({}); setReserved('');
+    try { const message = await onSubmit(confirmReserved || undefined); await refresh(); notify(message); onClose(); }
+    catch (failure) { if (reservedVerb && !confirmReserved && (failure as ApiError).code === 'reserved-stock') setReserved((failure as Error).message); else { setError((failure as Error).message); setErrors((failure as ApiError).fields || {}); } }
     finally { setBusy(false); }
   }
-  return <Modal title={title} subtitle={subtitle} onClose={onClose} wide={wide}><form onSubmit={event => void send(event)}><div className="modal-body"><FormError message={error} fields={errors}/><div className="form-grid">{children(errors)}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>;
+  function send(event: FormEvent) { event.preventDefault(); void run(false); }
+  return <><Modal title={title} subtitle={subtitle} onClose={onClose} wide={wide}><form onSubmit={send}><div className="modal-body"><FormError message={error} fields={errors}/><div className="form-grid">{children(errors)}</div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{submit}</button></div></form></Modal>
+    {reserved && <Modal title="Reserved material" onClose={() => setReserved('')}><div className="modal-body"><div className="alert error" role="alert"><AlertCircle size={18}/><span>{reserved} Do you really want to {reservedVerb}?</span></div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={() => setReserved('')}>Cancel</button><button type="button" className="btn primary" disabled={busy} onClick={() => void run(true)}>{busy && <Loader2 size={15} className="spin"/>}Yes, {reservedVerb}</button></div></Modal>}</>;
 }
 
 const sitesOf = (allRows: Record<string, Row[]>) => activeRows(allRows, 'sites').map(site => ({ value: site.id, label: String(site.name) }));
@@ -186,8 +189,8 @@ function RemoveDialog({ line, onClose }: { line: Row; onClose: () => void }) {
 /** Remove material from inventory (reference #removeMaterialFromInventory): Quantity and Comment. */
 function InventoryRemoveDialog({ row, onClose }: { row: InventoryRow; onClose: () => void }) {
   const [amount, setAmount] = useState(''), [comment, setComment] = useState('');
-  return <ActionDialog title="Remove material from inventory" subtitle={`${row.details.materialNo} · ${formatNumber(row.quantity, 3)} ${row.details.uom} in the inventory`} submit="Remove"  onClose={onClose}
-    onSubmit={async () => { if (!validQuantity(Number(amount)) || Number(amount) > row.quantity) throw new Error(`Enter a quantity from 0.01 to ${formatNumber(row.quantity, 3)}, in steps of 0.01.`); await post('/actions/inventory-remove', { siteId: row.siteId, ...(row.materialId ? { materialId: row.materialId } : { customMaterialId: row.customMaterialId }), quantity: Number(amount), comment, date: today() }); return 'Removed from the inventory.'; }}>{errors => <>
+  return <ActionDialog title="Remove material from inventory" subtitle={`${row.details.materialNo} · ${formatNumber(row.quantity, 3)} ${row.details.uom} in the inventory`} submit="Remove" onClose={onClose} reservedVerb="remove it"
+    onSubmit={async confirmReserved => { if (!validQuantity(Number(amount)) || Number(amount) > row.quantity) throw new Error(`Enter a quantity from 0.01 to ${formatNumber(row.quantity, 3)}, in steps of 0.01.`); await post('/actions/inventory-remove', { siteId: row.siteId, ...(row.materialId ? { materialId: row.materialId } : { customMaterialId: row.customMaterialId }), quantity: Number(amount), comment, date: today(), ...(confirmReserved ? { confirmReserved: true } : {}) }); return 'Removed from the inventory.'; }}>{errors => <>
     <QuantityInput value={amount} onChange={setAmount} max={row.quantity} error={errors.quantity}/>
     <Text label="Comment" required max={500} value={comment} onChange={setComment} error={errors.comment}/></>}</ActionDialog>;
 }
@@ -257,14 +260,14 @@ export function OrderDialog({ context, inventory = [], lines = [], siteId, onClo
   const needsSite = route?.from === 'inventory' || route?.to === 'inventory';
   const update = (index: number, patch: Partial<ItemDraft>) => setItems(current => current.map((item, i) => i === index ? { ...item, ...patch } : item));
   const warehouses = warehousesOf(rows).map(w => ({ value: w.id, label: String(w.name) }));
-  return <ActionDialog title="New Transfer Order" subtitle="Plan the move now; nothing moves until the order is completed." submit="New Transfer Order" onClose={onClose} wide
-    onSubmit={async () => {
+  return <ActionDialog title="New Transfer Order" subtitle="Plan the move now; nothing moves until the order is completed." submit="New Transfer Order" onClose={onClose} wide reservedVerb="transfer it"
+    onSubmit={async confirmReserved => {
       if (!route) throw new Error('Choose the type of transfer order.');
       if (needsSite && !site) throw new Error('Choose the project site whose inventory the order uses.');
       const bad = items.findIndex(item => !item.materialNo.trim() || !validQuantity(Number(item.quantity)));
       if (bad >= 0) throw new Error(`Item ${bad + 1} needs a material number and a quantity of at least 0.01, in steps of 0.01.`);
       if (items.some(item => item.balance !== undefined && Number(item.quantity) > item.balance)) throw new Error('Quantity exceeds available balance');
-      await post('/actions/transfer-order-create', { type, priority, fromWarehouseId: show.fromStorehouse ? from : '', fromSiteId: route.from === 'inventory' ? site : '', siteId: show.toSite ? toSite : route.to === 'inventory' ? site : '', toWarehouseId: show.toStorehouse ? to : '', notes, date: today(),
+      await post('/actions/transfer-order-create', { type, priority, fromWarehouseId: show.fromStorehouse ? from : '', fromSiteId: route.from === 'inventory' ? site : '', siteId: show.toSite ? toSite : route.to === 'inventory' ? site : '', toWarehouseId: show.toStorehouse ? to : '', notes, date: today(), ...(confirmReserved ? { confirmReserved: true } : {}),
         items: items.map(item => ({ materialNo: item.materialNo, description: item.description, quantity: Number(item.quantity), uom: item.uom, ...(item.certs.length ? { certIds: item.ticked } : {}), ...(item.stockId && route.from === 'storehouse' ? { stockId: item.stockId } : {}) })) });
       return 'Transfer order created.';
     }}>{errors => <>

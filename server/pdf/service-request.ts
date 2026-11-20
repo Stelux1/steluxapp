@@ -45,11 +45,38 @@ const groupSteps = (model: ServiceRequestDocument): Step[] => [
   ]),
 ];
 
+const PARTY_HEIGHT = 74;
+/**
+ * The two signature blocks at the end of the Service request (the form is signed on paper, there is no online signing):
+ * the Sender (the company that sends the elements, its name from Company data) and the Carrier (the transport company).
+ * Each block has Company, Name, Signature and Date lines to fill in by hand.
+ */
+export function partySignatureBlock(senderCompany: string): Block {
+  const parties = [{ title: 'Sender', company: senderCompany }, { title: 'Carrier (transport company)', company: '' }];
+  return {
+    height: () => PARTY_HEIGHT,
+    draw(canvas: Canvas, x: number, y: number, width: number) {
+      const gap = 10, w = (width - gap) / 2;
+      parties.forEach((party, i) => {
+        const left = x + i * (w + gap);
+        canvas.rect(left, y, w, PARTY_HEIGHT, { stroke: GREY_LINE, lineWidth: 0.5 });
+        canvas.text(party.title, left + 4, y + 3, { size: 7.5, font: 'bold', maxWidth: w - 8 });
+        ['Company', 'Name', 'Signature', 'Date'].forEach((label, row) => {
+          const top = y + 4 + lineHeight(7.5) + row * 14;
+          canvas.text(`${label}:`, left + 4, top, { size: 7, color: 0.3 });
+          if (label === 'Company' && party.company) canvas.text(party.company, left + 50, top, { size: 7, maxWidth: w - 54 });
+          else canvas.line(left + 50, top + lineHeight(7) - 1, left + w - 4, top + lineHeight(7) - 1, { width: 0.5 });
+        });
+      });
+    },
+  };
+}
+
 /** The Service request document. `drawings` are the isometric drawing files to append (PDF or image), in order. */
 export async function serviceRequestPdf(input: ServiceRequestPdfInput & { drawings?: { name: string; bytes: Uint8Array }[] }) {
   const result = await renderOperational({
     page: A4_LANDSCAPE, title: `Service request ${input.model.reportNo}`, generatedAt: input.generatedAt,
-    async layout(pdf) { return { header: await header(pdf, input, 'Service request', `Report no. ${input.model.reportNo}`), steps: groupSteps(input.model) }; },
+    async layout(pdf) { return { header: await header(pdf, input, 'Service request', `Report no. ${input.model.reportNo}`), steps: [...groupSteps(input.model), { block: partySignatureBlock(input.company?.company.name ?? ''), before: 16 }] }; },
   });
   if (!input.drawings?.length) return { ...result, appended: 0, skipped: [] as string[] };
   const out = await PDFDocument.load(result.bytes); let appended = 0; const skipped: string[] = [];

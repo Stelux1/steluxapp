@@ -6,6 +6,7 @@ import { EXPORT_TABLES, areaRight } from '../shared/export-tables.ts';
 import type { Availability, Row } from '../shared/types.ts';
 import { PICKLIST_NOTE_MAX, START_FROM_PERCENT, allocateStock, canStartAt, isoStatuses, pickIssued, planReserve, planStart, startedPhases, undoRefusal } from '../shared/mto-logistics.ts';
 import { materialIdentity, materialRecord } from '../shared/materials.ts';
+import { phaseLocation } from '../shared/mto-materials.ts';
 import { isSiteStock } from '../shared/mto-stock.ts';
 import { runAction } from './workflows.ts';
 import { changeSiteStock, siteOfIso, takeFromSite } from './mto-stock.ts';
@@ -29,8 +30,8 @@ const ids = (value: unknown, label: string) => {
 
 /** Why an isometric has nothing to reserve or start (for the refusal message). */
 function nothingBecause(rows: Record<string, Row[]>, isoId: string, verb: 'reserve' | 'start') {
-  const status = isoStatuses(rows).get(isoId);
-  if (!status?.lines.length) return 'This isometric has no material requirements.';
+  const status = isoStatuses(rows, verb === 'start' ? { shop: true } : {}).get(isoId);
+  if (!status?.lines.length) return verb === 'start' ? 'This isometric has no Shop material requirements.' : 'This isometric has no material requirements.';
   if (status.lines.every(line => line.required - line.picked - line.claimed <= 0)) return 'Everything this isometric needs is already picked or on a pick list.';
   return verb === 'reserve' ? 'No free stock is available for the missing materials, or it is already reserved.' : 'None of the missing materials is in stock yet.';
 }
@@ -59,12 +60,13 @@ export function runMtoLogisticsAction(key: string, context: MtoActionContext): {
   if (key === 'start-iso') {
     const iso = ensure('isometrics', data.isoId);
     const phaseId = text(data.phaseId);
-    if (phaseId) ensure('operation_phases', phaseId);
+    // Start belongs to the Shop (prefabrication) only: a Field or other Type is refused, and only Shop lines are ever booked.
+    if (phaseId && phaseLocation(ensure('operation_phases', phaseId)) !== 'shop') throw new AppError(409, 'Isometric execution starts the Shop (prefabrication) only. There is no execution for Field.');
     const pickNote = noteOf(data.note);
     const rows = rowsOf(store);
-    // Start is offered from a Mat.status of 70 % (of the Type shown on the board, else of the whole isometric).
-    const percent = isoStatuses(rows, phaseId ? { isoId: iso.id, phaseId } : { isoId: iso.id }).get(iso.id)?.percent ?? null;
-    if (percent === null) throw new AppError(409, phaseId ? 'This isometric has no materials of this type.' : 'This isometric has no material requirements.');
+    // Start is offered from a Mat.status of 70 %, computed over the isometric's Shop lines only.
+    const percent = isoStatuses(rows, { isoId: iso.id, shop: true }).get(iso.id)?.percent ?? null;
+    if (percent === null) throw new AppError(409, 'This isometric has no Shop materials.');
     if (!canStartAt(percent)) throw new AppError(409, `Start is possible from a material status of ${START_FROM_PERCENT} %. This isometric is at ${percent} %.`);
     if (phaseId && startedPhases(rows, iso.id).has(phaseId)) throw new AppError(409, 'This isometric is already started for this type. Undo its execution in the Pick List archive to start it again.');
     const plan = planStart(rows, iso.id);
