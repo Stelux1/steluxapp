@@ -90,6 +90,19 @@ Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.doc
 
 **Pitanje za klijenta — Excel sa tipovima materijala.** Excel nije stigao uz poruku. Da li je to fajl „Oil_Gas_Material_Catalog_6_Field_Import.xlsx"? Ako jeste: (a) koji list je osnovna lista za svaki novi projekat — „Material Catalog" (123 materijala, kod mnogih bez ISO 15608 grupe) ili „Ready for CSV Import" (44 materijala, svi sa ISO grupom); (b) pošaljite ISO 15608 grupe koje fale (npr. A106, A333, A335, A105, A234, API 5L, 16Mo3, GOST) ili potvrdite da ostanu prazne; (c) GOST redovi nemaju Material specification — da li tako ostaju. Ako nije taj fajl, pošaljite pravi Excel.
 
+### NDT na zavaru, RFQ, baza materijala, Cut list (poruka od 20.11.2026, uveče)
+
+| Zahtev | Urađeno |
+|---|---|
+| Inspection results ukloniti; rezultati se prilažu na zavar. | Stavka je uklonjena iz menija Weld Pilota. Edit weld ima odeljak „NDT result" → „Attach NDT result": NDT request, round, broj izveštaja, datum, obavezno Approved / Rejected i PDF izveštaja; lista rezultata zavara sa fajlovima. Rezultati se i dalje čuvaju za NDT/PWHT Manager, izveštaje i Compliance. |
+| Čim postoji NDT request za zavar, zavar je zaključan; menjati mogu samo određeni useri uz obavezan komentar, vidljiv samo u Edit weld. | Zaključan je svaki zavar sa NDT / NDT Pre requestom koji nije otkazan (katanac u tabeli). Menjati može samo administrator (Luka), i to samo uz komentar promene; komentar je u „Previous edits" unutar Edit weld. Ostali korisnici dobijaju odbijanje i na mass edit-u i brisanju. NDT rezultat se može priložiti i na zaključan zavar. |
+| Baza materijala iz Excela kao osnova za svaki novi glavni projekat; prefiks NLB → inicijali firme (SC). | Svaki nov glavni projekat dobija 7264 materijala iz MaterialDB.xlsx (grupa, Article No, Material No, prečnik, LBS, opis, UOM, deo, tip). Article No = prefiks iz Company data („Article No prefix", podrazumevano SC) + šest cifara (SC000001…). Postojeći glavni projekti se ne menjaju. Tip materijala u Excelu postoji samo kod 2703 materijala (A106 Gr. B, A105N); ostali su bez tipa. |
+| Filter za datum u Material part, Type of material, UOMs, Spools, Operation phases, Material suppliers nema funkciju. | Uklonjen; dugme Filters se ne prikazuje gde nema šta da se filtrira. |
+| Nova sekcija Request for Quotation pre Order materials. | Ista lista kao Order materials; dugme „Request for Quotation" (dobavljač, rok, napomena) pravi PDF zahteva za ponudu (RFQ-00001 … po glavnom projektu) sa kolonama za cenu, dostupnost i rok. Ništa se ne naručuje, ne knjiži i ne rezerviše; stavke ostaju za novi RFQ i za Order materials. Tab „Sent requests" čuva poslate zahteve. |
+| Sekciju Calculations potpuno ukloniti (biće zaseban pilot). | Uklonjena iz menija MTO Pilota i svi linkovi ka njoj; podaci ostaju za budući pilot. |
+| U izometriji ukloniti „Calculation · MSPS"; „MSPS cut list" → „Cut list". | Urađeno. |
+| Cut list kao tabela za proračun po Excelu; fitinzi sa nazivima tipa „90° Elbow 2"". | Cut list ima redove SHT, Spool, DIA, Material, SCH/WT, Total length, Bevel, Extra length, Fit 1–4; Pastuk = Total + Extra − 2×Bevel − take-off fitinga (11 primera iz Excela daju iste vrednosti). Katalog od 1019 fitinga iz lista Codes sa čitljivim nazivima (npr. „45° Elbow 1"", „Weld neck flange 2" LBS150"), prvo za prečnik reda; dugme „Fittings" za dodavanje i izmenu. Excel i Print u izgledu lista Print. |
+
 Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
 
 ---
