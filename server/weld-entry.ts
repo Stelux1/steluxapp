@@ -4,7 +4,7 @@ import type { Row } from '../shared/types.ts';
 import { inOwnerSite } from '../shared/welder-data.ts';
 import {
   MASS_EDIT_FIELDS, MASS_EDIT_MANDATORY_MESSAGE, WELD_ENTRY_FIELDS, WELD_SORTING_MESSAGES, certificateErrors, hasWelder, lockContext, massEditMissingFields, missingMandatoryFields, moveWeld, neighbourOf, normalizedNdtPercent,
-  orderedWelds, planWeldRange, readMassEdit, weldLock, weldSortingDisabled, welderWpsErrors, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_TRACER_HINT, WELDERS, WELD_MANDATORY_MESSAGE, certificateSelectionErrors,
+  orderedWelds, planWeldRange, readMassEdit, weldLock, weldSortingDisabled, welderWpsErrors, wpsDiameterErrors, weldDiameterOf, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_TRACER_HINT, WELDERS, WELD_MANDATORY_MESSAGE, certificateSelectionErrors,
   diameterErrors, duplicateWelderErrors, editReason, specialWeldCleared, CERTIFICATE_NOT_SELECTABLE,
 } from '../shared/weld-entry.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
@@ -100,11 +100,16 @@ export function assertWeldEntry(store: Store, input: Values, existing?: Row, mod
   // The mass edit has its own, smaller rule (massEditMissingFields).
   const missing = mode !== 'mass' && changed(input, existing, ['weldNo', 'typeId', 'wpsId', 'date', 'lengthMode', 'diameterId', 'dialen', 'chargeNo1', 'chargeNo2', 'certificate1Id', 'certificate2Id', 'welder1Id', 'welder2Id', 'welder3Id', 'welder4Id']) ? missingMandatoryFields(site, merged) : {};
   Object.assign(errors, missing);
-  // (b) validation on WPS
-  if (changed(input, existing, ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id', 'wpsId', 'date']) && hasWelder(merged) && merged.wpsId) {
+  // (b) validation on WPS: the WPS's own diameter range (inches) holds the weld's diameter, and a welder's qualification listing the WPS holds it (mm).
+  const diameter = weldDiameterOf(merged, store.list('diameters', true));
+  if (changed(input, existing, ['wpsId', 'diameterId', 'lengthMode']) && merged.wpsId && !errors.wpsId) {
+    let wps: Row | undefined; try { wps = store.get('wps', merged.wpsId, true); } catch { /* reported above */ }
+    Object.assign(errors, wpsDiameterErrors(site, merged, wps, diameter));
+  }
+  if (changed(input, existing, ['welder1Id', 'welder2Id', 'welder3Id', 'welder4Id', 'wpsId', 'date', 'diameterId', 'lengthMode']) && hasWelder(merged) && merged.wpsId) {
     let wps: Row | undefined; try { wps = store.get('wps', merged.wpsId, true); } catch { /* reported above */ }
     const certificates = store.list('welder_certificates');
-    Object.assign(errors, welderWpsErrors(site, merged, wps, id => certificates.filter(row => row.welderId === id), id => { try { return store.display('welders', store.get('welders', id, true)); } catch { return 'This welder'; } }, today()));
+    Object.assign(errors, welderWpsErrors(site, merged, wps, id => certificates.filter(row => row.welderId === id), id => { try { return store.display('welders', store.get('welders', id, true)); } catch { return 'This welder'; } }, today(), diameter));
   }
   // (c) project certificates
   const sides = [1, 2].filter(side => changed(input, existing, [`certificate${side}Id`]) && merged[`certificate${side}Id`]);

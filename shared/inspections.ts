@@ -267,6 +267,12 @@ export function repairChain(weld: Row, welds: Row[]): Row[] {
   }
 }
 /**
+ * A rejection that is still open: the weld is not accepted (`notAccepted`) and no weld later in its repair chain has an
+ * accepted result. Client answer 17.11.2026: a rejected weld counts as Rejected only until it is repaired. One rule for
+ * the blockers, the weld dashboard and its reports. `welds` are all welds the repair chain may run through.
+ */
+export const openRejection = (weld: Row, welds: Row[], results: Row[] | null | undefined) => notAccepted(weld, results) && !repairChain(weld, welds).some(repair => ndtAccepted(repair, results));
+/**
  * Weld number of the next repair: the original number with the suffix R1, R2, … counted along the chain
  * (`010` → `010R1`, a not-accepted `010R1` → `010R2`). A number already used on the isometric is skipped.
  */

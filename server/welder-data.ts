@@ -5,6 +5,7 @@
  */
 import type { Row } from '../shared/types.ts';
 import { CUSTOM_RANGES, FLAG_BULK_FIELDS, WELDERCARD_LISTS, joinIds, joinWqNos, splitIds, splitWqNos, welderWqNumbers, FREE_VALUE_MAX, HOSTED_FREE_VALUES, isWelderRole, QUALIFICATION_RANGES, SITE_OWNED, certificateMandatoryErrors, diameterIdFor, diameterNumbers, hostedRequiredErrors, inOwnerSite, isoAsmeLabel, nextSiteIndexNumber, rangeErrors } from '../shared/welder-data.ts';
+import { WPS_RANGES } from '../shared/wps.ts';
 import type { Actor, Store } from './store.ts';
 import { qaEngineerCompany } from '../shared/weld-catalogs.ts';
 
@@ -66,6 +67,8 @@ export function prepareWelderData(store: Store, key: string, input: Record<strin
     Object.assign(next, numbers.values); Object.assign(errors, numbers.errors);
   }
   if (key === 'welder_customs_catalog') Object.assign(errors, rangeErrors(merged, CUSTOM_RANGES));
+  // The diameter range a WPS covers (inches), entered by hand: numbers, and "to" not below "from".
+  if (key === 'wps') Object.assign(errors, rangeErrors(merged, WPS_RANGES));
   if (key === 'welder_certificates') {
     Object.assign(errors, rangeErrors(merged, QUALIFICATION_RANGES));
     if (!blank(merged.issuedAt) && !blank(merged.expiresAt) && String(merged.expiresAt) < String(merged.issuedAt)) errors.expiresAt = 'The expiry date cannot be before the issue date.';

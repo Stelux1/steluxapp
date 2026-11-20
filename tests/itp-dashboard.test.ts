@@ -163,6 +163,15 @@ test('the defect block works per group, with Exam %, flag, tracer status and the
   assert.deepEqual([a.flag, a.flagReason, a.tracerStatus, a.tracerAction, a.tracerHint], ['bad', 'Rejected but tracers missing', { value: 'Missing', hint: '2 of 2 tracer(s) still required.' }, true, 'Missing 2']);
   const c = groups.find(group => group.welderId === 'wb')!.defects;
   assert.deepEqual([c.welds, c.examined, c.examinedPercent, c.rejected, c.flag, c.tracerStatus.value, c.tracerAction], [4, 2, 50, 0, 'ok', 'Not needed', false]);
+  // Client answer 17.11.2026: a rejected weld counts as Rejected only until it is repaired. A2 gets its repair weld; once that
+  // repair is accepted the group has no rejected weld (no tracers expected, flag ok), before that A2 still counts.
+  const repair = row('a2r1', { typeId: 't1', wpsId: 'w1', weldNo: 'A2R1', isoId: 'iso1', welder1Id: 'wa', date: '2026-10-12', repairOfId: 'a2' });
+  const withRepair = (result?: string): DashboardRows => ({ ...rows, welds: [...welds, repair], results: result ? [...results, row('x-a2r1', { weldId: 'a2r1', type: 'NDT', result, date: '2026-10-14' })] : results });
+  const defectsOf = (data: DashboardRows) => dash({}, undefined, 'welds', data).compliance.find(group => group.itpId === 'i30')!.defects;
+  assert.equal(defectsOf(withRepair()).rejected, 1, 'a repair without an accepted result does not close the rejection');
+  assert.equal(defectsOf(withRepair('Rejected')).rejected, 2, 'a rejected repair is rejected as well');
+  const repaired = defectsOf(withRepair('Accepted'));
+  assert.deepEqual([repaired.rejected, repaired.expectedTracers, repaired.missingTracers, repaired.flag], [0, 0, 0, 'ok']);
   // Tracer status branches (reference buildTracerStatus).
   assert.deepEqual(tracerStatus({ expectedTracers: 0, tracerWelds: 0, tracerExamined: 0, tracerRejected: 0, missingTracers: 0 }), { value: 'Not needed', hint: 'No tracer action required for this group.' });
   assert.deepEqual(tracerStatus({ expectedTracers: 4, tracerWelds: 3, tracerExamined: 2, tracerRejected: 1, missingTracers: 1 }), { value: 'Rejected', hint: '1 accepted / 1 rejected | 1 additional tracer(s) still required.' });

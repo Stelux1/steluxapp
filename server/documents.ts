@@ -32,6 +32,13 @@ export function documentStorage(store: Store, dataDir: string, mode: DocumentSto
       if (mode === 'database') store.db.prepare('INSERT INTO upload_blobs VALUES (?,?)').run(id, Buffer.from(bytes).toString('base64'));
       else { const filename = randomUUID(); writeFileSync(join(uploadsDir, filename), bytes); store.db.prepare('INSERT INTO upload_paths VALUES (?,?)').run(id, filename); }
     },
+    /** A copy of an attachment's stored file for another attachment record (its own bytes, so deleting one never touches the other); false when the original file is unavailable. */
+    copy(fromId: string, toId: string): boolean {
+      const bytes = this.read(fromId);
+      if (!bytes) return false;
+      this.saveBytes(toId, bytes);
+      return true;
+    },
     discard(file?: Express.Multer.File) { if (file?.path && existsSync(file.path)) unlinkSync(file.path); },
     /** The stored bytes of an attachment, or null when the file is unavailable (server-side use, e.g. documents that print signatures). */
     read(id: string): Buffer | null {

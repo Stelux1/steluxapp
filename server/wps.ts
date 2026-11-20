@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs';
 import { AppError, type Store } from './store.ts';
 import { actorOf, type AuthRequest } from './auth.ts';
 import type { releaseAccess } from './release-access.ts';
+import type { documentStorage } from './documents.ts';
 import { canResource } from '../shared/permissions.ts';
 import type { Row } from '../shared/types.ts';
 import {
@@ -17,6 +18,7 @@ import {
  * permission is checked here; the pages only mirror them.
  */
 type Access = ReturnType<typeof releaseAccess>;
+type Documents = ReturnType<typeof documentStorage>;
 const user = (req: Request) => (req as AuthRequest).user;
 const allow = (req: Request, key: string, verb: Parameters<typeof canResource>[2], row?: Row) => { if (!canResource(user(req), key, verb, row)) throw new AppError(403, 'Your permission profile does not allow this action.'); };
 function ids(value: unknown): string[] {
@@ -66,7 +68,7 @@ function existingNumbers(store: Store): Map<string, string[]> {
 /** What one row writes: the filled cells (an empty cell keeps the stored value of an existing PQR). */
 const rowData = (row: PqrImportRow) => Object.fromEntries(Object.entries(row.values).filter(([name, value]) => value !== '' && PQR_IMPORT_COLUMNS.some(column => column.name === name)));
 
-export function registerWpsRoutes(app: Application, { store, access }: { store: Store; access: Access }) {
+export function registerWpsRoutes(app: Application, { store, documents, access }: { store: Store; documents: Documents; access: Access }) {
   // --- WPS per project site -------------------------------------------------------------------------------------------
   app.post('/api/wps/site', (req, res) => {
     access.resource('wps');
@@ -92,6 +94,14 @@ export function registerWpsRoutes(app: Application, { store, access }: { store: 
     }));
     res.json({ records: records.map(row => access.project('wps', row)) });
   });
+  /** The copy carries the original's attached documents: its own attachment rows, each with its own copy of the stored file. A file whose bytes are unavailable is left out. */
+  function copyDocuments(original: Row, copy: Row, actor: ReturnType<typeof actorOf>) {
+    const files = store.list('attachments').filter(file => file.entityType === 'wps' && file.entityId === original.id).sort((a, b) => String(a._createdAt).localeCompare(String(b._createdAt)));
+    for (const file of files) {
+      const row = store.create('attachments', { name: file.name, entityType: 'wps', entityId: copy.id, documentType: file.documentType, mime: file.mime, size: file.size, note: file.note || '' }, actor);
+      if (!documents.copy(file.id, row.id)) store.archive('attachments', row.id, row._version, actor);
+    }
+  }
   app.post('/api/wps/copy', (req, res) => {
     access.resource('wps');
     const list = ids(req.body?.ids), site = siteOf(store, req.body?.siteId);
@@ -102,7 +112,9 @@ export function registerWpsRoutes(app: Application, { store, access }: { store: 
       const rows = wpsRows(store);
       const refusal = wpsCopyRefusal(rows, wps, site.id);
       if (refusal) throw new AppError(422, refusal);
-      return store.create('wps', wpsCopyValues(rows, wps, site.id), actor);
+      const copy = store.create('wps', wpsCopyValues(rows, wps, site.id), actor);
+      copyDocuments(wps, copy, actor);
+      return copy;
     }));
     res.status(201).json({ records: records.map(row => access.project('wps', row)) });
   });

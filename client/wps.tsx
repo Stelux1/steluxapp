@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { AlertCircle, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, Copy, Globe, Loader2, Pause, Pencil, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  WPS_ALL_PROJECTS, WPS_DOCUMENT_TYPE, WPS_GROUP_FIELDS, WPS_GROUP_HINT, WPS_METHOD_PLACEHOLDER, WPS_PAGE_SIZES, WPS_SITE_COLUMN, WPS_TABS, WPS_VARIANTS,
+  WPS_ALL_PROJECTS, WPS_DOCUMENT_TYPE, WPS_GROUP_FIELDS, WPS_GROUP_HINT, WPS_METHOD_PLACEHOLDER, WPS_PAGE_SIZES, WPS_RANGE_FIELDS, WPS_RANGE_NAMES, WPS_SITE_COLUMN, WPS_TABS, WPS_VARIANTS,
   enableOnSiteLabel, isWpsCopy, tagText, tagValues, wpsDocument, wpsEnabledOnSite, wpsProjectSelection, wpsProjectValues, wpsSiteChange, wpsSiteStatus,
   wpsTab, wpsTabCounts, wpsVariant, type WpsTab, type WpsVariant,
 } from '../shared/wps.ts';
@@ -21,6 +21,8 @@ type Column = 'name' | 'method' | 'definition' | 'jointType';
 const COLUMNS: [Column, string][] = [['name', 'WPS number'], ['method', 'Weld process'], ['definition', 'WPS definition'], ['jointType', 'Joint type']];
 type Bulk = 'activate' | 'deactivate' | 'copy' | 'global';
 const str = (value: unknown) => value === null || value === undefined ? '' : String(value);
+/** A typed range value as the record API takes it: a number, '' for none, or the text itself when it is no number (the server names the field). */
+const rangeValue = (value: unknown) => { const raw = str(value).trim().replace(',', '.'); return raw === '' || Number.isNaN(Number(raw)) ? str(value).trim() : Number(raw); };
 
 export function WpsPage() {
   const { rows, allRows, siteId, canRecord, label } = useWorkspace();
@@ -156,7 +158,7 @@ export function WpsEditor({ record, onClose }: { record?: Row; onClose: () => vo
   const site = (allRows.sites || []).find(row => row.id === siteId);
   const initial = useMemo(() => ({
     name: str(record?.name), method: str(record?.method), definition: str(record?.definition), jointType: str(record?.jointType),
-    ...Object.fromEntries(WPS_GROUP_FIELDS.map(field => [field.name, str(record?.[field.name])])),
+    ...Object.fromEntries([...WPS_GROUP_FIELDS.map(field => field.name), ...WPS_RANGE_NAMES].map(name => [name, str(record?.[name])])),
     projects: wpsProjectSelection(record, record && projectsRelation ? relationIds(rows, projectsRelation, record.id) : []),
     pqrIds: record && pqrRelation ? relationIds(rows, pqrRelation, record.id) : [] as string[],
     enabled: record ? wpsEnabledOnSite(rows, record, siteId) : false,
@@ -172,8 +174,9 @@ export function WpsEditor({ record, onClose }: { record?: Row; onClose: () => vo
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setFields({});
     if (file && !/\.pdf$/i.test(file.name)) { setFields({ file: 'Choose a PDF file.' }); setError('Please check the highlighted fields.'); return; }
-    const plain = ['name', 'method', 'definition', ...WPS_GROUP_FIELDS.map(field => field.name), 'jointType'];
-    const payload: Record<string, unknown> = Object.fromEntries(plain.filter(name => !record || values[name] !== initial[name]).map(name => [name, values[name]]));
+    const plain = ['name', 'method', 'definition', ...WPS_GROUP_FIELDS.map(field => field.name), 'jointType', ...WPS_RANGE_NAMES];
+    // The diameter range (inches) is a number field: the server takes a number, or empty for no limit.
+    const payload: Record<string, unknown> = Object.fromEntries(plain.filter(name => !record || values[name] !== initial[name]).map(name => [name, WPS_RANGE_NAMES.includes(name) ? rangeValue(values[name]) : values[name]]));
     if (!record || JSON.stringify(values.projects) !== JSON.stringify(initial.projects)) Object.assign(payload, wpsProjectValues(values.projects));
     if (!record || JSON.stringify(values.pqrIds) !== JSON.stringify(initial.pqrIds)) payload.pqrIds = values.pqrIds;
     if (!record) payload.siteIds = values.enabled && siteId ? [siteId] : [];
@@ -199,6 +202,7 @@ export function WpsEditor({ record, onClose }: { record?: Row; onClose: () => vo
       <p className="field-hint full-width wps-group-hint">{WPS_GROUP_HINT}</p>
       {WPS_GROUP_FIELDS.map(field => <TagInput key={field.name} id={`wps-${field.name}`} label={field.label} options={field.options} value={str(values[field.name])} onChange={value => set(field.name, value)}/>)}
       {text('jointType', 'Joint type')}
+      {WPS_RANGE_FIELDS.map(field => <div className="field" key={field.name}><label htmlFor={`wps-${field.name}`}>{field.label}</label><input id={`wps-${field.name}`} name={field.name} type="text" inputMode="decimal" autoComplete="off" aria-invalid={Boolean(fields[field.name])} value={str(values[field.name])} onChange={event => set(field.name, event.target.value)}/><small className="field-hint">{field.hint}</small>{fields[field.name] && <small className="field-error">{fields[field.name]}</small>}</div>)}
       <fieldset className="field full-width wps-choices"><legend>Project</legend><div className="multi-options">
         <label><input type="checkbox" checked={values.projects.includes(WPS_ALL_PROJECTS)} onChange={event => toggleProject(WPS_ALL_PROJECTS, event.target.checked)}/><span>ALL</span></label>
         {projects.map(project => <label key={project.id}><input type="checkbox" disabled={values.projects.includes(WPS_ALL_PROJECTS)} checked={values.projects.includes(project.id)} onChange={event => toggleProject(project.id, event.target.checked)}/><span>{label('projects', project.id)}</span></label>)}

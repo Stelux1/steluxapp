@@ -22,7 +22,7 @@ import {
   compositeEnds, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, normalizeSizeInch, parseInchSize, specialWeldCleared, specialWeldHidden,
   weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
   ADD_PRE_HT_LABEL, RANGE_DIALOG, WELDER_GROUP_LABELS, WELDER_PLACEHOLDER, chargeMaterialGroup, chargesForWelders, diameterRowSize, groupWeldersForDia, materialGroupWarnings, sortChargesForDia, suggestOnDia,
-  welderFieldsDisabled, welderQualifiedByProcess, wpsValidationMode, welderOptionLabel, welderOptionList, weldersForWps, weldersQualifiedForDiameter, wpsChangeClearsWelders, wpsMatchesDiameter,
+  welderFieldsDisabled, welderQualifiedByProcess, wpsValidationMode, wpsDiameterRange, wpsHoldsDiameter, wpsRangeText, wpsOfferedForDiameters, wpsDiameterErrors, weldDiameterOf, diameterSizeInch, type WeldDiameter, welderOptionLabel, welderOptionList, weldersForWps, weldersQualifiedForDiameter, wpsChangeClearsWelders, wpsMatchesDiameter,
 } from '../shared/weld-entry.ts';
 import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -370,7 +370,7 @@ test('save-weld creates a weld at the end of the table and enforces mandatory fi
   const outsider = f.store.create('welders', { number: 'W-009', name: 'Pat Quinn', status: 'Active', globallyDeployable: true });
   result = await f.act('save-weld', { ...complete, weldNo: 'W041', welder1Id: outsider.id });
   assert.equal(result.status, 422); assert.match(result.body.fields.welder1Id, /Pat Quinn has no valid qualification for WPS STX-WPS-141-01/);
-  const expiring = f.store.create('welder_certificates', { name: 'WQ-OLD', welderId: outsider.id, isDocument: true, wpsIds: 'wps-1', expiresAt: '2026-06-30' });
+  const expiring = f.store.create('welder_certificates', { name: 'WQ-OLD', welderId: outsider.id, isDocument: true, wpsIds: 'wps-1', expiresAt: '2026-06-30', diameterFrom: 21.3, diameterTo: 323.9 });
   assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W041', welder1Id: outsider.id })).status, 422, 'expired before the weld date');
   assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W041', welder1Id: outsider.id, date: '2026-06-01' })).status, 201, 'valid on the weld date');
   f.store.update('welder_certificates', expiring.id, { expiresAt: '2027-06-30' }, expiring._version);
@@ -880,12 +880,56 @@ test('welder lists after Dia.: qualified for the diameter first, the others unde
   assert.equal(groupWeldersForDia(options, new Set(options.map(o => o.value))).length, 1, 'an empty group is not shown');
 });
 
-test('WPS match a diameter by the scope of their PQR; one number is exact, a lower limit is open ended', () => {
-  assert.equal(wpsMatchesDiameter(['21.3 - 168.3'], 60.3), true);
-  assert.equal(wpsMatchesDiameter(['21,3-48.3'], 60.3), false);
-  assert.equal(wpsMatchesDiameter(['> 50'], 60.3), true);
-  assert.equal(wpsMatchesDiameter(['n/a', ''], 60.3), false);
-  assert.equal(wpsMatchesDiameter(['21.3 - 168.3'], null), false);
+test('a WPS covers the diameter range entered on it (inches); no range is not limited; matches need a range of their own', () => {
+  const ranged = row('r', { name: 'R', diameterFrom: 1, diameterTo: 2 });
+  assert.deepEqual(wpsDiameterRange(ranged), [1, 2]);
+  assert.deepEqual([0.5, 1, 1.5, 2, 2.5].map(size => wpsHoldsDiameter(ranged, size)), [false, true, true, true, false]);
+  assert.equal(wpsHoldsDiameter(row('free', {}), 6), true, 'a WPS without a range is not limited');
+  assert.equal(wpsHoldsDiameter(row('empty', { diameterFrom: '', diameterTo: null }), 6), true);
+  assert.equal(wpsHoldsDiameter(ranged, null), true, 'a weld without a known diameter cannot be checked');
+  assert.deepEqual([wpsDiameterRange(row('open-end', { diameterFrom: 2 })), wpsDiameterRange(row('open-start', { diameterTo: 4 })), wpsDiameterRange(row('zero-end', { diameterFrom: 2, diameterTo: 0 }))], [[2, Infinity], [0, 4], [2, Infinity]]);
+  assert.deepEqual([wpsRangeText(ranged), wpsRangeText(row('a', { diameterFrom: 2 })), wpsRangeText(row('b', { diameterTo: 4 })), wpsRangeText(row('c'))], ['1 - 2 inch', 'from 2 inch', 'up to 4 inch', '']);
+  assert.deepEqual([wpsMatchesDiameter(ranged, 1.5), wpsMatchesDiameter(ranged, 3), wpsMatchesDiameter(row('free'), 1.5), wpsMatchesDiameter(ranged, null)], [true, false, false, false], 'only a WPS with its own range matches (the auto-suggest)');
+  assert.deepEqual([{ sizeinch: '1.5' }, { sizeinch: '' }, { sizeinch: 0 }, null].map(item => diameterSizeInch(item as Row | null)), [1.5, null, null, null]);
+});
+
+test('Validation on WPS offers only WPS whose range holds the diameter of every weld; off or without a range nothing is limited', () => {
+  const ranged = row('r', { diameterFrom: 1, diameterTo: 2 }), free = row('free');
+  assert.deepEqual([ranged, free].map(wps => wpsOfferedForDiameters({ wpsValidation: true }, wps, [1.5])), [true, true]);
+  assert.deepEqual([ranged, free].map(wps => wpsOfferedForDiameters({ wpsValidation: true }, wps, [4])), [false, true]);
+  assert.equal(wpsOfferedForDiameters({ wpsValidation: true }, ranged, [1.5, 4]), false, 'Mass edit: every checked weld must be held');
+  assert.equal(wpsOfferedForDiameters({ wpsValidation: false }, ranged, [4]), true, 'setting off: nothing changes');
+  assert.equal(wpsOfferedForDiameters({}, ranged, [4]), true, 'setting never saved: nothing changes');
+  const diameters = [row('d1', { diameter: '1 1/2"', size: 48.3, sizeinch: 1.5 }), row('d4', { diameter: '4"', size: 114.3, sizeinch: 4 })];
+  const weld = { wpsId: 'r', diameterId: 'd4', lengthMode: 'Diameter' };
+  const dia = weldDiameterOf(weld, diameters);
+  assert.deepEqual(dia, { mm: 114.3, inch: 4, label: '4"' });
+  assert.match(wpsDiameterErrors({ wpsValidation: true }, weld, row('r', { name: 'WPS-R', diameterFrom: 1, diameterTo: 2 }), dia).wpsId, /WPS WPS-R covers 1 - 2 inch, not the diameter 4" \(4 inch\)/);
+  assert.deepEqual(wpsDiameterErrors({ wpsValidation: true }, { ...weld, diameterId: 'd1' }, ranged, weldDiameterOf({ ...weld, diameterId: 'd1' }, diameters)), {});
+  assert.deepEqual(wpsDiameterErrors({ wpsValidation: false }, weld, ranged, dia), {});
+  assert.equal(weldDiameterOf({ ...weld, lengthMode: 'Length in mm' }, diameters), null, 'an explicit length has no diameter');
+});
+
+test('Validation on WPS: a welder needs a qualification listing the WPS whose own diameter range (mm) holds the diameter; a qualification without a range does not qualify', () => {
+  const wps = row('B', { name: 'WPS-B' }), onDate = '2026-11-16';
+  const qualification = (id: string, data: Record<string, unknown> = {}) => row(id, { welderId: 'w', wpsIds: 'B', ...data });
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1', { diameterFrom: 21.3, diameterTo: 168.3 })], onDate, [60.3]), true);
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1', { diameterFrom: 21.3, diameterTo: 48.3 })], onDate, [60.3]), false, 'the range does not hold the diameter');
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1')], onDate, [60.3]), false, 'no range: does not qualify');
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1')], onDate), true, 'without a diameter only the listing counts');
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1', { diameterFrom: 21.3, diameterTo: 168.3, wpsIds: 'C' })], onDate, [60.3]), false, 'the qualification must list the WPS');
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1', { diameterFrom: 21.3, diameterTo: 168.3, expiresAt: '2026-01-01' })], onDate, [60.3]), false, 'expired');
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1', { diameterFrom: 21.3, diameterTo: 48.3 }), qualification('q2', { diameterFrom: 50, diameterTo: 200 })], onDate, [30, 114.3]), true, 'each checked diameter is held by some qualification');
+  assert.equal(welderQualifiedForWps(wps, [qualification('q1', { diameterFrom: 21.3, diameterTo: 48.3 })], onDate, [30, 114.3]), false);
+  // The welder list and the server's answer follow the same rule.
+  const welders = [row('w1'), row('w2')], certificates = [qualification('q1', { welderId: 'w1', diameterFrom: 21.3, diameterTo: 168.3 }), qualification('q2', { welderId: 'w2' })];
+  assert.deepEqual(weldersForWps({ wpsValidation: true }, welders, certificates, wps, onDate, [], [60.3]).map(w => w.id), ['w1']);
+  assert.deepEqual(weldersForWps({ wpsValidation: true }, welders, certificates, wps, onDate, [], [null]).map(w => w.id), ['w1', 'w2'], 'no diameter yet');
+  assert.deepEqual(weldersForWps({ wpsValidation: false }, welders, certificates, wps, onDate, [], [60.3]).map(w => w.id), ['w1', 'w2'], 'setting off');
+  const ask = (welder: string, dia: WeldDiameter | null) => welderWpsErrors({ wpsValidation: true }, { wpsId: 'B', welder1Id: welder, date: onDate }, wps, id => certificates.filter(c => c.welderId === id), id => id.toUpperCase(), onDate, dia);
+  assert.deepEqual(ask('w1', { mm: 60.3, inch: 2, label: '2"' }), {});
+  assert.match(ask('w2', { mm: 60.3, inch: 2, label: '2"' }).welder1Id, /W2 has no valid qualification for WPS WPS-B whose diameter range holds 2" \(60.3 mm\) on 2026-11-16/);
+  assert.deepEqual(ask('w2', null), {}, 'without a diameter the older rule applies');
 });
 
 test('material group warning: one warning when the pair is not covered, none for an allowed pair, one for a WPS without groups (weld-iso-welds-030)', () => {
@@ -953,6 +997,36 @@ test('welder option texts: "<code> <name>" in Add weld and Mass edit, "<code>, <
   assert.deepEqual(WELDER_PLACEHOLDER, { add: 'Choose Welder', edit: '-----------------', mass: '-----------------' });
 });
 
+test('save-weld through HTTP: with Validation on WPS a WPS is refused when its own diameter range (inches) does not hold the weld diameter; off, nothing changes; the WPS form saves the range', async t => {
+  const f = await fixture(t);
+  const wps = f.store.get('wps', 'wps-1'), diameter = f.store.get('diameters', 'diameter-6');
+  const sizeinch = Number(diameter.sizeinch); assert.ok(sizeinch > 0, 'the sample diameter has a size in inches');
+  const make = (name: string, from: number | null, to: number | null) => f.store.create('wps', { name, method: '141', definition: 'Ranged procedure', allProjects: true, siteIds: ['site-north', 'site-river'], processId: wps.processId, ...(from === null ? {} : { diameterFrom: from }), ...(to === null ? {} : { diameterTo: to }) });
+  const below = make('WPS-BELOW', 0.25, sizeinch / 2), holds = make('WPS-HOLDS', sizeinch / 2, sizeinch * 2), open = make('WPS-OPEN', null, null);
+  const certificates = f.store.list('welder_certificates').filter(cert => cert.welderId === 'welder-1' && cert.wpsIds);
+  for (const cert of certificates) f.store.update('welder_certificates', cert.id, { wpsIds: [...String(cert.wpsIds).split(','), below.id, holds.id, open.id].join(',') }, cert._version);
+  const refused = await f.act('save-weld', { ...complete, weldNo: 'W080', wpsId: below.id });
+  assert.equal(refused.status, 422); assert.match(refused.body.fields.wpsId, /WPS WPS-BELOW covers 0\.25 - [\d.]+ inch, not the diameter/);
+  assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W081', wpsId: holds.id })).status, 201);
+  assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W082', wpsId: open.id })).status, 201, 'a WPS without a range is not limited');
+  // Edit: moving a weld to a diameter the WPS does not hold is refused; the plain record route refuses the same.
+  const saved = f.store.list('welds').find(weld => weld.weldNo === 'W081')!;
+  const smaller = f.store.list('diameters').find(row => Number(row.sizeinch) > 0 && Number(row.sizeinch) > sizeinch * 2)!;
+  const moved = await f.act('save-weld', { isoId: 'iso-1', weldId: saved.id, expectedVersion: saved._version, diameterId: smaller.id });
+  assert.equal(moved.status, 422); assert.ok(moved.body.fields.wpsId);
+  assert.equal((await f.request(`/api/records/welds/${saved.id}`, 'PUT', { diameterId: smaller.id, _version: saved._version })).status, 422);
+  // Mass edit: a WPS that does not hold the diameter of the checked weld is refused.
+  const target = f.store.list('welds').find(weld => weld.isoId === 'iso-1' && weld.wpsId === 'wps-1' && weld.diameterId === 'diameter-6') ?? f.store.list('welds').find(weld => weld.weldNo === 'W082')!;
+  const mass = await f.act('mass-edit-welds', { weldIds: [target.id], versions: { [target.id]: target._version }, changes: { wpsId: below.id } });
+  assert.equal(mass.status, 422, JSON.stringify(mass.body));
+  // Setting off (Riverside): the same WPS is accepted whatever its range.
+  assert.equal((await f.act('save-weld', { ...complete, isoId: 'iso-5', weldNo: 'W083', wpsId: below.id, diameterId: 'diameter-9' })).status, 201);
+  // The WPS form: the range is two numbers, "to" not below "from".
+  assert.equal((await f.request('/api/records/wps', 'POST', { name: 'WPS-FORM', method: '141', definition: 'x', diameterFrom: 1, diameterTo: 2 })).status, 201);
+  const bad = await f.request('/api/records/wps', 'POST', { name: 'WPS-FORM-2', method: '141', definition: 'x', diameterFrom: 3, diameterTo: 2 });
+  assert.equal(bad.status, 422); assert.match(JSON.stringify(await bad.json()), /Diameter to must not be smaller than diameter from/);
+});
+
 test('save-weld through HTTP with Validation on WPS: a welder not on a valid qualification document of the WPS is refused, a listed one is accepted (weld-iso-welds-036)', async t => {
   const f = await fixture(t);
   const wps = f.store.get('wps', 'wps-1');
@@ -960,10 +1034,20 @@ test('save-weld through HTTP with Validation on WPS: a welder not on a valid qua
   const listed = f.store.create('welders', { number: 'W-101', name: 'Lia Roe', status: 'Active', globallyDeployable: true });
   const unlisted = f.store.create('welders', { number: 'W-102', name: 'Max Orr', status: 'Active', globallyDeployable: true });
   const expired = f.store.create('welders', { number: 'W-103', name: 'Eve Ash', status: 'Active', globallyDeployable: true });
-  f.store.create('welder_certificates', { name: 'Doc A', welderId: listed.id, isDocument: true, wpsIds: wps.id, expiresAt: '2030-01-01' });
+  // The qualification's own diameter range (mm) is entered by hand; the weld of `complete` is 60.3 mm (2").
+  f.store.create('welder_certificates', { name: 'Doc A', welderId: listed.id, isDocument: true, wpsIds: wps.id, expiresAt: '2030-01-01', diameterFrom: 21.3, diameterTo: 168.3 });
   f.store.create('welder_certificates', { name: 'Doc B', welderId: unlisted.id, isDocument: true, wpsIds: other.id, expiresAt: '2030-01-01' });
   f.store.create('welder_certificates', { name: 'Doc C', welderId: expired.id, isDocument: true, wpsIds: wps.id, expiresAt: '2026-01-01' });
   assert.equal((await f.act('save-weld', { ...complete, weldNo: 'W070', welder1Id: listed.id })).status, 201);
+  // A qualification that lists the WPS but has no diameter range, or one that does not hold the weld's 60.3 mm, does not qualify.
+  const unranged = f.store.create('welders', { number: 'W-104', name: 'Kai Ide', status: 'Active', globallyDeployable: true });
+  const narrow = f.store.create('welders', { number: 'W-105', name: 'Joy Fox', status: 'Active', globallyDeployable: true });
+  f.store.create('welder_certificates', { name: 'Doc D', welderId: unranged.id, isDocument: true, wpsIds: wps.id, expiresAt: '2030-01-01' });
+  f.store.create('welder_certificates', { name: 'Doc E', welderId: narrow.id, isDocument: true, wpsIds: wps.id, expiresAt: '2030-01-01', diameterFrom: 21.3, diameterTo: 48.3 });
+  for (const [weldNo, welder] of [['W074', unranged], ['W075', narrow]] as [string, Row][]) {
+    const refused = await f.act('save-weld', { ...complete, weldNo, welder1Id: welder.id });
+    assert.equal(refused.status, 422); assert.match(refused.body.fields.welder1Id, /has no valid qualification for WPS STX-WPS-141-01 whose diameter range holds/);
+  }
   let result = await f.act('save-weld', { ...complete, weldNo: 'W071', welder1Id: unlisted.id });
   assert.equal(result.status, 422); assert.match(result.body.fields.welder1Id, /Max Orr has no valid qualification for WPS/);
   result = await f.act('save-weld', { ...complete, weldNo: 'W072', welder1Id: expired.id });

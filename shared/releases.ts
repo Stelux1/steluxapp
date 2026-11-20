@@ -1,7 +1,8 @@
 import type { Field, Row } from './types.ts';
-import { COMPLETION_FIELDS, isoBlockers, newest, phaseCompleted, type BlockerKey } from './iso-status.ts';
+import { COMPLETION_FIELDS, isoBlockers, missingCompleteFields, newest, phaseCompleted, type BlockerKey } from './iso-status.ts';
 import { RELEASE_DOC_DRAWINGS } from './site-settings.ts';
 import { punchBlocking, punchKind } from './punch.ts';
+import { nonWeldCode } from './weld-codes.ts';
 import { itpLatest } from './itps.ts';
 import { priorityLabel } from './priority.ts';
 import { weldItpId } from './itp-dashboard.ts';
@@ -116,16 +117,21 @@ export interface ReleaseCheckInput {
   iso: Row; welds: Row[]; weldTypes: Row[]; results: Row[];
   /** Release records (an active one stands for a completed phase); null / absent when unreadable. */
   releases?: Row[] | null;
-  /** Punch items. Read by the status card's warning only: open punch never holds a phase (see `releaseCheck`). */
+  /** Punch items: an open pre-punch of the isometric holds a phase (see `releaseCheck`); null when unreadable. */
   punch?: Row[] | null;
 }
 export interface ReleaseCheck { type: ReleasePhase; reasons: ReleaseReason[]; ready: boolean; /** Live welds of the phase. */ welds: number; }
 
 /**
- * An open pre-punch item of category A or B (shared/punch.ts rules). The reference only warns about it ("Pre-punch:
- * N A/B still need Finished + approval") and lists it in the blockers; it never holds Complete or the release.
+ * An open pre-punch item of category A or B (shared/punch.ts rules). Client answer 17.11.2026: an open pre-punch may not
+ * pass, so it holds Prefab / Field complete and the release (`releaseCheck`, the server's release action).
  */
 export const punchBlocksRelease = (item: Row) => !item._archived && punchKind(item) === 'Pre-punch' && punchBlocking([item]).length > 0;
+
+/** The open pre-punch items (category A / B) of an isometric: they hold both phases. */
+export const openPrePunch = (punch: Row[] | null | undefined, isoId: unknown) => (punch || []).filter(item => text(item.isoId) === text(isoId) && punchBlocksRelease(item));
+/** The reason line of open pre-punch items, or '' when none are open. */
+export const prePunchReason = (count: number) => count ? `${count} open pre-punch ${count === 1 ? 'item' : 'items'} (category A / B) must be finished and approved first.` : '';
 
 const ORDER: BlockerKey[] = ['release', 'welds', 'ndt', 'repair', 'punch'];
 const TITLES: Record<BlockerKey, string> = { release: 'Release', welds: 'Welds', ndt: 'NDT', repair: 'Repair', punch: 'Punch' };
@@ -137,7 +143,8 @@ const byWeldNo = (a: Row, b: Row) => text(a.weldNo).localeCompare(text(b.weldNo)
  * Prefab: every weld of the isometric has a type with a shop / field location, every shop weld is welded, every
  * required NDT of a shop weld has a result and no rejection waits for its repair. No shop welds: available (vacuous).
  * Field: Prefab complete first ("Prefab complete is required first"), then the same for the field welds; no field
- * welds: available once Prefab is complete. Open punch and missing optional weld fields do not hold a phase.
+ * welds: available once Prefab is complete. A welded weld without WPS, weld date or charge numbers holds the phase
+ * (special number codes GAP / SP / E / B are exempt), and so does an open pre-punch of the isometric (client answers 17.11.2026).
  */
 export function releaseCheck(type: ReleasePhase, input: ReleaseCheckInput): ReleaseCheck {
   const phase = PHASE_LOCATION[type];
@@ -148,6 +155,8 @@ export function releaseCheck(type: ReleasePhase, input: ReleaseCheckInput): Rele
   if (type === 'Field' && !phaseCompleted(input.iso, 'Prefab', input.releases)) add('release', 'Prefab complete is required first');
   if (type === 'Prefab') for (const weld of all.filter(weld => !weldPhase(weld, input.weldTypes))) add('welds', `Weld ${weld.weldNo} has no type — assign shop or field.`, weld.id);
   for (const weld of welds.filter(weld => !hasWelder(weld))) add('welds', `Weld ${weld.weldNo} has not been welded yet.`, weld.id);
+  for (const weld of welds.filter(weld => hasWelder(weld) && !nonWeldCode(weld.weldNo))) { const missing = missingCompleteFields(weld); if (missing.length) add('welds', `Weld ${weld.weldNo} is missing ${missing.join(', ')}.`, weld.id); }
+  const prePunch = openPrePunch(input.punch, input.iso.id).length; if (prePunch) add('punch', prePunchReason(prePunch));
   const status = isoBlockers({ iso: input.iso, welds, weldTypes: input.weldTypes, diameters: [], results: input.results, releases: null, punch: null });
   for (const group of status.groups.filter(group => group.key === 'ndt' || group.key === 'repair')) for (const item of group.items) add(group.key, item.message, item.weldId);
   reasons.sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));

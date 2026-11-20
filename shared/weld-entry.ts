@@ -227,10 +227,22 @@ const notExpired = (cert: Row, onDate: string) => !present(cert.expiresAt) || te
 /**
  * "Validation on WPS" on: a welder is qualified for a WPS when a qualification document of the welder lists that WPS and has
  * not expired on the weld date (today while the weld has no date) (reference: Personnel's certificates and files, w3-welder-card).
+ * With the weld's diameter (mm) given, a listing qualification whose own Diameter range holds it is needed (a qualification
+ * without a range does not qualify): the welder's range is entered by hand per qualification.
  */
-export function welderQualifiedForWps(wps: Values | undefined | null, certificates: Row[], onDate: string): boolean {
+export function welderQualifiedForWps(wps: Values | undefined | null, certificates: Row[], onDate: string, sizesMm: (number | null)[] = []): boolean {
   if (!wps) return true;
-  return live(certificates).some(cert => splitIds(cert.wpsIds).includes(text(wps.id)) && notExpired(cert, onDate));
+  const listing = live(certificates).filter(cert => splitIds(cert.wpsIds).includes(text(wps.id)) && notExpired(cert, onDate));
+  return listing.length > 0 && sizesMm.every(size => size === null || listing.some(cert => qualificationHoldsMm(cert, size)));
+}
+/**
+ * The Diameter range (mm) a welder qualification was entered with by hand ("Diameter from / to"): an open end (empty or 0 for
+ * "to") is no limit. A qualification without any range holds no diameter (client answer 17.11.2026).
+ */
+export function qualificationHoldsMm(cert: Row, sizeMm: number): boolean {
+  if (!present(cert.diameterFrom) && !present(cert.diameterTo)) return false;
+  const from = present(cert.diameterFrom) ? Number(cert.diameterFrom) : 0, to = present(cert.diameterTo) && Number(cert.diameterTo) > 0 ? Number(cert.diameterTo) : Number.POSITIVE_INFINITY;
+  return sizeMm >= from && sizeMm <= to;
 }
 /** The older check, kept for a main project whose setting was never saved: a certificate names the welding process of the WPS and has not expired; a WPS without a process reference passes. */
 export function welderQualifiedByProcess(wps: Values | undefined | null, certificates: Row[], onDate: string): boolean {
@@ -238,28 +250,69 @@ export function welderQualifiedByProcess(wps: Values | undefined | null, certifi
   return live(certificates).some(cert => cert.processId === wps.processId && notExpired(cert, onDate));
 }
 /** Messages by welder field for every welder of the weld who does not cover the weld's WPS. */
-export function welderWpsErrors(site: SiteLike, weld: Values, wps: Values | undefined | null, certificatesOf: (welderId: string) => Row[], welderName: (welderId: string) => string, today: string): Record<string, string> {
+export function welderWpsErrors(site: SiteLike, weld: Values, wps: Values | undefined | null, certificatesOf: (welderId: string) => Row[], welderName: (welderId: string) => string, today: string, diameter?: WeldDiameter | null): Record<string, string> {
   const mode = wpsValidationMode(site);
   if (mode === 'off' || !present(weld.wpsId) || !wps) return {};
   const onDate = present(weld.date) ? text(weld.date) : today, errors: Record<string, string> = {};
   for (const name of WELDERS) {
     const id = text(weld[name]); if (!id) continue;
     if (!(mode === 'documents' ? welderQualifiedForWps : welderQualifiedByProcess)(wps, certificatesOf(id), onDate)) errors[name] = `${welderName(id)} has no valid qualification for WPS ${text(wps.name)} on ${onDate}.`;
+    else if (mode === 'documents' && diameter?.mm != null && !welderQualifiedForWps(wps, certificatesOf(id), onDate, [diameter.mm])) errors[name] = `${welderName(id)} has no valid qualification for WPS ${text(wps.name)} whose diameter range holds ${diameter.label} (${diameter.mm} mm) on ${onDate}.`;
   }
   return errors;
+}
+/** The diameter of a weld as the WPS and welder rules read it: outside diameter in mm (qualifications), in inches (WPS range) and its label. */
+export interface WeldDiameter { mm: number | null; inch: number | null; label: string; }
+/** The weld's diameter row as a `WeldDiameter`; null for a weld without one (explicit length, none chosen). */
+export function weldDiameterOf(weld: Values, diameters: Row[] | Map<string, Row>): WeldDiameter | null {
+  if (weld.lengthMode === 'Length in mm' || !present(weld.diameterId)) return null;
+  const row = diameters instanceof Map ? diameters.get(text(weld.diameterId)) : diameters.find(item => item.id === weld.diameterId);
+  return row ? { mm: diameterSizeMm(row), inch: diameterSizeInch(row), label: text(row.diameter) || text(row.sizeinch) } : null;
+}
+/** The size in inches of a diameter row (`sizeinch`); null when it has none. */
+export const diameterSizeInch = (row?: Values | null): number | null => { const size = Number(row?.sizeinch); return row && present(row.sizeinch) && Number.isFinite(size) && size > 0 ? size : null; };
+
+// ----- the diameter range of a WPS, entered by hand on the WPS ("Diameter from / to (inch)")
+
+/** The range of a WPS in inches: an empty "from" is 0, an empty or 0 "to" is open; null when the WPS has no range (it is not limited). */
+export function wpsDiameterRange(wps: Values | undefined | null): [number, number] | null {
+  if (!wps || (!present(wps.diameterFrom) && !present(wps.diameterTo))) return null;
+  const from = present(wps.diameterFrom) ? Number(wps.diameterFrom) : 0, to = present(wps.diameterTo) && Number(wps.diameterTo) > 0 ? Number(wps.diameterTo) : Number.POSITIVE_INFINITY;
+  return [from, to];
+}
+/** Whether a WPS may be used for a weld of this diameter (inches): a WPS without a range, or a weld without a known diameter, is not limited. */
+export function wpsHoldsDiameter(wps: Values | undefined | null, sizeInch: number | null): boolean {
+  const range = wpsDiameterRange(wps);
+  return !range || sizeInch === null || (sizeInch >= range[0] && sizeInch <= range[1]);
+}
+/** A WPS matches a diameter when it has a range of its own and the range holds the diameter (what the Dia. choice may select by itself). */
+export const wpsMatchesDiameter = (wps: Values | undefined | null, sizeInch: number | null) => sizeInch !== null && wpsDiameterRange(wps) !== null && wpsHoldsDiameter(wps, sizeInch);
+/** "Validation on WPS" on: the WPS has to hold the diameter of every weld it is chosen for; off: nothing is limited. */
+export const wpsOfferedForDiameters = (site: SiteLike, wps: Values, sizesInch: (number | null)[]) => !wpsValidation(site) || sizesInch.every(size => wpsHoldsDiameter(wps, size));
+/** The text of a WPS range as the forms show it: "1 - 2 inch", "from 1 inch", "up to 2 inch"; '' without one. */
+export function wpsRangeText(wps: Values | undefined | null): string {
+  const range = wpsDiameterRange(wps); if (!range) return '';
+  const [from, to] = range;
+  return to === Number.POSITIVE_INFINITY ? `from ${from} inch` : from > 0 ? `${from} - ${to} inch` : `up to ${to} inch`;
+}
+/** The server's check of the chosen WPS against the weld's diameter ("Validation on WPS" on); the message names the range. */
+export function wpsDiameterErrors(site: SiteLike, weld: Values, wps: Values | undefined | null, diameter: WeldDiameter | null): Record<string, string> {
+  if (!wpsValidation(site) || !present(weld.wpsId) || !wps || !diameter || wpsHoldsDiameter(wps, diameter.inch)) return {};
+  return { wpsId: `WPS ${text(wps.name)} covers ${wpsRangeText(wps)}, not the diameter ${diameter.label} (${diameter.inch} inch).` };
 }
 /** An active welder, or one the form already holds (kept so an edit still shows who welded). */
 const activeWelder = (welder: Row, keep: unknown[]) => !welder._archived && (welder.status !== 'Inactive' || keep.includes(welder.id));
 /**
  * The welders Welder 1-4 offer once a WPS is chosen, in the catalog's own order (creation order; the rows arrive in it).
  * Nothing is offered before a WPS is chosen. With "Validation on WPS" off every active welder is offered; with it on only
- * those qualified for the WPS (`certificates` undefined: the qualifications are not known here, the server decides).
+ * those qualified for the WPS (`certificates` undefined: the qualifications are not known here, the server decides); `sizesMm`
+ * (the diameters of the weld, or of every checked weld) also asks for a qualification whose range holds each.
  */
-export function weldersForWps(site: SiteLike, welders: Row[], certificates: Row[] | undefined, wps: Values | undefined | null, onDate: string, keep: unknown[] = []): Row[] {
+export function weldersForWps(site: SiteLike, welders: Row[], certificates: Row[] | undefined, wps: Values | undefined | null, onDate: string, keep: unknown[] = [], sizesMm: (number | null)[] = []): Row[] {
   if (!wps) return [];
   const active = welders.filter(welder => activeWelder(welder, keep));
   if (!wpsValidation(site) || !certificates) return active;
-  return active.filter(welder => keep.includes(welder.id) || welderQualifiedForWps(wps, certificates.filter(cert => cert.welderId === welder.id), onDate));
+  return active.filter(welder => keep.includes(welder.id) || welderQualifiedForWps(wps, certificates.filter(cert => cert.welderId === welder.id), onDate, sizesMm));
 }
 /** Welder 1-4 stay disabled until a WPS is chosen when "Validation on WPS" is on (Add weld, Mass edit after a WPS change). */
 export const welderFieldsDisabled = (site: SiteLike, wpsId: unknown) => wpsValidation(site) && !present(wpsId);
@@ -491,17 +544,6 @@ export function suggestOnDia(input: DiaSuggestInput): DiaSuggestion {
   const wpsId = !present(input.values.wpsId) && input.matchingWps.length === 1 ? input.matchingWps[0] : '';
   return { patch, wpsId };
 }
-/** The numbers of a PQR scope text such as "21.3 - 168.3" or "> 25": a range, a lower limit or one size. */
-export function scopeRange(value: unknown): [number, number] | null {
-  const raw = text(value).replace(/,/g, '.');
-  const numbers = raw.match(/\d+(\.\d+)?/g)?.map(Number) ?? [];
-  if (numbers.length >= 2) return [Math.min(numbers[0], numbers[1]), Math.max(numbers[0], numbers[1])];
-  if (numbers.length === 1) return /^\s*(>|≥|>=|from)/i.test(raw) ? [numbers[0], Number.POSITIVE_INFINITY] : [numbers[0], numbers[0]];
-  return null;
-}
-/** A WPS matches a diameter when one of its PQR scope texts (EN Ø, ASME IX Ø) covers the outside diameter in mm. INFERRED: the reference's own rule is on its server. */
-export const wpsMatchesDiameter = (scopeTexts: unknown[], sizeMm: number | null) => sizeMm !== null && scopeTexts.some(value => { const range = scopeRange(value); return Boolean(range) && sizeMm >= range![0] && sizeMm <= range![1]; });
-
 // ----- material groups against the WPS (reference weld-material-group-check.php)
 
 export interface MaterialGroup { iso?: string; asme?: string; }

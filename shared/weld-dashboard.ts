@@ -1,7 +1,7 @@
 import type { Row } from './types.ts';
 import { DEFAULT_NDT_PERCENT, itpNdtPercent, weldItpId } from './itp-dashboard.ts';
 import { repairPerformanceLimit } from './site-settings.ts';
-import { NDT_ROUNDS, TRACERS_REQUIRED, hasNdtActivity, inTracerGroup, isTracer, notAccepted, processField, repairChain, repairRoot, tracerGroup, tracersOf, type TracerContext } from './inspections.ts';
+import { NDT_ROUNDS, TRACERS_REQUIRED, hasNdtActivity, inTracerGroup, isTracer, notAccepted, openRejection, processField, repairChain, repairRoot, tracerGroup, tracersOf, type TracerContext } from './inspections.ts';
 import { isNonWeldCode } from './weld-codes.ts';
 
 /**
@@ -201,7 +201,7 @@ export interface TracerStatus { value: string; hint: string; }
 export interface DefectBlock {
   /** The group's welds (tracers not counted). */ welds: number;
   examined: number; examinedPercent: number;
-  /** Welds of the group whose latest NDT outcome is not accepted (NA or ReWeld?). */ rejected: number; rejectedPercent: number;
+  /** Welds of the group whose latest NDT outcome is not accepted (NA or ReWeld?) and that no accepted repair has closed yet (`openRejection`). */ rejected: number; rejectedPercent: number;
   /** Tracer welds linked to the group's rejected welds, and how many of them are examined / rejected. */ tracerWelds: number; tracerExamined: number; tracerRejected: number;
   /** Two per rejected weld. */ expectedTracers: number; missingTracers: number;
   flag: DefectFlag; flagReason: string; tracerStatus: TracerStatus;
@@ -288,7 +288,7 @@ export function inspectionCompliance(rows: DashboardRows, scope: Fact[], welderF
     const examined = welds.filter(weld => isNdtCompleted(results, weld)).length;
     const selected = welds.filter(weld => weld.ndoReq === true && !isNdtCompleted(results, weld)).length;
     const remaining = Math.max(0, required - examined - selected);
-    const rejectedWelds = welds.filter(weld => notAccepted(weld, results));
+    const rejectedWelds = welds.filter(weld => openRejection(weld, allWelds, results));
     const tracers = rejectedWelds.flatMap(weld => tracersOf(weld, allWelds));
     const missingTracers = rejectedWelds.reduce((sum, weld) => sum + Math.max(0, TRACERS_REQUIRED - tracersOf(weld, allWelds).length), 0);
     const counts = {
@@ -418,7 +418,7 @@ export function groupTracerProposal(rows: DashboardRows, key: GroupKey, context:
     const iso = isos.get(String(weld.isoId));
     return { id: weld.id, weldNo: text(weld.weldNo), isoNo: text(iso?.isoNo), projectNo: text(projects.get(String(iso?.projectId))?.internnumber), typeLabel: text(types.get(String(weld.typeId))?.location), date: text(weld.date), statusLabel, locked };
   };
-  const sourceRows = members.filter(weld => notAccepted(weld, results)).sort((a, b) => natural(text(a.weldNo), text(b.weldNo)));
+  const sourceRows = members.filter(weld => openRejection(weld, allWelds, results)).sort((a, b) => natural(text(a.weldNo), text(b.weldNo)));
   const sourceIds = new Set(sourceRows.map(weld => weld.id));
   const sources = sourceRows.map((source): GroupTracerSource => {
     const chain = new Set([repairRoot(source, allWelds).id, ...repairChain(repairRoot(source, allWelds), allWelds).map(weld => weld.id)]);
