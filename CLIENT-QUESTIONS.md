@@ -65,6 +65,16 @@ Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.doc
 | „Welder customs" ne pripada „Welder data", nego „Weld data". | Stavka Customs je premeštena u grupu Weld data (posle Spools); nazivi grupa ostaju (Luka). |
 | Spoolovi novog glavnog projekta treba da budu A, B, C …; CSV za druga imena. | Nov glavni projekat dobija A–Z (ostala imena isključena samo za njega); stranica Spools ima „Import CSV" (kolona Spool name, opciono Abbreviation; opcija da zameni listu tog glavnog projekta). |
 
+### Prečnici (poruka od 17.11.2026, poslata 20.11.2026, uz tabelu NPS ↔ DN)
+
+| Zahtev | Urađeno |
+|---|---|
+| Filter po datumu u Weld diameters nema svrhu. | Uklonjen (i dugme Filters na toj listi). |
+| Pri kreiranju glavnog projekta prečnici po standardu ASME (inch) ili EN (DN), iz poslate tabele. | Nova postavka glavnog projekta „Diameter standard" (ASME (inch) / EN (DN); postojeći glavni projekti čitaju se kao ASME). Nov glavni projekat dobija 36 veličina iz tabele u svom standardu (`1/8"` … `48"` ili `DN 6` … `DN 1200`), ostali prečnici su za njega isključeni; postojeći glavni projekti ne menjaju ništa. Opcija „ASME / EN" pre ovoga nije postojala. |
+| Custom prečnik sa jedinicom mere (inch, DN, mm …). | Add u Weld diameters ima Unit (izaberi ili ukucaj, kao „Choose or type" u Add material type) i vrednost; naziv se slaže sam (`2"`, `DN 50`, `12.5 mm`); važi samo za taj glavni projekat. |
+| Na izometriji `2"` za inch projekat, `DN 50` za EN projekat. | Var prikazuje naziv svog prečnika; liste varova, LISL i ISS štampaju `DN 50` u EN glavnom projektu. |
+| Tri iste slike forme Add material type (bez teksta). | Shvaćene kao uzor za „Choose or type" kod custom prečnika; sama forma nije menjana. |
+
 Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
 
 ---
