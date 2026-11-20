@@ -1,14 +1,14 @@
 /* Isometric header: six cards, identical under Weld Pilot and MTO Pilot. */
-.iso-header { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 24px; align-items: start; }
-.iso-card { padding: 18px 20px 20px; min-width: 0; border-top: 3px solid var(--pilot-color, var(--primary)); }
-.iso-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
-.iso-card h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 600; }
+.iso-header { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; align-items: start; }
+.iso-card { padding: 10px 12px 12px; min-width: 0; border-top: 3px solid var(--pilot-color, var(--primary)); }
+.iso-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.iso-card h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 600; }
 .iso-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.iso-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; margin: 0; }
+.iso-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px 12px; margin: 0; }
 .iso-facts > div { min-width: 0; }
-.iso-facts dt { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.iso-facts dd { margin: 0; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
-.iso-slot { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line); min-width: 0; }
+.iso-facts dt { font-size: 11px; color: var(--muted); margin-bottom: 1px; }
+.iso-facts dd { margin: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.iso-slot { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); min-width: 0; }
 .iso-slot:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
 .iso-card > .iso-slot:not(:last-child) + .iso-facts, .iso-slot + .iso-facts { margin-top: 0; }
 .iso-slot-main { display: flex; gap: 11px; min-width: 0; }
@@ -18,14 +18,14 @@
 .iso-slot-meta { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
 .iso-slot-meta .text-link { font-size: 12px; }
 .iso-slot-actions { display: flex; gap: 2px; flex-shrink: 0; }
-.iso-total { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.iso-total strong { font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.iso-total { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.iso-total strong { font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .iso-total span { font-size: 12px; color: var(--muted); }
-.iso-status-card .progress { margin-bottom: 16px; }
+.iso-status-card .progress { margin-bottom: 8px; }
 .iso-open-count { border: 1px solid #d9a21e; background: #fff7e0; color: #7a4f00; border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600; min-height: 28px; }
 .iso-open-count:hover { background: #ffefbf; }
 .iso-clear { display: inline-flex; gap: 5px; align-items: center; color: #1a7f4b; }
-.iso-phases { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 13px; }
+.iso-phases { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 13px; }
 .iso-phases summary { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
 .iso-phases summary span { color: var(--muted); font-size: 12px; }
 .iso-phases ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
@@ -34,10 +34,10 @@
 .iso-material-slot { min-height: 56px; margin-top: 16px; border-top: 1px dashed var(--line); }
 .iso-hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
 .iso-weights-link { display: inline-block; margin-top: 10px; }
-.iso-phase-list { display: grid; gap: 8px; }
+.iso-phase-list { display: grid; gap: 4px; }
 .iso-phase { border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .iso-phase h3 { margin: 0; font-size: 14px; }
-.iso-phase h3 button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px; background: none; border: 0; text-align: left; color: var(--ink); font-weight: 500; }
+.iso-phase h3 button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 4px 10px; background: none; border: 0; text-align: left; color: var(--ink); font-weight: 500; }
 .iso-phase h3 button:hover { background: var(--surface-blue); }
 .iso-phase-name { flex: 1; }
 .iso-phase-value { font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -69,14 +69,15 @@
 .iso-blockers h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 8px; }
 .iso-blockers ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
 .iso-blockers .text-link { text-align: left; font-size: 13px; }
-.iso-wdi-panel { margin-bottom: 24px; padding: 0; }
-.iso-wdi-panel > summary { display: flex; justify-content: space-between; gap: 12px; padding: 14px 20px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.iso-wdi-panel { margin-bottom: 10px; padding: 0; }
+.iso-wdi-panel > summary { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }
 .iso-wdi-panel > summary span { color: var(--muted); font-size: 12px; font-weight: 400; }
 .iso-wdi-panel > .wdi-progress { padding: 4px 20px 20px; }
-@media (max-width: 1250px) { .iso-header { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1500px) { .iso-header { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .iso-header { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) {
-  .iso-header { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .iso-card { padding: 16px; }
+  .iso-header { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .iso-card { padding: 12px 16px; }
   .iso-facts { gap: 12px; }
   .iso-phases ul { grid-template-columns: minmax(0, 1fr); }
   .iso-quantity { grid-template-columns: minmax(0, 1fr) 100px; }
@@ -146,3 +147,18 @@
 .iso-audit-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
 .iso-audit-list li { border-bottom: 1px solid var(--line); padding-bottom: 10px; overflow-wrap: anywhere; }
 .iso-audit-list small { display: block; color: var(--muted); margin-top: 4px; }
+
+/* Compact workspace: the welds table dominates; cards stay dense, the Status details and the section rows are one line. */
+.iso-status-details { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; font-size: 13px; }
+.iso-status-details > summary { cursor: pointer; display: flex; justify-content: space-between; gap: 8px; min-height: 28px; align-items: center; font-weight: 500; }
+.iso-status-details > summary span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.iso-itp-row { padding-top: 6px; }
+.iso-itp-rows { gap: 6px; }
+.iso-itp-number { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; overflow-wrap: anywhere; }
+.iso-workspace .iso-flanges { padding: 6px 14px; margin-bottom: 10px; min-height: 0; }
+.iso-workspace .iso-flanges > div { gap: 4px 8px; }
+.iso-workspace > [role="tabpanel"] { min-height: 60vh; }
+.iso-workspace .page-heading { margin-bottom: 10px; }
+.iso-name-link { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.iso-name-link:hover { text-decoration: underline; }
+.iso-name-link svg { color: var(--muted); flex-shrink: 0; }

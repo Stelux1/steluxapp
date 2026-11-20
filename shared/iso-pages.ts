@@ -4,6 +4,7 @@
  * Set phase boxes, the refusals of Delete for projects and isometrics, and where the one Options menu of the isometric page sits.
  */
 import type { Field, Row } from './types.ts';
+import { currentRevision } from './revisions.ts';
 
 // ----- Projects page (reference weld__welding__projects.txt:393-433) -----------------------------------------------------
 
@@ -86,6 +87,20 @@ export function currentRevisionFile(rows: Record<string, Row[]>, isoId: string, 
   const revision = (rows.revisions || []).filter(row => !row._archived && row.isoId === isoId && row.type === kind && String(row.revNo) === current).sort((a, b) => String(b._createdAt).localeCompare(String(a._createdAt)))[0];
   return revision ? files.find(file => file.entityType === 'revisions' && file.entityId === revision.id) : undefined;
 }
+
+/**
+ * The newest file of a drawing kind (ISO, ITP, ITP 2): what a click on the isometric name opens in a new tab. The
+ * attached documents (newest first) win, then the file of the current revision record; undefined when nothing is uploaded.
+ */
+export function latestIsoFile(rows: Record<string, Row[]>, documents: Row[], isoId: string, kind = 'ISO'): { file?: Row; revision: string } {
+  const revision = currentRevision(rows, isoId, kind);
+  const file = documents.find(row => row.documentType === `${kind} revision ${revision}` || row.documentType === kind) ?? currentRevisionFile(rows, isoId, kind, revision);
+  return { file, revision };
+}
+/** Tooltip of the isometric name: what the link opens, or why it is plain text. */
+export const isoDrawingTitle = (file: Row | undefined, revision: string) => file ? `Open the latest drawing revision (Rev ${revision}) in a new tab` : 'No drawing file uploaded yet';
+/** Tooltip of an ITP number in the ITPs card. */
+export const itpDrawingTitle = (file: Row | undefined, revision: string) => file ? `Open the latest ITP PDF${revision ? ` (Rev ${revision})` : ''} in a new tab` : 'No ITP file uploaded yet';
 
 // ----- Set phase (reference weld__iso__0001.txt:1185-1213, weld__start__dashboard.txt:1039) -------------------------------
 
