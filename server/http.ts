@@ -42,6 +42,7 @@ import { SITE_REFUSED } from '../shared/site-scope.ts';
 import { siteOfRecord } from './weld-catalogs.ts';
 import { applyDefaultSpoolNames, importSpoolNames } from './spool-catalog.ts';
 import { applyDefaultDiameters } from './diameter-standard.ts';
+import { applyBaseMaterials } from './material-base.ts';
 import { SPOOL_IMPORT_TEXTS, spoolImportEntries } from '../shared/spool-catalog.ts';
 import { weldEditHistory } from './weld-entry.ts';
 import { companyForDocuments } from './pdf/company.ts';
@@ -304,7 +305,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     if (resource.readonly) throw new AppError(405, 'Use the workflow action to create this record.');
     // Add material (pilots): it belongs to the main project it is added on; an existing Material No is linked there or refused.
     if (pilots && resource.key === 'materials') { const added = addMaterialOnSite(store, req.body, actorOf(req)); res.status(added.linked ? 200 : 201).json({ record: access.project(resource.key, added.record), linked: added.linked }); return; }
-    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (pilots && resource.key === 'sites') { applyDefaultSpoolNames(store, row.id, actorOf(req)); applyDefaultDiameters(store, row.id, actorOf(req)); } if (pilots && resource.key === 'profiles') assertRightsWrite(store, (req as unknown as AuthRequest).user, 'profiles', undefined, row); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
+    const row = store.transaction(() => { if (pilots && resource.key === 'isometrics') assignIrn(store, req.body, actorOf(req)); let row = store.create(resource.key, req.body, actorOf(req)); if (pilots && resource.key === 'sites') { applyDefaultSpoolNames(store, row.id, actorOf(req)); applyDefaultDiameters(store, row.id, actorOf(req)); applyBaseMaterials(store, row.id, actorOf(req)); } if (pilots && resource.key === 'profiles') assertRightsWrite(store, (req as unknown as AuthRequest).user, 'profiles', undefined, row); if (resource.key === 'users') { if (pilots) { assertAccountReach(store, (req as unknown as AuthRequest).user.id, store.get('users', row.id)); assertRightsWrite(store, (req as unknown as AuthRequest).user, 'users', undefined, row); } store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(row.id, passwordHash(req.body.password)); } if (archiveSite) { assertSiteArchive(store, (req as unknown as AuthRequest).user, row); row = store.archive('sites', row.id, row._version, actorOf(req)); } return row; });
     res.status(201).json({ record: access.project(resource.key, row) });
   });
   app.put('/api/records/:resource/:id', (req, res) => {

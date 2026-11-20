@@ -19,6 +19,7 @@ import type { Database } from './database.ts';
 import { REPLACED_UNIQUE_RULES, initializePostgres } from './postgres-schema.ts';
 import { applyEnablement, defectNormSaved, enablementErrors } from './weld-catalogs.ts';
 import { diameterStandardSaved } from './diameter-standard.ts';
+import { articlePrefixError, normalizeArticlePrefix } from '../shared/material-base.ts';
 import { EDIT_OPTIONAL, ENABLEMENT_INPUT } from '../shared/weld-catalogs.ts';
 import { isStandardDefectCode } from '../shared/defect-codes.ts';
 import { isWelderRole } from '../shared/welder-data.ts';
@@ -257,6 +258,8 @@ export class Store {
       // ("Flange ID … already exists.", see `duplicate`); an empty one is refused here, at the field, as the index would refuse it.
       if (!String(data.flange_id ?? '').trim() && data.isoId && this.list('flanges').some(r => r.id !== existing?.id && r.isoId === data.isoId && !String(r.flange_id ?? '').trim())) errors.flange_id ??= 'This isometric already has a flange without a Flange ID. Enter a Flange ID.';
     }
+    // Company data: the Article No prefix of the base materials is stored upper case; letters and digits only (shared/material-base.ts).
+    if (key === 'company_data') { const prefix = normalizeArticlePrefix(data.articlePrefix); data.articlePrefix = prefix; const message = articlePrefixError(prefix); if (message) errors.articlePrefix ??= message; }
     if (key === 'ndt_defect_codes' && actor.id !== SYSTEM.id) data.system = existing?.system === true;
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
