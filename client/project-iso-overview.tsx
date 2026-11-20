@@ -111,7 +111,8 @@ export function ProjectIsoOverview({ project }: { project?: Row }) {
         {canReadReport('lisl') && pilot && pagePilots('/welding/lisl').includes(pilot.pilot.key) && <Link className="btn" to="/welding/lisl"><Database size={15}/>Data LISL</Link>}
         {weld && reports.length > 0 && <Dropdown label="Reports" trigger={<span className="btn"><FileText size={15}/>Reports<ChevronDown size={15}/></span>}>{reports.map(({ label, item: entryItem }) => item(label, () => setReport(entryItem!), checked.length !== 1, 'Check one isometric first.'))}</Dropdown>}
         <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>
-          {item(OPTIONS[0], () => setDialog('delete-all'), !removable || !shownRows.some(iso => !iso._archived), removable ? 'There are no isometrics to delete.' : 'You may not delete isometrics.')}
+          {/* Delete all would archive every isometric of the main project here: only a sub-project's page offers it. */}
+          {!all && item(OPTIONS[0], () => setDialog('delete-all'), !removable || !shownRows.some(iso => !iso._archived), removable ? 'There are no isometrics to delete.' : 'You may not delete isometrics.')}
           {item(OPTIONS[1], () => setDialog('delete-selected'), none || !removable, none ? CHECK_FIRST : 'You may not delete isometrics.')}
           {item(OPTIONS[2], () => setDialog('mass'), none || !writable, none ? CHECK_FIRST : 'You may not edit isometrics.')}
           {item(OPTIONS[4], () => setDialog('phase'), none || !canRun('phases'), none ? CHECK_FIRST : 'You may not set phases.')}
