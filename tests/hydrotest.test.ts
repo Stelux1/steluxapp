@@ -396,3 +396,10 @@ test('the welding demo profile does not deliver the hydrotest records or actions
   assert.equal((await f.request('/api/actions/hydrotest-move', 'POST', { spoolIds: ['spool-6'], testSystemId: 'test-st' })).status, 404);
   assert.equal((await f.request('/api/actions/hydrotest-result', 'POST', {})).status, 404);
 });
+
+test('the Shop Welds driver counts a weld as welded with a welder and the weld date (client, 17.11.2026)', () => {
+  const types = [row('ws', { location: 'Shop' })], diameters = [row('d2', { sizeinch: 2 })];
+  const weld = (id: string, data: Record<string, unknown>) => row(id, { isoId: 'iso', typeId: 'ws', diameterId: 'd2', lengthMode: 'Diameter', ...data });
+  const welds = (progress: ReturnType<typeof isoProgress>) => progress.phases[0].drivers.find(item => item.key === 'welds')!.progress;
+  assert.equal(welds(isoProgress(input({ weldTypes: types, diameters, welds: [weld('a', { welder1Id: 'w', date: '2026-11-01' }), weld('b', { welder1Id: 'w', date: '' })] }))), 0.5, 'the weld without a date is not welded yet');
+});

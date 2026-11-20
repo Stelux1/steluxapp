@@ -131,6 +131,24 @@ export const progressLabel = (phase: ProgressPhase, activityKey?: string) => {
   const found = phase.activities.find(a => a.key === activityKey)!;
   return phase.key === 'site' ? found.label : `${found.label} - ${phase.label}`;
 };
+/**
+ * The explanation the main project form shows above the Iso progress weights (client, 20.11.2026: "ne razumem detalje
+ * za Iso Progress"). Each line names one input and what it measures on an isometric (shared/iso-status.ts isoProgress).
+ */
+export const PROGRESS_HELP = {
+  intro: 'The progress of an isometric is built from three phases, and each phase from its activities. You give each part a weight in percent.',
+  lines: [
+    ['Distribution - Shop / Field / Site', 'The share of each phase in the isometric total. The three must add up to 100% (for example Shop 50, Field 50, Site 0).'],
+    ['Welds', 'Weld inches of the phase welds that are welded (a welder and the weld date filled in), against all weld inches of the phase.'],
+    ['NDT', 'Welds of the phase that need NDT and whose latest NDT result (after any repair) is Accepted.'],
+    ['Material pipe', 'Metres of pipe entered on the isometric Progress card, against the pipe of the MTO.'],
+    ['Supports / Appendages', 'Pieces entered on the isometric Progress card, against the supports or appendages of the MTO.'],
+    ['Punch (Field)', 'The punch progress entered on the isometric.'],
+    ['Hydrotest / Paint/Tracing (Site)', 'Hydrotest counts when its test system is Approved; Paint/Tracing when the finish items of the isometric are Done.'],
+  ] as [string, string][],
+  rule: 'Inside each phase the activities must add up to 100%. An activity with weight 0, or one that does not apply to an isometric, is left out and the others share its weight.',
+  example: 'Example: Shop 50, Field 50; Shop activities Welds 25, NDT 25, Material pipe 25, Supports 25. When every shop weld is welded and nothing else is done, Shop is 25% and the isometric 12.5%.',
+};
 /** What a new main project starts with: Shop 50, Field 50, Site 0 and every activity 0. */
 export const PROGRESS_DEFAULTS: Record<string, number> = Object.fromEntries(PROGRESS_PHASES.flatMap(phase => [[phase.field, phase.key === 'site' ? 0 : 50], ...phase.activities.map(a => [a.field, 0])]));
 const SITE_FORM_SECTION = 'Project settings';

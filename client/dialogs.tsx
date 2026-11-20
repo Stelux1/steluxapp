@@ -20,7 +20,7 @@ import { PqrEditor } from './pqr.tsx';
 import { usePilot } from './pilot.tsx';
 import { DIAMETER_NUMBER_MESSAGE, SITE_OWNED, diameterNumbers, hostedFieldOrder } from '../shared/welder-data.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
-import { PROGRESS_FIELDS, PROGRESS_PHASES, progressSumsOk, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
+import { PROGRESS_FIELDS, PROGRESS_HELP, PROGRESS_PHASES, progressSumsOk, progressTotals, progressWeights, validateProgressWeights } from '../shared/site-settings.ts';
 import { DuplicateSiteDialog } from './site-duplicate.tsx';
 import { AddNewIsometric } from './iso-add-new.tsx';
 import { IsoCurrentRevisions, IsoFileInputs, IsoRevisionHelp, isoFileErrors, uploadIsoFiles } from './iso-form-files.tsx';
@@ -96,7 +96,7 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
 function ProgressGroups({ fields, values, errors, onChange }: { fields: Field[]; values: Record<string, unknown>; errors: Record<string, string>; onChange: (name: string, value: unknown) => void }) {
   const totals = progressTotals(values), ok = progressSumsOk(values);
   const sum = (key: string, label: string, total: number, good = total === 100) => <div className="field full-width weight-sum" role="status" key={key}><span>{label}</span><strong className={good ? 'ok' : ''}>{total}% / 100%</strong></div>;
-  return <>{PROGRESS_PHASES.map((phase, index) => {
+  return <><details className="field full-width progress-help"><summary>How Iso progress is calculated</summary><p>{PROGRESS_HELP.intro}</p><dl>{PROGRESS_HELP.lines.map(([term, text]) => <div key={term}><dt>{term}</dt><dd>{text}</dd></div>)}</dl><p>{PROGRESS_HELP.rule}</p><p>{PROGRESS_HELP.example}</p></details>{PROGRESS_PHASES.map((phase, index) => {
     const input = (name: string) => { const field = fields.find(f => f.name === name); return field && <FieldInput key={name} field={field} value={values[name]} values={values} error={errors[name]} onChange={v => onChange(name, v)}/>; };
     return <div className="form-grid weight-group" key={phase.key} role="group" aria-label={`${phase.label} weights`}>
       {input(phase.field)}

@@ -91,6 +91,12 @@
 .weight-sum strong { color: #b42318; font-variant-numeric: tabular-nums; }
 .weight-sum strong.ok { color: #1c7a3a; }
 .weight-note { margin: 8px 0 0; }
+.progress-help { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2, transparent); font-size: 13px; }
+.progress-help summary { cursor: pointer; font-weight: 600; }
+.progress-help p { margin: 8px 0 0; }
+.progress-help dl { margin: 8px 0 0; display: grid; gap: 6px; }
+.progress-help dt { font-weight: 600; }
+.progress-help dd { margin: 0; color: var(--muted, inherit); }
 .duplicate-options { border: 0; margin: 0 0 14px; padding: 0; min-width: 0; }
 .duplicate-options legend { padding: 0; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .duplicate-options label { display: flex; align-items: center; gap: 9px; padding: 5px 0; font-size: 13px; color: var(--ink); }

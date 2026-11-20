@@ -295,7 +295,8 @@ export function isoProgress(input: IsoStatusInput): IsoProgress {
     const inPhase = welds.filter(weld => locationOf(weld, input.weldTypes) === phase);
     if (key === 'welds') {
       let total = 0, done = 0;
-      for (const weld of inPhase) { const size = inchesOf(weld, input.diameters); total += size; if (hasWelder(weld)) done += size; }
+      // Welded = a welder and the weld date (client, 17.11.2026), the same rule as the WDI of the project status.
+      for (const weld of inPhase) { const size = inchesOf(weld, input.diameters); total += size; if (hasWelder(weld) && text(weld.date)) done += size; }
       return total > 0 ? done / total : null;
     }
     if (key === 'ndt') {
