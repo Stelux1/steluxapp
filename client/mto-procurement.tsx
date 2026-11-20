@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Download, ExternalLink, Link2, List, Loader2, PackageCheck, PackagePlus, Printer, ShoppingCart } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Download, ExternalLink, FileText, Link2, List, Loader2, PackageCheck, PackagePlus, Printer, ShoppingCart } from 'lucide-react';
 import { materialName, materialRecord } from '../shared/materials.ts';
-import { PROCUREMENT_PAGES, additionalOverview, orderedMaterials, archiveDefaultRange, archivedOrders, dateRangeError, momentOf, orderChoiceText, orderDetail, orderMoment, orderPlanning, pendingLines, printMoment, receiptItems, receiptLog, receiptMoment, receiptQuantityErrors, receivableOrders, supplierChoiceText, toCsv } from '../shared/mto-procurement.ts';
+import { PROCUREMENT_PAGES, additionalOverview, orderedMaterials, rfqArchive, archiveDefaultRange, archivedOrders, dateRangeError, momentOf, orderChoiceText, orderDetail, orderMoment, orderPlanning, pendingLines, printMoment, receiptItems, receiptLog, receiptMoment, receiptQuantityErrors, receivableOrders, supplierChoiceText, toCsv } from '../shared/mto-procurement.ts';
 import type { Row } from '../shared/types.ts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { enabledOptions } from '../shared/weld-catalogs.ts';
@@ -70,7 +70,6 @@ export function OrderMaterials() {
   const checked = planning.filter(group => selected.includes(group.identity));
   const requirementIds = checked.flatMap(group => group.requirementIds);
   if (!allowed) return <NoAccess title="Order materials"/>;
-  const toggle = (identity: string, on: boolean) => setSelected(old => on ? [...new Set([...old, identity])] : old.filter(id => id !== identity));
   const exportRows = (checked.length ? checked : planning);
   const projects = activeRows(rows, 'projects').map(project => ({ value: project.id, label: label('projects', project.id) }));
   const isometrics = projectId ? activeRows(rows, 'isometrics').filter(iso => iso.projectId === projectId).map(iso => ({ value: iso.id, label: String(iso.isoNo ?? '') })) : [];
@@ -103,13 +102,94 @@ export function OrderMaterials() {
       {view === 'ordered' && <OrderedView label={label} state={ordered} filtered={Boolean(projectId || isoId || query)}/>}
       {view === 'additional' && <AdditionalView label={label} state={overview} filtered={Boolean(projectId || query)} isoFiltered={Boolean(isoId)}/>}
       {view === 'order' && <>
-      <TableScroll><table className="data-table"><caption className="sr-only">Materials waiting to be ordered</caption><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="number-cell">Quantity</th><th>UOM</th><th className="select-cell"><input type="checkbox" aria-label="Check all" title="Check all" checked={planning.length > 0 && checked.length === planning.length} disabled={!planning.length} onChange={e => setSelected(e.target.checked ? planning.map(g => g.identity) : [])}/></th></tr></thead>
-        <tbody>{planning.map(group => { const c = materialCells(group.material); return <tr key={group.identity}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}</td><td className="number-cell">{formatNumber(group.quantity, 3)}</td><td>{c[6]}</td><td className="select-cell"><input type="checkbox" aria-label={`Check ${c[2]}`} checked={selected.includes(group.identity)} onChange={e => toggle(group.identity, e.target.checked)}/></td></tr>; })}</tbody></table></TableScroll>
-      {!planning.length && <EmptyState title="Nothing waiting to be ordered" description={projectId || isoId || query ? 'No material matches these filters.' : 'Every material requirement is already on an order.'}/>}
+      <PlanningTable planning={planning} checked={checked.length} selected={selected} setSelected={setSelected} empty={{ title: 'Nothing waiting to be ordered', description: projectId || isoId || query ? 'No material matches these filters.' : 'Every material requirement is already on an order.' }}/>
       <div className="table-footer"><span>{planning.length} material{planning.length === 1 ? '' : 's'}{checked.length ? ` · ${checked.length} checked` : ''}</span><span>Open orders of a material are subtracted. The supplier is assigned in Order archive.</span></div></>}
     </section>
     {additionalOpen && <AdditionalOrderDialog projectId={projectId} onClose={() => setAdditionalOpen(false)}/>}
   </div>;
+}
+
+/** The list of Order materials and of Request for Quotation: one row per material still to be ordered, with a check box per row. */
+function PlanningTable({ planning, checked, selected, setSelected, empty }: { planning: ReturnType<typeof orderPlanning>; checked: number; selected: string[]; setSelected: (value: string[] | ((old: string[]) => string[])) => void; empty: { title: string; description: string } }) {
+  const toggle = (identity: string, on: boolean) => setSelected(old => on ? [...new Set([...old, identity])] : old.filter(id => id !== identity));
+  return <>
+    <TableScroll><table className="data-table"><caption className="sr-only">Materials waiting to be ordered</caption><thead><tr><th>Material group</th><th>Article No</th><th>Material No</th><th>DIA</th><th>LBS/SCH</th><th>Description</th><th className="number-cell">Quantity</th><th>UOM</th><th className="select-cell"><input type="checkbox" aria-label="Check all" title="Check all" checked={planning.length > 0 && checked === planning.length} disabled={!planning.length} onChange={e => setSelected(e.target.checked ? planning.map(g => g.identity) : [])}/></th></tr></thead>
+      <tbody>{planning.map(group => { const c = materialCells(group.material); return <tr key={group.identity}><td>{c[0]}</td><td>{c[1]}</td><td>{c[2]}</td><td>{c[3]}</td><td>{c[4]}</td><td className="description-cell">{c[5]}</td><td className="number-cell">{formatNumber(group.quantity, 3)}</td><td>{c[6]}</td><td className="select-cell"><input type="checkbox" aria-label={`Check ${c[2]}`} checked={selected.includes(group.identity)} onChange={e => toggle(group.identity, e.target.checked)}/></td></tr>; })}</tbody></table></TableScroll>
+    {!planning.length && <EmptyState title={empty.title} description={empty.description}/>}
+  </>;
+}
+
+const rfqPdfPath = (rfqId: string) => `/pdf/request-for-quotation?rfqId=${encodeURIComponent(rfqId)}`;
+type RfqView = 'request' | 'sent';
+
+/**
+ * Request for Quotation (client request 20.11.2026): the same list as Order materials, but "Request for Quotation" only asks suppliers for prices,
+ * availability and delivery times. Nothing is ordered or booked: the materials stay on this list and on Order materials. "Sent requests" re-opens the documents.
+ */
+export function RequestForQuotation() {
+  const { rows, label, canRun } = useWorkspace();
+  const allowed = useProcurementAccess('request-for-quotation');
+  const [projectId, setProject] = useState(''); const [isoId, setIso] = useState(''); const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<string[]>([]); const [view, setView] = useState<RfqView>('request');
+  const [dialog, setDialog] = useState(false); const [created, setCreated] = useState<{ number: string; url: string } | null>(null);
+  const planning = useMemo(() => orderPlanning(rows, { projectId, isoId, query }), [rows, projectId, isoId, query]);
+  const sent = useMemo(() => rfqArchive(rows, { projectId, query }), [rows, projectId, query]);
+  const checked = planning.filter(group => selected.includes(group.identity));
+  const requirementIds = checked.flatMap(group => group.requirementIds);
+  if (!allowed) return <NoAccess title="Request for Quotation"/>;
+  const projects = activeRows(rows, 'projects').map(project => ({ value: project.id, label: label('projects', project.id) }));
+  const isometrics = projectId ? activeRows(rows, 'isometrics').filter(iso => iso.projectId === projectId).map(iso => ({ value: iso.id, label: String(iso.isoNo ?? '') })) : [];
+  return <div className="page mto-procurement-page"><Heading title="Request for Quotation" description="Ask suppliers for prices, availability and delivery times before the purchase order. Check the rows and request a quotation: the document opens in a new tab. Nothing is ordered, so the materials stay available for Order materials.">
+    {canRun('request-for-quotation') && view === 'request' && <button className="btn primary" disabled={!requirementIds.length} onClick={() => setDialog(true)}><FileText size={16}/>Request for Quotation{checked.length ? ` (${checked.length})` : ''}</button>}
+  </Heading>
+    {created && <div className="alert success" role="status">Request for quotation {created.number} was created. <a className="text-link" href={created.url} target="_blank" rel="noreferrer">Open the document<ExternalLink size={13} aria-hidden="true"/></a></div>}
+    <section className="panel procurement-panel">
+      <div className="procurement-filters"><ChoiceFilter id="rfq-project" label="Project" empty="All projects" value={projectId} options={projects} onChange={value => { setProject(value); setIso(''); setSelected([]); }}/><ChoiceFilter id="rfq-iso" label="Isometric" empty="All isometrics" value={isoId} options={isometrics} onChange={value => { setIso(value); setSelected([]); }}/></div>
+      <div className="table-card-top"><div className="table-tabs" role="tablist" aria-label="Request for Quotation views">
+        <button type="button" role="tab" aria-selected={view === 'request'} className={view === 'request' ? 'selected' : ''} onClick={() => setView('request')}>To request<span>{planning.length}</span></button>
+        <button type="button" role="tab" aria-selected={view === 'sent'} className={view === 'sent' ? 'selected' : ''} onClick={() => setView('sent')}>Sent requests<span>{sent.length}</span></button></div></div>
+      <div className="table-toolbar"><SearchInput value={query} onChange={v => { setQuery(v); setSelected([]); }} placeholder="Search"/></div>
+      {view === 'request' && <>
+        <PlanningTable planning={planning} checked={checked.length} selected={selected} setSelected={setSelected} empty={{ title: 'Nothing waiting to be ordered', description: projectId || isoId || query ? 'No material matches these filters.' : 'Every material requirement is already on an order.' }}/>
+        <div className="table-footer"><span>{planning.length} material{planning.length === 1 ? '' : 's'}{checked.length ? ` · ${checked.length} checked` : ''}</span><span>Same quantities as Order materials. A quotation request does not reserve, order or reduce anything.</span></div></>}
+      {view === 'sent' && <>
+        <TableScroll><table className="data-table"><caption className="sr-only">Requests for quotation that were created</caption><thead><tr><th>RFQ No.</th><th>Date</th><th>Project</th><th>Supplier</th><th>Quote needed by</th><th className="number-cell">Materials</th><th>Note</th><th className="actions-cell"><span className="sr-only">Document</span></th></tr></thead>
+          <tbody>{sent.map(({ rfq, count }) => <tr key={rfq.id}><td>{String(rfq.number)}</td><td>{formatDate(rfq.date)}</td><td>{rfq.projectId ? label('projects', rfq.projectId) : rfq.siteId ? label('sites', rfq.siteId) : '—'}</td><td>{rfq.supplierId ? label('suppliers', rfq.supplierId) : '—'}</td><td>{rfq.requiredBy ? formatDate(rfq.requiredBy) : '—'}</td><td className="number-cell">{count}</td><td className="description-cell">{text(rfq.note)}</td><td className="actions-cell"><a className="text-link" href={apiUrl(rfqPdfPath(rfq.id))} target="_blank" rel="noreferrer">Open document<ExternalLink size={13} aria-hidden="true"/></a></td></tr>)}</tbody></table></TableScroll>
+        {!sent.length && <EmptyState title="No requests for quotation yet" description={projectId || query ? 'No request matches these filters.' : 'Requests appear here once they are created, so the document can be opened again.'}/>}
+        <div className="table-footer"><span>{sent.length} request{sent.length === 1 ? '' : 's'}</span><span>Requests are records only: they are not orders.</span></div></>}
+    </section>
+    {dialog && <RfqDialog requirementIds={requirementIds} count={checked.length} onClose={() => setDialog(false)} onCreated={result => { setCreated(result); setSelected([]); setDialog(false); }}/>}
+  </div>;
+}
+
+/** The supplier (optional), the date the quote is needed by (optional) and a note; creating the request opens its document in a new tab. */
+function RfqDialog({ requirementIds, count, onClose, onCreated }: { requirementIds: string[]; count: number; onClose: () => void; onCreated: (created: { number: string; url: string }) => void }) {
+  const { rows, siteId, refresh, notify } = useWorkspace();
+  const suppliers = enabledOptions('suppliers', activeRows(rows, 'suppliers'), siteId, rows);
+  const [supplierId, setSupplier] = useState(''); const [requiredBy, setRequiredBy] = useState(''); const [note, setNote] = useState('');
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError(''); setBusy(true);
+    // The document tab is opened before the request so that it is not blocked.
+    const tab = window.open('', '_blank');
+    try {
+      const { record } = await post<{ record: Row }>('/actions/request-for-quotation', { requirementIds, ...(supplierId ? { supplierId } : {}), ...(requiredBy ? { requiredBy } : {}), ...(note.trim() ? { note: note.trim() } : {}) });
+      const url = apiUrl(rfqPdfPath(record.id));
+      if (tab) tab.location.href = url;
+      await refresh(); notify(`Request for quotation ${String(record.number)} created.`);
+      onCreated({ number: String(record.number), url });
+    } catch (problem) { tab?.close(); setError(problem instanceof ApiError || problem instanceof Error ? problem.message : 'The request for quotation could not be created.'); } finally { setBusy(false); }
+  }
+  return <Modal title="Request for Quotation" subtitle={`${count} material${count === 1 ? '' : 's'} checked`} onClose={onClose}>
+    <form onSubmit={event => void submit(event)} noValidate><div className="modal-body">
+      {error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}
+      <div className="form-grid">
+        <div className="field wide-field"><label htmlFor="rfq-supplier">Supplier</label><select id="rfq-supplier" value={supplierId} onChange={e => setSupplier(e.target.value)}><option value="">No supplier chosen</option>{suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplierChoiceText(supplier)}</option>)}</select></div>
+        <div className="field"><label htmlFor="rfq-required-by">Quote needed by</label><input id="rfq-required-by" type="date" value={requiredBy} onChange={e => setRequiredBy(e.target.value)}/></div>
+        <div className="field wide-field"><label htmlFor="rfq-note">Note</label><textarea id="rfq-note" rows={3} value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note for the supplier"/></div>
+      </div>
+      <p className="muted">This only asks for an offer. Nothing is ordered, taken in or reserved, and the materials stay available for Order materials.</p>
+    </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Request for Quotation</button></div></form></Modal>;
 }
 
 /** Order materials, "Ordered": the materials already on an order for the same filter, apart from what is still to be ordered. */

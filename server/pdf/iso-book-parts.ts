@@ -56,7 +56,7 @@ export const NOT_IN_BOOK: Record<string, string> = {
   'pick-sheet': 'A pick sheet is the handler\'s list of one transfer order between storehouses and project sites; it belongs to no isometric.',
   'flange-labels': 'Flange labels are printed for the flanges ticked on the Flange Management page; the book\'s Flange labels part stays deferred.',
   'hydrotest-request': 'A hydrotest request covers a test system of several isometrics; the book has no Hydrotest part.',
-  'reserved-materials': 'Reserved materials lists the reservations of every isometric on the execution board; the book has no part for it.',  'order-materials': 'An order of materials covers the checked materials of several isometrics; the book has no order part.',
+  'reserved-materials': 'Reserved materials lists the reservations of every isometric on the execution board; the book has no part for it.',  'request-for-quotation': 'A request for quotation covers the checked materials of one main project; the book has no part for it.',  'order-materials': 'An order of materials covers the checked materials of several isometrics; the book has no order part.',
   ...Object.fromEntries(DASHBOARD_REPORTS.map(report => [report.key, 'Reports of the Weld Pilot dashboard cover the welds of its filters, not one isometric.'])),
 };
 

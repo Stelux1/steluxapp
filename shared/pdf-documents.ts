@@ -350,3 +350,37 @@ export function orderDocumentModel(rows: Rows, orderId: string, projectIds: Set<
   const number = text(order.number);
   return { order, number, date: printMoment(momentOf(order.date, order.orderedAt), true), site, items: [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, { label: 'Phone', value: text(site?.phone) }, { label: 'Order number', value: number }], lines };
 }
+
+// ----- Request for Quotation (MTO Pilot) --------------------------------------------------------------------------------------
+
+/** The last three columns are left empty: the supplier fills in the price, the availability and the delivery time. */
+export const RFQ_COLUMNS = ['Material group', 'Article No', 'Material No', 'DIA', 'LBS/SCH', 'Piping class', 'Description', 'Quantity', 'UOM', 'Unit price', 'Availability', 'Delivery time'];
+export interface RfqDocumentModel {
+  rfq: Row; number: string; date: string; site?: Row; supplier?: Row; requiredBy: string; note: string;
+  /** The left block of the document: Home location (the main project), Address, Phone, Request number, Supplier. */
+  items: LabelValueItem[];
+  lines: string[][];
+}
+/**
+ * The document "Request for Quotation" of one request, when its main project has a project enabled in the pilot (`projectIds`). Null otherwise.
+ * One line per material with the quantity asked for; the supplier's columns stay empty.
+ */
+export function rfqDocumentModel(rows: Rows, rfqId: string, projectIds: Set<string>): RfqDocumentModel | null {
+  const rfq = find(rows, 'rfqs', rfqId);
+  if (!rfq) return null;
+  if (!live(rows.projects).some(project => project.siteId === rfq.siteId && projectIds.has(project.id))) return null;
+  const site = find(rows, 'sites', rfq.siteId), supplier = find(rows, 'suppliers', rfq.supplierId);
+  const lines = live(rows.rfq_lines).filter(line => line.rfqId === rfq.id).map(line => {
+    const material = materialRecord(rows, line);
+    return [
+      text(material?.materialGroup), text(material?.articleNo), text(line.materialNo) || text(material?.materialNo), text(line.dia || material?.dia), text(line.lbs || material?.lbs),
+      text(line.pipingClass), text(line.description || material?.description), quantityText(Number(line.quantity) || 0), text(line.uom || material?.uom), '', '', '',
+    ];
+  }).sort((a, b) => naturalCompare(a[0], b[0]) || naturalCompare(a[2], b[2]));
+  const address = [text(site?.address), [text(site?.zip), text(site?.residence)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const number = text(rfq.number);
+  const requiredBy = /^\d{4}-\d{2}-\d{2}$/.test(text(rfq.requiredBy)) ? printMoment({ date: text(rfq.requiredBy), time: '' }) : '';
+  const items: LabelValueItem[] = [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, { label: 'Phone', value: text(site?.phone) }, { label: 'Request number', value: number }, { label: 'Supplier', value: text(supplier?.name) || 'Not chosen' }];
+  if (requiredBy) items.push({ label: 'Quote needed by', value: requiredBy });
+  return { rfq, number, date: printMoment(momentOf(rfq.date, rfq.issuedAt), true), site, supplier, requiredBy, note: text(rfq.note), items, lines };
+}

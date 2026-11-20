@@ -12,7 +12,7 @@ import { inspectionRules } from './inspections.ts';
 import { assignFieldPackage, completePhase, releaseIsometrics, reopenRelease } from './releases.ts';
 import { runPunchAction } from './punch.ts';
 import { MTO_MATERIAL_ACTIONS, runMtoMaterialAction } from './mto-materials.ts';
-import { correctReceipt, orderAdditionalMaterial, orderCheckedMaterials, receiveMaterials, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
+import { correctReceipt, orderAdditionalMaterial, orderCheckedMaterials, receiveMaterials, requestForQuotation, receivingWarehouseId, recordReceipt, type ProcurementContext } from './mto-procurement.ts';
 import { hasLocationKind, isMtoStockAction } from '../shared/mto-stock.ts';
 import { changeSiteStock, receivingSiteId, runMtoStock, siteOfIso, takeFromSite } from './mto-stock.ts';
 import { MTO_ACTION_KEYS } from '../shared/mto-logistics.ts';
@@ -84,6 +84,7 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
     if (key === 'correct-receipt') { const done = correctReceipt(procurement, data); return { resource: done.resource, record: done.record }; }
     // Pilots (hosted): one order line per material, the quantity netted by open orders, five-digit numbers, no supplier yet.
     if (key === 'order-requirements' && options.hosted) return orderCheckedMaterials(procurement, ids(data.requirementIds, 'material requirement'), !data.date);
+    if (key === 'request-for-quotation') return requestForQuotation(procurement, ids(data.requirementIds, 'material requirement'), data, !data.date);
     if (key === 'order-additional') return orderAdditionalMaterial(procurement, data, !data.date);
     if (key === 'assign-order-supplier') {
       // Order archive "Assign order to supplier": the only place an order gets its supplier (a take-in supplier stays on the receipt).
