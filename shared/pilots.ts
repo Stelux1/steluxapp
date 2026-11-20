@@ -17,8 +17,8 @@ export interface PilotItem {
   path?: string;
   resources?: string[];
   reports?: string[];
-  /** A control rather than a page: the change-password dialog, or the "Project search" dialog of Iso overview. */
-  action?: 'password' | 'iso-overview';
+  /** A control rather than a page: the change-password dialog. */
+  action?: 'password';
   /** Page area (shared/permissions.ts PAGE_SCOPES) whose Show the item also needs, e.g. the Weld dashboard 35. */
   area?: string;
 }
@@ -33,8 +33,9 @@ const p = (label: string, path: string, need: Pick<PilotItem, 'resources' | 'rep
 const PROJECT_SITES = r('Project sites', 'sites');
 const PASSWORD: PilotItem = { label: 'Change password', action: 'password' };
 const DASHBOARD = p('Dashboard', '/dashboard');
-/** Iso overview: a "Project search" dialog that opens the chosen project's isometrics page (needs projects and isometrics). */
-const ISO_OVERVIEW: PilotItem = { label: 'Iso overview', action: 'iso-overview', resources: ['projects', 'isometrics'] };
+/** Iso overview: every isometric of every sub-project of the current main project, with filters and mass edit (needs projects and isometrics). */
+export const ISO_OVERVIEW_PATH = '/workspace/iso-overview';
+const ISO_OVERVIEW = p('Iso overview', ISO_OVERVIEW_PATH, { resources: ['projects', 'isometrics'] });
 /** Weld Pilot page areas (weld__system__profiles.txt): Dahsboard - WeldPilot 35, Iso Overview 92. */
 const WELD_DASHBOARD: PilotItem = { ...DASHBOARD, area: '35' };
 const WELD_ISO_OVERVIEW: PilotItem = { ...ISO_OVERVIEW, area: '92' };

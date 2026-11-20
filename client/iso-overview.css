@@ -12,3 +12,7 @@ button.iso-started-link{cursor:pointer}
 .iso-started-link.off{color:var(--muted)}
 .iso-row-options{display:inline-flex;align-items:center;gap:2px;white-space:nowrap}
 .iso-overview-table th.select-cell,.iso-overview-table td.select-cell{width:36px}
+/* All-isometrics page: the Filters panel is a grid of labelled selects. */
+.iso-overview-filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 14px;align-items:end}
+.iso-overview-filters .field{margin:0}
+.iso-overview-filters .text-link{justify-self:start;align-self:center}

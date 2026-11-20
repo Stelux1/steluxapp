@@ -138,7 +138,6 @@ const queryOf = (path: string) => path.includes('?') ? path.slice(path.indexOf('
  */
 export function PilotNavigation({ onPassword, collapsed = false }: { onPassword: () => void; collapsed?: boolean }) {
   const state = usePilot()!; const { user, canRecord, canReadReport, canArea } = useWorkspace(); const location = useLocation();
-  const [searching, setSearching] = useState(false);
   // Collapsed menu: the group whose panel is open, and where the panel starts (the top of its icon).
   const [panel, setPanel] = useState<{ title: string; top: number } | null>(null);
   const panelGroup = useRef<HTMLDivElement>(null), panelBox = useRef<HTMLDivElement>(null), panelButton = useRef<HTMLButtonElement | null>(null);
@@ -171,9 +170,8 @@ export function PilotNavigation({ onPassword, collapsed = false }: { onPassword:
   const active = items.find(item => here(item) && queryOf(target(item)!) && queryOf(target(item)!) === location.search) || items.find(item => here(item) && !queryOf(target(item)!));
   if (!state.entered) return <p className="pilot-nav-note">{state.pilot.title} is not included in your permission profile.</p>;
   const entry = (item: PilotItem) => item.action
-    ? <button key={item.label} type="button" className={`sub-nav-item pilot-nav-button${restricted(item) ? ' no-rights' : ''}`} aria-disabled={restricted(item) || undefined} title={restricted(item) ? NO_RIGHTS_TEXT : undefined} onClick={() => { setPanel(null); if (restricted(item)) return; if (item.action === 'password') onPassword(); else setSearching(true); }}>{item.label}</button>
+    ? <button key={item.label} type="button" className={`sub-nav-item pilot-nav-button${restricted(item) ? ' no-rights' : ''}`} aria-disabled={restricted(item) || undefined} title={restricted(item) ? NO_RIGHTS_TEXT : undefined} onClick={() => { setPanel(null); if (restricted(item)) return; onPassword(); }}>{item.label}</button>
     : <Link key={item.label} to={target(item)!} className={`sub-nav-item${item === active ? ' active' : ''}${restricted(item) ? ' no-rights' : ''}`} aria-current={item === active ? 'page' : undefined} aria-disabled={restricted(item) || undefined} title={restricted(item) ? NO_RIGHTS_TEXT : undefined} onClick={() => setPanel(null)}>{item.label}</Link>;
-  const search = searching && <ProjectSearch onClose={() => setSearching(false)}/>;
   if (collapsed) return <>{groups.map(group => {
     const Icon = GROUP_ICONS[group.icon], current = group.items.includes(active!), open = panel?.title === group.title, only = group.items.length === 1 && !group.items[0].action ? group.items[0] : null;
     // A group of one page (Start → Dashboard) opens that page directly.
@@ -183,38 +181,11 @@ export function PilotNavigation({ onPassword, collapsed = false }: { onPassword:
         onClick={event => { panelButton.current = event.currentTarget; setPanel(open ? null : { title: group.title, top: event.currentTarget.getBoundingClientRect().top }); }}><Icon size={18}/></button>
       {open && <div ref={panelBox} className="nav-flyout" role="group" aria-label={group.title} style={{ top: panel!.top }}><strong className="nav-flyout-title">{group.title}</strong>{group.items.map(entry)}</div>}
     </div>;
-  })}{search}</>;
+  })}</>;
   return <>{groups.map(group => { const Icon = GROUP_ICONS[group.icon]; return <details key={state.pilot.key + group.title} className="nav-group pilot-nav-group" open={group.items.includes(active!)}>
     <summary><span className="nav-group-title"><Icon size={15}/>{group.title}</span><ChevronDown size={13}/></summary>
     {group.items.map(entry)}
-  </details>; })}{search}</>;
-}
-
-const projectLabel = (project: Record<string, unknown>) => [project.internnumber, project.description].map(value => String(value ?? '').trim()).filter(Boolean).join(' - ') || 'Unnamed project';
-
-/**
- * Iso overview → "Project search": choose one of the projects visible in this pilot and main project, then Search
- * opens its isometrics page. The input filters the project list as the user types (a native combobox).
- */
-function ProjectSearch({ onClose }: { onClose: () => void }) {
-  const { rows } = useWorkspace(); const navigate = useNavigate(); const id = useId();
-  const projects = (rows.projects || []).filter(project => !project._archived).map(project => ({ id: project.id, label: projectLabel(project) })).sort((a, b) => a.label.localeCompare(b.label, 'en', { numeric: true }));
-  const [query, setQuery] = useState(''), [error, setError] = useState('');
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const wanted = query.trim().toLowerCase();
-    const match = projects.find(project => project.label.toLowerCase() === wanted) || (wanted ? projects.filter(project => project.label.toLowerCase().includes(wanted)) : []).find((_, index, list) => list.length === 1);
-    if (!match) { setError(wanted ? 'Choose one project from the list.' : 'Choose a project.'); return; }
-    onClose(); navigate(`/workspace/projects/${match.id}/isometrics`);
-  }
-  return <Modal title="Project search" subtitle="Open the isometric overview of a project." onClose={onClose}>
-    {projects.length ? <form onSubmit={submit}><div className="modal-body">
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <div className="field"><label htmlFor={`${id}-project`}>Project</label><input id={`${id}-project`} list={`${id}-projects`} value={query} onChange={event => { setQuery(event.target.value); setError(''); }} placeholder="Search intern prj. no. or description" autoComplete="off" aria-invalid={Boolean(error)} required/>
-        <datalist id={`${id}-projects`}>{projects.map(project => <option key={project.id} value={project.label}/>)}</datalist></div>
-    </div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn primary">Search</button></div></form>
-      : <><div className="modal-body"><EmptyState title="No projects" description="No project is visible in this main project."/></div><div className="modal-footer"><button type="button" className="btn" onClick={onClose}>Cancel</button></div></>}
-  </Modal>;
+  </details>; })}</>;
 }
 
 /** The pilot block in the sidebar: title in the pilot colour and the way back to the selector. */
