@@ -37,7 +37,7 @@ function useTableSender() {
   return { ...rights, send: (table: string, format: 'csv' | 'xlsx', name: string, headers: string[], lines: unknown[][]) => { void exportTable(table, format, headers, lines, name).catch(problem => notify((problem as Error).message || 'The file could not be created.')); } };
 }
 function Heading({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
-  return <div className="page-heading"><div><div className="eyebrow">MTO PILOT · ORDER / TAKE IN</div><h1>{title}</h1><p>{description}</p></div><div className="heading-actions">{children}</div></div>;
+  return <div className="page-heading"><div><div className="eyebrow">MATERIAL CORE · ORDER / TAKE IN</div><h1>{title}</h1><p>{description}</p></div><div className="heading-actions">{children}</div></div>;
 }
 const materialCells = (material: Record<string, unknown> | undefined, line?: Record<string, unknown>) => [text(material?.materialGroup), text(material?.articleNo), text(material?.materialNo ?? line?.materialNo), text(material?.dia ?? line?.dia), text(material?.lbs ?? line?.lbs), text(material?.description ?? line?.description), text(material?.uom ?? line?.uom, '')];
 
