@@ -73,7 +73,8 @@
 .iso-wdi-panel > summary { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }
 .iso-wdi-panel > summary span { color: var(--muted); font-size: 12px; font-weight: 400; }
 .iso-wdi-panel > .wdi-progress { padding: 4px 20px 20px; }
-@media (min-width: 1500px) { .iso-header { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+/* Identification, ITPs and Progress carry names and selects: they get more of the one row. */
+@media (min-width: 1500px) { .iso-header { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.1fr); } }
 @media (max-width: 1000px) { .iso-header { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) {
   .iso-header { grid-template-columns: minmax(0, 1fr); gap: 10px; }

@@ -75,6 +75,21 @@ Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.doc
 | Na izometriji `2"` za inch projekat, `DN 50` za EN projekat. | Var prikazuje naziv svog prečnika; liste varova, LISL i ISS štampaju `DN 50` u EN glavnom projektu. |
 | Tri iste slike forme Add material type (bez teksta). | Shvaćene kao uzor za „Choose or type" kod custom prečnika; sama forma nije menjana. |
 
+### Weld Pilot: meni, Iso overview, izometrija, Type of material (poruka od 20.11.2026, deset slika)
+
+| Zahtev | Urađeno |
+|---|---|
+| Add material type: ukloniti ASME P-Number i ASME Group Number; polja prema poslatom Excelu. | Forma ima tačno šest kolona iz Excela: Standard system, Material specification, Material grade, Product form, Material description, ISO 15608 group (Standard system, Product form i ISO grupa: izaberi ili ukucaj). Obavezni su Standard system i Material grade; naziv („Type of material" u listama) slaže se sam od specifikacije i grade-a (`ASTM A312 / ASME SA-312 TP304L`). Stara polja (Type of steel, Basic material, Material group, Lucefin, ASME) nisu više u formi, a vrednosti postojećih zapisa ostaju sačuvane. WPS ostaje kakav je; provera grupe materijala prema WPS-u sada za nove tipove poredi samo ISO 15608 (Luka). Osnovna lista materijala čeka Excel — pitanje ispod. |
+| Roles nema funkciju u Weld Pilotu. | Uklonjeno iz menija i kolona Role iz liste zavarivača; zavarivač na serveru i dalje dobija ulogu Welder. |
+| Welding wire pripada grupi Weld data. | Premešteno iz Material data u Weld data (posle Coating). |
+| Data LISL ne stoji sam u meniju, dolazi se kroz Iso overview. | Uklonjen iz menija; dugme „Data LISL" u zaglavlju Iso overview. Na izometriji ostaje kartica „LISL (all fields)". |
+| „Projects" treba da glasi „Sub-projects". | Stavka menija i naslov stranice su „Sub-projects" (Weld Pilot i MTO Pilot). |
+| Iso overview otvara sve izometrije svih sub-projekata, sa filterom i mass edit-om. | Iso overview je sada stranica sa svim izometrijama glavnog projekta (kolona Sub-project), bez biranja projekta, u oba pilota. „Filters": ISO broj, Sub-project, Area, IRN, Piping class, ITP, Revision, Priority, Test system, Field work package, PED, X-ray, Material, Nominal diameter, Zone, NoBo, PWHT. Options → Mass edit: sva polja forme prazna; menjaju se samo popunjena polja i samo na čekiranim izometrijama, prazna polja čuvaju staru vrednost. Van mass edit-a ostaju ISO broj, Sub-project, X-ray, test sistem i ITP veze (ITP se vezuje sa izometrije). „Delete all" se nudi samo na stranici jednog sub-projekta. |
+| U izometriji je gornji deo prevelik, tabela varova treba da preovladava; redosled isti. | Kartice su zbijene u jedan red na širokom ekranu, detalji Status kartice (faze, release, hydrotest, punch) su iza „Details"; redovi Flanges / WDI su uži; tabela varova ima najmanje 60 % visine ekrana. Redosled se nije menjao. |
+| Klik na naziv izometrije otvara poslednju reviziju crteža u novom tabu; isto za vezani ITP. | Naslov izometrije i ISO broj u kartici Identification otvaraju PDF poslednje ISO revizije u novom tabu; broj ITP-a u kartici ITPs otvara poslednji PDF tog ITP-a. Bez fajla ostaje običan tekst. |
+
+**Pitanje za klijenta — Excel sa tipovima materijala.** Excel nije stigao uz poruku. Da li je to fajl „Oil_Gas_Material_Catalog_6_Field_Import.xlsx"? Ako jeste: (a) koji list je osnovna lista za svaki novi projekat — „Material Catalog" (123 materijala, kod mnogih bez ISO 15608 grupe) ili „Ready for CSV Import" (44 materijala, svi sa ISO grupom); (b) pošaljite ISO 15608 grupe koje fale (npr. A106, A333, A335, A105, A234, API 5L, 16Mo3, GOST) ili potvrdite da ostanu prazne; (c) GOST redovi nemaju Material specification — da li tako ostaju. Ako nije taj fajl, pošaljite pravi Excel.
+
 Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
 
 ---
