@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { SITE_OWNED, inOwnerSite } from './welder-data.ts';
+import { SITE_OWNED, inOwnerSite, ownerRows } from './welder-data.ts';
 
 /** Row key that switches a project on for each pilot. Projects without the key (older records) are enabled. */
 const PILOT_FLAGS: Record<string, string> = { weld: 'weldPilot', mto: 'mtoPilot' };
@@ -39,8 +39,8 @@ export function pilotScope(rows: Record<string, Row[]>, pilot?: string): Record<
 export function projectScope(rows: Record<string, Row[]>, siteId: string): Record<string, Row[]> {
   if (!siteId) return rows;
   const scoped = narrowToProjects(rows, (rows.projects || []).filter(row => row.siteId === siteId), (rows.sites || []).filter(row => row.id === siteId));
-  // Certificates and welding wires belong to one main project (older ones without one follow their linked projects).
-  for (const [key, owned] of Object.entries(SITE_OWNED)) if (rows[key]) scoped[key] = rows[key].filter(row => inOwnerSite(key, row, siteId, { links: rows[owned.links], projects: rows.projects }));
+  // Certificates, welding wires, ITPs, WPS methods and PQRs belong to one main project (older ones follow their links, shared/welder-data.ts `ownerSites`).
+  for (const key of Object.keys(SITE_OWNED)) if (rows[key]) { const lists = ownerRows(key, name => rows[name]); scoped[key] = rows[key].filter(row => inOwnerSite(key, row, siteId, lists)); }
   const kept = Object.fromEntries(Object.keys(SITE_OWNED).map(key => [key, new Set((scoped[key] || []).map(row => row.id))]));
   if (scoped.attachments) scoped.attachments = scoped.attachments.filter(row => !kept[String(row.entityType)] || kept[String(row.entityType)].has(String(row.entityId)));
   return scoped;

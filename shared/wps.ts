@@ -1,5 +1,6 @@
 import type { Field, Row } from './types.ts';
 import { PQR_ATTRIBUTES, RELATIONS, relationIds } from './welding.ts';
+import { inOwnerSite, ownerRows, siteUniqueClash } from './welder-data.ts';
 
 /**
  * WPS methods and PQR as the reference's Weld data pages show them (hosted profile).
@@ -142,20 +143,24 @@ export function wpsCopyRefusal(rows: Rows, wps: Row, siteId: string): string {
   return '';
 }
 /**
- * The new record of a copy. ASSUMPTION (to confirm): the copy keeps every value and the PQR links of its original; its
- * number gets the main project's name added (WPS numbers are unique); it is enabled on that main project only; projects
- * chosen on the original stay chosen when they belong to that main project. The document is not copied.
+ * The new record of a copy. ASSUMPTION (to confirm): the copy keeps every value of its original and belongs to the main
+ * project it is copied to (client 20.11.2026: WPS numbers are unique per main project, so the number stays as it is; copies
+ * made before keep " (<site>)" in theirs). Only when that main project already holds a WPS with the number (an older WPS
+ * shared with it) does the copy get the main project's name added, as before. It is enabled on that main project only;
+ * projects chosen on the original stay chosen when they belong to that main project, and so do its PQRs (a PQR of another
+ * main project is left out).
  */
 export function wpsCopyValues(rows: Rows, wps: Row, siteId: string): Record<string, unknown> {
-  const site = live(rows.sites).find(row => row.id === siteId);
+  const pqrs = new Map(live(rows.pqr).map(row => [row.id, row])), owners = ownerRows('pqr', name => rows[name]);
+  const site = live(rows.sites).find(row => row.id === siteId), taken = siteUniqueClash('wps', { name: text(wps.name), siteId }, live(rows.wps), ownerRows('wps', name => rows[name]));
   const projects = new Set(live(rows.projects).filter(project => project.siteId === siteId).map(project => project.id));
   const copied = ['method', 'definition', 'jointType', ...WPS_GROUP_FIELDS.map(field => field.name), ...WPS_RANGE_NAMES, 'processId', 'standard', 'description'];
   return {
     ...Object.fromEntries(copied.filter(name => wps[name] !== undefined && wps[name] !== null && wps[name] !== '').map(name => [name, wps[name]])),
-    name: `${text(wps.name)} (${text(site?.name) || siteId})`,
+    name: taken ? `${text(wps.name)} (${text(site?.name) || siteId})` : text(wps.name), siteId,
     allProjects: wps.allProjects !== false,
     projectIds: wps.allProjects !== false ? [] : relationIds(linkRows(rows), relation('projectIds'), wps.id).filter(id => projects.has(id)),
-    pqrIds: relationIds(linkRows(rows), relation('pqrIds'), wps.id),
+    pqrIds: relationIds(linkRows(rows), relation('pqrIds'), wps.id).filter(id => !rows.pqr || pqrs.has(id) && inOwnerSite('pqr', pqrs.get(id)!, siteId, owners)),
     siteIds: [siteId], active: true, sourceId: wps.id, copySiteId: siteId,
   };
 }

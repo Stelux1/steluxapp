@@ -1022,8 +1022,8 @@ test('save-weld through HTTP: with Validation on WPS a WPS is refused when its o
   // Setting off (Riverside): the same WPS is accepted whatever its range.
   assert.equal((await f.act('save-weld', { ...complete, isoId: 'iso-5', weldNo: 'W083', wpsId: below.id, diameterId: 'diameter-9' })).status, 201);
   // The WPS form: the range is two numbers, "to" not below "from".
-  assert.equal((await f.request('/api/records/wps', 'POST', { name: 'WPS-FORM', method: '141', definition: 'x', diameterFrom: 1, diameterTo: 2 })).status, 201);
-  const bad = await f.request('/api/records/wps', 'POST', { name: 'WPS-FORM-2', method: '141', definition: 'x', diameterFrom: 3, diameterTo: 2 });
+  assert.equal((await f.request('/api/records/wps', 'POST', { name: 'WPS-FORM', siteId: 'site-north', method: '141', definition: 'x', diameterFrom: 1, diameterTo: 2 })).status, 201);
+  const bad = await f.request('/api/records/wps', 'POST', { name: 'WPS-FORM-2', siteId: 'site-north', method: '141', definition: 'x', diameterFrom: 3, diameterTo: 2 });
   assert.equal(bad.status, 422); assert.match(JSON.stringify(await bad.json()), /Diameter to must not be smaller than diameter from/);
 });
 

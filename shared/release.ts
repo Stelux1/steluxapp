@@ -197,7 +197,7 @@ export const availabilityFor = (profile: ReleaseProfile): Availability | undefin
     // Welders, qualifications, material data and certificates (shared/welder-data.ts): menu pages, then records without a page.
     for (const [key, names] of Object.entries(WELDER_DATA_PAGES)) deliverResource(availability, key, names);
     for (const [key, names] of Object.entries(WELDER_DATA_RECORDS)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), ...names])];
-    // Certificates and welding wires carry the main project they belong to (shared/welder-data.ts → SITE_OWNED).
+    // Certificates, welding wires, ITPs, WPS methods and PQRs carry the main project they belong to (shared/welder-data.ts → SITE_OWNED).
     for (const key of Object.keys(SITE_OWNED)) availability.resources[key] = [...new Set([...(availability.resources[key] || []), 'siteId'])];
     // Weld table and weld entry on the isometric: the entry fields of a weld and the actions behind the form.
     deliverResource(availability, 'welds', fields('typeId spoolId coating1Id coating2Id coatingWeldId sleeve kr fp insLength insLength2 processId sortOrder tracer stampedBy stampedAt'));

@@ -41,13 +41,15 @@ test('scn-SB-D2: a duplicate Flange ID names the field and the value, at the fie
 
 test('scn-SB-D2: a duplicate ITP number names the field and the value; editing into a duplicate does too', async t => {
   const f = await fixture(t); await f.setup();
+  // ITP numbers are unique per main project (client 20.11.2026): the administrator works in one.
+  assert.equal((await f.request('/auth/site', 'POST', { siteId: 'site-north' })).status, 200);
   const make = (number: string) => f.request('/records/itps', 'POST', { number, description: 'Piping', ndtPercent: 15, revision: '1' });
   const first = await make('ITP-DUP-1'); assert.equal(first.status, 201);
   const body = await refused(await make('ITP-DUP-1'), 409);
-  assert.match(body.error, /ITP.* ITP-DUP-1 already exists\.$/); assert.ok(!NOT_GENERIC.includes(body.error));
+  assert.match(body.error, /ITP.* ITP-DUP-1 already exists in this main project\.$/); assert.ok(!NOT_GENERIC.includes(body.error));
   const second = (await (await make('ITP-DUP-2')).json()).record as Row;
   const edit = await refused(await f.request(`/records/itps/${second.id}`, 'PUT', { number: 'ITP-DUP-1', _version: second._version }), 409);
-  assert.match(edit.error, /ITP-DUP-1 already exists\.$/);
+  assert.match(edit.error, /ITP-DUP-1 already exists in this main project\.$/);
 });
 
 test('scn-SC-N1: a custom material with "add to DB" and an existing number names the material number', async t => {

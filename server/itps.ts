@@ -8,6 +8,7 @@ import { checkItpLinkAccess } from './itp-dashboard.ts';
 import { scopeRows } from './site-scope.ts';
 import { ITP_REVISION_DOCUMENT, ITP_SCOPES, importFromIsometrics, isoWriteErrors, isoXRay, itpDeleteRefusal, itpIsometrics, itpLatest, itpRevisions, linkItp, revisionErrors, unlinkValues, type LinkSlot } from '../shared/itps.ts';
 import type { Row } from '../shared/types.ts';
+import { inOwnerSite, ownerRows, siteUniqueClash } from '../shared/welder-data.ts';
 
 /**
  * ITPs page actions (Weld Pilot, hosted profile): Add ITP with its first revision PDF, Upload revision, Link ITP /
@@ -81,10 +82,12 @@ export function registerItpRoutes(app: Application, { store, documents, access, 
       if (percent !== null && (!Number.isFinite(percent) || percent < 0 || percent > 100)) errors.ndtPercent = 'X-Ray % must be between 0 and 100.';
       Object.assign(errors, revisionErrors(revNo, file ? { name: pdfName(file) } : undefined));
       fail(errors);
-      if (store.list('itps').some(row => str(row.number).toLowerCase() === str(body.number).toLowerCase())) throw new AppError(422, `ITP No ${str(body.number)} already exists.`, { number: 'This ITP No already exists.' });
+      // The ITP belongs to the main project it is added in; its ITP No is unique there (shared/welder-data.ts → SITE_UNIQUE).
+      const siteId = activeSite(req);
+      if (siteUniqueClash('itps', { number: str(body.number), siteId }, store.list('itps'), ownerRows('itps', key => store.list(key, true)))) throw new AppError(422, `ITP No ${str(body.number)} already exists in this main project.`, { number: 'This ITP No already exists in this main project.' });
       const actor = actorOf(req);
       const record = store.transaction(() => {
-        const itp = store.create('itps', { number: str(body.number), title: str(body.title), description: str(body.description), scope: str(body.scope) || 'Shop+Field', ndtPercent: percent, revision: revNo, active: true }, actor);
+        const itp = store.create('itps', { siteId, number: str(body.number), title: str(body.title), description: str(body.description), scope: str(body.scope) || 'Shop+Field', ndtPercent: percent, revision: revNo, active: true }, actor);
         saveRevision(itp, revNo, str(body.comment), file!, actor);
         return itp;
       });
@@ -129,15 +132,20 @@ export function registerItpRoutes(app: Application, { store, documents, access, 
     res.json({ record: access.project('isometrics', record) });
   });
 
-  /** Import from isometrics: one entry per distinct ITP number found on the isometrics, which are then linked to it. */
+  /**
+   * Import from isometrics: one entry per distinct ITP number found on the isometrics of the open main project, which are
+   * then linked to it. The new ITPs belong to that main project; ITPs of other main projects are neither matched nor linked.
+   */
   app.post('/api/itps/import-from-isometrics', (req, res) => {
     checkResourcePermission(req, 'itps', 'insert'); checkResourcePermission(req, 'isometrics', 'edit');
-    const actor = actorOf(req);
+    const actor = actorOf(req), siteId = activeSite(req);
     const result = store.transaction(() => {
-      // Only the isometrics the request reaches are read and linked (sec1-008).
-      const plan = importFromIsometrics(scopeRows('isometrics', store.list('isometrics')), store.list('itps'));
+      // Only the isometrics the request reaches are read and linked (sec1-008), and only those of the open main project.
+      const projects = new Set(store.list('projects', true).filter(project => project.siteId === siteId).map(project => project.id));
+      const lists = ownerRows('itps', key => store.list(key, true));
+      const plan = importFromIsometrics(scopeRows('isometrics', store.list('isometrics')).filter(iso => projects.has(String(iso.projectId))), store.list('itps').filter(itp => inOwnerSite('itps', itp, siteId, lists)));
       const ids = new Map<string, string>();
-      for (const entry of plan.create) ids.set(entry.number.toLowerCase(), store.create('itps', { number: entry.number, scope: entry.scope, ndtPercent: entry.ndtPercent, revision: entry.revision, active: true }, actor).id);
+      for (const entry of plan.create) ids.set(entry.number.toLowerCase(), store.create('itps', { siteId, number: entry.number, scope: entry.scope, ndtPercent: entry.ndtPercent, revision: entry.revision, active: true }, actor).id);
       let linked = 0;
       for (const link of plan.link) {
         const iso = store.get('isometrics', link.isoId);
@@ -149,4 +157,6 @@ export function registerItpRoutes(app: Application, { store, documents, access, 
     res.status(201).json(result);
   });
 }
+/** The main project the request works in: ITPs are added there (an account without one chooses a main project first). */
+const activeSite = (req: Request) => { const siteId = str((req as unknown as AuthRequest).user.siteId); if (!siteId) throw new AppError(422, 'Open a main project before adding this record.', { siteId: 'Open a main project first.' }); return siteId; };
 const canIsoEdit = (req: Request, iso: Row) => { try { checkResourcePermission(req, 'isometrics', 'edit', iso); return true; } catch { return false; } };

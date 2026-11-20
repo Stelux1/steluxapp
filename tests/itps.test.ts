@@ -119,6 +119,8 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     return response;
   };
   assert.equal((await request('/auth/setup', { method: 'POST', data: { name: 'Itps admin', email: 'itps-admin@example.test', password: PASSWORD } })).status, 201);
+  // The administrator works in North fabrication yard: ITPs belong to the main project they are added in (client 20.11.2026).
+  assert.equal((await request('/auth/site', { method: 'POST', data: { siteId: 'site-north' } })).status, 200);
   const reader = async () => {
     const profile = store.create('profiles', { name: 'Itps reader profile', settingsPermission: 'No access', toolsPermission: 'No access', generalPermission: 'Read & write', materialsPermission: 'Read & write', weldingPermission: 'Read only' });
     const user = store.create('users', { name: 'Itps reader', email: 'itps-reader@example.test', active: true, profileId: profile.id });

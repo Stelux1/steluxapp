@@ -1,13 +1,16 @@
 import type { Database } from './database.ts';
 import { RESOURCES } from '../shared/resources.ts';
 import type { Resource } from '../shared/types.ts';
-import { POSTGRES_SCHEMA, SCHEMA_LOCK, protectStatement, recordTableStatement, referenceColumnStatement, uniqueIndexes, uniqueIndexStatement, type UniqueIndex } from './postgres-schema.ts';
+import { POSTGRES_SCHEMA, REPLACED_UNIQUE_RULES, SCHEMA_LOCK, protectStatement, recordTableStatement, referenceColumnStatement, uniqueIndexes, uniqueIndexStatement, type UniqueIndex } from './postgres-schema.ts';
 
 /**
  * Hosted schema preparation. The hosted server never migrates during a request; this backed-up, manual
  * step brings an existing workspace database to the shape `initializePostgres` produces for every resource
  * in `shared/resources.ts`: missing record tables, generated reference columns with their foreign keys,
- * unique indexes and row-level security. It never seeds, rewrites, nulls or drops anything.
+ * unique indexes and row-level security. It never seeds, rewrites, nulls or drops anything, with one exception that holds
+ * no data: the previous index of a unique rule a release replaced by a looser one (`REPLACED_UNIQUE_RULES`, for example
+ * ITP No unique per main project instead of over all of them) is dropped and its replacement created in the same
+ * transaction; only an index that enforces exactly the previous keys is replaced, any other is reported and left alone.
  */
 export const PREPARE_COMMAND = 'STELUX_CLOUD_DATABASE=workspace npm run db:prepare:welding';
 const RECORD_COLUMNS: Record<string, string> = { id: 'text', data: 'text', version: 'integer', archived: 'integer', created_at: 'text', updated_at: 'text' };
@@ -32,6 +35,8 @@ export interface HostedSchemaPlan {
   /** Generated reference columns that exist without their foreign key. */
   foreignKeys: Reference[];
   indexes: UniqueIndex[];
+  /** Previous indexes of replaced unique rules (REPLACED_UNIQUE_RULES): dropped and created anew with the release's keys. */
+  replace: (UniqueIndex & { previous: string[] })[];
   protect: string[];
   /** Existing objects that differ from the release; the preparation never alters them automatically. */
   conflicts: string[];
@@ -71,7 +76,7 @@ const expectedJsonKeys = (index: UniqueIndex) => index.expressions.flatMap(expre
 
 /** What the preparation would create for `resources`; purely derived from the catalog and the definitions. */
 export function planHostedSchema(catalog: Catalog, resources: Resource[] = RESOURCES): HostedSchemaPlan {
-  const plan: HostedSchemaPlan = { tables: [], columns: [], foreignKeys: [], indexes: [], protect: [], conflicts: [], missingFixedTables: FIXED_TABLES.filter(name => !catalog.tables.has(name)) };
+  const plan: HostedSchemaPlan = { tables: [], columns: [], foreignKeys: [], indexes: [], replace: [], protect: [], conflicts: [], missingFixedTables: FIXED_TABLES.filter(name => !catalog.tables.has(name)) };
   for (const resource of resources) {
     const table = catalog.tables.get(resource.key);
     if (!table) { plan.tables.push(resource.key); plan.protect.push(resource.key); continue; }
@@ -101,20 +106,23 @@ export function planHostedSchema(catalog: Catalog, resources: Resource[] = RESOU
     if (!existing) { plan.indexes.push(index); continue; }
     const expected = expectedJsonKeys(index), actual = jsonKeys(existing.definition);
     if (existing.table !== index.table || !existing.unique || (expected.length === index.expressions.length && JSON.stringify(actual) !== JSON.stringify(expected))) {
+      // The previous index of a replaced unique rule, exactly as the earlier release created it, is replaced.
+      const previous = REPLACED_UNIQUE_RULES[index.name];
+      if (previous && existing.table === index.table && existing.unique && JSON.stringify(actual) === JSON.stringify(previous) && / WHERE \(archived = 0\)$/.test(existing.definition)) { plan.replace.push({ ...index, previous }); continue; }
       plan.conflicts.push(`Index ${index.name} on ${existing.table} enforces (${actual.join(', ') || existing.definition}); the release expects a unique rule on ${index.table} (${expected.join(', ') || index.expressions.join(', ')}). Unique rules may only be appended to a resource, never reordered.`);
     }
   }
   return plan;
 }
 
-const pending = (plan: HostedSchemaPlan) => plan.tables.length + plan.columns.length + plan.foreignKeys.length + plan.indexes.length + plan.protect.length;
+const pending = (plan: HostedSchemaPlan) => plan.tables.length + plan.columns.length + plan.foreignKeys.length + plan.indexes.length + plan.replace.length + plan.protect.length;
 const cut = (items: string[]) => items.length > LIST_LIMIT ? [...items.slice(0, LIST_LIMIT), `… ${items.length - LIST_LIMIT} more`] : items;
 export function describePlan(plan: HostedSchemaPlan) {
   return {
     tables: plan.tables,
     columns: plan.columns.map(({ table, field, target }) => `${table}.${field} → ${target}`),
     foreignKeys: plan.foreignKeys.map(({ table, field, target }) => `${table}.${field} → ${target}`),
-    indexes: plan.indexes.map(index => `${index.name} on ${index.table}`),
+    indexes: [...plan.indexes.map(index => `${index.name} on ${index.table}`), ...plan.replace.map(index => `${index.name} on ${index.table} (${expectedJsonKeys(index).join(', ')}) replaces the unique rule on (${index.previous.join(', ')})`)],
     rowLevelSecurity: plan.protect,
   };
 }
@@ -219,6 +227,10 @@ export function prepareHostedSchema(db: Database, options: PrepareOptions = {}):
     const duplicates = uniqueViolations(db, plan.indexes.filter(({ table }) => catalog.tables.has(table)));
     if (duplicates.length) throw new Error(`Cannot add the unique rules this release requires: existing active records violate them. Nothing was changed; resolve the duplicates in the application, then run the preparation again. ${duplicates.join(' ')}`);
     for (const index of plan.indexes) db.exec(uniqueIndexStatement(index));
+    // A replaced rule is looser than the one it replaces, so the existing records meet it; checked all the same.
+    const replaced = uniqueViolations(db, plan.replace);
+    if (replaced.length) throw new Error(`Cannot replace the unique rules this release changes: existing active records violate them. Nothing was changed. ${replaced.join(' ')}`);
+    for (const index of plan.replace) db.exec(`DROP INDEX "${index.name}"; ${uniqueIndexStatement(index)}`);
     for (const table of plan.protect) db.exec(protectStatement(table));
     options.afterChanges?.(db);
     verifyHostedSchema(db, resources);

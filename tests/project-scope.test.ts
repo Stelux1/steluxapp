@@ -18,7 +18,8 @@ test('main-project scope follows subprojects through welds, inspections, and doc
   assert.ok(scoped.inspection_results.every(result => scoped.welds.some(weld => weld.id === result.weldId)));
   assert.ok(scoped.attachments.every(file => scoped[String(file.entityType)]?.some(row => row.id === file.entityId)));
   assert.equal(scoped.materials, rows.materials);
-  assert.equal(scoped.wps, rows.wps);
+  // WPS methods belong to their main projects (shared/welder-data.ts → SITE_OWNED); the sample ones are enabled on every main project, so all stay.
+  assert.deepEqual(scoped.wps, rows.wps);
   assert.equal(projectScope(rows, ''), rows);
   assert.equal(projectScope(rows, 'missing-project').welds.length, 0);
   assert.ok(rows.projects.length > scoped.projects.length, 'fixture includes another main project');

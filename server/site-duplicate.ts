@@ -18,7 +18,10 @@ export function duplicateSite(store: Store, data: Record<string, unknown>, actor
   for (const part of parts) {
     if (part.catalog) for (const link of store.list(CATALOG_SITES).filter(row => row.resourceKey === part.catalog && row.siteId === source.id)) store.create(CATALOG_SITES, { resourceKey: part.catalog, recordId: link.recordId, siteId: site.id, enabled: link.enabled !== false }, actor);
     if (part.records === 'memo-templates') copyMemoTemplates(store, source.id, site.id, actor);
-    if (part.links) for (const link of store.list(part.links.resource).filter(row => row.siteId === source.id)) store.create(part.links.resource, { [part.links.ownerKey]: link[part.links.ownerKey], siteId: site.id, ownerArchived: link.ownerArchived === true }, actor);
+    // A WPS saved in a main project belongs to it (shared/welder-data.ts → SITE_OWNED, client 20.11.2026): it is not switched on
+    // in the copy, which fills in its own; an older WPS shared by the main projects is, as before.
+    const owned = part.links?.resource === 'wps_sites' ? new Set(store.list('wps', true).filter(row => String(row.siteId ?? '')).map(row => row.id)) : new Set<string>();
+    if (part.links) for (const link of store.list(part.links.resource).filter(row => row.siteId === source.id && !owned.has(String(row[part.links!.ownerKey])))) store.create(part.links.resource, { [part.links.ownerKey]: link[part.links.ownerKey], siteId: site.id, ownerArchived: link.ownerArchived === true }, actor);
   }
   return { resource: 'sites', record: site };
 }

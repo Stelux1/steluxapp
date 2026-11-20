@@ -1,6 +1,7 @@
 import type { Row } from '../shared/types.ts';
 import { COMPLETION_FIELDS, ITP_MISSING, openPrePunch, prePunchReason, RELEASE_PHASES, activeRelease, fwpAccepts, nextReportNo, phaseCompleted, releaseCheck, releaseDocumentData, releaseItpOf, releaseItpsOf, type ReleasePhase } from '../shared/releases.ts';
 import { itpLatest } from '../shared/itps.ts';
+import { inOwnerSite, ownerRows } from '../shared/welder-data.ts';
 import { AppError, SYSTEM, validDate, type Actor, type Store } from './store.ts';
 
 type Input = Record<string, unknown>;
@@ -84,7 +85,9 @@ export function releaseIsometrics(store: Store, data: Input, actor: Actor, defau
       throw new AppError(422, `Report number ${reportNo} is already used for a ${type} release of this main project. Leave it empty to number it automatically.`, { reportNo: `${reportNo} is already used.` });
     }
   }
-  const itpEntry = itp ? store.list('itps').find(entry => String(entry.number) === itp) : undefined;
+  // ITP numbers are unique per main project (client 20.11.2026): the ITP linked on the isometrics, else the one of this main project.
+  const itpRows = store.list('itps'), itpSite = isometrics.length ? siteOf(store, isometrics[0])?.id ?? '' : '', itpOwners = ownerRows('itps', key => store.list(key, true));
+  const itpEntry = !itp ? undefined : isometrics.flatMap(iso => [iso.itpId, iso.itp2Id]).map(id => itpRows.find(entry => entry.id === id)).find(entry => entry && String(entry.number) === itp) ?? itpRows.find(entry => String(entry.number) === itp && inOwnerSite('itps', entry, itpSite, itpOwners));
   const itpRev = itpEntry ? itpLatest(itpEntry, store.list('attachments')).revNo : '';
   const number = store.next(type === 'Hydrotest' ? 'HYDRO' : 'REL'); const now = new Date().toISOString();
   const created = isometrics.map(iso => store.create('releases', {

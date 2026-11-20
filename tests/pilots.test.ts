@@ -207,6 +207,8 @@ test('an MTO-only account sees shared catalogs through the API but stays out of 
 
 test('PQR is a Weld Pilot page of the hosted profile: an administrator reads and creates PQRs, an MTO-only account cannot', async t => {
   const f = await hostedFixture(t); await f.setup();
+  // PQRs and WPS methods belong to the main project they are created in (client 20.11.2026).
+  assert.equal((await f.request('/api/auth/site', 'POST', { siteId: 'site-north' })).status, 200);
   const weld = (await (await f.request('/api/auth/status')).json()).user as User;
   assert.ok(weld.availability!.navigation.includes('pqr'), 'the PQR page is delivered in Weld Pilot');
   assert.ok(pageAvailable(weld.availability, '/weld/welding/pqr', RESOURCES));
