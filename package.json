@@ -43,7 +43,7 @@
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
     "multer": "^2.0.2",
-    "next": "16.4.3",
+    "next": "16.4.6",
     "pdf-lib": "1.17.1",
     "pg": "^8.23.1",
     "qrcode-generator": "2.0.4",
