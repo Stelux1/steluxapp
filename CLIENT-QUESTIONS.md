@@ -11,6 +11,54 @@ Kako su pitanja nastala. Svako pitanje je prvo traženo ovim redom: stranice ref
 
 ---
 
+## Odgovori klijenta od 17.11.2026 i šta je urađeno (20.11.2026)
+
+Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.docx`) i poslao ISO book (`ISO Book - PTP002 - M170-MET-002.PDF`: naslovna, izometrija, LISL [GU], indeks sertifikata, RT izveštaj, dva VT izveštaja) i svoj Export weld data (`Export-site2-user226-20261117-112325.xlsx`, 87 kolona, 100 613 varova). Brojevi su brojevi pitanja iz Dela 1.
+
+| # | Odgovor klijenta (ukratko) | Šta je urađeno |
+|---|---|---|
+| 1 | Izometrije i sertifikati se izvoze kao „Export CSV" u Websoniku; projekti, PQR i NDT se unose ručno; ne zna šta je uvoz prirubnica. | Ništa. Za šablone uvoza trebaju nam njihovi CSV izvozi izometrija i sertifikata. |
+| 2 | Da, tako (sve četiri tačke). | Ništa, ugrađeno je tako. |
+| 3 | Rezervisan materijal sme da se skine / prebaci, uz pitanje „da li ste sigurni". Drugi deo nije razumeo. | Remove i transfer iz Material inventory pitaju za potvrdu kad diraju rezervisanu količinu (server odbija bez potvrde). Inv. ostaje. |
+| 4 | Start pravi pick listu i skida materijal; Start je samo za predfabrikaciju (Shop); Field nema Isometric execution; field pick listu čine elementi pod „Field MTO". | Isometric execution nudi samo Shop; Start skida samo Shop redove (i „Shop missing", „Support Shop"…); server odbija Start za drugu fazu. Field pick lista nije napravljena — za sastanak. |
+| 5 | Ne razume pitanje. | Ostaje; za sastanak. |
+| 6 | Pita o kom dokumentu je reč. | Ostaje; za sastanak. |
+| 7 | WPS, datum i šarže su obavezni za complete; otvoren pre-punch ne sme da prođe; (c) nije razumeo. | Var bez WPS, datuma zavarivanja ili šarže (ili sertifikata) blokira Prefab / Field complete; otvoren pre-punch kategorije A / B blokira complete i izdavanje. (c) ostaje. |
+| 8 | Tablice se razlikuju po projektu, ostaje ručni unos. | Ništa. |
+| 9, 10 | Za sastanak. | Ostaje. |
+| 11 | Po inčima varova; var je zavaren kad ima zavarivača i datum zavarivanja. | WDI (Status % projekta i WDI panel) broji var kao završen tek sa zavarivačem i datumom. |
+| 12 | Objasnio PWHT (ide kao NDT zahtev); Documentation nije siguran. | Ostaje; za sastanak. |
+| 13 | Za sastanak. | Ostaje. |
+| 14 | Možemo sami da izvezemo (poslat fajl). | Export weld data piše 87 kolona njihovog fajla, istim redom i nazivima (i sa njihovim greškama u kucanju: „Eelevation", „S chedule 2", dva puta „NDT 1 Report"), list „Sheet1", vrednosti kao tekst: Yes/No, YES/NO za NDT, „------" za prazan zavarivač/žica, materijal „3"/40/5,49/A234-WPB/Equal Tee". Data LISL nije menjan. |
+| 15 | Repaired = da; odbijen var se broji kao Rejected dok se ne popravi; (c) i (f) traži više informacija. | Odbijen var prestaje da se broji kao Rejected kad je njegova popravka prihvaćena (dashboard i izveštaji). (c), (f) za sastanak. |
+| 16 | Možemo da pošaljemo PDF-ove. | Čekamo PDF-ove (Project book, Welder report). |
+| 17 | Tracer ide u NDT request; kandidati — da. | Ništa, ugrađeno je tako. |
+| 18 | Opseg WPS-a (npr. 1"–2") se unosi ručno; zavarivaču se ručno unosi opseg po kvalifikaciji. | WPS ima „Diameter from / to (inch)"; sa uključenim Validation on WPS nudi se i prihvata samo WPS čiji opseg drži prečnik vara (WPS bez opsega nije ograničen) i samo zavarivač čija važeća kvalifikacija ima opseg koji ga drži. PQR tekst se više ne koristi. |
+| 19 | Oznake GAP / SP / E / B ne poznaje; osnovna podela je Shop / Field; svaki tip vara mora biti Shop ili Field. | Ništa: nijedan od 100 613 brojeva varova u njihovom izvozu ne pada pod to pravilo; lokacija tipa vara je već obavezna. |
+| 20 | Ostaje stara vrednost. | Ništa (Keep je podrazumevano). |
+| 21, 22 | Ne razume / za sastanak. | Ostaje. |
+| 23 | Hydrotest je završen tek kad se uploaduje potpisana dokumentacija, pa klikne Approved. | Approved traži bar jedan PDF rezultata tog test sistema (server odbija bez njega); test sistem je završen samo sa Approved. Ranije završeni sistemi ostaju završeni. |
+| 24 | Poslao samo dve slike našeg menija, bez teksta. | Ostaje. |
+| 25 | Za sastanak. | Ostaje. |
+| 26 | Svaki sertifikat se unosi ručno i mora imati PDF. Uvoz zalihe ne koriste. | Certifications: PDF je obavezan (samo PDF), lista pokazuje „No PDF" kod starih bez fajla, server odbija fajl koji nije PDF. |
+| 27 | Poručeno se ne prikazuje među onim što treba poručiti, nego u posebnom prozoru; negativan prijem ne treba; treba „additional" porudžbina i pregled dodatnog prema potrebama projekta. | Order materials ima kartice To order / Ordered / Additional vs required; Additional order (sa razlogom) ne smanjuje redovnu potrebu; take-in prima samo pozitivne količine. |
+| 28 | Za sastanak. | Ostaje. |
+| 29 | Dostavnica bez Print i Sign u programu; na odštampanom obrascu polja za potpis pošiljaoca i prevoznika. | Sign online je uklonjen; PDF service request-a ima blokove Sender i Carrier (transport company) za potpis na papiru. |
+| 30 | Dashboard isti za sve; % poručenog i primljenog od potrebnog i % započetih izometrija. | Svi paneli za svakog ko otvara dashboard; nove kartice Ordered %, Received %, Isometrics started %. |
+| 31 | VT2 treba da bude samo VT; poslat ISO book. | (Odluka Luke) prekidač Ver 2 i VT type 2 polja su skriveni; izveštaj „Visual inspection 00021", novi brojevi sa 5 cifara; opcija ISS „VT from VT report". |
+| 32 | Ne razume. | Ostaje. |
+| 33 | Sve ide uz kopiju (PQR je „tata", WPS „sin"). | Copy / Mass copy WPS kopira i dokumente i opseg prečnika. |
+| 34 | Nov dobavljač, firma, laydown je odmah isključen, uz opciju pri dodavanju da se odmah uključi. | Material supplier, Service companies, Laydown areas, Laydown materials počinju isključeni, Add ima „Enable on this site". |
+| 35 | Pita šta znači „u toku". | Ostaje; za sastanak. |
+| 36 | Za sastanak; izometrija je jedinstvena. | Ništa (ISO broj je već jedinstven u projektu). |
+| 37 | Izometrija sme da se obriše uvek, ali samo određeni korisnici; svi podaci se preračunavaju. | Brisanje traži samo pravo Delete na izometrijama (64); varovi, materijali, rezervacije, pick liste i ostalo što visi na izometriji se brišu (arhiviraju) sa njom; kretanja zaliha i porudžbine ostaju. Vraćanje izometrije ne vraća obrisane zapise. |
+| 38 | Za sastanak. | Ostaje. |
+| Napomena | Prilozi treba da se otvore za pregled u novom prozoru, ne da se odmah preuzmu. | PDF i slike se otvaraju u novoj kartici (inline, tip po sadržaju fajla); ostali fajlovi i `?download=1` se preuzimaju. |
+
+Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
+
+---
+
 ## Deo 1 — Pitanja za klijenta (srpski)
 
 Uvod za klijenta: Napravili smo Weld Pilot i MTO Pilot tako da rade kao WeldPilot i MTOPilot koje koristite. Referencu smo samo gledali, ništa na njoj nismo menjali niti slali. Za tačke ispod referenca ne pokazuje pravilo, pa smo ugradili razumno podrazumevano ponašanje. Molimo vas da za svaku tačku odgovorite kratko (da / ne, ili slovo izbora). Ako odgovor ne znate, napišite „ne znam" — tada ostaje podrazumevano.

@@ -175,8 +175,8 @@ function missingWeldFields(weld: Row): string[] {
   if (!text(weld.wpsId)) missing.push('WPS');
   if (!text(weld.date)) missing.push('weld date');
   if (weld.lengthMode === 'Length in mm' ? !(Number(weld.dialen) > 0) : !text(weld.diameterId)) missing.push(weld.lengthMode === 'Length in mm' ? 'length' : 'diameter');
-  if (!text(weld.chargeNo1)) missing.push('charge number 1');
-  if (!text(weld.chargeNo2)) missing.push('charge number 2');
+  if (!text(weld.chargeNo1) && !text(weld.certificate1Id)) missing.push('charge number 1');
+  if (!text(weld.chargeNo2) && !text(weld.certificate2Id)) missing.push('charge number 2');
   return missing;
 }
 

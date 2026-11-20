@@ -21,15 +21,16 @@ function requirement(store: Store, isoId = 'iso-1') {
   return store.create('iso_materials', { isoId, customMaterial: true, materialNo: 'PLANNING-PIPE', description: 'Measured planning material', uom: 'M', quantity: 4.5 });
 }
 
-test('WDI weights diameter inches and Welder IDs independently of dates and welder count', () => {
+test('WDI weights diameter inches; a weld is completed with a welder and a weld date, whatever the welder count', () => {
   const weld = (id: string, props: Record<string, unknown>) => ({ id, _archived: false, ...props } as Row);
   const result = wdiProgress([
-    weld('large', { diameterId: 'eight', welder2Id: 'second', welder3Id: 'third', date: '' }),
+    weld('large', { diameterId: 'eight', welder2Id: 'second', welder3Id: 'third', date: '2026-10-28' }),
     weld('small', { diameterId: 'two', welder1Id: '', date: '2026-10-29' }),
-    weld('unknown', { diameterId: 'missing', welder1Id: 'first' }),
+    weld('unknown', { diameterId: 'missing', welder1Id: 'first', date: '2026-10-30' }),
     weld('archived', { diameterId: 'eight', welder1Id: 'first', _archived: true }),
   ], [weld('eight', { sizeinch: 8 }), weld('two', { sizeinch: 2 })]);
   assert.deepEqual(result, { total: 10, completed: 8, remaining: 2, percent: 80, unmeasured: 1, welds: 3, completedWelds: 2 });
+  assert.equal(wdiProgress([weld('no-date', { diameterId: 'two', welder1Id: 'first', date: '' })], [weld('two', { sizeinch: 2 })]).completed, 0, 'a welder without a weld date is not completed yet');
   assert.equal(wdiProgress([], []).percent, 0);
   assert.equal(wdiProgress([weld('none', { diameterId: 'invalid' })], [weld('invalid', { sizeinch: null })]).unmeasured, 1);
 });
