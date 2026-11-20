@@ -18,7 +18,7 @@ import { resourcePath } from '../client/records.tsx';
 
 const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
 /** Routes of the client route table that are not resource pages (`client/App.tsx`). */
-const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive', '/materials/materials-list', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
+const EXPLICIT_ROUTES = ['/dashboard', '/workspace/main-projects', '/workspace/iso-overview', '/welding/lisl', '/welding/inspections', '/welding/reports', '/materials', '/materials/planning', '/materials/execution', '/materials/logistics', '/materials/reports', '/materials/order-materials', '/materials/pending-orders', '/materials/take-in', '/materials/order-archive', '/materials/materials-list', '/materials/iso-execution', '/materials/service-spools', '/materials/service-materials'];
 // The Prefab release and Field release pages share the releases route and differ by ?view= (see client/releases.tsx).
 EXPLICIT_ROUTES.push('/welding/releases', '/welding/field_packages');
 // NDT Batch Import has a route of its own (client/ndt-batch-import.tsx).
@@ -33,12 +33,12 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'Calculations', 'System']);
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);
   // Iso overview: Weld Pilot "Welding data" right after ITPs (the reference's ITP templates are not built) and before
-  // NDT/PWHT Manager; MTO Pilot "Projects data" last, after Pick List archive. Both open the "Project search" dialog.
+  // NDT/PWHT Manager; MTO Pilot "Projects data" last, after Pick List archive. Both open the Iso overview page of all isometrics of the main project.
   const labels = (key: 'weld' | 'mto', title: string) => PILOT_MAP[key].groups.find(group => group.title === title)!.items.map(item => item.label);
   const weldData = labels('weld', 'Welding data');
   assert.equal(weldData[weldData.indexOf('ITPs') + 1], 'Iso overview'); assert.ok(weldData.indexOf('Iso overview') < weldData.indexOf('NDT/PWHT Manager'));
   assert.deepEqual(labels('mto', 'Projects data').slice(-2), ['Pick List archive', 'Iso overview']);
-  for (const key of ['weld', 'mto'] as const) { const item = PILOT_MAP[key].groups.flatMap(group => group.items).find(entry => entry.label === 'Iso overview')!; assert.equal(item.action, 'iso-overview'); assert.deepEqual(pilotItemResources(item), ['projects', 'isometrics']); }
+  for (const key of ['weld', 'mto'] as const) { const item = PILOT_MAP[key].groups.flatMap(group => group.items).find(entry => entry.label === 'Iso overview')!; assert.equal(item.action, undefined); assert.equal(pilotItemPath(item), '/workspace/iso-overview'); assert.deepEqual(pilotItemResources(item), ['projects', 'isometrics']); }
   // Reference items without a page in this application are not listed.
   for (const missing of ['ITP templates', 'WPS Designer', 'Form designer', 'My templates', 'Daily reporting', 'ISO PDF Import', 'Change theme']) assert.ok(!items.some(({ item }) => item.label === missing), missing);
 });
@@ -59,7 +59,7 @@ test('the Assign Iso to FWP menu item opens the assign tab of the field work pac
 test('every menu item resolves to a real page and resource items use resourcePath()', () => {
   catalog.configureCatalog();
   for (const { pilot, item } of items) {
-    if (item.action) { assert.ok(['password', 'iso-overview'].includes(item.action), item.label); continue; }
+    if (item.action) { assert.ok(['password'].includes(item.action), item.label); continue; }
     const path = pilotItemPath(item)!; const route = path.split('?')[0];
     for (const key of pilotItemResources(item)) assert.ok(RESOURCE_MAP[key], `${pilot.key} ${item.label}: ${key}`);
     if (item.resource && !item.path) assert.equal(path, resourcePath(item.resource), item.label);

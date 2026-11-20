@@ -24,6 +24,50 @@ export const ISO_OVERVIEW_COLUMNS: IsoOverviewColumn[] = [
   { key: 'status', label: 'Status', sortable: true, kind: 'status' }, { key: 'started', label: 'Started', sortable: true, kind: 'started' },
   { key: 'options', label: 'Options', sortable: false, kind: 'options' },
 ];
+/** The column of the all-isometrics page: the sub-project an isometric belongs to, right after the ISO number. */
+export const ISO_OVERVIEW_PROJECT_COLUMN: IsoOverviewColumn = { key: 'projectId', label: 'Sub-project', sortable: true };
+/** The columns of the page: those of one sub-project, or (all-isometrics page) with the Sub-project column after ISO. */
+export const overviewColumns = (all: boolean): IsoOverviewColumn[] => all ? [ISO_OVERVIEW_COLUMNS[0], ISO_OVERVIEW_PROJECT_COLUMN, ...ISO_OVERVIEW_COLUMNS.slice(1)] : ISO_OVERVIEW_COLUMNS;
+
+// ----- Filters of the all-isometrics page ---------------------------------------------------------------------------------
+
+/** One filter: `text` = contains (case-insensitive); `select` = one of the distinct values in the rows; `flag` = Yes / No. */
+export interface IsoFilterDef { key: string; label: string; kind: 'text' | 'select' | 'flag' }
+/** The filters, from the fields of the isometric input form, in the order of the form. */
+export const ISO_OVERVIEW_FILTERS: IsoFilterDef[] = [
+  { key: 'isoNo', label: 'ISO number', kind: 'text' }, { key: 'projectId', label: 'Sub-project', kind: 'select' }, { key: 'area', label: 'Area', kind: 'select' },
+  { key: 'irn', label: 'IRN', kind: 'select' }, { key: 'pipingClass', label: 'Piping class', kind: 'select' }, { key: 'itpNo', label: 'ITP', kind: 'select' },
+  { key: 'revNo', label: 'Revision', kind: 'select' }, { key: 'priority', label: 'Priority', kind: 'select' }, { key: 'testSystemId', label: 'Test system', kind: 'select' },
+  { key: 'fieldPackageId', label: 'Field work package', kind: 'select' }, { key: 'ped', label: 'PED category / module', kind: 'select' }, { key: 'xRay', label: 'X-ray requirement', kind: 'select' },
+  { key: 'material', label: 'Material', kind: 'select' }, { key: 'nomDiameter', label: 'Nominal diameter', kind: 'select' }, { key: 'zone', label: 'Zone / Area', kind: 'select' },
+  { key: 'noBo', label: 'NoBo', kind: 'flag' }, { key: 'pwht', label: 'PWHT', kind: 'flag' },
+];
+export type IsoOverviewFilters = Record<string, string>;
+export const NO_OVERVIEW_FILTERS: IsoOverviewFilters = {};
+/** The value of an empty field in a select filter ("(empty)"): it matches the isometrics that have nothing there. */
+export const FILTER_EMPTY = '__empty__';
+/** What a filter compares: Yes / No for a flag, else the trimmed text of the field. */
+export function filterValue(iso: Row, def: IsoFilterDef): string {
+  return def.kind === 'flag' ? (iso[def.key] === true ? 'yes' : 'no') : String(iso[def.key] ?? '').trim();
+}
+export function matchesOverviewFilters(iso: Row, filters: IsoOverviewFilters, defs: IsoFilterDef[] = ISO_OVERVIEW_FILTERS): boolean {
+  return defs.every(def => {
+    const wanted = (filters[def.key] ?? '').trim();
+    if (!wanted) return true;
+    const value = filterValue(iso, def);
+    if (def.kind === 'text') return value.toLowerCase().includes(wanted.toLowerCase());
+    return wanted === FILTER_EMPTY ? value === '' : value === wanted;
+  });
+}
+export const overviewFilterCount = (filters: IsoOverviewFilters, defs: IsoFilterDef[] = ISO_OVERVIEW_FILTERS) => defs.filter(def => (filters[def.key] ?? '').trim() !== '').length;
+/** The choices of a select filter: the distinct values of the rows (naturally sorted, `label` names a stored value) and "(empty)" when some row has none. */
+export function filterOptions(rows: Row[], def: IsoFilterDef, label: (value: string) => string = value => value): { value: string; label: string }[] {
+  const values = new Set<string>(); let empty = false;
+  for (const iso of rows) { const value = filterValue(iso, def); if (value) values.add(value); else empty = true; }
+  const options = [...values].map(value => ({ value, label: label(value) })).sort((a, b) => a.label.localeCompare(b.label, 'en', { numeric: true }));
+  return empty ? [...options, { value: FILTER_EMPTY, label: '(empty)' }] : options;
+}
+
 /** Rows per page of the list (reference lengthMenu), 20 by default, ordered by Started ascending. */
 export const ISO_OVERVIEW_PAGE = { sizes: [10, 20, 50, 100, 500], initial: 20 };
 export const ISO_OVERVIEW_DEFAULT_SORT = { field: 'started', direction: 1 as 1 | -1 };

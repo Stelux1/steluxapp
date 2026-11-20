@@ -338,7 +338,7 @@ export function pageAvailable(availability: Availability | undefined, pathname: 
   return deliveredPage(availability, pathname, definitions);
 }
 function deliveredPage(availability: Availability, pathname: string, definitions: Resource[]): boolean {
-  if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
+  if (availability.features.includes('lisl') && (pathname === '/workspace/main-projects' || pathname === '/workspace/iso-overview' || /^\/workspace\/projects\/[^/]+\/isometrics$/.test(pathname) || /^\/workspace\/isometrics\/[^/]+$/.test(pathname))) return true;
   if (pathname === '/welding/lisl' && availability.features.includes('lisl')) return true;
   if (pathname === MANAGER_PATH && availability.features.includes('inspections')) return true;
   // NDT Batch Import (Weld Pilot, server/ndt-batch.ts): with the inspections flow where the profile delivers pilots.
