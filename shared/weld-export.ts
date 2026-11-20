@@ -24,6 +24,8 @@ export const WELD_EXPORT_COLUMNS: WeldExportColumn[] = HEADERS.map((label, index
 export const EMPTY_PERSON = '------';
 const text = (value: unknown) => value === null || value === undefined ? '' : String(value);
 const resultWord = (value: unknown) => value === 'Accepted' ? 'YES' : value === 'Rejected' ? 'NO' : '';
+/** A size the catalog stores as a bare number ("2", "1.5", "0,75") carries the inch mark, as in the client's file ('3"'); anything else stays as entered. */
+const inch = (value: string) => /^\d+(?:[.,]\d+)?$/.test(value) ? `${value}"` : value;
 /** "2026-08-03 14:42:31" from a stored ISO time stamp. */
 const stamp = (value: unknown) => text(value).replace('T', ' ').slice(0, 19);
 
@@ -44,7 +46,7 @@ export function weldExportValues(weld: Row, rows: Record<string, Row[]>): Record
     const certificate = find('certifications', weld[`certificate${side}Id`]), row = find('materials', weld[`material${side}Id`] || certificate?.materialId);
     const part = text(find('material_parts', row?.partId)?.name) || text(row?.description) || text(certificate?.materialDescription);
     const grade = text(find('material_types', row?.typeId)?.name);
-    return [text(row?.dia), text(lisl[`Schedule ${side}`]), text(lisl[`Wall thickness ${side}`]), grade, part || '???'].join('/');
+    return [inch(text(row?.dia)), text(lisl[`Schedule ${side}`]), text(lisl[`Wall thickness ${side}`]), grade, part || '???'].join('/');
   };
   const vt = text(lisl.VT);
   const values: Record<string, Value> = {

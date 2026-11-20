@@ -298,7 +298,7 @@ export interface BoardFilters { phaseId: string; from: number; to: number; prio?
 export interface BoardRow { iso: Row; status: IsoStatus; percent: number; priority: string }
 /**
  * The isometrics on the execution board of one Type: those with lines of that phase whose Mat.status for that phase
- * lies in the percent range, not started from that Type (Undo execution brings them back), optionally of one priority
+ * lies in the percent range, not started yet (any execution pick list; Undo execution brings them back), optionally of one priority
  * ("Prio-1"); highest Mat.status first. A Type whose phase does not exist lists nothing.
  */
 export function executionBoard(rows: Record<string, Row[]>, filters: BoardFilters): BoardRow[] {
@@ -309,7 +309,8 @@ export function executionBoard(rows: Record<string, Row[]>, filters: BoardFilter
   return active(rows, 'isometrics').flatMap(iso => {
     const status = statuses.get(iso.id); if (!status || status.percent === null) return [];
     if (status.percent < filters.from || status.percent > filters.to) return [];
-    if (startedPhases(rows, iso.id).has(filters.phaseId)) return [];
+    // Start is Shop only, so any execution pick list means the isometric is started (also one written before, without a Type or from another chip).
+    if (startedReports(rows, iso.id).length) return [];
     const priority = executionPriority(iso.priority);
     if (filters.prio && priority !== filters.prio) return [];
     return [{ iso, status, percent: status.percent, priority }];

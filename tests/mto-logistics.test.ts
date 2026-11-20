@@ -303,8 +303,8 @@ test('delta-I3-001 / mto-iso-execution-017: a Type chip is one operation phase; 
   assert.deepEqual(['Prio 1', 'Critical', '', 'Prio 3', 'No priority'].map(executionPriority), ['Prio-1', 'Prio-1', 'Prio not set', 'Prio-3', 'Prio not set']);
   assert.deepEqual(PERCENT_CHIPS.map(chip => [chip.label, chip.from, chip.to]), [['All', 0, 100], ['100%', 100, 100], ['80 – 99%', 80, 99], ['70 – 79%', 70, 79], ['< 70%', 0, 69]]);
   assert.deepEqual([...EXECUTION_EXPORT_COLUMNS], ['Project', 'ISO', 'Piping class', 'Priority', 'Drawing no. 1', 'Chemical clean', 'Mat.status']);
-  // The seed started STX-CW-001 without a Type: like the reference's 00022 it stays on the board.
-  assert.ok(startedReports(rows, 'iso-1').length > 0); assert.ok(all.some(entry => entry.iso.id === 'iso-1'));
+  // The seed started STX-CW-001 without a Type. Start is Shop only (client, 17.11.2026), so any execution pick list means started: it leaves the board.
+  assert.ok(startedReports(rows, 'iso-1').length > 0); assert.equal(all.some(entry => entry.iso.id === 'iso-1'), false);
   // Reserved materials (Print): per reservation, or summed per material.
   const lines = reservedMaterials(rows, { grouped: false }); const grouped = reservedMaterials(rows, { grouped: true });
   assert.ok(lines.length > 0);

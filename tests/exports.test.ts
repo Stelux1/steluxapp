@@ -73,6 +73,7 @@ test('Export weld data: the columns and value formats of the client file', t => 
   const values = report.rows.find(line => line.source?.id === weld.id)!.values;
   assert.match(String(values.Welder), / \| /); assert.equal(values['Welder 2'], '------');
   assert.match(String(values['Last edit date']), /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  assert.ok(report.rows.some(line => /^\d+(?:[.,]\d+)?"\//.test(String(line.values['Material 1']))), 'a bare catalog size carries the inch mark (2"/40/…)');
 });
 
 // ---- weld-dashboard-reports-022 / -023: Export weld data ---------------------------------------------------------------
