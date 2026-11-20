@@ -76,9 +76,9 @@ test('every menu item resolves to a real page and resource items use resourcePat
   // isometric itself (the reference's Order / Take in menu has no Isometric materials, mto-procurement-stock-011).
   // The reference hides Weld process (and the Request archive): the page stays reachable by its route, not by a menu item (shell-general-025). Transfer orders open from the Transfer Orders button on Storehouses and from the bell (mto-procurement-stock-010).
   // Weld data / Materials → Spools open the spool name catalog (w4-spool-catalog); an isometric's own spools open from its Spools tab and the Service request page.
-  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders', 'roles', 'inspection_results', 'calculation_norms'].includes(key)))
+  for (const key of hosted.navigation.filter(key => !['calculation_lines', 'cut_list', 'inspection_requests', 'iso_materials', 'weld_processes', 'spools', 'transfer_orders', 'roles', 'inspection_results', 'calculation_norms'].includes(key))) assert.ok(listed.has(resourcePath(key)), key);
   // Inspection results: NDT results are attached on the weld itself (client, 20.11.2026); calculation norms go with the Calculations pilot.
-  assert.ok(!listed.has(resourcePath('inspection_results')) && !listed.has(resourcePath('calculation_norms'))); assert.ok(listed.has(resourcePath(key)), key);
+  assert.ok(!listed.has(resourcePath('inspection_results')) && !listed.has(resourcePath('calculation_norms')));
   // Roles has no function in Weld Pilot (client, 20.11.2026): no menu item; the welder keeps its Welder role on the server.
   assert.ok(!listed.has(resourcePath('roles')), 'Roles has no menu item');
   assert.ok(!listed.has(resourcePath('weld_processes')) && hosted.navigation.includes('weld_processes'), 'Weld process is delivered but has no menu item');
