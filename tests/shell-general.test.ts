@@ -117,7 +117,7 @@ test('Duplicate Project site copies the ticked settings and lists, names the cop
   assert.equal(copy.irnCode ?? '', '', 'the IRN Code identifies one site and is not copied');
   assert.equal(copy.weightShop ?? null, null, 'Iso progress was not ticked'); assert.equal(copy.hydrotestPlan ?? '', '', 'Document settings were not ticked');
   assert.deepEqual(counts(), before, 'no project, isometric, weld or spool is copied');
-  const copied = store.list('catalog_sites').filter(link => link.siteId === copy.id && link.resourceKey !== 'spool_names' && link.resourceKey !== 'diameters'); // Spools not ticked: the copy gets the default names A to Z (tests/spool-catalog.test.ts)
+  const copied = store.list('catalog_sites').filter(link => link.siteId === copy.id && link.resourceKey !== 'spool_names' && link.resourceKey !== 'diameters' && link.resourceKey !== 'materials'); // Spools not ticked: the copy gets the default names A to Z (tests/spool-catalog.test.ts)
   assert.ok(copied.length > 0 && copied.every(link => link.resourceKey === 'weld_types'), 'only the ticked list');
   assert.ok(copied.some(link => link.recordId === 'weld-type-1' && link.enabled === false), 'a record switched off on the source stays off');
   assert.equal(copied.length, weldTypeLinks + 1); assert.ok(otherLinks >= 0);
@@ -341,7 +341,7 @@ test('password strength grows with length and variety; the strength meter shows 
 // ----- shell-general-022 Company data: the reference's fields, and the logo sizing on the selector ------------------------------
 test('Company data: the form fields equal the reference list (Name* to Padding bottom) with the Logo after Fax', () => {
   const company = projectResource(hosted, RESOURCE_MAP.company_data);
-  assert.deepEqual(companyFormLabels(company.fields), ['Name', 'Address', 'Zip code', 'Residence', 'Mailbox number', 'MN-Zip code', 'MN-Residence', 'Phone', 'Fax', 'Logo', 'Logo max height (px)', 'Logo padding top (px)', 'Logo padding bottom (px)']);
+  assert.deepEqual(companyFormLabels(company.fields), ['Name', 'Address', 'Zip code', 'Residence', 'Mailbox number', 'MN-Zip code', 'MN-Residence', 'Phone', 'Fax', 'Logo', 'Article No prefix', 'Logo max height (px)', 'Logo padding top (px)', 'Logo padding bottom (px)']);
   assert.equal(company.fields.find(item => item.name === 'name')!.required, true);
   const sizing = (name: string) => company.fields.find(item => item.name === name)!;
   assert.deepEqual([sizing('logoMaxHeight').min, sizing('logoMaxHeight').max, sizing('logoMaxHeight').default], [32, 400, 286]);
