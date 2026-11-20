@@ -291,7 +291,7 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
   registerMtoStockRoutes(app, store, availability, access);
   registerMtoLogisticsRoutes(app, availability);
   registerExportRoutes({ app, store, availability, readableRows });
-  registerCutListRoutes({ app, store, availability, readableRows });
+  registerCutListRoutes({ app, store, documents, availability, readableRows });
   if (pilots) registerCertificationRoutes({ app, store, documents, access, readableRows });
   if (pilots) registerMemoTemplateRoutes(app, { store, access });
   app.post('/api/records/:resource', (req, res) => {

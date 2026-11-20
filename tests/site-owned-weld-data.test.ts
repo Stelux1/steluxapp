@@ -137,14 +137,14 @@ test('a fresh local SQLite database gets the per-main-project index; an older on
     let store = new Store(file); seed(store);
     assert.match(index(store.db as unknown as DatabaseSync, 'itps_unique_0'), /'\$\.siteId'.*'\$\.number'/);
     // As an earlier release left it: one global rule per number / name.
-    for (const [name, [key]] of Object.entries(REPLACED_UNIQUE_RULES)) {
+    for (const [name, [key]] of Object.entries(REPLACED_UNIQUE_RULES).filter(([name]) => name !== 'cut_list_unique_0')) {
       const table = name.replace(/_unique_0$/, '');
       store.db.exec(`DROP INDEX "${name}"; CREATE UNIQUE INDEX "${name}" ON "${table}" (coalesce(json_extract(data, '$.${key}'), '')) WHERE archived=0;`);
     }
     const before = store.list('itps').map(item => JSON.stringify(item));
     store.close();
     store = new Store(file);
-    for (const name of Object.keys(REPLACED_UNIQUE_RULES)) assert.match(index(store.db as unknown as DatabaseSync, name), /'\$\.siteId'/, name);
+    for (const name of Object.keys(REPLACED_UNIQUE_RULES).filter(name => name !== 'cut_list_unique_0')) assert.match(index(store.db as unknown as DatabaseSync, name), /'\$\.siteId'/, name);
     assert.deepEqual(store.list('itps').map(item => JSON.stringify(item)), before, 'no record changed');
     store.create('itps', { siteId: RIVER, number: 'ITP-03' });
     assert.throws(() => store.db.prepare("INSERT INTO itps(id,data,created_at,updated_at) VALUES ('raw','{\"siteId\":\"site-river\",\"number\":\"ITP-03\"}','x','x')").run(), /UNIQUE/, 'the index itself refuses a second ITP-03 of Riverside');
@@ -169,8 +169,8 @@ test('the hosted preparation plans the replacement of exactly the previous globa
   for (const [name, keys] of Object.entries(REPLACED_UNIQUE_RULES)) older.set(name, { table: name.replace(/_unique_0$/, ''), unique: true, definition: definition(name.replace(/_unique_0$/, ''), keys) });
   const plan = planHostedSchema({ tables, columns, foreignKeys, indexes: older });
   assert.deepEqual(plan.conflicts, []);
-  assert.deepEqual(plan.replace.map(index => index.name).sort(), ['itps_unique_0', 'pqr_unique_0', 'wps_unique_0']);
-  assert.deepEqual(describePlan(plan).indexes.sort(), ['itps_unique_0 on itps (siteId, number) replaces the unique rule on (number)', 'pqr_unique_0 on pqr (siteId, name) replaces the unique rule on (name)', 'wps_unique_0 on wps (siteId, name) replaces the unique rule on (name)'], 'the dry run names each replacement');
+  assert.deepEqual(plan.replace.map(index => index.name).sort(), ['cut_list_unique_0', 'itps_unique_0', 'pqr_unique_0', 'wps_unique_0']);
+  assert.deepEqual(describePlan(plan).indexes.sort(), ['cut_list_unique_0 on cut_list (isoId, revisionId, name) replaces the unique rule on (isoId, name)', 'itps_unique_0 on itps (siteId, number) replaces the unique rule on (number)', 'pqr_unique_0 on pqr (siteId, name) replaces the unique rule on (name)', 'wps_unique_0 on wps (siteId, name) replaces the unique rule on (name)'], 'the dry run names each replacement');
   // Another rule under that name, or the previous keys under another condition, are reported and left alone.
   const odd = current();
   odd.set('itps_unique_0', { table: 'itps', unique: true, definition: definition('itps', ['title']) });

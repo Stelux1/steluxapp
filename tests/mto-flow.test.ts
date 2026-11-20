@@ -106,7 +106,7 @@ test('MTO Pilot end to end: order, take in, transfer, reserve, start and take a 
 
 test('the MTO Pilot menu has one item per page, in the reference group order', () => {
   const mto = PILOT_MAP.mto;
-  assert.deepEqual(mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'System']);
+  assert.deepEqual(mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Cut List', 'Logistic', 'System']);
   const items = mto.groups.flatMap(group => group.items);
   const paths = items.filter(item => !item.action).map(item => pilotItemPath(item)); // controls (Change password, Iso overview) have no page
   assert.equal(new Set(paths).size, paths.length, `duplicate menu paths: ${paths.filter((path, i) => paths.indexOf(path) !== i).join(', ')}`);

@@ -23,6 +23,7 @@ import { duplicateSite } from './site-duplicate.ts';
 import { reorderAttachmentNames } from './attachment-names.ts';
 import { assignIrn, editedHeader, fillIrn, siteNumbersIrn } from './iso-pages.ts';
 import { ISO_SERVER_OWNED } from '../shared/iso-pages.ts';
+import { inCurrentRevision } from '../shared/cut-list-revisions.ts';
 
 type Input = Record<string, unknown>;
 const str = (v: unknown) => typeof v === 'string' ? v.trim() : '';
@@ -335,8 +336,9 @@ export function runAction(store: Store, key: string, data: Input, actor: Actor, 
             add('calculation_lines', { name: line.name, isoId: copy.id, requirementId: requirements.get(String(line.requirementId)), normId: line.normId, quantity: line.quantity ?? null, description: line.description ?? '' }); lines++;
           }
           // Cut list lines: an earlier line follows its copied MTO material; a line of the calculation table (no material) is copied
-          // with its fittings, and its take-offs and cut length are worked out again (server/cut-list.ts).
-          for (const line of store.list('cut_list').filter(row => row.isoId === source.id && (!row.requirementId || requirements.has(String(row.requirementId))))) {
+          // with its fittings, and its take-offs and cut length are worked out again (server/cut-list.ts). Only the current revision
+          // of the source's cut list is copied; the copy starts as the draft Rev. 00 (shared/cut-list-revisions.ts).
+          for (const line of store.list('cut_list').filter(row => row.isoId === source.id && inCurrentRevision(row, store.list('cut_list_revisions')) && (!row.requirementId || requirements.has(String(row.requirementId))))) {
             const calculation = Object.fromEntries(['sheet', 'dia', 'material', 'schedule', 'totalLength', 'bevel', 'extraLength', 'fit1Id', 'fit2Id', 'fit3Id', 'fit4Id'].filter(name => line[name] !== undefined).map(name => [name, line[name]]));
             add('cut_list', { name: line.name, isoId: copy.id, requirementId: line.requirementId ? requirements.get(String(line.requirementId)) : '', spoolId: spoolFor(line.spoolId), quantity: line.quantity, lengthMm: line.lengthMm, ...calculation, description: line.description ?? '' }); lines++;
           }

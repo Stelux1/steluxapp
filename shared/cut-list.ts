@@ -42,9 +42,13 @@ export function cutLength(values: CutLengthInput, takeoffs: readonly unknown[]) 
 /** A line of the calculation table: it has a total length. Earlier lines (pieces × entered cut length) have none. */
 export const isCalculationLine = (line: Partial<Row> | Record<string, unknown>) => line.totalLength !== undefined && line.totalLength !== null && line.totalLength !== '';
 
-/** Take-offs and PASTUK LENGTH of a stored line with the catalog as it is now. An earlier line keeps its entered cut length. */
+/**
+ * Take-offs and PASTUK LENGTH of a stored line with the catalog as it is now. An earlier line keeps its entered cut length.
+ * A line whose take-offs are fixed (`takeoffsFixed`: a completed revision, or one that keeps the previous standards,
+ * shared/cut-list-revisions.ts) keeps the take-offs stored with it, whatever the catalog says now.
+ */
 export function lineLengths(line: Row, fittings: ReadonlyMap<string, Row>) {
-  const takeoffs = CUT_LIST_FITS.map(slot => { const id = String(line[fitField(slot)] ?? ''); return id ? number(fittings.get(id)?.takeoff ?? line[takeoffField(slot)]) : 0; });
+  const takeoffs = CUT_LIST_FITS.map(slot => { const id = String(line[fitField(slot)] ?? ''); return !id ? 0 : line.takeoffsFixed === true ? number(line[takeoffField(slot)]) : number(fittings.get(id)?.takeoff ?? line[takeoffField(slot)]); });
   if (!isCalculationLine(line)) return { calculated: false, net: null, takeoffs, length: number(line.lengthMm) };
   return { calculated: true, ...cutLength(line, takeoffs) };
 }
@@ -121,6 +125,17 @@ export function fittingName(row: { code: unknown; description?: unknown; diamete
   const dia = diameter ? columnSize(diameter) : '';
   return [description || code, dia && !description.includes(dia) ? dia : ''].filter(Boolean).join(' ');
 }
+
+/** Element types of the Cut list standards page filter, by code prefix (most specific first); a code no rule knows is "Other". */
+const FITTING_TYPE_RULES: [string, RegExp][] = [
+  ['Weld neck flange', /^WN-/i], ['Blind flange', /^BL-/i], ['Spectacle blind', /^SBL-/i], ['Cap', /^CAP-/i],
+  ['Elbow SW', /^e(45|90)sw-/i], ['Elbow', /^e(45|90)-/i], ['Elbow cutback', /^e\d+(?:[.,]\d+)?-/i],
+  ['Equal tee SW', /^Tsw-/i], ['Reducing tee', /^TR-/i], ['Equal tee', /^T-/i], ['Reducer', /^R-/i],
+  ['Weldolet', /^Wolet(SW)?-/i], ['Nipolet', /^Nolet-/i], ['Half pipe', /^HP-/i], ['Stub end', /^StEd-/i],
+  ['Globe valve', /^GoV-/i], ['Gate valve', /^GtV(sw)?-/i], ['Socket weld flange', /^FSW/i], ['Socket weld ring distance', /^SWD$/i], ['Slip-on flange', /^SoF\b/i],
+];
+export const FITTING_TYPES = [...FITTING_TYPE_RULES.map(([type]) => type), 'Other'];
+export const fittingType = (row: Record<string, unknown>) => FITTING_TYPE_RULES.find(([, pattern]) => pattern.test(String(row.code ?? '').trim()))?.[0] ?? 'Other';
 
 /** Words of a search typed in the fitting dropdown: every word must occur in the name, code, description or diameter. */
 export function fittingMatches(fitting: Row, query: string) {

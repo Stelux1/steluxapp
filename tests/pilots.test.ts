@@ -30,7 +30,7 @@ test('both pilots carry the reference titles, module colours and menu groups in 
   assert.deepEqual(PILOTS.map(pilot => [pilot.key, pilot.title, pilot.module]), [['weld', 'Weld Core', 'welding'], ['mto', 'Material Core', 'materials']]);
   assert.equal(PILOT_MAP.weld.color, '#e11d2e'); assert.equal(PILOT_MAP.mto.color, '#f07a1a');
   assert.deepEqual(PILOT_MAP.weld.groups.map(group => group.title), ['General data', 'Start', 'Welder data', 'Weld data', 'Material data', 'NDT data', 'Welding data', 'Releases', 'System']);
-  assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Logistic', 'System']);
+  assert.deepEqual(PILOT_MAP.mto.groups.map(group => group.title), ['General data', 'Start', 'Materials', 'Order / Take in', 'Projects data', 'Cut List', 'Logistic', 'System']);
   // Calculations leave Material Core (client, 20.11.2026): they become a pilot of their own later.
   assert.ok(!PILOT_MAP.mto.groups.some(group => group.title === 'Calculations'));
   for (const { pilot } of items) assert.doesNotMatch(pilot.title, /®/);

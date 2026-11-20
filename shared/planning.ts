@@ -1,6 +1,7 @@
 import { materialRecord } from './materials.ts';
 import type { Row } from './types.ts';
 import { CUT_LIST_FITS, fitField, lineLengths, sortLines } from './cut-list.ts';
+import { inCurrentRevision } from './cut-list-revisions.ts';
 /** Planning resources (estimation). The hosted preparation derives every table from RESOURCES (server/hosted-schema.ts), so this list no longer decides which tables exist. */
 export const PLANNING_RESOURCES = ['calculation_norms', 'calculation_lines', 'cut_list'];
 
@@ -26,12 +27,13 @@ export function calculationEntries(rows: Record<string, Row[]>, isoIds?: Set<str
 /**
  * Cut list lines with their cut length: a line with a total length is worked out with the fitting catalog as it is now
  * (shared/cut-list.ts), an earlier line keeps its entered cut length. Total = pieces × cut length. Lines in line-number order.
+ * Only the current revision of each isometric's cut list counts (shared/cut-list-revisions.ts).
  */
 export function cutListEntries(rows: Record<string, Row[]>, isoIds?: Set<string>) {
   const isos = new Map(active(rows, 'isometrics').map(row => [row.id, row]));
   const requirements = new Map(active(rows, 'iso_materials').map(row => [row.id, row]));
   const fittings = new Map((rows.cut_fittings || []).map(row => [row.id, row]));
-  return sortLines(active(rows, 'cut_list').filter(line => isos.has(String(line.isoId)) && (!isoIds || isoIds.has(String(line.isoId))))).map(line => {
+  return sortLines(active(rows, 'cut_list').filter(line => isos.has(String(line.isoId)) && (!isoIds || isoIds.has(String(line.isoId))) && inCurrentRevision(line, rows.cut_list_revisions))).map(line => {
     const requirement = line.requirementId ? requirements.get(String(line.requirementId)) : undefined;
     const lengths = lineLengths(line, fittings), quantity = number(line.quantity) ?? 1;
     return { line, iso: isos.get(String(line.isoId))!, material: requirement ? materialRecord(rows, requirement) : undefined, fittings: CUT_LIST_FITS.map(slot => fittings.get(String(line[fitField(slot)] ?? ''))),

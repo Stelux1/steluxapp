@@ -39,7 +39,8 @@ export function uniqueIndexes(resources: Resource[] = RESOURCES): UniqueIndex[] 
  * one, so the preparation drops exactly this previous index and creates its replacement in its one transaction
  * (server/hosted-schema.ts); any other differing index is still reported and left alone.
  */
-export const REPLACED_UNIQUE_RULES: Record<string, string[]> = { pqr_unique_0: ['name'], wps_unique_0: ['name'], itps_unique_0: ['number'] };
+// Cut list (20.11.2026): a line number is unique per revision of the isometric's cut list (shared/cut-list-revisions.ts), no longer per isometric.
+export const REPLACED_UNIQUE_RULES: Record<string, string[]> = { pqr_unique_0: ['name'], wps_unique_0: ['name'], itps_unique_0: ['number'], cut_list_unique_0: ['isoId', 'name'] };
 export const uniqueIndexStatement = (index: UniqueIndex) => `CREATE UNIQUE INDEX IF NOT EXISTS "${index.name}"
         ON "${index.table}" (${index.expressions.join(',')}) WHERE ${index.where};`;
 /** Drops the previous index of a replaced unique rule (REPLACED_UNIQUE_RULES) when it does not enforce the new keys yet. */
