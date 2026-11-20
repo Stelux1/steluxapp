@@ -38,6 +38,8 @@ export interface Actor {
   id: string; name: string;
   /** Requests only: whether the account may add records to a resource. Asked where a write adds a record on the side (a new reusable value typed into a form field); system code has no limit. */
   canAdd?: (resource: string) => boolean;
+  /** Requests only: the account is an administrator (shared/permissions.ts `isAdministrator`); it alone may change a weld locked by its NDT request. */
+  administrator?: boolean;
 }
 /** Ledger resources an isometric's deletion does not touch and does not wait for (stock movements and order lines are history of what physically happened). */
 const ISOMETRIC_DELETE_KEEPS = ['movements', 'order_lines'];

@@ -136,6 +136,7 @@ test('old rows work unchanged: an older weld keeps its isometric spool, is edite
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
   // An older workspace: no catalog at all, welds pointing at the isometric spools of the first version.
   store.db.exec(`DELETE FROM "${SPOOL_NAMES}"`);
+  for (const request of store.list('inspection_requests').filter(row => row.weldId === 'weld-1' && row.type === 'NDT')) store.update('inspection_requests', request.id, { status: 'Cancelled' }, request._version, SYSTEM); 
   const before = raw(store);
   const old = store.get('welds', 'weld-1');
   assert.equal(old.spoolId, 'spool-1');

@@ -49,7 +49,7 @@ const enabledRows = (rows: Record<string, Row[]>, key: string, siteId: unknown, 
 const options = (rows: Row[] | undefined, label = (row: Row) => String(row.name)) => (rows || []).filter(row => !row._archived).map(row => ({ value: row.id, label: label(row) }));
 
 /** Uploads files to a record (one request each); returns how many failed. */
-async function uploadFiles(entityType: string, entityId: string, files: File[], documentType: string) {
+export async function uploadFiles(entityType: string, entityId: string, files: File[], documentType: string) {
   let failed = 0;
   for (const file of files) {
     const body = new FormData(); body.set('entityType', entityType); body.set('entityId', entityId); body.set('documentType', documentType); body.set('file', file);

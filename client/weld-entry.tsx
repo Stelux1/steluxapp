@@ -1,19 +1,20 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, ListPlus, Loader2, Lock, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileText, GripVertical, ListPlus, Loader2, Lock, Paperclip, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
 import { useWorkspace, activeRows } from './context.tsx';
-import { Dropdown, EmptyState, Modal, SearchInput, TableScroll, revealInvalidField } from './components.tsx';
+import { Badge, Dropdown, EmptyState, Modal, SearchInput, TableScroll, revealInvalidField } from './components.tsx';
 import { availableWps } from './catalog.ts';
-import { ApiError, api, post, formatDate } from './api.ts';
+import { ApiError, api, apiUrl, post, formatDate } from './api.ts';
 import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
 import { AttachmentCountBadge } from './iso-dialogs.tsx';
-import { useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
+import { uploadFiles, useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
 import { PunchDialog } from './punch.tsx';
 import { projectCertificates, wpsValidation } from '../shared/site-settings.ts';
 import { enabledOnSite, enabledOptions } from '../shared/weld-catalogs.ts';
 import { SPOOL_NAMES, SPOOL_NAME_INPUT, spoolOptionsForIso } from '../shared/spool-catalog.ts';
 import { resourceAvailable } from '../shared/release.ts';
-import { NDT_ROUNDS, INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS, ndtOrPwhtInProgress } from '../shared/inspections.ts';
+import { NDT_DOCUMENT, NDT_ROUNDS, NDT_TYPES, INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS, currentRequest, inspectionFileError, ndtOrPwhtInProgress, requestFlag, roundLabel, weldResults } from '../shared/inspections.ts';
+import { isAdministrator } from '../shared/permissions.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
 import {
   WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
@@ -25,6 +26,7 @@ import {
   chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
   RANGE_DIALOG, WELDER_PLACEHOLDER, chargeMaterialGroup, chargesForWelders, diameterRowSize, diameterSizeMm, groupWeldersForDia, materialGroupWarnings, suggestOnDia, welderFieldsDisabled, welderOptionList, weldersForWps, weldersQualifiedForDiameter,
   diameterSizeInch, wpsChangeClearsWelders, wpsDiameterErrors, wpsMatchesDiameter, wpsOfferedForDiameters, weldDiameterOf, rangeSkippedMessage, type SelectOption,
+  NDT_ATTACH_RESULTS, NDT_LOCK_COMMENT_LABEL, NDT_LOCK_COMMENT_REQUIRED, NDT_LOCK_REASON, ndtAttachLabel, ndtLock, ndtLockRefusal,
 } from '../shared/weld-entry.ts';
 import type { Row } from '../shared/types.ts';
 
@@ -168,6 +170,73 @@ function PreviousEdits({ weldId }: { weldId: string }) {
   </div>;
 }
 
+/**
+ * "NDT result" of Edit weld (client request 20.11.2026: results are attached to the weld the NDT was meant for, not
+ * entered on a separate page). Lists the weld's NDT / NDT Pre results with their report files, and "Attach NDT result":
+ * the weld's NDT request, the round, report number, date, the PDF and a required Approved / Rejected. It saves through
+ * the existing "Upload NDT" action (server/inspections.ts `inspection-upload`), so the request settles and the tracer
+ * and repair rules read the result as before; Approved / Rejected are stored as Accepted / Rejected. A weld locked by its
+ * NDT request still takes results; a weld of a completed phase does not (the server refuses it as well).
+ */
+function NdtResultSection({ weld, phaseLocked }: { weld: Row; phaseLocked: boolean }) {
+  const { rows, canRun, canRecord, hasFeature, refresh, notify } = useWorkspace();
+  const [open, setOpen] = useState(false), [type, setType] = useState(''), [round, setRound] = useState(''), [reportNo, setReportNo] = useState(''), [date, setDate] = useState(todayText()), [result, setResult] = useState(''), [file, setFile] = useState<File | null>(null);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  if (!hasFeature('inspections') || !canRecord('inspection_results')) return null;
+  const typeLabel = (stored: string) => stored === 'NDT PRE' ? 'NDT Pre' : 'NDT';
+  // One choice per examination: the weld's current request of that type, else a new request when the weld requires it.
+  const choices = NDT_TYPES.map(kind => ({ type: kind, request: currentRequest(rows.inspection_requests, weld.id, kind) })).filter(choice => (choice.request || weld[requestFlag(choice.type)] === true) && canRun('inspection-upload', { type: choice.type }));
+  const results = weldResults(rows.inspection_results, weld.id, NDT_TYPES);
+  const allResults = (rows.inspection_results || []).filter(row => !row._archived);
+  // The report file is stored on one result of the report (Upload NDT on multiple welds): every result of that report shows it.
+  const filesOf = (row: Row) => {
+    const sameReport = new Set(allResults.filter(item => item.type === row.type && str(item.reportNo) !== '' && str(item.reportNo) === str(row.reportNo)).map(item => item.id)); sameReport.add(row.id);
+    return (rows.attachments || []).filter(item => !item._archived && item.entityType === 'inspection_results' && sameReport.has(str(item.entityId)));
+  };
+  const chosen = choices.find(choice => choice.type === type) ?? choices[0];
+  const roundsDone = new Set(allResults.filter(row => chosen?.request && row.requestId === chosen.request.id && str(row.result) !== '').map(row => str(row.round)));
+  const roundValue = round || (NDT_ROUNDS.find(item => !roundsDone.has(item.key)) ?? NDT_ROUNDS[0]).key;
+  const canAttach = !phaseLocked && choices.length > 0;
+  function start() { setOpen(true); setError(''); setType(choices[0]?.type ?? ''); setRound(''); setReportNo(''); setDate(todayText()); setResult(''); setFile(null); }
+  async function save() {
+    setError('');
+    if (!chosen) { setError('This weld has no NDT request to attach a result to.'); return; }
+    if (!reportNo.trim()) { setError('Enter the report number.'); return; }
+    if (!date) { setError('Enter the NDT date.'); return; }
+    if (!result) { setError('Choose Approved or Rejected.'); return; }
+    if (!file) { setError('Choose the NDT report (PDF).'); return; }
+    const wrong = inspectionFileError(NDT_DOCUMENT, file.name); if (wrong) { setError(wrong); return; }
+    setBusy(true);
+    try {
+      const saved = await post<{ records: Row[] }>('/actions/inspection-upload', { type: chosen.type, weldIds: [weld.id], rounds: [{ round: roundValue, reportNo: reportNo.trim(), result }], date });
+      const record = saved.records.find(row => row.weldId === weld.id) ?? saved.records[0];
+      const failed = record ? await uploadFiles('inspection_results', record.id, [file], NDT_DOCUMENT) : 1;
+      await refresh();
+      notify(failed ? `NDT result saved on weld ${str(weld.weldNo)}; the report file could not be uploaded.` : `NDT result ${ndtAttachLabel(result)} attached to weld ${str(weld.weldNo)}.`);
+      setOpen(false);
+    } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
+  }
+  return <section className="weld-ndt" aria-label="NDT result" onKeyDown={event => { if (event.key === 'Enter' && (event.target as HTMLElement).tagName === 'INPUT') event.preventDefault(); }}>
+    <div className="weld-ndt-heading"><h3 className="weld-form-section">NDT result</h3>{canAttach && !open && <button type="button" className="btn small" onClick={start}><Paperclip size={15}/>Attach NDT result</button>}</div>
+    {results.length ? <TableScroll><table className="data-table weld-ndt-table" aria-label={`NDT results of weld ${str(weld.weldNo)}`}><thead><tr><th scope="col">Report number</th><th scope="col">Examination</th><th scope="col">Round</th><th scope="col">Date</th><th scope="col">Result</th><th scope="col">Report</th></tr></thead>
+      <tbody>{results.map(row => { const files = filesOf(row); return <tr key={row.id}><td>{str(row.reportNo) || '—'}</td><td>{typeLabel(str(row.type))}</td><td>{roundLabel(row.round)}</td><td className="tabular">{formatDate(row.date)}</td><td><Badge color={row.result === 'Accepted' ? 'green' : row.result === 'Rejected' ? 'red' : 'neutral'}>{ndtAttachLabel(row.result)}</Badge></td>
+        <td>{files.length ? files.map(item => <a key={item.id} className="weld-ndt-file" target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${item.id}`)}><FileText size={14}/>{str(item.name)}</a>) : <span className="muted">No file</span>}</td></tr>; })}</tbody></table></TableScroll>
+      : <p className="muted weld-ndt-empty">{canAttach || phaseLocked ? 'No NDT result attached yet.' : 'No NDT result attached yet. A result can be attached once the weld requires NDT or has an NDT request.'}</p>}
+    {open && <div className="weld-ndt-form">
+      <Failure message={error}/>
+      <div className="form-grid">
+        <SelectField label="NDT request" value={chosen?.type ?? ''} placeholder="Choose" placeholderDisabled options={choices.map(choice => ({ value: choice.type, label: choice.request ? `${str(choice.request.number) || 'Request'} · ${typeLabel(choice.type)} · ${str(choice.request.status)}` : `New ${typeLabel(choice.type)} request` }))} onChange={value => { setType(value); setRound(''); }}/>
+        <SelectField label="Round" value={roundValue} placeholder="Choose" placeholderDisabled options={NDT_ROUNDS.map(item => ({ value: item.key, label: `${item.label}${roundsDone.has(item.key) ? ' (has a result)' : ''}` }))} hint={roundsDone.has(roundValue) ? 'This round already has a result on the request; saving replaces it.' : undefined} onChange={setRound}/>
+        <TextField label="Report number" required value={reportNo} onChange={setReportNo}/>
+        <TextField label="NDT date" type="date" required value={date} onChange={setDate}/>
+      </div>
+      <fieldset className="weld-ndt-result"><legend>Result *</legend>{NDT_ATTACH_RESULTS.map(choice => <label key={choice.value}><input type="radio" name={`ndt-result-${weld.id}`} value={choice.value} checked={result === choice.value} onChange={() => setResult(choice.value)}/>{choice.label}</label>)}</fieldset>
+      <div className="field full-width"><label htmlFor={`weld-ndt-file-${weld.id}`}>NDT report (PDF) *</label><input id={`weld-ndt-file-${weld.id}`} type="file" accept=".pdf,application/pdf" onChange={event => setFile(event.target.files?.[0] ?? null)}/><small className="field-hint">Attached to the result and listed above.</small></div>
+      <div className="weld-ndt-actions"><button type="button" className="btn" disabled={busy} onClick={() => setOpen(false)}>Cancel</button><button type="button" className="btn primary" disabled={busy} onClick={() => void save()}>{busy && <Loader2 size={15} className="spin"/>}Save NDT result</button></div>
+    </div>}
+  </section>;
+}
+
 /** Edit weld from the blockers list of the isometric page: read-only with the lock banner while the weld is locked. */
 export function EditWeldDialog({ iso, weld, onClose }: { iso: Row; weld: Row; onClose: () => void }) {
   const data = useWeldData(iso), lock = weldLock(weld, data.lock);
@@ -175,8 +244,12 @@ export function EditWeldDialog({ iso, weld, onClose }: { iso: Row; weld: Row; on
 }
 
 export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Row; weld?: Row; data: WeldData; onClose: () => void; lockedReason?: string }) {
-  const { rows, refresh, notify } = useWorkspace();
+  const { rows, refresh, notify, user, canRun } = useWorkspace();
   const mode = weld ? 'edit' : 'add';
+  // NDT lock (chat 17.11.2026): with an NDT request only an administrator edits the weld, with a change comment; everyone else sees it read-only.
+  // An account that only records NDT results opens it read-only as well, for the NDT result section.
+  const ndt = ndtLock(data.requests, str(weld?.id), isAdministrator(user));
+  const readOnly = Boolean(lockedReason) || (ndt.locked && !ndt.editable) || (Boolean(weld) && !canRun('save-weld', { weldId: str(weld?.id) }));
   const [values, setValues] = useState<Values>(() => initialValues(weld, iso.id));
   const [updatePrev, setUpdatePrev] = useState(false), [updateNext, setUpdateNext] = useState(false);
   const [note, setNote] = useState(''), [defaultDiameter, setDefaultDiameter] = useState('');
@@ -215,7 +288,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
   // Live rules: missing mandatory fields are marked and block saving; Dia. is compared with the chosen certificates.
   const missing = missingMandatoryFields(data.site, values), blocked = Object.keys(missing).length > 0;
   const diameterCheck = weldDiameterCheck({ ...values, defaultDiameter }, { certificates: data.certs, diameters: data.diameters });
-  const reasonNeeded = Boolean(weld) && ndtOrPwhtInProgress(data.requests, str(weld?.id));
+  const reasonNeeded = Boolean(weld) && (ndt.locked || ndtOrPwhtInProgress(data.requests, str(weld?.id)));
   const reasonMissing = reasonNeeded && !editReason(note);
   const addNew = weld ? addNewEnabled(values.weldNo, weld.weldNo, data.all.map(row => row.weldNo)) : false;
   const disabledCertificates = projectCertificates(data.site) || data.offered.some(row => !certificateSelectable(row));
@@ -316,22 +389,24 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
     <form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)} noValidate>
       <div className="modal-body weld-form">
         {lockedReason && <div className="alert iso-lock-banner" role="status"><Lock size={16} aria-hidden="true"/><span><strong>{lockedReason}</strong> Weld {str(weld?.weldNo)} is read-only.</span></div>}
+        {!lockedReason && ndt.locked && <div className="alert iso-lock-banner" role="status"><Lock size={16} aria-hidden="true"/><span><strong>{NDT_LOCK_REASON}</strong> {ndt.editable ? 'Enter a change comment to save a change.' : `Weld ${str(weld?.weldNo)} is read-only for you; NDT results can still be attached below.`}</span></div>}
         {weld && <PreviousEdits weldId={weld.id}/>}
-        {reasonNeeded && !lockedReason && <div className="weld-reason">
-          <div className="alert weld-warning" role="note"><AlertCircle size={18}/><span><strong>Warning</strong><br/>{EDIT_REASON_WARNING}</span></div>
-          <div className="field"><label htmlFor="weld-edit-reason">{EDIT_REASON_LABEL}</label><textarea id="weld-edit-reason" required maxLength={EDIT_REASON_MAX} rows={3} value={note} placeholder={EDIT_REASON_LABEL} aria-invalid={Boolean(e.note)} aria-describedby={e.note ? 'weld-edit-reason-error' : undefined} onChange={event => setNote(event.target.value)}/>{e.note && <small id="weld-edit-reason-error" className="field-error">{e.note}</small>}</div>
+        {reasonNeeded && !readOnly && <div className="weld-reason">
+          <div className="alert weld-warning" role="note"><AlertCircle size={18}/><span><strong>Warning</strong><br/>{ndt.locked ? NDT_LOCK_COMMENT_REQUIRED : EDIT_REASON_WARNING}</span></div>
+          <div className="field"><label htmlFor="weld-edit-reason">{ndt.locked ? NDT_LOCK_COMMENT_LABEL : EDIT_REASON_LABEL}</label><textarea id="weld-edit-reason" required maxLength={EDIT_REASON_MAX} rows={3} value={note} placeholder={ndt.locked ? 'Why does this weld change?' : EDIT_REASON_LABEL} aria-invalid={Boolean(e.note)} aria-describedby={e.note ? 'weld-edit-reason-error' : undefined} onChange={event => setNote(event.target.value)}/>{e.note && <small id="weld-edit-reason-error" className="field-error">{e.note}</small>}</div>
         </div>}
         <Failure message={error}/>
-        <fieldset className="weld-form-fields" disabled={Boolean(lockedReason)}>
+        <fieldset className="weld-form-fields" disabled={readOnly}>
         <div className="weld-form-columns">{layout.map((column, index) => <div key={index} className={`weld-form-column weld-form-column-${index + 1}`}>{column.map(item => <Fragment key={item.name}>{columns[item.name]}</Fragment>)}</div>)}</div>
         </fieldset>
-        {blocked && <p className="weld-blocked muted" role="status">{WELD_MANDATORY_MESSAGE}</p>}
+        {blocked && !readOnly && <p className="weld-blocked muted" role="status">{WELD_MANDATORY_MESSAGE}</p>}
         <MaterialWarnings warnings={warnings}/>
+        {weld && <NdtResultSection weld={weld} phaseLocked={Boolean(lockedReason)}/>}
       </div>
       <div className="modal-footer">
-        <button type="button" className="btn" disabled={busy} onClick={onClose}>{lockedReason ? 'Close' : 'Cancel'}</button>
-        {weld && !lockedReason && <button type="button" className="btn" disabled={saveBlocked || !addNew} title={addNew ? undefined : 'Change Weld no. to a number this isometric does not have yet.'} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
-        {!lockedReason && <button className="btn primary" disabled={saveBlocked}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add'}</button>}
+        <button type="button" className="btn" disabled={busy} onClick={onClose}>{readOnly ? 'Close' : 'Cancel'}</button>
+        {weld && !readOnly && <button type="button" className="btn" disabled={saveBlocked || !addNew} title={addNew ? undefined : 'Change Weld no. to a number this isometric does not have yet.'} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
+        {!readOnly && <button className="btn primary" disabled={saveBlocked}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add'}</button>}
       </div>
     </form>
   </Modal>;
@@ -377,6 +452,8 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
   const { rows, refresh, notify } = useWorkspace();
   const [changes, setChanges] = useState<Touch>({}), [clear, setClear] = useState({ datefit: false, date: false }), [lengthMode, setLengthMode] = useState(false);
   const [error, setError] = useState(''), [fields, setFields] = useState<Record<string, string>>({}), [busy, setBusy] = useState(false);
+  // Checked welds with an NDT request (an administrator's mass edit): the change comment is required and kept on each of them.
+  const [comment, setComment] = useState(''), lockedWelds = selected.filter(weld => ndtLock(data.requests, weld.id, true).locked);
   const set = (name: string) => (value: unknown) => setChanges(current => { const next = { ...current }; if (value === '' || value === undefined) delete next[name]; else next[name] = value; return next; });
   // Mass edit sets new values only, so catalog records switched off on the active main project are not offered.
   const options = (key: string, label: (row: Row) => string = row => str(row.name)) => sortByName(enabledOptions(key, activeRows(rows, key), str(data.site?.id), rows), 'name').map(row => ({ value: row.id, label: label(row) }));
@@ -411,14 +488,19 @@ function MassEditDialog({ iso, data, selected, onClose, onDone }: { iso: Row; da
     if (selected.some(weld => massEditMissingFields(data.site, weld, read.changes).length)) { setError(MASS_EDIT_MANDATORY_MESSAGE); return; }
     const unselectable = certificateSelectionErrors(read.changes, [1, 2], data.certificates);
     if (Object.keys(unselectable).length) { setError(CERTIFICATE_NOT_SELECTABLE); setFields(Object.fromEntries(Object.keys(unselectable).map(name => [name.replace('certificate', 'chargeNo').replace('Id', ''), CERTIFICATE_NOT_SELECTABLE]))); return; }
+    if (lockedWelds.length && !editReason(comment)) { setError(NDT_LOCK_COMMENT_REQUIRED); return; }
     setBusy(true);
-    try { await post('/actions/mass-edit-welds', { weldIds: selected.map(row => row.id), versions: Object.fromEntries(selected.map(row => [row.id, row._version])), changes: body }); await refresh(); notify(`${selected.length} ${selected.length === 1 ? 'weld' : 'welds'} updated.`); onDone(); onClose(); }
+    try { await post('/actions/mass-edit-welds', { weldIds: selected.map(row => row.id), versions: Object.fromEntries(selected.map(row => [row.id, row._version])), changes: body, ...(lockedWelds.length ? { note: editReason(comment) } : {}) }); await refresh(); notify(`${selected.length} ${selected.length === 1 ? 'weld' : 'welds'} updated.`); onDone(); onClose(); }
     catch (failure) { setError(errorMessage(failure)); setFields((failure as ApiError).fields || {}); } finally { setBusy(false); }
   }
   const e = fields;
   return <Modal title="Mass edit welds" subtitle={`${str(iso.isoNo)} · ${selected.length} checked ${selected.length === 1 ? 'weld' : 'welds'}`} wide onClose={onClose}>
     <form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)} noValidate><div className="modal-body weld-form">
       <Failure message={error}/>
+      {lockedWelds.length > 0 && <div className="weld-reason">
+        <div className="alert iso-lock-banner" role="note"><Lock size={16} aria-hidden="true"/><span><strong>{NDT_LOCK_REASON}</strong> Checked with an NDT request: {lockedWelds.map(weld => str(weld.weldNo)).join(', ')}.</span></div>
+        <div className="field"><label htmlFor="weld-mass-comment">{NDT_LOCK_COMMENT_LABEL}</label><textarea id="weld-mass-comment" required maxLength={EDIT_REASON_MAX} rows={2} value={comment} placeholder="Why do these welds change?" onChange={event => setComment(event.target.value)}/></div>
+      </div>}
       <p className="muted">Only the fields you change are written. Fields left on “Keep current” stay as they are on every checked weld.</p>
       <div className="form-grid weld-mass-columns">{MASS_EDIT_COLUMNS.map((column, index) => <div key={index}>{column.map(entry => control(entry))}</div>)}</div>
       <div className="form-grid">
@@ -488,7 +570,7 @@ function BringBackDialog({ weld, onClose, onBack }: { weld: Row; onClose: () => 
 const COLUMNS = ['Sort', 'WN', 'Type', 'Wdr', 'VI', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT', 'Idx', 'Chg.No.', 'Material ①', 'Idx', 'Chg.No.', 'Material ②', 'WPS', 'D', 'S', 'Options'];
 
 function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, canAttachments, switcher }: { iso: Row; onAttachments: () => void; onAuditTrail: () => void; onSetPhase: () => void; canSetPhase: boolean; canAttachments: boolean; switcher: ReactNode }) {
-  const { canRecord, canRun, refresh, notify } = useWorkspace(); const data = useWeldData(iso);
+  const { canRecord, canRun, refresh, notify, user } = useWorkspace(); const data = useWeldData(iso);
   const [selected, setSelected] = useState<string[]>([]), [query, setQuery] = useState(''), [showDeleted, setShowDeleted] = useState(false);
   const [dialog, setDialog] = useState<'add' | 'range' | 'mass' | 'delete' | 'punch' | null>(null), [editing, setEditing] = useState<Row | null>(null), [stamping, setStamping] = useState<Row | null>(null), [removing, setRemoving] = useState<Row[]>([]), [restoring, setRestoring] = useState<Row | null>(null);
   const [dragging, setDragging] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [announce, setAnnounce] = useState('');
@@ -497,6 +579,10 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
   const { welds } = data, order = welds.map(weld => weld.id);
   const sortingOff = weldSortingDisabled(iso), sorting = weldSortingMenu(sortingOff);
   const locks = new Map([...welds, ...data.deleted].map(weld => [weld.id, weldLock(weld, data.lock)]));
+  // NDT lock: a weld with an NDT request; it can be checked, moved and deleted only by an administrator (the server says the same).
+  const administrator = isAdministrator(user);
+  const ndtLocks = new Map([...welds, ...data.deleted].map(weld => [weld.id, ndtLock(data.requests, weld.id, administrator)]));
+  const frozen = (weld: Row) => locks.get(weld.id)!.locked || !ndtLocks.get(weld.id)!.editable;
   const sideOf = (weld: Row, side: 1 | 2) => {
     const certificate = data.certs.get(str(weld[`certificate${side}Id`])), material = data.materials.get(str(weld[`material${side}Id`] || certificate?.materialId));
     return sideSummary(weld, side, { certificate, material, materialType: str(data.materialTypes.get(str(material?.typeId))?.name), materialPart: str(data.materialParts.get(str(material?.partId))?.name) });
@@ -511,7 +597,10 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
   const visible = listed.filter(weld => weldMatchesSearch(rowText(weld), query));
   const checked = showDeleted ? [] : visible.filter(weld => selected.includes(weld.id) && !locks.get(weld.id)!.locked);
   const unlocked = showDeleted ? [] : visible.filter(weld => !locks.get(weld.id)!.locked);
-  const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canMass = canRun('mass-edit-welds'), canDelete = canRecord('welds', 'delete');
+  // Checked welds still go to the NDT / VI / PWHT actions; Mass edit and Delete refuse a checked weld locked by its NDT request.
+  const ndtFrozen = checked.find(frozen);
+  const editChecked = (open: () => void) => { if (!checked.length) notify(MASS_EDIT_SELECT_NOTHING); else if (ndtFrozen) notify(ndtLockRefusal(ndtFrozen.weldNo)); else open(); };
+  const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canOpen = canEdit || NDT_TYPES.some(type => canRun('inspection-upload', { type })), canMass = canRun('mass-edit-welds'), canDelete = canRecord('welds', 'delete');
   const showSort = !sortingOff && !showDeleted, canSort = canRun('reorder-welds') && showSort;
   const columns = showSort ? COLUMNS : COLUMNS.slice(1);
   async function toggleSorting() {
@@ -543,7 +632,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
       case 'audit-trail': return <button type="button" onClick={onAuditTrail}>{label}</button>;
       case 'set-phase': return <button type="button" disabled={!canSetPhase} onClick={onSetPhase}>{label}</button>;
       case 'show-deleted': return <button type="button" onClick={() => void toggleDeleted()}>{showDeleted ? WELD_BRING_BACK_WORDING.showActive : label}</button>;
-      case 'delete-selected': return <button type="button" disabled={!canDelete || !checked.length} onClick={() => { setRemoving(checked); setDialog('delete'); }}>{label}</button>;
+      case 'delete-selected': return <button type="button" disabled={!canDelete || !checked.length} onClick={() => editChecked(() => { setRemoving(checked); setDialog('delete'); })}>{label}</button>;
       case 'sorting': return <button type="button" role="menuitemcheckbox" aria-checked={sorting.checked} onClick={() => void toggleSorting()}>{sorting.checked ? '☑' : '☐'} {sorting.label}</button>;
       default: {
         const item = inspectionItem(key); if (!item) return null;
@@ -558,7 +647,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
         <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>
           {WELD_OPTIONS_MENU.map(entry => { const node = menuItem(entry.key, entry.label); return node ? <Fragment key={entry.key}>{entry.dividerBefore && <div role="separator" className="dropdown-divider"/>}{node}</Fragment> : null; })}
         </Dropdown>
-        <button type="button" className="btn" disabled={!canMass || showDeleted} onClick={() => { if (checked.length) setDialog('mass'); else notify(MASS_EDIT_SELECT_NOTHING); }}>Mass edit welds</button>
+        <button type="button" className="btn" disabled={!canMass || showDeleted} onClick={() => editChecked(() => setDialog('mass'))}>Mass edit welds</button>
         <button type="button" className="btn" disabled={!canRun('add-welds') || showDeleted} onClick={() => setDialog('range')}><ListPlus size={16}/>{RANGE_DIALOG.toolbar}</button>
         <button type="button" className="btn primary" disabled={!canAdd || showDeleted} onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button>
       </div></div>
@@ -568,11 +657,11 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     {listed.length ? <TableScroll><table className="data-table weld-table" aria-label={`${showDeleted ? 'Deleted welds' : 'Welds'} of ${str(iso.isoNo)}`} aria-busy={busy}>
       <thead><tr>{columns.map((name, index) => <th key={`${name}${index}`} scope="col" className={name === 'Sort' ? 'weld-sort-head' : undefined}>{name === 'Sort' ? <span className="sr-only">Sort</span> : name}</th>)}<th scope="col" className="select-cell"><input type="checkbox" aria-label="Check all unlocked welds" disabled={showDeleted} checked={unlocked.length > 0 && unlocked.every(weld => selected.includes(weld.id))} ref={input => { if (input) input.indeterminate = unlocked.some(weld => selected.includes(weld.id)) && !unlocked.every(weld => selected.includes(weld.id)); }} onChange={event => setSelected(current => event.target.checked ? [...new Set([...current, ...unlocked.map(weld => weld.id)])] : current.filter(id => !unlocked.some(weld => weld.id === id)))}/></th></tr></thead>
       <tbody>{visible.map(weld => {
-        const lock = locks.get(weld.id)!, type = data.types.get(str(weld.typeId)), stamps = welderStamps(weldersOf(weld)), stamper = data.stampers.get(str(weld.stampedBy));
+        const lock = locks.get(weld.id)!, ndt = ndtLocks.get(weld.id)!, type = data.types.get(str(weld.typeId)), stamps = welderStamps(weldersOf(weld)), stamper = data.stampers.get(str(weld.stampedBy));
         const abbreviation = typeAbbreviation(type), tooltip = locationTooltip(type);
         return <tr key={weld.id} className={`${lock.locked ? 'weld-row-locked' : ''} ${dragging === weld.id ? 'weld-row-dragging' : ''}`} onDragOver={event => { if (dragging && dragging !== weld.id) event.preventDefault(); }} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, weld.id), welds.find(row => row.id === dragging)); }}>
-          {showSort && <td className="weld-sort-cell">{canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld, 'up')}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld, 'down')}><ArrowDown size={14}/></button></> : <span className="muted">-</span>}</td>}
-          <td className="weld-no">{canEdit && !lock.locked && !showDeleted ? <button type="button" className="record-link" onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
+          {showSort && <td className="weld-sort-cell">{canSort && !ndt.editable ? <span className="weld-lock" role="img" aria-label={`Weld ${str(weld.weldNo)} cannot be moved. ${NDT_LOCK_REASON}`} title={NDT_LOCK_REASON}><Lock size={14}/></span> : canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld, 'up')}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld, 'down')}><ArrowDown size={14}/></button></> : <span className="muted">-</span>}</td>}
+          <td className="weld-no">{canOpen && !lock.locked && !showDeleted ? <button type="button" className="record-link" onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
           <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}`}>{abbreviation}</span> : <span className="muted">-</span>}</td>
           <td>{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{NO_WELDER_TEXT}</span>}</td>
           <td><InspectionCell weld={weld} kind="VI"/></td><td><InspectionCell weld={weld} kind="NDT PRE"/></td><td><InspectionCell weld={weld} kind="NDT"/></td><td><InspectionCell weld={weld} kind="PWHT"/></td>
@@ -581,8 +670,9 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
           <td className="tabular">{weldDiameterText(weld, data.diameters.get(str(weld.diameterId))) || <span className="muted">—</span>}</td>
           <td>{str(data.spools.get(str(weld.spoolId))?.name) || <span className="muted">—</span>}</td>
           <td className="weld-options">{lock.locked ? <span className="weld-lock" role="img" aria-label={`Locked. ${lock.reason}`} title={lock.reason}><Lock size={16}/></span> : showDeleted ? (canDelete && <button type="button" className="icon-btn" aria-label={`${WELD_BRING_BACK_WORDING.icon} ${str(weld.weldNo)}`} title={WELD_BRING_BACK_WORDING.icon} onClick={() => setRestoring(weld)}><RotateCcw size={16}/></button>) : <>
-            {canEdit && <button type="button" className="icon-btn" aria-label={`Edit weld ${str(weld.weldNo)}`} onClick={() => setEditing(weld)}><Pencil size={16}/></button>}
-            {canDelete && <button type="button" className="icon-btn" aria-label={`Delete weld ${str(weld.weldNo)}`} onClick={() => { setRemoving([weld]); setDialog('delete'); }}><Trash2 size={16}/></button>}
+            {ndt.locked && <span className="weld-lock weld-lock-ndt" role="img" aria-label={`Weld ${str(weld.weldNo)}. ${NDT_LOCK_REASON}`} title={NDT_LOCK_REASON}><Lock size={16}/></span>}
+            {canOpen && <button type="button" className="icon-btn" aria-label={ndt.editable && canEdit ? `Edit weld ${str(weld.weldNo)}` : `Open weld ${str(weld.weldNo)} to see or attach NDT results`} title={ndt.editable && canEdit ? undefined : 'Open the weld: NDT results can be attached'} onClick={() => setEditing(weld)}><Pencil size={16}/></button>}
+            {canDelete && ndt.editable && <button type="button" className="icon-btn" aria-label={`Delete weld ${str(weld.weldNo)}`} onClick={() => { setRemoving([weld]); setDialog('delete'); }}><Trash2 size={16}/></button>}
             {canEdit && <button type="button" className={`icon-btn ${weld.stampedBy ? 'weld-stamp-set' : ''}`} aria-label={`Stamp weld ${str(weld.weldNo)}${stamper ? `, stamped by ${str(stamper.name)}` : ''}`} title={stamper ? stampOptionLabel(stamper) : 'Stamp'} onClick={() => setStamping(weld)}><Stamp size={16}/></button>}</>}</td>
           <td className="select-cell"><input type="checkbox" aria-label={`Check weld ${str(weld.weldNo)}`} disabled={lock.locked || showDeleted} title={lock.locked ? lock.reason : undefined} checked={!lock.locked && !showDeleted && selected.includes(weld.id)} onChange={event => setSelected(current => event.target.checked ? [...current, weld.id] : current.filter(id => id !== weld.id))}/></td>
         </tr>;
@@ -592,6 +682,7 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
       : showDeleted ? <EmptyState {...deletedViewEmpty(welds.length)}/>
       : <EmptyState title="No welds on this isometric" description="Add the first weld, or add a range of weld numbers at once." action={canAdd ? <button type="button" className="btn primary" onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : undefined}/>}
     {welds.length > 0 && !showDeleted && <p className="muted weld-legend"><Lock size={13}/> A padlock marks a weld of a completed phase: field welds after the Field release, shop welds after the Prefab release. Reopen the release to change them.</p>}
+    {!showDeleted && welds.some(weld => ndtLocks.get(weld.id)!.locked) && <p className="muted weld-legend"><Lock size={13}/> A padlock in Options marks a weld with an NDT request: only an administrator can change it, with a comment. Its NDT results are attached in the weld itself (open the weld → NDT result).</p>}
     {dialog === 'add' && <WeldDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
     {dialog === 'range' && <RangeDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
     {editing && <WeldDialog iso={iso} weld={editing} data={data} onClose={() => setEditing(null)}/>}

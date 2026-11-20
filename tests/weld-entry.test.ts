@@ -20,11 +20,11 @@ import {
   EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE,
   CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, SIDE_VALUES, addNewEnabled, certificateLabel, certificateSelectable, certificateSelectionErrors, chargeDetails, chargeOptionList,
   compositeEnds, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, normalizeSizeInch, parseInchSize, specialWeldCleared, specialWeldHidden,
-  weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
+  weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel, NDT_ATTACH_RESULTS, NDT_LOCK_COMMENT_REQUIRED, NDT_LOCK_REASON, ndtAttachLabel, ndtLock,
   ADD_PRE_HT_LABEL, RANGE_DIALOG, WELDER_GROUP_LABELS, WELDER_PLACEHOLDER, chargeMaterialGroup, chargesForWelders, diameterRowSize, groupWeldersForDia, materialGroupWarnings, sortChargesForDia, suggestOnDia,
   welderFieldsDisabled, welderQualifiedByProcess, wpsValidationMode, wpsDiameterRange, wpsHoldsDiameter, wpsRangeText, wpsOfferedForDiameters, wpsDiameterErrors, weldDiameterOf, diameterSizeInch, type WeldDiameter, welderOptionLabel, welderOptionList, weldersForWps, weldersQualifiedForDiameter, wpsChangeClearsWelders, wpsMatchesDiameter,
 } from '../shared/weld-entry.ts';
-import { ndtOrPwhtInProgress } from '../shared/inspections.ts';
+import { NDT_TYPES, ndtOrPwhtInProgress, ndtRequested } from '../shared/inspections.ts';
 import type { Row, User } from '../shared/types.ts';
 
 const row = (id: string, data: Record<string, unknown> = {}) => ({ id, _version: 1, _archived: false, _createdAt: '', _updatedAt: '', ...data }) as Row;
@@ -304,6 +304,17 @@ test('Dia. must equal the diameter of the chosen charges, with a Default diamete
   assert.equal(normalizeSizeInch('0,50"'), '0.5'); assert.equal(parseInchSize('3/4'), '0.75'); assert.deepEqual(compositeEnds('4" x 2"'), ['4', '2']);
 });
 
+test('NDT lock: any NDT or NDT Pre request that is not cancelled locks the weld; only an administrator may still edit it', () => {
+  const requests = [row('r1', { weldId: 'a', type: 'NDT', status: 'Accepted' }), row('r2', { weldId: 'b', type: 'NDT PRE', status: 'Open' }), row('r3', { weldId: 'c', type: 'PWHT', status: 'Open' }), row('r4', { weldId: 'd', type: 'NDT', status: 'Cancelled' }), row('r5', { weldId: 'e', type: 'NDT', status: 'Open', _archived: true }), row('r6', { weldId: 'f', type: 'VI', status: 'Open' })];
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f'].filter(id => ndtRequested(requests, id)), ['a', 'b']);
+  assert.deepEqual(ndtLock(requests, 'a', false), { locked: true, editable: false, reason: NDT_LOCK_REASON });
+  assert.deepEqual(ndtLock(requests, 'a', true), { locked: true, editable: true, reason: NDT_LOCK_REASON });
+  assert.deepEqual(ndtLock(requests, 'c', false), { locked: false, editable: true, reason: '' });
+  assert.equal(NDT_LOCK_REASON, 'Locked: an NDT request exists. Only an administrator can change it, with a comment.');
+  assert.deepEqual(NDT_ATTACH_RESULTS.map(choice => [choice.value, choice.label]), [['Accepted', 'Approved'], ['Rejected', 'Rejected']], 'stored as the existing results, labelled Approved / Rejected');
+  assert.deepEqual(['Accepted', 'Rejected', ''].map(ndtAttachLabel), ['Approved', 'Rejected', '—']);
+});
+
 test('NDT or PWHT in progress: an open NDT (Pre) or Pre-HT / PWHT request; the reason is kept as plain text', () => {
   const requests = [row('r1', { weldId: 'a', type: 'NDT', status: 'Open' }), row('r2', { weldId: 'b', type: 'NDT', status: 'Accepted' }), row('r3', { weldId: 'c', type: 'PWHT', status: 'Open' }), row('r4', { weldId: 'd', type: 'VI', status: 'Open' }), row('r5', { weldId: 'e', type: 'NDT PRE', status: 'Open', _archived: true })];
   assert.deepEqual(['a', 'b', 'c', 'd', 'e'].filter(id => ndtOrPwhtInProgress(requests, id)), ['a', 'c']);
@@ -335,6 +346,8 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, profile:
   const act = async (key: string, data: unknown) => { const response = await request(`/api/actions/${key}`, 'POST', data); return { status: response.status, body: await response.json() as Record<string, any> }; };
   return { store, request, act, signIn, usePilot: (key: string) => { pilot = key; } };
 }
+/** The sample's NDT requests taken off welds whose test is about another rule (a weld with an NDT request is locked, see the NDT lock tests). */
+const withoutNdtRequests = (store: Store, ...weldIds: string[]) => { for (const request of store.list('inspection_requests').filter(row => weldIds.includes(String(row.weldId)) && NDT_TYPES.includes(String(row.type)))) store.update('inspection_requests', request.id, { status: 'Cancelled' }, request._version, SYSTEM); };
 const complete = { isoId: 'iso-1', typeId: 'weld-type-1', wpsId: 'wps-1', date: '2026-10-22', welder1Id: 'welder-1', diameterId: 'diameter-6', chargeNo1: 'EXISTING', chargeNo2: 'CONN ISO' };
 const orderOf = (store: Store, isoId: string) => orderedWelds(store.list('welds').filter(w => w.isoId === isoId)).map(w => w.id);
 const archiveRelease = (store: Store, isoId: string, type: string) => { const release = store.list('releases').find(r => r.isoId === isoId && r.type === type)!; store.archive('releases', release.id, release._version, actor); };
@@ -384,7 +397,7 @@ test('save-weld creates a weld at the end of the table and enforces mandatory fi
 });
 
 test('save-weld edits send only changed fields, clears the NDT percent when it stops applying and refuses a tracer change on edit', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-5');
   const weld = f.store.get('welds', 'weld-5');
   let result = await f.act('save-weld', { weldId: weld.id, expectedVersion: weld._version, lengthMode: 'Length in mm', dialen: 95, ndoReq: true, ndtpercent: 40 });
   assert.equal(result.status, 201, JSON.stringify(result.body));
@@ -401,7 +414,7 @@ test('save-weld edits send only changed fields, clears the NDT percent when it s
 });
 
 test('Upd. prev. weld and Upd. next weld copy the charge to the adjoining side of the neighbour in table order', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-1', 'weld-10', 'weld-19', 'weld-18');
   assert.deepEqual(orderOf(f.store, 'iso-1'), ['weld-1', 'weld-10', 'weld-19', 'weld-28']);
   const weld = f.store.get('welds', 'weld-10');
   const result = await f.act('save-weld', { weldId: weld.id, expectedVersion: weld._version, chargeNo1: 'H-1043', certificate1Id: 'cert-h1043', material1Id: 'material-2', chargeNo2: 'EXISTING', certificate2Id: '', material2Id: '', diameterId: 'diameter-6', updatePrev: true, updateNext: true });
@@ -467,7 +480,7 @@ test('rule (d) through HTTP: Prefab / Field complete lock their welds and the in
 });
 
 test('rule (d) through HTTP: locked welds cannot be edited, deleted or restored; reopening the release unlocks them; shop and field are separate', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-1', 'weld-3', 'weld-12');
   // iso-3 has a Prefab and a Field release: weld-3 is a shop weld, weld-12 a field weld.
   assert.equal(f.store.get('weld_types', f.store.get('welds', 'weld-3').typeId as string).location, 'Shop'); assert.equal(f.store.get('weld_types', f.store.get('welds', 'weld-12').typeId as string).location, 'Field');
   for (const id of ['weld-3', 'weld-12']) {
@@ -484,8 +497,8 @@ test('rule (d) through HTTP: locked welds cannot be edited, deleted or restored;
   assert.equal((await f.act('save-weld', { isoId: 'iso-3', weldNo: 'W901' })).status, 201, 'no type, no phase yet');
   // iso-9 only has a Prefab release: its shop weld is locked, its field weld is not.
   assert.equal((await f.act('save-weld', { weldId: 'weld-9', kr: 'K9' })).status, 423);
-  assert.equal((await f.act('save-weld', { weldId: 'weld-18', kr: 'K9', note: 'KR corrected' })).status, 201, 'weld-18 has an open NDT request: the reason is required');
-  assert.equal((await f.act('save-weld', { weldId: 'weld-18', typeId: 'weld-type-1' })).status, 423, 'typing it as a shop weld would lock it');
+  assert.equal((await f.act('save-weld', { weldId: 'weld-18', kr: 'K9', note: 'KR corrected' })).status, 201, 'weld-18 has an open NDT request: the administrator gives a change comment');
+  assert.equal((await f.act('save-weld', { weldId: 'weld-18', typeId: 'weld-type-1', note: 'Type corrected' })).status, 423, 'typing it as a shop weld would lock it');
   // Removing the Field release unlocks weld-12 at once; the Prefab release still holds weld-3.
   archiveRelease(f.store, 'iso-3', 'Field');
   assert.equal((await f.act('save-weld', { weldId: 'weld-12', kr: 'K9' })).status, 201); assert.equal((await f.act('save-weld', { weldId: 'weld-3', kr: 'K9' })).status, 423);
@@ -531,7 +544,7 @@ test('Add welds (range) creates the missing numbers all or nothing, after the ex
 });
 
 test('Mass edit welds writes only the fields that change, clears dates on request and is all or nothing', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-5', 'weld-6', 'weld-1', 'weld-10');
   const before = Object.fromEntries(['weld-5', 'weld-6'].map(id => [id, f.store.get('welds', id)]));
   const versions = Object.fromEntries(Object.entries(before).map(([id, weld]) => [id, weld._version]));
   let result = await f.act('mass-edit-welds', { weldIds: ['weld-5', 'weld-6'], versions, changes: { kr: 'ignored' } });
@@ -583,7 +596,7 @@ test('the table order is stored per isometric; a stale order is refused', async 
 });
 
 test('access: only accounts that may edit welds in Weld Pilot can use the actions, in both directions and across the pilot boundary', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-5');
   const payload = { ...complete, weldNo: 'W060' };
   const attempts = () => [['save-weld', payload], ['add-welds', { isoId: 'iso-1', start: 20, end: 21 }], ['mass-edit-welds', { weldIds: ['weld-5'], changes: { pos2: '2G' } }], ['reorder-welds', { isoId: 'iso-1', weldIds: orderOf(f.store, 'iso-1') }]] as const;
   // The administrator in the other pilot is refused: the pilot is the boundary.
@@ -708,7 +721,7 @@ test('sample weld types carry the reference abbreviations (Shop WS, Field FW, HO
 });
 
 test('save-weld form rules: the same welder twice, Dia. against the charges with Default diameter, special weld numbers, unaccepted certificates, tracer on Add', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-1');
   // weld-iso-welds-024: a second identical welder is refused.
   let result = await f.act('save-weld', { ...complete, weldNo: 'W070', welder2Id: 'welder-1' });
   assert.equal(result.status, 422); assert.equal(result.body.fields.welder2Id, DUPLICATE_WELDER);
@@ -746,17 +759,19 @@ test('save-weld form rules: the same welder twice, Dia. against the charges with
 });
 
 test('Mass edit welds applies the Tracer flag (weld-iso-welds-018)', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-5', 'weld-6');
   assert.deepEqual(['weld-5', 'weld-6'].map(id => Boolean(f.store.get('welds', id).tracer)), [false, false]);
   const result = await f.act('mass-edit-welds', { weldIds: ['weld-5', 'weld-6'], changes: { tracer: true } });
   assert.equal(result.status, 201, JSON.stringify(result.body));
   assert.deepEqual(['weld-5', 'weld-6'].map(id => f.store.get('welds', id).tracer), [true, true]);
 });
 
-test('editing a weld with NDT or PWHT in progress needs a reason, which Previous edits lists (weld-iso-welds-R1, -040)', async t => {
+test('editing a weld with PWHT in progress needs a reason, which Previous edits lists (weld-iso-welds-R1, -040)', async t => {
   const f = await fixture(t);
-  const weld = f.store.get('welds', 'weld-15');
-  assert.ok(f.store.list('inspection_requests').some(row => row.weldId === weld.id && row.status === 'Open'), 'the sample has an open NDT request on weld 15');
+  // weld-19 has no NDT request; an open PWHT request puts heat treatment in progress.
+  assert.equal(ndtRequested(f.store.list('inspection_requests'), 'weld-19'), false);
+  f.store.create('inspection_requests', { number: 'R90019', weldId: 'weld-19', type: 'PWHT', status: 'Open', date: '2026-10-22' }, SYSTEM);
+  const weld = f.store.get('welds', 'weld-19');
   let result = await f.act('save-weld', { weldId: weld.id, expectedVersion: weld._version, kr: 'K2' });
   assert.equal(result.status, 422); assert.equal(result.body.error, 'You MUST enter reason for editing weld');
   assert.equal((await f.act('save-weld', { weldId: weld.id, kr: 'K2', note: '<p> </p>' })).status, 422, 'markup alone is no reason');
@@ -767,11 +782,69 @@ test('editing a weld with NDT or PWHT in progress needs a reason, which Previous
   assert.equal(result.status, 201, JSON.stringify(result.body)); assert.equal(f.store.get('welds', weld.id).kr, 'K2');
   history = await (await f.request(`/api/weld-history/${weld.id}`)).json();
   assert.equal(history.edits.length, 1); assert.equal(history.edits[0].comment, 'KR from the revised drawing'); assert.equal(history.edits[0].user, 'Weld admin');
-  // A weld without a request in progress needs none.
-  assert.equal((await f.act('save-weld', { weldId: 'weld-1', kr: 'K3' })).status, 201);
+  // A weld without a request needs none.
+  assert.equal((await f.act('save-weld', { weldId: 'weld-20', kr: 'K3' })).status, 201);
   // The history needs read access to the weld.
   await f.signIn('No welding', { generalPermission: 'Read only', materialsPermission: 'No access', weldingPermission: 'No access' });
   assert.equal((await f.request(`/api/weld-history/${weld.id}`)).status, 403);
+});
+
+test('NDT lock (chat 17.11.2026): a weld with an NDT request is refused to everyone but an administrator, who needs a change comment kept in Previous edits', async t => {
+  const f = await fixture(t);
+  // weld-15 has the sample's open NDT request; weld-24 shares its isometric (iso-6) and has none.
+  assert.equal(ndtRequested(f.store.list('inspection_requests'), 'weld-15'), true); assert.equal(ndtRequested(f.store.list('inspection_requests'), 'weld-24'), false);
+  const version = () => f.store.get('welds', 'weld-15')._version;
+  // An administrator without a comment is refused, the same with markup alone; nothing is stored.
+  let result = await f.act('save-weld', { weldId: 'weld-15', kr: 'K2' });
+  assert.equal(result.status, 422); assert.equal(result.body.error, NDT_LOCK_COMMENT_REQUIRED);
+  assert.equal((await f.act('save-weld', { weldId: 'weld-15', kr: 'K2', note: '<p> </p>' })).status, 422);
+  assert.notEqual(f.store.get('welds', 'weld-15').kr, 'K2');
+  // An administrator with a comment changes it; the comment is the weld's Previous edits entry.
+  result = await f.act('save-weld', { weldId: 'weld-15', expectedVersion: version(), kr: 'K2', note: 'KR corrected after the NDT request' });
+  assert.equal(result.status, 201, JSON.stringify(result.body)); assert.equal(f.store.get('welds', 'weld-15').kr, 'K2');
+  let history = await (await f.request('/api/weld-history/weld-15')).json();
+  assert.deepEqual(history.edits.map((edit: { comment: string }) => edit.comment), ['KR corrected after the NDT request']);
+  // Mass edit: the administrator needs the comment too, then it is kept on the locked weld only.
+  result = await f.act('mass-edit-welds', { weldIds: ['weld-15', 'weld-24'], changes: { pos2: '2G' } });
+  assert.equal(result.status, 422); assert.match(String(result.body.error), /^Weld W015: Enter a change comment/);
+  result = await f.act('mass-edit-welds', { weldIds: ['weld-15', 'weld-24'], changes: { pos2: '2G' }, note: 'Position from the weld map' });
+  assert.equal(result.status, 201, JSON.stringify(result.body)); assert.equal(f.store.get('welds', 'weld-15').pos2, '2G');
+  history = await (await f.request('/api/weld-history/weld-15')).json(); assert.equal(history.edits[0].comment, 'Position from the weld map');
+  assert.deepEqual((await (await f.request('/api/weld-history/weld-24')).json()).edits, [], 'an unlocked weld keeps no comment');
+  // The record routes carry no comment: the administrator is sent to Edit weld.
+  result = { status: 0, body: {} }; const put = await f.request('/api/records/welds/weld-15', 'PUT', { pos1: '1G', _version: version() });
+  assert.equal(put.status, 423); assert.match(String((await put.json()).error), /change it in Edit weld with a change comment/);
+  // Any other account is refused every write: Edit weld, Mass edit, the record routes, delete and its place in the table.
+  await f.signIn('Weld operator', { generalPermission: 'Read & write', materialsPermission: 'No access', weldingPermission: 'Read & write' });
+  result = await f.act('save-weld', { weldId: 'weld-15', kr: 'K5', note: 'I have a comment' });
+  assert.equal(result.status, 423); assert.equal(result.body.error, 'Weld W015 is locked: an NDT request exists. Only an administrator can change it, with a comment.');
+  assert.equal((await f.act('mass-edit-welds', { weldIds: ['weld-24', 'weld-15'], changes: { pos1: '5G' }, note: 'x' })).status, 423);
+  assert.notEqual(f.store.get('welds', 'weld-24').pos1, '5G', 'all or nothing');
+  assert.equal((await f.request('/api/records/welds/weld-15', 'PUT', { pos1: '1G', _version: version() })).status, 423);
+  assert.equal((await f.request('/api/records/welds/weld-15/archive', 'POST', { _version: version() })).status, 423);
+  assert.equal(f.store.get('welds', 'weld-15')._archived, false); assert.equal(f.store.get('welds', 'weld-15').kr, 'K2');
+  const order = orderOf(f.store, 'iso-6'); assert.ok(order.indexOf('weld-15') < order.indexOf('weld-24'));
+  assert.equal((await f.act('reorder-welds', { isoId: 'iso-6', weldIds: moveWeld(order, 'weld-24', 'up') })).status, 423, 'moving weld-24 above it moves the locked weld');
+  assert.equal((await f.act('reorder-welds', { isoId: 'iso-6', weldIds: order })).status, 201, 'an order that leaves it in place is saved');
+  // The unlocked weld of the same isometric stays editable.
+  assert.equal((await f.act('save-weld', { weldId: 'weld-24', kr: 'K6' })).status, 201);
+  // Attaching an NDT result is no weld edit: an account that records results attaches one to the locked weld.
+  const request = f.store.list('inspection_requests').find(row => row.weldId === 'weld-15' && row.type === 'NDT')!;
+  result = await f.act('inspection-upload', { type: 'NDT', weldIds: ['weld-15'], rounds: [{ round: 'Initial', reportNo: 'RT-2026-915', result: 'Rejected' }], date: '2026-10-23' });
+  assert.equal(result.status, 201, JSON.stringify(result.body));
+  const stored = f.store.list('inspection_results').find(row => row.weldId === 'weld-15' && row.reportNo === 'RT-2026-915')!;
+  assert.deepEqual([stored.requestId, stored.type, stored.result, stored.round, stored.date], [request.id, 'NDT', 'Rejected', 'Initial', '2026-10-23']);
+  assert.equal(f.store.get('inspection_requests', request.id).status, 'Rejected', 'the request settles on the result');
+});
+
+test('NDT lock: the system actor (sample data, imports) is not checked, and a cancelled or removed NDT request does not lock', () => {
+  const s = new Store(':memory:'); seed(s);
+  assert.equal(runAction(s, 'save-weld', { weldId: 'weld-15', kr: 'K7', note: 'Sample correction' }, SYSTEM).record!.kr, 'K7');
+  assert.throws(() => runAction(s, 'save-weld', { weldId: 'weld-15', kr: 'K8', note: 'Comment' }, actor), /Weld W015 is locked: an NDT request exists/);
+  assert.equal(runAction(s, 'save-weld', { weldId: 'weld-15', kr: 'K8', note: 'Comment' }, { ...actor, administrator: true }).record!.kr, 'K8');
+  for (const request of s.list('inspection_requests').filter(row => row.weldId === 'weld-15' && row.type === 'NDT')) s.update('inspection_requests', request.id, { status: 'Cancelled' }, request._version, SYSTEM);
+  assert.equal(runAction(s, 'save-weld', { weldId: 'weld-15', kr: 'K9' }, actor).record!.kr, 'K9', 'a cancelled request no longer locks');
+  s.close();
 });
 
 test('the weld history route is not offered where the profile has no weld entry', async t => {
@@ -790,7 +863,7 @@ test('E9: a fixed part placeholder shows as Material with "-" in Idx / Chg.No.; 
   const source = readFileSync('client/weld-entry.tsx', 'utf8'), mass = source.slice(source.indexOf('function MassEditDialog'), source.indexOf('async function submit', source.indexOf('function MassEditDialog')));
   assert.match(mass, /label: wpsLabel\(row, 'mass'\)/);
   assert.match(source, /certificateSelectionErrors\(read\.changes, \[1, 2\], data\.certificates\)[\s\S]{0,120}setError\(CERTIFICATE_NOT_SELECTABLE\)/, 'refused in the dialog before sending');
-  const f = await fixture(t);
+  const f = await fixture(t); withoutNdtRequests(f.store, 'weld-1');
   assert.equal(f.store.get('certifications', 'certificate-3').accepted, false);
   const before = f.store.get('welds', 'weld-1');
   const result = await f.act('mass-edit-welds', { weldIds: ['weld-1'], changes: { chargeNo1: 'H-5120', certificate1Id: 'certificate-3' } });
@@ -1082,4 +1155,17 @@ test('SA2 N-D2: bringing back the last deleted weld returns to the active welds;
   const source = (await import('node:fs')).readFileSync(new URL('../client/weld-entry.tsx', import.meta.url), 'utf8');
   assert.match(source, /stayInDeletedView\(data\.deleted\.filter\(row => row\.id !== restoring\.id\)\.length\)\) setShowDeleted\(false\)/);
   assert.match(source, /<EmptyState \{\.\.\.deletedViewEmpty\(welds\.length\)\}\/>/);
+});
+
+test('Edit weld attaches NDT results (Approved / Rejected, report PDF) through Upload NDT, and Weld Pilot no longer sends users to the Inspection results page', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../client/weld-entry.tsx', import.meta.url), 'utf8');
+  const section = source.slice(source.indexOf('function NdtResultSection'), source.indexOf('export function EditWeldDialog'));
+  assert.match(section, /Attach NDT result/); assert.match(section, /post<\{ records: Row\[\] \}>\('\/actions\/inspection-upload'/, 'the existing result action');
+  assert.match(section, /uploadFiles\('inspection_results', record\.id, \[file\], NDT_DOCUMENT\)/, 'the PDF goes on the result');
+  assert.match(section, /NDT_ATTACH_RESULTS\.map/); assert.match(section, /Choose Approved or Rejected\./, 'the result is required');
+  assert.match(source, /\{weld && <NdtResultSection weld=\{weld\} phaseLocked=\{Boolean\(lockedReason\)\}\/>\}/, 'shown in Edit weld, outside the read-only fields');
+  assert.match(source, /<fieldset className="weld-form-fields" disabled=\{readOnly\}>/);
+  const lisl = readFileSync(new URL('../client/data-lisl.tsx', import.meta.url), 'utf8');
+  assert.match(lisl, /hasFeature\('pilots'\) \? 'NDT results are attached in the weld itself/);
 });

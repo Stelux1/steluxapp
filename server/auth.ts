@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { AppError, Store, type Actor } from './store.ts';
 import { permissionValue } from '../shared/resources.ts';
 import type { Module, User } from '../shared/types.ts';
-import { canResource,canAction,parsePermissionRules,moduleSummary } from '../shared/permissions.ts';
+import { canResource,canAction,isAdministrator,parsePermissionRules,moduleSummary } from '../shared/permissions.ts';
 import { scopeLimited, siteProfilesField, siteProfilesOf, siteScopeField } from '../shared/site-scope.ts';
 import type {PermissionVerb,Row} from '../shared/types.ts';
 import { referencePasswordAccepted } from '../shared/password-strength.ts';
@@ -84,7 +84,7 @@ export function publicUser(store: Store, id: string, profileId?: string): User {
 export const PILOT_HIDDEN: Partial<Record<'weld' | 'mto', string[]>> = { weld: ['warehouses'] };
 export const pilotHides = (user: User, key: string) => Boolean(user.pilot && PILOT_HIDDEN[user.pilot]?.includes(key));
 /** The account behind a request as the store records it, with its add rights (see `Actor.canAdd`). */
-export const actorOf = (req: Request): Actor => { const user = (req as AuthRequest).user; return { id: user.id, name: user.name, canAdd: resource => canResource(user, resource, 'insert') }; };
+export const actorOf = (req: Request): Actor => { const user = (req as AuthRequest).user; return { id: user.id, name: user.name, canAdd: resource => canResource(user, resource, 'insert'), administrator: isAdministrator(user) }; };
 export function checkPermission(req: Request, module: Module, level = 1) {
   if ((req as AuthRequest).user.permissions[module] < level) throw new AppError(403, 'Your permission profile does not allow this action.');
 }

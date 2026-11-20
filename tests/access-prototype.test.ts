@@ -125,7 +125,9 @@ for (const releaseProfile of ['access-prototype', HOSTED_RELEASE_PROFILE] as con
   assert.equal(store.get('projects', project.id).contact, 'Bulk contact');
   assert.equal((await request('/bulk/welds', 'POST', { ids: [bootstrap.rows.welds[0].id], changes: { description: 'Unavailable bulk area' } })).status, 404);
 
-  const weld = store.list('welds')[0]; assert.equal((await request(`/records/welds/${weld.id}`, 'PUT', { _version: weld._version, chargeNo1: 'WRONG' })).status, 422);
+  // The imported NDT request of the weld is cancelled: a weld with one is locked (shared/weld-entry.ts ndtLock).
+  const weld = store.list('welds')[0]; for (const line of store.list('inspection_requests').filter(row => row.weldId === weld.id && row.type === 'NDT')) store.update('inspection_requests', line.id, { status: 'Cancelled' }, line._version, SYSTEM);
+  assert.equal((await request(`/records/welds/${weld.id}`, 'PUT', { _version: weld._version, chargeNo1: 'WRONG' })).status, 422);
   const wps = store.get('wps', weld.wpsId); store.update('wps', wps.id, { active: false }, wps._version);
   assert.equal((await request('/records/welds', 'POST', { weldNo: 'NEW', isoId: weld.isoId, wpsId: wps.id })).status, 422);
   const profile = store.create('profiles', { name: 'Prototype viewer', generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only' });
