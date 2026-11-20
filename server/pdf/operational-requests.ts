@@ -37,14 +37,14 @@ export interface VisualPdfInput { model: VisualReportModel; company: CompanyForD
 export function visualPdf(input: VisualPdfInput) {
   const { model, company } = input, withIso = model.context.isometrics.length > 1;
   return renderOperational({
-    page: A4_PORTRAIT, title: `Visual inspection report ${model.reportNo}`, generatedAt: input.generatedAt,
+    page: A4_PORTRAIT, title: `Visual inspection ${model.reportNo}`, generatedAt: input.generatedAt,
     async layout(pdf) {
       const box = [
         { label: 'Report no.', value: model.reportNo }, { label: 'Inspection date', value: printDate(model.date) }, { label: 'ITP', value: model.itp },
         { label: 'Activity no.', value: model.activityNo }, { label: 'Custom no.', value: model.customNo }, { label: 'QA/QC engineer', value: engineerLine(model.engineer) },
         ...model.vtFields,
       ];
-      const header = await documentHeader(pdf, { title: 'Visual inspection report', subtitle: `Report ${model.reportNo}`, company, left: projectItems(model.context, input.rows), box });
+      const header = await documentHeader(pdf, { title: `Visual inspection ${model.reportNo}`, company, left: projectItems(model.context, input.rows), box });
       const image = input.signature ? await pdf.embedImage(input.signature.content) : null;
       const headers = [...(withIso ? ['ISO'] : []), ...VISUAL_COLUMNS];
       const widths = [...(withIso ? [9] : []), 8, 5, 5, 6, 13, 11, 8, 8, 6, 7];

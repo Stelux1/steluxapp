@@ -142,11 +142,8 @@ export interface VisualReportModel {
   reportNo: string; itp: string; activityNo: string; customNo: string; date: string; engineer?: Row; /** The VI results of the report (their recording account decides the signature). */ resultIds: string[]; lines: (WeldLine & { accepted: boolean; notApplicable: boolean; result: string })[];
   context: ProjectContext; /** VT document fields of the main project that are filled in. */ vtFields: LabelValueItem[];
 }
-export const VT_SETTINGS: [string, string][] = [['vtDocNo', 'VT Doc.No. & Rev.No.'], ['vtProcedureNo', 'VT Procedure No.'], ['vtType2No', 'VT type 2 no'], ['vtType2Rev', 'VT type 2 rev'], ['vtType2Date', 'VT type 2 date'], ['vtType2OrderNo', 'VT type 2 order No'], ['vt2Prefix', 'VT 2 prefix']];
-/** The VT report version of a main project: 2 when its switch "Visual Inspection Ver 2" is on, otherwise 1. */
-export const vtVersion = (site: Row | undefined | null): 1 | 2 => site?.vt2Enabled === true ? 2 : 1;
-/** The VT document settings a report of this version prints: version 1 the Doc.No. & Rev.No. and Procedure No., version 2 the VT type 2 lines and the prefix. */
-export const vtSettingsFor = (version: 1 | 2) => VT_SETTINGS.filter(([name]) => (version === 2) === (name.startsWith('vtType2') || name === 'vt2Prefix'));
+/** The VT document settings of a main project that every visual inspection report prints (one report version; the earlier VT type 2 settings stay stored but are not printed). */
+export const VT_SETTINGS: [string, string][] = [['vtDocNo', 'VT Doc.No. & Rev.No.'], ['vtProcedureNo', 'VT Procedure No.']];
 /** The visual inspection report of one report number: its results on welds of visible isometrics, newest result per weld. */
 export function visualReportModel(rows: Rows, reportNo: string, isoIds: Set<string>): VisualReportModel | null {
   const number = text(reportNo);
@@ -160,7 +157,7 @@ export function visualReportModel(rows: Rows, reportNo: string, isoIds: Set<stri
   const newest = (weldId: string) => results.filter(row => row.weldId === weldId).sort((a, b) => text(b.date).localeCompare(text(a.date)) || b._createdAt.localeCompare(a._createdAt) || b.id.localeCompare(a.id))[0];
   const lines = sortWeldLines(unique([...results.map(row => text(row.weldId)), ...(generated ? text(generated.weldIds).split(',').filter(id => welds.has(id)) : [])]).map(id => ({ ...weldLine(welds.get(id)!, rows), result: text(newest(id)?.result) })).map(line => ({ ...line, accepted: line.result === 'Accepted', notApplicable: line.result === 'Not applicable' }))) as VisualReportModel['lines'];
   const context = projectContext(rows, unique(lines.map(line => text(line.iso?.id))).map(id => find(rows, 'isometrics', id)!).filter(Boolean));
-  const vtFields = vtSettingsFor(vtVersion(context.site)).map(([name, label]) => ({ label, value: name === 'vtType2Date' ? printDate(context.site?.[name]) : text(context.site?.[name]) })).filter(item => item.value);
+  const vtFields = VT_SETTINGS.map(([name, label]) => ({ label, value: text(context.site?.[name]) })).filter(item => item.value);
   return { reportNo: number, itp: text(oldest.itp), activityNo: text(oldest.activityNo), customNo: text(oldest.customNo), date: text(oldest.date).slice(0, 10), engineer: find(rows, 'qa_engineers', oldest.engineerId), resultIds: results.map(row => row.id), lines, context, vtFields };
 }
 export const VISUAL_COLUMNS: (string | string[])[] = ['Weld no.', 'Type', 'Dia.', 'Wall thk.', 'Material', 'WPS', 'Welder', 'Weld date', 'Accepted', ['Not', 'applicable']];

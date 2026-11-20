@@ -28,11 +28,16 @@ const materialOption = (row: Row) => [text(row.materialNo), text(row.description
 /** The newest file of a certificate (the reference shows one file per certificate). */
 export const certificateFile = (rows: Record<string, Row[]>, id: string) => activeRows(rows, 'attachments').filter(file => file.entityType === 'certifications' && file.entityId === id).sort((a, b) => String(b._createdAt).localeCompare(String(a._createdAt)))[0];
 
-/** File icon next to the index number when the certificate has a file. */
+const isPdf = (file: Row) => /\.pdf$/i.test(text(file.name));
+/** Whether a certificate has a PDF attached (every certificate needs one; older ones may have none). */
+export const certificateHasPdf = (rows: Record<string, Row[]>, id: string) => activeRows(rows, 'attachments').some(file => file.entityType === 'certifications' && file.entityId === id && isPdf(file));
+
+/** File icon next to the index number when the certificate has a file, and a "No PDF" marker while it has no PDF. */
 export function CertificateFileLink({ row }: { row: Row }) {
   const { rows } = useWorkspace(); const file = certificateFile(rows, row.id);
-  if (!file) return null;
-  return <a className="cert-file-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer" title="Certificate file" aria-label={`Certificate file of ${text(row.indexNo) || 'this certificate'}: ${text(file.name)}`}><FileText size={14}/></a>;
+  const marker = certificateHasPdf(rows, row.id) ? null : <span className="cert-no-pdf" title="This certificate has no PDF attached yet. Edit it to attach one.">No PDF</span>;
+  if (!file) return marker;
+  return <><a className="cert-file-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noopener noreferrer" title="Certificate file" aria-label={`Certificate file of ${text(row.indexNo) || 'this certificate'}: ${text(file.name)}`}><FileText size={14}/></a>{marker}</>;
 }
 
 /** The record editor of certifications: the hosted form, the generic editor elsewhere. */
@@ -77,6 +82,9 @@ export function CertificationEditor({ record, onClose }: { record?: Row; onClose
   const [file, setFile] = useState<File | null>(null); const [copyFile, setCopyFile] = useState(false);
   const [error, setError] = useState(''); const [problems, setProblems] = useState<Record<string, string>>({}); const [busy, setBusy] = useState('');
   const id = useId().replaceAll(':', ''); const listId = `cert-materials-${id}`;
+  // Every certificate has a PDF: the form asks for one while the certificate has none (a user who cannot attach files is not asked).
+  const hasPdf = record ? certificateHasPdf(rows, record.id) : false; const pdfRequired = !hasPdf && canRecord('certifications', 'import');
+  const pdfProblem = () => { if (!pdfRequired || file && /\.pdf$/i.test(file.name)) return ''; return file ? 'Choose a PDF file.' : 'Attach the certificate as a PDF.'; };
   const change = (name: string, value: unknown) => setValues(current => ({ ...current, [name]: value }));
   function chooseMaterial(value: string) {
     setMaterialText(value);
@@ -105,19 +113,22 @@ export function CertificationEditor({ record, onClose }: { record?: Row; onClose
   const fail = (failure: unknown) => { const problem = failure as ApiError; const fields = { ...(problem.fields || {}) }; if (fields.diameter) { fields.diameterId ??= fields.diameter; delete fields.diameter; } setError(problem.message); setProblems(fields); };
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setProblems({});
-    if (text(materialText) && !values.materialId) { setError('Please check the highlighted fields.'); setProblems({ materialId: 'Choose a material from the list.' }); return; }
+    const missing = pdfProblem(), unmatched = text(materialText) && !values.materialId;
+    if (missing || unmatched) { setError('Please check the highlighted fields.'); setProblems({ ...(unmatched ? { materialId: 'Choose a material from the list.' } : {}), ...(missing ? { file: missing } : {}) }); return; }
     setBusy('save');
     try {
       const saved = record
         ? await api<{ record: Row }>(`/records/certifications/${record.id}`, { method: 'PUT', body: JSON.stringify({ ...payload(), _version: record._version }) })
         : await post<{ record: Row }>('/records/certifications', { ...values, siteId });
-      try { await attach(saved.record.id); } catch (failure) { await refresh(); setError(`The certificate was saved, but the file was not attached: ${(failure as Error).message}`); setBusy(''); return; }
+      try { await attach(saved.record.id); } catch (failure) { await refresh(); notify(`The certificate was saved without its PDF: ${(failure as Error).message} Open it with Edit to attach the PDF.`); onClose(); return; }
       await refresh(); notify(`Certification ${record ? 'updated' : 'added'}.`); onClose();
     } catch (failure) { fail(failure); } finally { setBusy(''); }
   }
   async function duplicate() {
     if (!record) return;
-    setError(''); setProblems({}); setBusy('duplicate');
+    setError(''); setProblems({}); const missing = !canAttach || copyFile || file && /\.pdf$/i.test(file.name) ? '' : 'Attach a PDF or tick Copy file.';
+    if (missing) { setError('Please check the highlighted fields.'); setProblems({ file: missing }); return; }
+    setBusy('duplicate');
     try {
       const copy = await post<{ record: Row }>(`/certifications/${record.id}/duplicate`, { values, copyFile, siteId });
       try { await attach(copy.record.id); } catch (failure) { await refresh(); setError(`The copy was saved, but the file was not attached: ${(failure as Error).message}`); setBusy(''); return; }
@@ -143,9 +154,9 @@ export function CertificationEditor({ record, onClose }: { record?: Row; onClose
             {problems.materialId ? <small id={`cert-material-${id}-error`} className="field-error">{problems.materialId}</small> : <small id={`cert-material-${id}-hint`} className="cert-material-hint">Type a material number; Material part and Type of material are filled from it.</small>}
           </div> : <FieldInput key={field.name} field={certificateFieldFor(field, Boolean(record))} value={values[field.name]} values={values} error={problems[field.name]} setValue={change} onChange={value => change(field.name, value)}/>)}
           {canAttach && <div className="field full-width">
-            <label htmlFor={`cert-file-${id}`}>File</label>
-            <input id={`cert-file-${id}`} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={event => setFile(event.target.files?.[0] || null)}/>
-            <small className="field-hint">{record && rows.attachments?.some(row => row.entityType === 'certifications' && row.entityId === record.id && !row._archived) ? 'A new file is added next to the files already attached.' : 'PDF or image, up to 20 MB.'}</small>
+            <label htmlFor={`cert-file-${id}`}>PDF{pdfRequired && <span className="required"> *</span>}</label>
+            <input id={`cert-file-${id}`} type="file" accept=".pdf,application/pdf" aria-invalid={Boolean(problems.file)} aria-describedby={problems.file ? `cert-file-${id}-error` : undefined} onChange={event => { setFile(event.target.files?.[0] || null); setProblems(current => ({ ...current, file: '' })); }}/>
+            {problems.file ? <small id={`cert-file-${id}-error`} className="field-error">{problems.file}</small> : <small className="field-hint">{hasPdf ? 'A new PDF is added next to the files already attached.' : 'The certificate as a PDF, up to 20 MB.'}</small>}
           </div>}
         </div>
       </div>

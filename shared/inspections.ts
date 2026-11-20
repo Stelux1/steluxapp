@@ -725,7 +725,8 @@ export const VT_TICK_ONE = 'Tick at least one A or NA to save.';
 export const VT_DELETE_CONFIRM = 'Delete selected VT report(s)?';
 export const VT_NOTHING_TO_DELETE = 'Check at least one report to delete.';
 export const vtMissingMessage = (weldNos: string[]) => `Each weld must have A (accepted) or NA (not accepted) before upload. Missing: ${weldNos.join(', ')}`;
-export const vtNumber = (seq: number) => `VT ${seq}`;
+/** The number of a new visual inspection report: the sequence, zero-padded to 5 digits ("00021"). Numbers stored earlier ("VT 12") stay as they are. */
+export const vtNumber = (seq: number) => String(seq).padStart(5, '0');
 export const vtSeq = (report: Row) => Number(report.seq) || Number(/(\d+)\s*$/.exec(textOf(report.number))?.[1]) || 0;
 /** Next report number of a main project: one more than its highest number, archived reports included so a number is never reused. */
 export const nextVtSeq = (reports: Row[] | null | undefined, siteId: string) => Math.max(0, ...(reports || []).filter(report => textOf(report.siteId) === siteId).map(vtSeq)) + 1;

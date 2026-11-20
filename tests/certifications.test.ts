@@ -408,3 +408,11 @@ test('Edit certification: Diameter, Material part and Type of material start wit
   assert.equal(certificateFieldFor(other, true), other, 'other fields are untouched');
   assert.deepEqual(CERTIFICATE_EDIT_BLANK_FIELDS, ['diameterId', 'materialPartId', 'materialTypeId']);
 });
+
+test('A certificate takes a PDF only: an image or another document is refused, a PDF is stored', async t => {
+  const f = await fixture(t);
+  const before = f.store.list('attachments', true).length;
+  for (const name of ['scan.png', 'scan.jpg', 'sheet.xlsx', 'notes.txt']) { const refused = await f.upload(f.admin, 'certificate-1', name, 'content'); assert.equal(refused.status, 422, name); assert.match((await refused.json()).error || '', /PDF/); }
+  assert.equal(f.store.list('attachments', true).length, before, 'nothing is stored');
+  assert.equal((await f.upload(f.admin, 'certificate-1', 'mill.PDF', '%PDF-1.4 mill')).status, 201);
+});

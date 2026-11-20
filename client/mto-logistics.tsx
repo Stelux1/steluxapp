@@ -479,7 +479,7 @@ function RequestOptions({ request, onSign, onUpload }: { request: ArchiveRequest
       {upload && !request.signOff && <button type="button" className="btn small" title="Upload" aria-label={`Upload the signed document of ${request.number}`} onClick={onUpload}><Upload size={14}/></button>}
       {request.files.signed && <a className="btn small" href={documentUrl(request, 'signed')} target="_blank" rel="noopener" title="Download" aria-label={`Download the signed document of ${request.number}`}><Download size={14}/></a>}
     </>}
-    {request.documents.map(document => <a key={document.id} className="btn small" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
+    {request.documents.map(document => <a key={document.id} className="btn small" target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${document.id}`)} download title={String(document.name)} aria-label={`Download ${document.name}`}><Download size={14}/>Download</a>)}</>;
 }
 const documentUrl = (request: ArchiveRequest, kind: 'service-request' | 'coating-release' | 'signed') => apiUrl(`/service-requests/${encodeURIComponent(request.headId)}/document/${kind}`);
 const blobAsDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('The drawing could not be read.')); reader.readAsDataURL(blob); });

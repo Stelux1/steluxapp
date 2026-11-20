@@ -25,3 +25,4 @@
 .heading-actions:has(.cert-actions) { flex-wrap: wrap; justify-content: flex-end; }
 /* Edit certification: the stored Material No read-only, with the Change link under it. */
 .cert-material-fixed .text-link { justify-self: start; margin-top: 4px; }
+.cert-no-pdf { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; color: var(--danger, #b42318); background: var(--danger-soft, #fdecea); vertical-align: middle; }

@@ -238,9 +238,9 @@ test('delta-I2b-002: the site has the LISL ISS - VT source setting; [ISS] prints
   assert.equal(field.label, 'LISL ISS — VT source'); assert.deepEqual(field.options, [...LISL_VT_SOURCES]); assert.equal(field.default, 'VT from NDT column'); assert.equal(field.section, 'Document settings');
   const hosted = hostedSiteFields(RESOURCE_MAP.sites.fields as never[]).find((item: { name: string }) => item.name === 'lislVtSource') as unknown as { control?: string; label: string };
   assert.equal(hosted.control, 'radio'); assert.equal(hosted.label, 'LISL ISS — VT source');
-  const names = RESOURCE_MAP.sites.fields.map(item => item.name); assert.ok(names.indexOf('lislVtSource') > names.indexOf('vt2Prefix'), 'after the VT 2 fields');
+  const names = RESOURCE_MAP.sites.fields.map(item => item.name); assert.ok(names.indexOf('lislVtSource') > names.indexOf('vtProcedureNo'), 'after the VT fields');
   assert.equal(issVtSource(undefined), 'ndt'); assert.equal(issVtSource(row({ id: 's' })), 'ndt', 'a site saved before the setting existed prints as before');
-  assert.equal(issVtSource(row({ lislVtSource: 'VT from VT2 report' })), 'vt2');
+  assert.equal(issVtSource(row({ lislVtSource: 'VT from VT report' })), 'vt2'); assert.equal(issVtSource(row({ lislVtSource: 'VT from VT2 report' })), 'vt2', 'the old stored value is the same choice'); assert.deepEqual(LISL_VT_SOURCES, ['VT from NDT column', 'VT from VT report']); assert.equal(field.legacy?.['VT from VT2 report'], 'VT from VT report');
 
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
   const rows = rowsOf(store); const weld = rows.welds.find(item => item.isoId === 'iso-1')!;
@@ -253,7 +253,7 @@ test('delta-I2b-002: the site has the LISL ISS - VT source setting; [ISS] prints
   };
   assert.ok(vtOf().join(' ').includes('N-7'), 'by default the VT column reads the NDT result'); assert.equal(vtOf().join(' ').includes('345'), false);
   assert.ok(vtOf('VT from NDT column').join(' ').includes('N-7'));
-  assert.ok(vtOf('VT from VT2 report').join(' ').includes('345')); assert.equal(vtOf('VT from VT2 report').join(' ').includes('N-7'), false, 'the VI report replaces it');
+  assert.ok(vtOf('VT from VT report').join(' ').includes('345')); assert.equal(vtOf('VT from VT2 report').join(' ').includes('345'), true, 'the old value still reads the VI report'); assert.equal(vtOf('VT from VT report').join(' ').includes('N-7'), false, 'the VI report replaces it');
   // A weld on no visual inspection report prints nothing in the VT2 mode.
   const noVi = { ...rows, inspection_results: rows.inspection_results.filter(item => item.id !== 'res-vi'), sites: rows.sites.map(site => ({ ...site, lislVtSource: 'VT from VT2 report' })) };
   assert.deepEqual(issModel(noVi, 'iso-1')!.welds.find(row => row.weldNo === String(weld.weldNo))!.methods.vt, []);

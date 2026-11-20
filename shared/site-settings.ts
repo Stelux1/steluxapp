@@ -12,7 +12,9 @@ export const RELEASE_DOC_DRAWINGS = ['Drawing no + iso', 'Prefix + iso'];
 /** The NDT standards a LISL [ISS] sheet can tick. */
 export const ISS_NDT_STANDARDS = ['ASME', 'EN ISO'];
 /** Edit project site, Document settings: where the VT column of LISL [ISS] reads its report number from (default: the VT NDT column). */
-export const LISL_VT_SOURCES = ['VT from NDT column', 'VT from VT2 report'] as const;
+export const LISL_VT_SOURCES = ['VT from NDT column', 'VT from VT report'] as const;
+/** The earlier stored name of the second choice (there was a VT 2 report then); it stays accepted and means 'VT from VT report'. */
+export const LISL_VT_SOURCE_LEGACY = 'VT from VT2 report';
 export const LISL_VT_SOURCE_LABEL = 'LISL ISS — VT source';
 /** Used by the weld dashboard KPI when a site leaves the repair performance limit empty. */
 export const DEFAULT_REPAIR_PERFORMANCE_LIMIT = 5;
@@ -151,8 +153,6 @@ export const HOSTED_DOCUMENT_SETTINGS: { name: string; label: string; intro?: st
   { name: 'signSubConstruction', label: 'Subcontractor Construction' }, { name: 'signPrincipalUi', label: 'Principal UI' },
   { name: 'signContractorQaqc', label: 'Contractor QA/QC' }, { name: 'signContractorConstruction', label: 'Contractor Construction' }, { name: 'signNobo', label: 'NoBo' },
   { name: 'vtDocNo', label: 'Doc.No. & Rev.No.', intro: 'Visual Inspection' }, { name: 'vtProcedureNo', label: 'Procedure No.' },
-  { name: 'vt2Enabled', label: 'Visual Inspection Ver 2', intro: 'Visual Inspection V2' },
-  { name: 'vtType2No', label: 'VT type 2 no:' }, { name: 'vtType2Rev', label: 'VT type 2 rev:' }, { name: 'vtType2Date', label: 'VT type 2 date:' }, { name: 'vtType2OrderNo', label: 'VT type 2 order No:' }, { name: 'vt2Prefix', label: 'VT 2 prefix:' },
   { name: 'lislField1', label: 'Field 1:', intro: 'LISL A3/A4', hint: 'First acceptance line, e.g. the company name.' }, { name: 'lislField2', label: 'Field 2:', hint: 'Second acceptance line, e.g. the client.' }, { name: 'lislField3', label: 'Field 3:', hint: 'Third acceptance line, e.g. NoBo.' },
   { name: 'lislGuField1', label: 'Field 1:', intro: 'LISL GU/MV', hint: 'First signature group, e.g. the contractor or supplier.' }, { name: 'lislGuField2', label: 'Field 2:', hint: 'Second signature group, e.g. the client.' }, { name: 'lislGuField3', label: 'Field 3:', hint: 'Third signature group, e.g. NoBo.' },
   { name: 'lislDocNo', label: 'Doc.No. & Rev.No.' }, { name: 'lislProcedureNo', label: 'Procedure No.' },
@@ -175,7 +175,7 @@ export function hostedSiteFields<T extends SiteFormField>(fields: T[]): T[] {
     if (field.name === 'lislVtSource') return { ...field, label: LISL_VT_SOURCE_LABEL, control: 'radio' as const, default: LISL_VT_SOURCES[0] };
     const document = documentSettings.get(field.name);
     if (document) return { ...field, label: document.label, ...(document.intro ? { intro: document.intro } : {}), ...(document.hint ? { hint: document.hint } : {}) };
-    if (field.section === 'Document settings' && !firstOwner) { firstOwner = field.name; return { ...field, intro: OWNER_SETTINGS_HEADING }; }
+    if (field.section === 'Document settings' && !(field as { hidden?: boolean }).hidden && !firstOwner) { firstOwner = field.name; return { ...field, intro: OWNER_SETTINGS_HEADING }; }
     if (field.name === 'ndtMeasurement') return { ...field, control: 'radio' as const, optionHints: NDT_MEASUREMENT_HINTS, default: NDT_MEASUREMENTS[0] };
     if (progress.has(field.name)) {
       const phase = PROGRESS_PHASES.find(item => item.field === field.name || item.activities.some(a => a.field === field.name))!;

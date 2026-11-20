@@ -12,7 +12,7 @@ import { EXTRA_RESULT_OPTION, INSPECTION_REQUEST_FIELDS, INSPECTION_RESULT_FIELD
 import { RELEASE_EXTRA_FIELDS } from './releases.ts';
 import { LEGACY_PUNCH_CATEGORIES, LEGACY_PUNCH_PROGRESS, LEGACY_PUNCH_STATUSES, LEGACY_SIGNER_TYPES, PUNCH_CATEGORIES, PUNCH_PROGRESS_OPTIONS, PUNCH_STATUSES, PUNCH_TYPES, SIGNER_TYPES, SIGN_METHODS } from './punch.ts';
 import { applyMtoStock } from './mto-stock.ts';
-import { DEFECT_NORMS, FLANGE_STANDARDS, OWNER_FORM_SETTINGS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS, ISS_NDT_STANDARDS, LISL_VT_SOURCES, LISL_VT_SOURCE_LABEL } from './site-settings.ts';
+import { DEFECT_NORMS, FLANGE_STANDARDS, OWNER_FORM_SETTINGS, NDT_MEASUREMENTS, PROGRESS_PHASES, RELEASE_DOC_DRAWINGS, ISS_NDT_STANDARDS, LISL_VT_SOURCES, LISL_VT_SOURCE_LABEL, LISL_VT_SOURCE_LEGACY } from './site-settings.ts';
 import { ITP_SCOPES } from './itps.ts';
 import { LOGO_PX } from './pdf-company.ts';
 import { ISO_BOOK_SECTION, ISO_BOOK_SWITCHES } from './iso-book-settings.ts';
@@ -56,9 +56,10 @@ const siteSettings: Field[] = [
   t('flangeProcedureNo', 'Flange procedure No.', { section: DOCUMENTS }),
   ...[['signSubQaqc', 'Subcontractor QA/QC'], ['signSubConstruction', 'Subcontractor Construction'], ['signPrincipalUi', 'Principal UI'], ['signContractorQaqc', 'Contractor QA/QC'], ['signContractorConstruction', 'Contractor Construction'], ['signNobo', 'NoBo']].map(([name, label]) => t(name, label, { section: DOCUMENTS })),
   t('vtDocNo', 'VT Doc.No. & Rev.No.', { section: DOCUMENTS }), t('vtProcedureNo', 'VT Procedure No.', { section: DOCUMENTS }),
-  b('vt2Enabled', 'Visual Inspection Ver 2', { section: DOCUMENTS, hint: 'On: the VT reports of this main project are version 2. Off: version 1.' }),
-  t('vtType2No', 'VT type 2 no', { section: DOCUMENTS }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS }), t('vtType2Date', 'VT type 2 date', { section: DOCUMENTS }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS }), t('vt2Prefix', 'VT 2 prefix', { section: DOCUMENTS, hint: 'Printed next to the VT type 2 no on version 2 reports.' }),
-  s('lislVtSource', LISL_VT_SOURCE_LABEL, [...LISL_VT_SOURCES], { section: DOCUMENTS, default: LISL_VT_SOURCES[0], hint: 'Where the VT column of LISL [ISS] takes its report number from.' }),
+  // The Ver 2 switch and its VT type 2 fields are no longer offered (one visual inspection report is printed); their stored values stay in the database.
+  b('vt2Enabled', 'Visual Inspection Ver 2', { section: DOCUMENTS, hidden: true }),
+  t('vtType2No', 'VT type 2 no', { section: DOCUMENTS, hidden: true }), t('vtType2Rev', 'VT type 2 rev', { section: DOCUMENTS, hidden: true }), t('vtType2Date', 'VT type 2 date', { section: DOCUMENTS, hidden: true }), t('vtType2OrderNo', 'VT type 2 order No', { section: DOCUMENTS, hidden: true }), t('vt2Prefix', 'VT 2 prefix', { section: DOCUMENTS, hidden: true }),
+  s('lislVtSource', LISL_VT_SOURCE_LABEL, [...LISL_VT_SOURCES], { section: DOCUMENTS, default: LISL_VT_SOURCES[0], hint: 'Where the VT column of LISL [ISS] takes its report number from.', legacy: { [LISL_VT_SOURCE_LEGACY]: LISL_VT_SOURCES[1] } }),
   ...[1, 2, 3].map(i => t(`lislField${i}`, `LISL A3/A4 Field ${i}`, { section: DOCUMENTS })), ...[1, 2, 3].map(i => t(`lislGuField${i}`, `LISL GU/MV Field ${i}`, { section: DOCUMENTS })),
   t('lislDocNo', 'LISL GU/MV Doc.No. & Rev.No.', { section: DOCUMENTS }), t('lislProcedureNo', 'LISL GU/MV Procedure No.', { section: DOCUMENTS }),
   ...OWNER_FORM_SETTINGS.map(setting => setting.type === 'date' ? d(setting.name, setting.label, { section: DOCUMENTS, hint: setting.hint }) : t(setting.name, setting.label, { section: DOCUMENTS, hint: setting.hint })),
