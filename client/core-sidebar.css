@@ -1,0 +1,65 @@
+/*
+ * Weld Core / Material Core sidebar, drawn after the client's mockups (20.11.2026): logo row, the Core block on a raised navy
+ * card with a Core-coloured edge, the main-project card, letter-spaced section label, light menu rows with the active row as a
+ * tinted pill, a Core-coloured wave above the footer, and a footer split by two thin rules. Only the expanded menu of the
+ * hosted Cores (`.has-core`); the icon rail (`.sidebar-collapsed`) and the other profiles keep their own styles.
+ */
+.has-core { --core-navy: #0a1530; --core-raised: #151f38; --core-line: #ffffff24; --core-text: #e8edf7; --core-soft: #c3cbdc; }
+.has-core .sidebar { background: linear-gradient(180deg, #0b1733 0%, #091330 55%, #071026 100%); }
+
+/* Logo row */
+.has-core:not(.sidebar-collapsed) .sidebar-brand { min-height: 0; }
+.has-core:not(.sidebar-collapsed) .brand-link { padding: 13px 18px 12px 18px; }
+.has-core:not(.sidebar-collapsed) .sidebar .brand-icon { width: 34px; height: 34px; }
+.has-core:not(.sidebar-collapsed) .sidebar .wordmark { gap: 9px; }
+.has-core:not(.sidebar-collapsed) .sidebar .wordmark-name { width: 150px; }
+.has-core:not(.sidebar-collapsed) .sidebar-collapse { width: 24px; height: 24px; box-shadow: 0 2px 8px #0006; }
+
+/* Core block */
+.has-core:not(.sidebar-collapsed) .pilot-badge { position: relative; margin: 0 14px 10px; padding: 8px 10px 8px 12px; min-height: 46px; gap: 10px; border-radius: 8px; border-left: 0; background: var(--core-raised); box-shadow: inset 0 0 0 1px #ffffff0d; overflow: hidden; }
+.has-core:not(.sidebar-collapsed) .pilot-badge::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--module-color); }
+.has-core:not(.sidebar-collapsed) .pilot-badge-icon { width: 30px; height: 30px; border-radius: 7px; background: linear-gradient(145deg, color-mix(in srgb, var(--module-color) 70%, #fff6c0), color-mix(in srgb, var(--module-color) 88%, #000)); box-shadow: 0 2px 6px #0005; }
+.has-core:not(.sidebar-collapsed) .pilot-badge strong { font-size: 13.5px; font-weight: 700; letter-spacing: -.01em; }
+.has-core:not(.sidebar-collapsed) .pilot-badge-switch { min-height: 27px; padding: 3px 9px; gap: 5px; border-radius: 6px; border-color: #ffffff47; color: #fff; font-size: 11.5px; }
+
+/* Main-project card */
+.has-core:not(.sidebar-collapsed) .workspace-switch { margin: 0 14px 18px; padding: 10px 12px; gap: 10px; align-items: center; border-radius: 8px; background: #0c1734; border: 1px solid var(--core-line); }
+.has-core:not(.sidebar-collapsed) .workspace-avatar { width: 30px; height: 30px; }
+.has-core:not(.sidebar-collapsed) .workspace-switch strong { font-size: 12px; font-weight: 700; color: #fff; }
+.has-core:not(.sidebar-collapsed) .workspace-switch small { font-size: 11px; color: var(--core-soft); margin-top: 1px; }
+.has-core:not(.sidebar-collapsed) .sidebar .project-switch-link { margin-top: 3px; font-size: 11.5px; font-weight: 700; color: var(--core-ink); }
+
+/* Section label and rows */
+.has-core:not(.sidebar-collapsed) .nav-label { padding: 0 14px 8px 28px; font-size: 10px; font-weight: 600; letter-spacing: .22em; color: var(--core-soft); }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group { margin: 0 14px; }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group summary { min-height: 30px; padding: 6px 10px 6px 14px; gap: 12px; border-radius: 6px; font-size: 12px; font-weight: 400; color: var(--core-text); }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group summary:hover { background: #ffffff0d; color: #fff; }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group summary .nav-group-title { gap: 12px; }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group summary .nav-group-title svg { width: 16px; height: 16px; color: var(--core-text); opacity: .95; }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group summary > svg:last-child { opacity: .45; }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group[open] > summary { color: #fff; }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group .sub-nav-item { margin: 1px 0; padding: 6px 10px 6px 42px; min-height: 29px; border-left: 0; border-radius: 6px; font-size: 11.5px; color: var(--core-soft); }
+.has-core:not(.sidebar-collapsed) .pilot-nav-group .sub-nav-item:hover { background: #ffffff0d; color: #fff; }
+.has-core:not(.sidebar-collapsed) .sidebar .pilot-nav-group .sub-nav-item.active, .has-core:not(.sidebar-collapsed) .sidebar .nav-item.active { position: relative; border-radius: 6px; font-weight: 700; color: #fff; background: color-mix(in srgb, var(--module-color) 30%, var(--core-navy)); box-shadow: none; }
+.has-core:not(.sidebar-collapsed) .sidebar .pilot-nav-group .sub-nav-item.active::before, .has-core:not(.sidebar-collapsed) .sidebar .nav-item.active::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 6px 0 0 6px; background: var(--module-color); }
+.has-core:not(.sidebar-collapsed) .sidebar .nav-item { margin: 0 14px; padding: 6px 10px 6px 14px; min-height: 30px; gap: 12px; border-radius: 6px; font-size: 12px; color: var(--core-text); }
+
+/* Wave above the footer: a Core-coloured ribbon from the right edge, fading to the left; behind the menu, never clickable. */
+.has-core:not(.sidebar-collapsed) .sidebar::before { left: 0; right: 0; bottom: 96px; height: 150px; opacity: 1;
+  background: linear-gradient(90deg, transparent 10%, color-mix(in srgb, var(--module-color) 14%, transparent) 42%, color-mix(in srgb, var(--module-color) 55%, transparent) 70%, var(--module-color) 100%);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 150' preserveAspectRatio='none'%3E%3Cpath d='M30 150 C 95 120 140 105 175 72 C 205 44 232 26 260 18 L260 64 C 232 70 204 86 178 104 C 140 130 96 142 30 150 Z' fill='%23000'/%3E%3Cpath d='M60 150 C 120 140 170 128 205 112 C 228 101 246 94 260 90 L260 150 Z' fill='%23000' fill-opacity='.32'/%3E%3C/svg%3E") center / 100% 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 260 150' preserveAspectRatio='none'%3E%3Cpath d='M30 150 C 95 120 140 105 175 72 C 205 44 232 26 260 18 L260 64 C 232 70 204 86 178 104 C 140 130 96 142 30 150 Z' fill='%23000'/%3E%3Cpath d='M60 150 C 120 140 170 128 205 112 C 228 101 246 94 260 90 L260 150 Z' fill='%23000' fill-opacity='.32'/%3E%3C/svg%3E") center / 100% 100% no-repeat; }
+
+/* Footer: rule, Connected workspace, rule, account */
+.has-core:not(.sidebar-collapsed) .sidebar-bottom { padding: 0 14px; border-top: 0; background: transparent; }
+.has-core:not(.sidebar-collapsed) .sample-indicator { padding: 11px 6px 11px 10px; gap: 10px; border-top: 1px solid var(--core-line); border-bottom: 1px solid var(--core-line); font-size: 11.5px; color: var(--core-text); }
+.has-core:not(.sidebar-collapsed) .sample-indicator .live-dot { width: 6px; height: 6px; box-shadow: none; }
+.has-core:not(.sidebar-collapsed) .sidebar-user { padding: 12px 2px 14px 4px; border-top: 0; gap: 10px; }
+.has-core:not(.sidebar-collapsed) .user-avatar { width: 30px; height: 30px; background: #1a2a4b; color: #fff; font-weight: 700; box-shadow: inset 0 0 0 1px #ffffff14; }
+.has-core:not(.sidebar-collapsed) .sidebar-user strong { font-size: 12px; font-weight: 700; color: #fff; }
+.has-core:not(.sidebar-collapsed) .sidebar-user small { font-size: 11px; color: var(--core-soft); }
+.has-core:not(.sidebar-collapsed) .sidebar-user .icon-btn { color: var(--core-text); }
+
+@media (prefers-contrast: more), (forced-colors: active) { .has-core:not(.sidebar-collapsed) .sidebar::before { display: none; } }
+/* The narrower menu (window below 1200px, 215px wide): Switch keeps its icon and title, the word moves out of sight so the Core name fits. */
+@media (min-width: 761px) and (max-width: 1200px) { .has-core:not(.sidebar-collapsed) .pilot-badge-switch span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; } .has-core:not(.sidebar-collapsed) .pilot-badge-switch { padding: 3px 7px; } }

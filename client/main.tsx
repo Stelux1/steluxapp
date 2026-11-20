@@ -14,6 +14,7 @@ import './iso-header.css';
 import './iso-overview.css';
 import './pilots.css';
 import './nav-collapse.css';
+import './core-sidebar.css';
 import './signatures.css';
 import './hydrotest.css';
 import './flanges.css';

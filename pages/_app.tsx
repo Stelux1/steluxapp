@@ -13,6 +13,7 @@ import '../client/iso-header.css';
 import '../client/iso-overview.css';
 import '../client/pilots.css';
 import '../client/nav-collapse.css';
+import '../client/core-sidebar.css';
 import '../client/signatures.css';
 // Pilot flows (keep in step with client/main.tsx: Next.js accepts global CSS only here).
 import '../client/hydrotest.css';
