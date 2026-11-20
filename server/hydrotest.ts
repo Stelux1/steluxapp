@@ -1,4 +1,4 @@
-import { HYDROTEST_DOCUMENT_TYPES, HYDROTEST_REQUEST_RESOURCE, TS_APPROVED, isoTestSystemIds, spoolTestSystemId, spoolsOfSystem } from '../shared/hydrotest.ts';
+import { APPROVAL_NEEDS_DOCUMENT, HYDROTEST_DOCUMENT_TYPES, HYDROTEST_REQUEST_RESOURCE, TS_APPROVED, isoTestSystemIds, spoolTestSystemId, spoolsOfSystem } from '../shared/hydrotest.ts';
 import type { Row } from '../shared/types.ts';
 import { AppError, today, type Actor, type Store } from './store.ts';
 
@@ -82,16 +82,30 @@ function releaseSystem(store: Store, data: Input, actor: Actor): Result {
 }
 
 /**
- * "Enter results": one result of a test system (its signed PDF files are attached to it afterwards). "Accepted?" completes
- * the hydrotest of every spool of the system and marks the system Approved ("Test system accepted by client").
+ * "Enter results": one result of a test system (its signed PDF files are attached to it afterwards). The hydrotest is
+ * finished only when the system is Approved, and the server approves only after a signed document (PDF) is uploaded:
+ * "Accepted?" on a new result is refused until an earlier result of the system has one; with `resultId` the client marks
+ * the result it has just uploaded its files to as accepted and approves the system ("Test system accepted by client").
  * Every result stays in the Results history; a later one never replaces an earlier one.
  */
 function enterResult(store: Store, data: Input, actor: Actor): Result {
   const system = store.get('test_systems', data.testSystemId);
   if (data.accepted !== undefined && typeof data.accepted !== 'boolean') throw new AppError(422, 'Accepted? must be checked or unchecked.', { accepted: 'Check or uncheck Accepted?.' });
-  const accepted = data.accepted === true;
-  const record = store.create('hydrotest_results', { testSystemId: system.id, date: today(), accepted }, actor);
-  if (accepted && system.accepted !== TS_APPROVED) store.update('test_systems', system.id, { accepted: TS_APPROVED }, system._version, actor);
+  const accepted = data.accepted === true, resultId = str(data.resultId);
+  let record: Row;
+  if (resultId) {
+    if (!accepted) throw new AppError(422, 'Accepted? must be checked to approve a result.', { accepted: 'Check Accepted?.' });
+    const existing = store.get('hydrotest_results', resultId);
+    if (existing.testSystemId !== system.id) throw new AppError(422, 'This result belongs to another test system.', { resultId: 'Choose a result of this test system.' });
+    record = existing.accepted === true ? existing : store.update('hydrotest_results', existing.id, { accepted: true }, existing._version, actor);
+  } else {
+    record = store.create('hydrotest_results', { testSystemId: system.id, date: today(), accepted }, actor);
+  }
+  // The store refuses the approval without a signed document (after its own access check); the whole action is rolled back, the result included.
+  if (accepted && system.accepted !== TS_APPROVED) {
+    try { store.update('test_systems', system.id, { accepted: TS_APPROVED }, system._version, actor); }
+    catch (error) { if (error instanceof AppError && error.status === 422 && error.fields?.accepted === APPROVAL_NEEDS_DOCUMENT) throw new AppError(422, APPROVAL_NEEDS_DOCUMENT, { accepted: APPROVAL_NEEDS_DOCUMENT }); throw error; }
+  }
   return { resource: 'hydrotest_results', record };
 }
 

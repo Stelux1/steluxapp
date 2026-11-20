@@ -10,7 +10,7 @@ import { SITE_OWNED } from '../shared/welder-data.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
 import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
-import { hydrotestErrors, spoolsOfSystem } from '../shared/hydrotest.ts';
+import { APPROVAL_NEEDS_DOCUMENT, TS_APPROVED, hasSignedDocument, hydrotestErrors, spoolsOfSystem } from '../shared/hydrotest.ts';
 import { flangeInputErrors, flangeStoredValue } from '../shared/flanges.ts';
 import { isoItpLinks, itpSlotRefresh } from '../shared/itp-dashboard.ts';
 import { nextPunchNumber, normalizePunch, punchInputErrors } from '../shared/punch.ts';
@@ -37,6 +37,8 @@ export interface Actor {
   /** Requests only: whether the account may add records to a resource. Asked where a write adds a record on the side (a new reusable value typed into a form field); system code has no limit. */
   canAdd?: (resource: string) => boolean;
 }
+/** Ledger resources an isometric's deletion does not touch and does not wait for (stock movements and order lines are history of what physically happened). */
+const ISOMETRIC_DELETE_KEEPS = ['movements', 'order_lines'];
 export const SYSTEM: Actor = { id: 'system', name: 'Stelux' };
 export const today = () => new Date().toISOString().slice(0, 10);
 export const qty = (value: unknown) => Math.round(Number(value) * 1_000_000) / 1_000_000;
@@ -242,6 +244,8 @@ export class Store {
     if (key === 'isometrics') { const iso = existing ?? data as unknown as Row; Object.assign(errors, isoInputErrors(data, existing, iso.id ? isoBudgets(iso, { iso_materials: this.list('iso_materials').filter(line => line.isoId === iso.id), materials: this.list('materials'), custom_materials: this.list('custom_materials'), operation_phases: this.list('operation_phases') }) : undefined)); }
     if (key === 'hydrotest_requests' || key === 'attachments') Object.assign(errors, hydrotestErrors(key, data));
     this.guardTestSystem(key, { ...existing, ...data } as Row); if (existing) this.guardTestSystem(key, existing);
+    // A test system is approved only once a signed document (PDF) is uploaded for it; the system user (seeds, imports) is not held to it.
+    if (key === 'test_systems' && actor.id !== SYSTEM.id && data.accepted === TS_APPROVED && existing?.accepted !== TS_APPROVED && !(existing && hasSignedDocument(existing.id, { hydrotest_results: this.list('hydrotest_results'), attachments: this.list('attachments') }))) errors.accepted = APPROVAL_NEEDS_DOCUMENT;
     if (key === 'isometrics' && (data.itpId || data.itp2Id)) { const linked = isoItpLinks(data, this.list('itps'), this.list('itp_projects'), existing); Object.assign(errors, linked.errors); Object.assign(data, linked.values); }
     if (key === 'punchlists') { let iso: Row | undefined; try { iso = data.isoId ? this.get('isometrics', data.isoId) : undefined; } catch { /* reported with the field */ } Object.assign(errors, punchInputErrors(data, existing, iso, this.list('punchlists'))); if (!Object.keys(errors).length) { normalizePunch(data, iso); data.number = existing?.number || nextPunchNumber(this.list('punchlists', true)); } }
     if (!Object.keys(errors).length && !this.keptReferences) Object.assign(errors, enablementErrors(this, key, data, existing, input));
@@ -329,6 +333,8 @@ export class Store {
       this.audit(key, id, 'updated', `Updated ${this.resource(key).singular} ${this.display(key, existing)}`, actor);
       this.syncRelations(key,id,input,actor);
       if (key === 'itps') for (const change of itpSlotRefresh(this.get(key, id), this.list('isometrics'))) this.update('isometrics', change.id, change.values, this.get('isometrics', change.id)._version, actor);
+      // Taking the approval off a test system reopens it: the acceptance of its results goes with it.
+      if (key === 'test_systems' && existing.accepted === TS_APPROVED && data.accepted !== TS_APPROVED) for (const result of this.list('hydrotest_results').filter(row => row.testSystemId === id && row.accepted === true)) this.update('hydrotest_results', result.id, { accepted: false }, result._version, actor);
       applyEnablement(this, key, id, input, actor);
       if (key === 'sites') defectNormSaved(this, existing, this.get(key, id), actor);
       // Pilots: renaming a UOM renames it on its materials (they point at the record; ones saved before by their code).
@@ -340,9 +346,22 @@ export class Store {
       return this.get(key, id);
     });
   }
+  private cascading = 0;
+  /** Archive every live record that points at `key`/`id` (and, one level down each time, what points at those). */
+  private archiveDependents(key: string, id: string, actor: Actor) {
+    for (const resource of RESOURCES) {
+      if (ISOMETRIC_DELETE_KEEPS.includes(resource.key)) continue;
+      for (const field of resource.fields.filter(f => f.ref === key)) {
+        for (const dependent of this.db.prepare(`SELECT id,version FROM ${table(resource.key)} WHERE "${field.name}"=? AND archived=0`).all(id) as { id: string; version: number }[]) this.archive(resource.key, dependent.id, dependent.version, actor);
+      }
+    }
+  }
   archive(key: string, id: string, version: number, actor: Actor) {
     return this.transaction(() => {
       const row = this.get(key, id, true);
+      // Hosted: an isometric may be deleted at any time; its welds, materials, spools and the rest are deleted with it, so no figure counts them.
+      const cascade = this.hostedRules && !row._archived && (key === 'isometrics' || this.cascading > 0);
+      if (cascade) { this.cascading++; try { this.archiveDependents(key, id, actor); } finally { this.cascading--; } }
       if (row._version !== version) throw conflict('This record changed. Refresh and try again.');
       this.guardTestSystem(key, row);
       if (this.hostedRules && key === 'roles' && isWelderRole(row) && !row._archived) throw new AppError(422, 'The Welder role cannot be deleted.');
@@ -356,6 +375,7 @@ export class Store {
         // Hosted: a PQR attribute value can be removed from its dropdown while PQRs keep showing it (shared/wps.ts).
         // Hosted: a weld is deleted even while inspection requests refer to it (Delete weld asks "Are you sure?" only).
         if (!(this.hostedRules && (key === 'qualification_options' || key === 'weldercard_options' || key === 'welds'))) for (const resource of RESOURCES) for (const f of resource.fields.filter(f => f.ref === key)) {
+          if (cascade && ISOMETRIC_DELETE_KEEPS.includes(resource.key)) continue;
           const dependent = this.db.prepare(`SELECT id FROM ${table(resource.key)} WHERE "${f.name}"=? AND archived=0 LIMIT 1`).get(id);
           if (dependent) throw conflict(`This ${this.resource(key).singular} is used by active ${resource.title.toLowerCase()}. Archive those records first.`);
         }

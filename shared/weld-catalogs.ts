@@ -27,17 +27,18 @@ export const ENABLED_COLUMN = 'Enabled on this site';
 export const enableLabel = (siteName: string) => `Enable on this site (${siteName})`;
 /**
  * The Add / Edit forms that carry the checkbox "Enable on this site (<site>)", with the box's starting value. The
- * reference ticks nothing. On every other catalog (service companies, laydown areas and materials included) the
+ * reference ticks nothing; the client asked for the same box on Material supplier, Service companies, Laydown areas and
+ * Laydown materials (a new record starts switched off, ticking the box switches it on at once). On every other catalog the
  * availability is changed only through Options.
  */
-export const FORM_ENABLEMENT: Record<string, boolean> = { ndt_processes: false, qa_engineers: false, coatings: false, spool_names: false };
+export const FORM_ENABLEMENT: Record<string, boolean> = { ndt_processes: false, qa_engineers: false, coatings: false, spool_names: false, suppliers: false, service_companies: false, laydowns: false, material_laydowns: false };
 export const formEnablement = (key: string) => Object.hasOwn(FORM_ENABLEMENT, key);
 /**
  * Catalogs whose new records a user adds switched off on every main project until the Add form's box is ticked or
  * Options -> Activate selected is used (hosted profile; the sample data and the demo copy keep "no link = enabled").
- * Weld types are not in the list: their form has no box and their lists show every type as enabled.
+ * Service companies, laydown areas and laydown materials joined the list on the client's answer of 17.11.2026; records that exist keep their state. Weld types are not in the list: their form has no box and their lists show every type as enabled.
  */
-export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers', 'materials', 'spool_names'];
+export const NEW_RECORDS_OFF = ['ndt_processes', 'qa_engineers', 'coatings', 'ndt_defect_codes', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'suppliers', 'service_companies', 'laydowns', 'material_laydowns', 'materials', 'spool_names'];
 /**
  * Catalog forms with a File input inside the dialog, and the field it follows (the NDT process dialog lists File after Method;
  * the welding wire form keeps its own placement). The chosen file is attached to the record once it is saved.

@@ -312,8 +312,8 @@ test('the NDT sample records only defect codes the weld\'s main project may sele
   store.close();
 });
 
-test('mto-logistics-016 / -017 / -018: service companies, laydown areas and laydown materials have the reference headings, no enablement box in the form, and Activate / Deactivate in Options', async t => {
-  for (const key of ['service_companies', 'laydowns', 'material_laydowns']) { assert.ok(enablementKey(key), key); assert.equal(Object.hasOwn(FORM_ENABLEMENT, key), false, `${key}: no Enable box in the Add / Edit form`); }
+test('mto-logistics-016 / -017 / -018: service companies, laydown areas and laydown materials have the reference headings, an unticked enablement box in the Add form, and Activate / Deactivate in Options', async t => {
+  for (const key of ['service_companies', 'laydowns', 'material_laydowns']) { assert.ok(enablementKey(key), key); assert.equal(FORM_ENABLEMENT[key], false, `${key}: the Enable box is in the Add form, unticked`); assert.ok(NEW_RECORDS_OFF.includes(key), `${key}: a new record starts off`); }
   const hosted = availabilityFor(HOSTED_RELEASE_PROFILE)!;
   assert.deepEqual([...hosted.resources.service_companies].sort(), ['address', 'email', 'name', 'phone']);
   assert.deepEqual(hosted.resources.laydowns, ['name']); assert.deepEqual(hosted.resources.material_laydowns, ['name']);
@@ -327,19 +327,34 @@ test('mto-logistics-016 / -017 / -018: service companies, laydown areas and layd
   }
 });
 
+test('hosted: a new supplier, service company, laydown area or laydown material starts off on the current site; the Add box switches it on at once', async t => {
+  const f = await hostedFixture(t); await f.setup(); f.usePilot('mto');
+  const state = async (key: string, record: Row) => enabledOnSite(key, record, 'site-north', { catalog_sites: await f.rows('catalog_sites') });
+  const sampleRows = await f.rows('suppliers'); assert.ok(sampleRows.length && await state('suppliers', sampleRows[0]), 'existing records keep their state (enabled)');
+  for (const [key, data] of [['suppliers', { name: 'Adria Cevi d.o.o.' }], ['service_companies', { name: 'Galvanizing Nord', address: '1 Dock Road' }], ['laydowns', { name: 'North yard 9' }], ['material_laydowns', { name: 'Hala 9' }]] as const) {
+    const off = (await body(await f.request(`/api/records/${key}`, 'POST', { ...data, name: `${data.name} off` }))).record!;
+    assert.equal(await state(key, off), false, `${key}: starts off`);
+    const on = (await body(await f.request(`/api/records/${key}`, 'POST', { ...data, name: `${data.name} on`, enabledOnSite: true, enabledSiteId: 'site-north' }))).record!;
+    assert.equal(await state(key, on), true, `${key}: the box switches it on at once`);
+  }
+});
+
 test('hosted: suppliers, service companies and laydowns (delivered by the MTO flows) get "Enabled on this site" end to end', async t => {
   const f = await hostedFixture(t); await f.setup();
   f.usePilot('mto');
-  // Form checkbox: a new service company switched off on the north site at creation.
-  let response = await f.request('/api/records/service_companies', 'POST', { name: 'Harbour Coating BV', address: '7 Quay Road', enabledOnSite: false, enabledSiteId: 'site-north' });
+  // Form checkbox: a new service company is ticked on at creation (north) and switched on for the river site through Options; Deactivate follows below.
+  let response = await f.request('/api/records/service_companies', 'POST', { name: 'Harbour Coating BV', address: '7 Quay Road', enabledOnSite: true, enabledSiteId: 'site-north' });
   assert.equal(response.status, 201); const company = (await body(response)).record!;
+  response = await f.request('/api/bulk/service_companies', 'POST', { ids: [company.id], versions: { [company.id]: company._version }, changes: { enabledOnSite: true, enabledSiteId: 'site-river' } });
+  assert.equal(response.status, 200);
+  const enabledCompany = (await f.rows('service_companies')).find(row => row.id === company.id)!;
   // Options menu: Deactivate on this site for checked suppliers and laydowns.
   const north = f.store.list('spools').find(spool => f.store.get('isometrics', String(spool.isoId)).projectId === 'project-cooling')!;
   const river = f.store.list('spools').find(spool => f.store.get('isometrics', String(spool.isoId)).projectId === 'project-steam')!;
   // A laydown neither sample spool already lies on (an unchanged reference is never judged).
   const supplier = (await f.rows('suppliers'))[0], laydown = (await f.rows('laydowns')).find(row => row.id !== north.laydownId && row.id !== river.laydownId)!;
   assert.ok(supplier && laydown, 'sample suppliers and laydowns exist');
-  for (const [key, row] of [['suppliers', supplier], ['laydowns', laydown]] as const) {
+  for (const [key, row] of [['service_companies', enabledCompany], ['suppliers', supplier], ['laydowns', laydown]] as const) {
     response = await f.request(`/api/bulk/${key}`, 'POST', { ids: [row.id], versions: { [row.id]: row._version }, changes: { enabledOnSite: false, enabledSiteId: 'site-north' } });
     assert.equal(response.status, 200, key);
   }
@@ -433,9 +448,9 @@ test('the Options menu asks for a Confirm before anything is written', () => {
   assert.match(source, /onClick=\{\(\) => void apply\(confirming\)\}/);
 });
 
-test('the Add form carries "Enable on this site" on NDT process, QA/QC engineers, Coating and Spools only, unticked', () => {
-  assert.deepEqual(Object.keys(FORM_ENABLEMENT).filter(key => FORM_ENABLEMENT[key] === false).sort(), ['coatings', 'ndt_processes', 'qa_engineers', 'spool_names']);
-  for (const key of ['suppliers', 'ndt_locations', 'pwht_processes', 'pwht_locations', 'ndt_defect_codes', 'weld_types', 'weld_processes']) assert.equal(Object.hasOwn(FORM_ENABLEMENT, key), false, key);
+test('the Add form carries "Enable on this site" on NDT process, QA/QC engineers, Coating, Spools, Material supplier, Service companies, Laydown areas and Laydown materials only, unticked', () => {
+  assert.deepEqual(Object.keys(FORM_ENABLEMENT).filter(key => FORM_ENABLEMENT[key] === false).sort(), ['coatings', 'laydowns', 'material_laydowns', 'ndt_processes', 'qa_engineers', 'service_companies', 'spool_names', 'suppliers']);
+  for (const key of ['ndt_locations', 'pwht_processes', 'pwht_locations', 'ndt_defect_codes', 'weld_types', 'weld_processes']) assert.equal(Object.hasOwn(FORM_ENABLEMENT, key), false, key);
   assert.ok(NEW_RECORDS_OFF.includes('ndt_locations') && NEW_RECORDS_OFF.includes('ndt_processes') && !NEW_RECORDS_OFF.includes('weld_types'));
 });
 

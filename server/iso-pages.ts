@@ -1,6 +1,6 @@
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import type { Row } from '../shared/types.ts';
-import { headerFields, highestIrnCounter, IRN_AUTO_MESSAGE, irnNumber, isometricDeleteRefusal, nextIrnSeries, projectDeleteRefusal } from '../shared/iso-pages.ts';
+import { headerFields, highestIrnCounter, IRN_AUTO_MESSAGE, irnNumber, nextIrnSeries, projectDeleteRefusal } from '../shared/iso-pages.ts';
 import { AppError, type Actor, type Store } from './store.ts';
 import { COMPLETION_FIELDS } from '../shared/iso-status.ts';
 
@@ -98,16 +98,8 @@ export function editedHeader(values: unknown): Input {
 /** True when the main project of the project numbers its isometrics itself. */
 export const siteNumbersIrn = (store: Store, project: Row) => siteOfProject(store, project.id)?.irnAuto === true;
 
-/** The reference's refusals of Delete: an isometric with welds, materials, reservations, calculations or started work; a project that is not blank. */
+/** Delete refusals: a project that is not blank. An isometric is never refused (its Delete right is the only gate; the store deletes what hangs on it). */
 export function deleteRefusal(store: Store, key: string, row: Row): string {
-  if (key === 'isometrics') {
-    const of = (resource: string) => live(store, resource).filter(item => item.isoId === row.id).length;
-    return isometricDeleteRefusal({
-      welds: of('welds'), materials: live(store, 'iso_materials').filter(item => item.isoId === row.id).length,
-      reserved: live(store, 'reservations').filter(item => item.isoId === row.id && item.status === 'Reserved').length,
-      calculations: of('calculation_lines') + of('cut_list'), started: of('picklists') + of('releases'),
-    });
-  }
   if (key === 'projects') return projectDeleteRefusal(live(store, 'isometrics').filter(item => item.projectId === row.id).length);
   return '';
 }

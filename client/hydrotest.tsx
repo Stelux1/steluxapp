@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronDown, Download, ExternalLink, FileText, FolderOpen, Loader2, MoveRight, Paperclip, Pencil, Play, Plus, SlidersHorizontal, Trash2, X } from 'lucide-react';
-import { HYDROTEST_ACTIONS, HYDROTEST_DOCUMENT_TYPES, NO_TEST_SYSTEM, PDF_ONLY, SPOOL_COLUMNS, TS_NOT_SET, colourMeaning, isPdfName, spoolColour, spoolFacts, spoolTestSystemId, testSystemColour, type HydrotestColour } from '../shared/hydrotest.ts';
+import { HYDROTEST_ACTIONS, HYDROTEST_DOCUMENT_TYPES, NO_TEST_SYSTEM, PDF_ONLY, SPOOL_COLUMNS, TS_APPROVED, TS_NOT_SET, colourMeaning, hasSignedDocument, isPdfName, spoolColour, spoolFacts, spoolTestSystemId, testSystemColour, type HydrotestColour } from '../shared/hydrotest.ts';
 import type { Row } from '../shared/types.ts';
 import { ApiError, api, apiBlob, apiUrl, formatDate, formatNumber, post } from './api.ts';
 import { useWorkspace, activeRows } from './context.tsx';
@@ -208,20 +208,24 @@ function ResultDialog({ systemId, onClose }: { systemId: string; onClose: () => 
   const { rows, refresh, notify } = useWorkspace(); const systems = activeRows(rows, 'test_systems');
   const [system, setSystem] = useState(systemId || systems[0]?.id || ''), [accepted, setAccepted] = useState(false), [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const hasDocument = files.length > 0 || hasSignedDocument(system, { hydrotest_results: rows.hydrotest_results, attachments: rows.attachments }), approved = text(systems.find(row => row.id === system)?.accepted) === TS_APPROVED, accept = accepted && hasDocument && !approved;
   async function submit() {
     if (files.some(file => !isPdfName(file.name))) { setError(PDF_ONLY); return; }
     setBusy(true); setError('');
     try {
-      const { record } = await post<{ record: Row }>('/actions/hydrotest-result', { testSystemId: system, accepted });
+      // The system is approved only once the signed document is uploaded: enter the result, upload, then mark it accepted.
+      const second = accept && files.length > 0;
+      const { record } = await post<{ record: Row }>('/actions/hydrotest-result', { testSystemId: system, accepted: accept && !second });
       for (const file of files) { const body = new FormData(); body.set('file', file); body.set('entityType', 'hydrotest_results'); body.set('entityId', record.id); body.set('documentType', 'Hydrotest result'); await api('/files', { method: 'POST', body }); }
-      await refresh(); notify(accepted ? 'Result added; the test system is accepted.' : 'Result added.'); onClose();
+      if (second) await post('/actions/hydrotest-result', { testSystemId: system, accepted: true, resultId: record.id });
+      await refresh(); notify(accept ? 'Result added; the test system is approved.' : 'Result added.'); onClose();
     } catch (problem) { await refresh().catch(() => undefined); setError((problem as Error).message); } finally { setBusy(false); }
   }
   return <ActionModal title="Enter results" submit="Add" busy={busy} error={error} onSubmit={() => void submit()} onClose={onClose}>
     {!systems.length ? <p className="muted">Add a test system first.</p> : <>
       <div className="field"><label htmlFor="hydrotest-result-system">Test system</label><select id="hydrotest-result-system" required value={system} onChange={event => setSystem(event.target.value)}>{systems.map(row => <option key={row.id} value={row.id}>{text(row.name)}</option>)}</select></div>
       <div className="field"><label htmlFor="hydrotest-result-file">Document</label><input id="hydrotest-result-file" type="file" accept=".pdf" multiple onChange={event => setFiles([...(event.target.files || [])])}/><small className="field-hint">{PDF_ONLY} Up to 20 MB each.</small></div>
-      <div className="field checkbox-field"><label htmlFor="hydrotest-result-accepted"><input id="hydrotest-result-accepted" type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)}/><span>Accepted?</span></label></div>
+      <div className="field checkbox-field"><label htmlFor="hydrotest-result-accepted"><input id="hydrotest-result-accepted" type="checkbox" checked={accept} disabled={!hasDocument || approved} aria-describedby="hydrotest-result-accepted-hint" onChange={event => setAccepted(event.target.checked)}/><span>Accepted? (Approved)</span></label><small className="field-hint" id="hydrotest-result-accepted-hint">{approved ? 'This test system is already approved.' : hasDocument ? 'Ticking it approves the test system and finishes its hydrotest.' : 'Upload the signed document (PDF) first; then the test system can be approved.'}</small></div>
     </>}
   </ActionModal>;
 }

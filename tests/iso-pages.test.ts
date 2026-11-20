@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../server/store.ts';
+import { passwordHash } from '../server/auth.ts';
+import { reportData } from '../shared/dashboard-reports.ts';
 import { seed } from '../server/seed.ts';
 import { createApp } from '../server/http.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
@@ -12,7 +14,7 @@ import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../sha
 import { canAction } from '../shared/permissions.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import {
-  currentRevisionFile, headerFields, headingHasOptions, highestIrnCounter, irnNumber, isometricDeleteRefusal, nextIrnSeries, nextRevisionNumber,
+  currentRevisionFile, headerFields, headingHasOptions, highestIrnCounter, irnNumber, isometricDeleteNotice, nextIrnSeries, nextRevisionNumber,
   PHASE_LABELS, phaseBoxes, PROJECT_OPTIONS, PROJECT_PRINT_ENTRIES, PROJECT_ROW_ACTIONS, projectDeleteRefusal, REVISION_DIALOGS, revisionInputType,
 } from '../shared/iso-pages.ts';
 import { PDF_MENU, pdfEntries } from '../client/pdf-reports.tsx';
@@ -65,14 +67,10 @@ test('Automatic IRN numbers: unique four-letter series, four-digit counter, coun
   for (const part of DUPLICATE_PARTS) for (const name of ['irnCode', 'irnAuto', 'irnCounter']) assert.ok(!duplicateFields(part).includes(name), `${part.key} ${name}`);
 });
 
-test('Delete refusals: the reference sentence for welds, then materials, reservations, calculations, started work; projects only while blank', () => {
+test('Delete: an isometric is never refused by what hangs on it (the notice names it); projects only while blank', () => {
   const none = { welds: 0, materials: 0, reserved: 0, calculations: 0, started: 0 };
-  assert.equal(isometricDeleteRefusal(none), '');
-  assert.equal(isometricDeleteRefusal({ ...none, welds: 2, materials: 1 }), 'Deletion is not possible while this isometric still has welds. Delete the welds first.');
-  assert.match(isometricDeleteRefusal({ ...none, materials: 1 }), /materials/);
-  assert.match(isometricDeleteRefusal({ ...none, reserved: 1 }), /reserved materials/);
-  assert.match(isometricDeleteRefusal({ ...none, calculations: 1 }), /calculations/);
-  assert.match(isometricDeleteRefusal({ ...none, started: 1 }), /already started/);
+  assert.match(isometricDeleteNotice(none), /welds and materials leave all figures/);
+  assert.match(isometricDeleteNotice({ ...none, welds: 2, materials: 1, started: 1 }), /deletes 2 welds, 1 material line with it.*pick list or release/);
   assert.equal(projectDeleteRefusal(0), '');
   assert.match(projectDeleteRefusal(3), /Only unused \(blank\) projects can be deleted/);
 });
@@ -105,18 +103,37 @@ async function hostedFixture(t: { after: (fn: () => Promise<void>) => void }) {
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie')!.split(';')[0]; return response;
   };
   assert.equal((await request('/api/auth/setup', 'POST', { name: 'Pages admin', email: 'pages-admin@example.test', password: 'Iso-Pages-Test-Password' })).status, 201);
-  return { store, request };
+  const signIn = async (name: string, levels: Record<string, string>) => {
+    const profileRow = store.create('profiles', { name, ...levels });
+    const user = store.create('users', { name, email: `${name.toLowerCase().replace(/\W+/g, '-')}@example.test`, profileId: profileRow.id, active: true });
+    store.db.prepare('INSERT INTO credentials VALUES (?,?)').run(user.id, passwordHash('Iso-Pages-Test-Password'));
+    assert.equal((await request('/api/auth/login', 'POST', { email: user.email, password: 'Iso-Pages-Test-Password' })).status, 200);
+  };
+  return { store, request, signIn };
 }
 const message = async (response: Response) => String((await response.json()).error);
 
-test('hosted: deleting an isometric that still has welds is refused with the reference sentence; a blank one goes; a project with isometrics stays', async t => {
+test('hosted: an isometric is deleted at any time by users with the Delete right (welds, materials, started work go with it); a project with isometrics stays', async t => {
   const f = await hostedFixture(t);
   const withWelds = f.store.get('isometrics', 'iso-1');
-  assert.ok(f.store.list('welds').some(weld => weld.isoId === 'iso-1'));
-  const refused = await f.request('/api/records/isometrics/iso-1/archive', 'POST', { _version: withWelds._version });
-  assert.equal(refused.status, 422);
-  assert.equal(await message(refused), 'Deletion is not possible while this isometric still has welds. Delete the welds first.');
-  assert.equal(f.store.get('isometrics', 'iso-1').archived ?? f.store.get('isometrics', 'iso-1')._archived, false, 'nothing was archived');
+  const count = (key: string, isoId = 'iso-1') => f.store.list(key).filter(row => row.isoId === isoId).length;
+  const figures = () => reportData(Object.fromEntries(['welds', 'isometrics', 'projects', 'welders', 'weld_types', 'inspection_requests', 'itps', 'sites'].map(key => [key, f.store.list(key)])), {}).welds.filter(item => item.weld.isoId === 'iso-1').length;
+  // Started work: a pick list of the isometric (the old refusal "work has already started").
+  const picklist = f.store.create('picklists', { isoId: 'iso-1', materialId: f.store.list('materials')[0].id, quantity: 1 });
+  assert.ok(picklist.id && count('picklists') > 0 && count('welds') > 0 && count('iso_materials') > 0 && figures() > 0, 'welds, materials and a pick list hang on it and the weld figures count it');
+  const others = f.store.list('welds').filter(weld => weld.isoId !== 'iso-1').length;
+  // Without the Delete right on isometrics nothing is deleted.
+  const reader = await hostedFixture(t); reader.store.create('picklists', { isoId: 'iso-1', materialId: reader.store.list('materials')[0].id, quantity: 1 });
+  await reader.signIn('Iso reader', { generalPermission: 'Read only', materialsPermission: 'Read only', weldingPermission: 'Read only' });
+  assert.equal((await reader.request('/api/records/isometrics/iso-1/archive', 'POST', { _version: reader.store.get('isometrics', 'iso-1')._version })).status, 403);
+  assert.equal(reader.store.get('isometrics', 'iso-1')._archived, false);
+  // The admin deletes it although it has welds, materials and started work.
+  const deleted = await f.request('/api/records/isometrics/iso-1/archive', 'POST', { _version: withWelds._version });
+  assert.equal(deleted.status, 200, await deleted.clone().text());
+  assert.equal(f.store.get('isometrics', 'iso-1', true)._archived, true);
+  assert.deepEqual(['welds', 'iso_materials', 'picklists', 'spools'].map(key => count(key)), [0, 0, 0, 0], 'what hangs on it is deleted with it');
+  assert.equal(f.store.list('welds').length, others, 'no other isometric is touched');
+  assert.equal(figures(), 0, 'the weld figures (WDI, welder statistics) no longer count it');
   // A project that still has isometrics is not blank.
   const project = f.store.get('projects', String(withWelds.projectId));
   const kept = await f.request(`/api/records/projects/${project.id}/archive`, 'POST', { _version: project._version });

@@ -139,7 +139,9 @@ test('hydrotestState follows every spool: two spools in two systems complete onl
   const open = s.create('test_systems', { name: 'PTC 02' });
   runAction(s, 'hydrotest-move', { spoolIds: [extra.id], testSystemId: open.id }, actor);
   assert.deepEqual(stateOf(s, 'iso-1'), { inScope: true, completed: false }, 'CW-01 is approved, PTC 02 is not');
-  runAction(s, 'hydrotest-result', { testSystemId: open.id, accepted: true }, actor);
+  const draft = runAction(s, 'hydrotest-result', { testSystemId: open.id, accepted: false }, actor).record!;
+  s.create('attachments', { name: 'signed.pdf', entityType: 'hydrotest_results', entityId: draft.id, documentType: 'Hydrotest result' });
+  runAction(s, 'hydrotest-result', { testSystemId: open.id, accepted: true, resultId: draft.id }, actor);
   assert.deepEqual(stateOf(s, 'iso-1'), { inScope: true, completed: true });
 });
 
@@ -171,6 +173,15 @@ test('Enter results: every result stays in the history; Accepted ticked marks th
   const first = runAction(s, 'hydrotest-result', { testSystemId: 'test-st', accepted: false }, actor).record!;
   assert.equal(first.accepted, false); assert.equal(s.get('test_systems', 'test-st').accepted, '', 'not accepted: the system stays as it was');
   assert.deepEqual(['iso-4', 'iso-5', 'iso-6'].map(id => stateOf(s, id).completed), [false, false, false]);
+  // Approving needs the signed document first: refused without one, also on the test system's own form and for custom documents.
+  fails(() => runAction(s, 'hydrotest-result', { testSystemId: 'test-st', accepted: true }, actor), /Upload the signed document/);
+  fails(() => s.update('test_systems', 'test-st', { accepted: 'Approved' }, s.get('test_systems', 'test-st')._version, actor), /Upload the signed document/);
+  s.create('attachments', { name: 'blinds.pdf', entityType: 'test_systems', entityId: 'test-st', documentType: 'Blind list' });
+  fails(() => runAction(s, 'hydrotest-result', { testSystemId: 'test-st', accepted: true }, actor), /Upload the signed document/);
+  assert.equal(s.get('test_systems', 'test-st').accepted, '', 'a refused approval changes nothing');
+  assert.equal(s.list('hydrotest_results').filter(result => result.testSystemId === 'test-st').length, 1, 'and adds no result');
+  s.create('attachments', { name: 'signed.pdf', entityType: 'hydrotest_results', entityId: first.id, documentType: 'Hydrotest result' });
+  assert.deepEqual(['iso-4', 'iso-5', 'iso-6'].map(id => stateOf(s, id).completed), [false, false, false], 'a document alone does not finish it');
   const second = runAction(s, 'hydrotest-result', { testSystemId: 'test-st', accepted: true }, actor).record!;
   assert.equal(s.get('test_systems', 'test-st').accepted, 'Approved', 'Accepted? marks the system accepted by client');
   assert.deepEqual(['iso-4', 'iso-5', 'iso-6'].map(id => stateOf(s, id).completed), [true, true, true]);
@@ -178,8 +189,12 @@ test('Enter results: every result stays in the history; Accepted ticked marks th
   assert.deepEqual(s.list('hydrotest_results').filter(result => result.testSystemId === 'test-st').map(result => [result.id, result.accepted]).sort(), [[first.id, false], [second.id, true]].sort());
   fails(() => runAction(s, 'hydrotest-result', { testSystemId: 'test-st', accepted: 'yes' }, actor), /checked or unchecked/);
   fails(() => runAction(s, 'hydrotest-result', { testSystemId: 'missing', accepted: true }, actor), /could not be found/);
+  // Taking the approval off reopens the system and takes the acceptance off its results.
+  s.update('test_systems', 'test-st', { accepted: '' }, s.get('test_systems', 'test-st')._version, actor);
+  assert.deepEqual(['iso-4', 'iso-5', 'iso-6'].map(id => stateOf(s, id).completed), [false, false, false]);
+  assert.equal(s.get('hydrotest_results', second.id).accepted, false);
   // Files of a result are PDFs only; deleting a result archives its files.
-  const file = s.create('attachments', { name: 'signed.pdf', entityType: 'hydrotest_results', entityId: first.id, documentType: 'Hydrotest result' });
+  const file = s.list('attachments').find(item => item.entityId === first.id)!;
   fails(() => s.create('attachments', { name: 'signed.png', entityType: 'hydrotest_results', entityId: first.id, documentType: 'Hydrotest result' }), /Only PDFs/);
   runAction(s, 'hydrotest-result-delete', { resultId: first.id }, actor);
   assert.equal(s.get('hydrotest_results', first.id, true)._archived, true); assert.equal(s.get('attachments', file.id, true)._archived, true);
@@ -254,7 +269,7 @@ test('the reference labels and order are used for the test system form and the h
   assert.deepEqual(SPOOL_COLUMNS, ['Project', 'ISO', 'Spool', 'Diameter', 'Paint spec.', 'Asset tag', 'Test pressure', 'Test system', 'Check']);
   assert.deepEqual(ACTIONS['hydrotest-move'].fields.map(field => [field.label, field.required === true]), [['Spools', true], ['Test system', false]]);
   assert.equal(ACTIONS['hydrotest-move'].fields[1].blank, '----');
-  assert.deepEqual(ACTIONS['hydrotest-result'].fields.map(field => field.label), ['Test system', 'Accepted?']);
+  assert.deepEqual(ACTIONS['hydrotest-result'].fields.map(field => field.label), ['Test system', 'Accepted?', 'Result']);
 });
 
 test('the Spools tab row: Paint spec., Asset tag and Test pressure of the isometric', () => {
@@ -305,10 +320,12 @@ test('Weld Pilot account: moves spools, makes a hydrotest release, enters a resu
   assert.equal(release.status, 201, await release.clone().text());
   const record = (await release.json()).record as Row;
   const book = await f.request(`/api/pdf/hydrotest-request?requestId=${record.id}`); assert.equal(book.status, 200);
-  const result = await f.request('/api/actions/hydrotest-result', 'POST', { testSystemId: 'test-st', accepted: true }); assert.equal(result.status, 201, await result.clone().text());
+  const refused = await f.request('/api/actions/hydrotest-result', 'POST', { testSystemId: 'test-st', accepted: true }); assert.equal(refused.status, 422, 'no signed document yet: no approval');
+  const result = await f.request('/api/actions/hydrotest-result', 'POST', { testSystemId: 'test-st', accepted: false }); assert.equal(result.status, 201, await result.clone().text());
   const entered = (await result.json()).record as Row;
   assert.equal((await upload(f, 'hydrotest_results', entered.id, 'Hydrotest result')).status, 201);
   assert.equal((await upload(f, 'hydrotest_results', entered.id, 'Hydrotest result', 'photo.png')).status, 422, 'only PDFs');
+  const approve = await f.request('/api/actions/hydrotest-result', 'POST', { testSystemId: 'test-st', accepted: true, resultId: entered.id }); assert.equal(approve.status, 201, await approve.clone().text());
   const after = await (await f.request('/api/bootstrap')).json() as { rows: Record<string, Row[]>; isoSummaries?: Record<string, { hydrotest: { completed: boolean } }> };
   for (const id of ['iso-1', 'iso-4']) assert.deepEqual(hydrotestState(after.rows.isometrics.find(item => item.id === id)!, after.rows), { inScope: true, completed: true }, id);
   assert.equal(after.isoSummaries?.['iso-4']?.hydrotest.completed, true, 'the server summary follows the spools too');
