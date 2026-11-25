@@ -7,7 +7,7 @@ import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContaine
 import { useWorkspace, activeRows } from './context.tsx';
 import { Badge, Dropdown, EmptyState, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
 import { RecordEditor } from './dialogs.tsx';
-import { TablePage } from './records.tsx';
+import { TablePage, resourcePath } from './records.tsx';
 import { PhaseDialog } from './iso-actions.tsx';
 import { DataLisl } from './data-lisl.tsx';
 import { WeldsPanel } from './weld-entry.tsx';
@@ -64,7 +64,7 @@ export function MainProjects() {
   const open = (site: Row) => { selectSite(site.id); navigate('/dashboard'); };
   const actions = (site: Row) => <>{!site._archived && canRecord('sites', 'edit', site) && <button className="icon-btn" aria-label={`Edit main project ${site.name}`} onClick={() => setEditor(site)}><Pencil size={16}/></button>}<ArchiveRecordButton resourceKey="sites" record={site} onArchive={() => setArchiving(site)}/></>;
   return <div className="page workflow-page main-projects-page">
-    <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>{pilot?.pilot.key === 'mto' ? 'Open a project to work with its subprojects, isometrics, and materials.' : 'Open a project to work with its subprojects, isometrics, and weld records.'}</p></div>{canRecord('sites', 'insert') && !limited && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div>
+    <div className="page-heading"><div><div className="eyebrow">BLITZKRIEG · PROJECT WORKSPACE</div><h1>Select a main project</h1><p>{pilot?.pilot.key === 'mto' ? 'Open a project to work with its subprojects, isometrics, and materials.' : 'Open a project to work with its subprojects, isometrics, and weld records.'}</p></div><div className="heading-actions">{canRecord('sites') && <Link className="btn" to={resourcePath('sites')} title="Every main project in a sortable list with CSV and Excel export">Project sites list</Link>}{canRecord('sites', 'insert') && !limited && <button className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add main project</button>}</div></div>
     <div className="table-tabs" role="group" aria-label="Main project visibility"><button className={!archived ? "selected" : ""} aria-pressed={!archived} onClick={() => setArchived(false)}>Active projects</button><button className={archived ? "selected" : ""} aria-pressed={archived} onClick={() => setArchived(true)}>Archived projects</button></div>
     <div className="project-picker-toolbar"><SearchInput value={query} onChange={setQuery} placeholder="Search main projects…"/><div className="project-picker-tools"><span>{sites.length} main projects</span>
       <div className="segmented main-project-view" role="group" aria-label="Show main projects as">{([['grid', 'Grid', LayoutGrid], ['list', 'List', List]] as const).map(([key, text, Icon]) => <button key={key} type="button" className={view === key ? 'selected' : ''} aria-pressed={view === key} onClick={() => chooseView(key)}><Icon size={15} aria-hidden="true"/>{text}</button>)}</div></div></div>
@@ -207,7 +207,8 @@ export function IsometricWorkspace() {
       // The full-field register (the former "LISL (all fields)" view), filtered on this isometric.
       case 'data-lisl': return lislPage && hasFeature('lisl') && canReadReport('lisl') && pagePilots('/welding/lisl').includes(pilot!.pilot.key) ? <Link to={dataLislUrl(iso)}>{label}</Link> : null;
       case 'other-core': return otherPilot ? <button type="button" onClick={() => pilot!.openPilot(otherPilot.key, `/workspace/isometrics/${isoId}`)}>Open in {otherPilot.title}</button> : null;
-      case 'archive': return canRecord('isometrics', 'delete', iso) ? <button type="button" className="dropdown-danger" onClick={() => setArchiving(true)}>{label}</button> : null;
+      // The entry names what its dialog says: "Delete isometric" in the hosted profile (soft delete), "Archive isometric" where the dialog archives.
+      case 'archive': return canRecord('isometrics', 'delete', iso) ? <button type="button" className="dropdown-danger" onClick={() => setArchiving(true)}>{hasFeature('pilots') ? label : 'Archive isometric'}</button> : null;
       default: return null;
     }
   };

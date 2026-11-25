@@ -24,7 +24,7 @@ function ActivityDonut({ card, phase }: { card: ActivityCard; phase: ProgressPha
     <div className="pc-activity-body">
       <h4>{card.label}</h4>
       {card.measurable ? <><p>{card.weightLabel}</p><p><strong>{card.contributionLabel}</strong></p></>
-        : <><p className="pc-reason">{card.reason}</p><p>{card.weightLabel}</p></>}
+        : <><p className="pc-reason">{card.reason}</p><p>{card.weightLabel}</p><p className="pc-count-note">{card.countNote}</p></>}
     </div>
   </li>;
 }
@@ -73,13 +73,17 @@ export function ProjectCompletionPanel({ progress, loading = false, error = '' }
   </section>;
 }
 
+/** Loading while the summaries are missing: always in the pilots profile (they follow the rows), elsewhere only until the isometrics arrive. */
+export const completionLoading = (summaries: boolean, isometrics: boolean, pilots: boolean) => !summaries && (pilots || !isometrics);
+
 /** The dashboard's first section: the whole main project (every sub-project), from the workspace's isometrics and their summaries. */
 export function ProjectCompletionSection() {
-  const { rows, isoSummaries } = useWorkspace();
+  const { rows, isoSummaries, hasFeature } = useWorkspace();
   const result = useMemo(() => {
     if (!isoSummaries) return { progress: null as ProjectProgress | null, error: '' };
     try { return { progress: mainProjectProgress(rows.isometrics, isoSummaries), error: '' }; }
     catch { return { progress: null as ProjectProgress | null, error: 'Project progress could not be calculated. Reload the page to try again.' }; }
   }, [rows.isometrics, isoSummaries]);
-  return <ProjectCompletionPanel progress={result.progress} error={result.error} loading={!isoSummaries && !rows.isometrics}/>;
+  // The pilots profile always sends iso summaries: until they arrive the section is loading, not "not available".
+  return <ProjectCompletionPanel progress={result.progress} error={result.error} loading={completionLoading(Boolean(isoSummaries), Boolean(rows.isometrics), hasFeature('pilots'))}/>;
 }

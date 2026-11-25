@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Download, FileText, Filter, Loader2, Pencil, Printer, RefreshCw, Search, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  ARCHIVE_PAGE_SIZES, ARCHIVE_TITLES, ARCHIVE_VIEWS, MANAGER_PATH, heatSections, massRequestAlert, requestCreatedText, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
+  ARCHIVE_PAGE_SIZES, ARCHIVE_VIEWS, HEAT_LABELS, MANAGER_PATH, archiveTitle, heatSections, massRequestAlert, requestCreatedText, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
   archiveViewLabel, filterManagerWelds, groupRequests, inspectionFileError, keepEligible, locationField, managerColumns, managerResults, managerWelds, massRequestPlan, monthRange, processField, requestArchiveArea, requestDetail, requestFlag, requestSelectable, resultLabel, roundErrors, roundLabel,
-  weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type ArchiveFilter, type ArchiveRow, type ArchiveView, type InspectionKind, type ManagerFilter, type ManagerTab, type MassRequestPlan, type RequestDetailLine, type RequestFilter, type RequestGroup, type RoundInput,
+  weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type ArchiveFilter, type ArchiveRow, type ArchiveView, type HeatType, type InspectionKind, type ManagerFilter, type ManagerTab, type MassRequestPlan, type RequestDetailLine, type RequestFilter, type RequestGroup, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
   vtEligibleWelds, vtGenerateError, vtMarks, vtMissingMessage, vtOpenReports, vtResultRows, vtSeq, vtUploadReports, vtWeldIds,
   TRACER_DETAIL_TEXTS, TRACER_LOCKED_HINT, TRACER_MAX_TEXT, TRACER_NO_CANDIDATES, TRACER_PANEL_NOTE, TRACER_REMOVABLE_HINT, TRACER_SELECT_TEXT, autoReweld, naBlockErrors,
@@ -257,18 +257,18 @@ function NdtTracerPanel({ weld, welderId, onPendingChange }: { weld: Row; welder
 // ----- Pre-HT / PWHT per weld --------------------------------------------------------------------------------
 
 /** "NDT archive" / "NDT Pre archive" / "PWHT archive" of one weld (reference showWeldNdtArchive, showWeldNdtPreArchive, showWeldPwhtArchive): one row per request the weld is on, newest first. */
-export function WeldArchiveDialog({ weld, kind, onClose }: { weld: Row; kind: InspectionKind; onClose: () => void }) {
+export function WeldArchiveDialog({ weld, kind, heat, onClose }: { weld: Row; kind: InspectionKind; /** Pre-HT or PWHT column: only that treatment's requests. */ heat?: HeatType; onClose: () => void }) {
   const { rows } = useWorkspace();
   const [error, setError] = useState('');
-  const state = inspectionCellState(weld, kind, workspaceCellRows(rows));
-  const pwht = kind === 'PWHT';
-  const title = ARCHIVE_TITLES[kind];
+  const state = inspectionCellState(weld, kind, workspaceCellRows(rows), kind === 'PWHT' ? heat : undefined);
+  const pwht = kind === 'PWHT', treatment = pwht && heat ? HEAT_LABELS[heat] : 'PWHT';
+  const title = archiveTitle(kind, heat);
   async function open(type: string, number: string) { setError(''); try { await openRequestPdf(type, number, false); } catch (failure) { setError((failure as ApiError).message || 'The request document could not be opened.'); } }
   return <Modal title={title} onClose={onClose}><div className="modal-body"><Alert message={error}/>
     {state.archive.length ? <TableScroll><table className="data-table" aria-label={title}><thead><tr><th scope="col">Document</th><th scope="col">Date</th>{!pwht && <th scope="col">Details</th>}</tr></thead><tbody>{state.archive.map(item => <tr key={item.key}>
-      <td>{item.file ? <a className="text-link" target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${item.file.id}`)} title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`}>{item.document}</a> : <button type="button" className="text-link" title={`Open archived ${pwht ? 'PWHT' : 'NDT'} Request`} onClick={() => void open(item.type, item.number)}>{item.document}</button>}</td>
+      <td>{item.file ? <a className="text-link" target="_blank" rel="noopener noreferrer" href={apiUrl(`/files/${item.file.id}`)} title={`Open archived ${pwht ? treatment : 'NDT'} Request`}>{item.document}</a> : <button type="button" className="text-link" title={`Open archived ${pwht ? treatment : 'NDT'} Request`} onClick={() => void open(item.type, item.number)}>{item.document}</button>}</td>
       <td>{item.date}</td>{!pwht && <td><Link className="text-link" to={MANAGER_PATH} title={`Open request ${item.shown} in the NDT request archive`}>Details</Link></td>}</tr>)}</tbody></table></TableScroll>
-      : <EmptyState title="No requests yet" description={`Weld ${weldName(weld)} is not on a ${pwht ? 'PWHT' : 'NDT'} request.`}/>}
+      : <EmptyState title="No requests yet" description={`Weld ${weldName(weld)} is not on a ${pwht ? treatment : 'NDT'} request.`}/>}
   </div><Footer busy={false} onClose={onClose}/></Modal>;
 }
 
@@ -397,9 +397,9 @@ export function MassRequestForm({ kind, type, onType, plan, processes, chosen, o
 }
 
 /** Generate Mass NDT-Pre / NDT / Pre-HT/PWHT request for the welds ticked in the table. Go creates the request (one number R + five digits) and its PDF. */
-export function MassRequestDialog({ kind, weldIds, onClose }: MassProps & { kind: 'NDT PRE' | 'NDT' | 'PWHT' }) {
+export function MassRequestDialog({ kind, type: initial, weldIds, onClose }: MassProps & { kind: 'NDT PRE' | 'NDT' | 'PWHT'; /** The treatment to start with (the Pre-HT column starts with PRE-HT); the kind's own type otherwise. */ type?: string }) {
   const { rows, canRun } = useWorkspace();
-  const [type, setType] = useState<string>(kind), [chosen, setChosen] = useState<string[]>([]), [note, setNote] = useState(''), [include, setInclude] = useState(false);
+  const [type, setType] = useState<string>(initial || kind), [chosen, setChosen] = useState<string[]>([]), [note, setNote] = useState(''), [include, setInclude] = useState(false);
   const { busy, error, setError, run } = useSubmit(onClose);
   const ndt = kind !== 'PWHT';
   const plan = massRequestPlan(type, tickedWelds(rows, weldIds), rows.inspection_requests, rows.inspection_results, rows.ndt_processes);

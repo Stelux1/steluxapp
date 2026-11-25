@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { COMING_CORES, coreFanItems, MATERIAL_CORE_COLOR, PILOTS, PILOT_MAP, WELD_CORE_COLOR, pathAfterSignIn } from '../shared/pilots.ts';
-import { CoreFanMenu, CoreSwitch, PilotSelector, fanOffsets } from '../client/pilot.tsx';
+import { CoreFanMenu, CoreSwitch, FAN_SIDEBAR_GAP, FAN_TOP_CLEAR, PilotSelector, fanOffsets, fanPlace } from '../client/pilot.tsx';
 import { readMainProjectView } from '../client/project-workspace.tsx';
 import type { User } from '../shared/types.ts';
 
@@ -75,6 +75,36 @@ test('the Switch fan lists the five Cores in order with their states; the button
   const css = source('client/pilots.css');
   assert.match(css, /animation-delay: calc\(var\(--i\) \* 40ms\)/); assert.match(css, /prefers-reduced-motion: reduce\) \{ \.core-fan-backdrop, \.core-fan-caption, \.core-fan-item \{ animation: none; \}/);
   assert.match(css, /\.core-fan-layer \{ position: fixed; inset: 0;/); assert.match(css, /@media \(max-width: 760px\) \{\s*\.core-fan \{/);
+});
+
+test('C4: the Switch button shows in every Core, also for an account with one Core, whose fan shows the other built Core as Not enabled', () => {
+  const pilot = source('client/pilot.tsx'), badge = pilot.slice(pilot.indexOf('export function PilotBadge'), pilot.indexOf('/** Whether the current page must be replaced'));
+  assert.doesNotMatch(badge, /allowed\.length > 1/, 'no condition on the number of Cores');
+  assert.match(badge, /<strong>\{state\.pilot\.title\}<\/strong><CoreSwitch current=\{state\.pilot\.key\}/);
+  const single = renderToStaticMarkup(createElement(CoreSwitch, { current: 'weld', allowed: ['weld'], onOpen: () => undefined }));
+  assert.match(single, /aria-label="Switch Core"/, 'the button renders for one Core');
+  const fan = renderToStaticMarkup(createElement(CoreFanMenu, { items: coreFanItems(['weld'], 'weld') }));
+  assert.match(fan, /class="core-fan-item is-disabled" aria-disabled="true"[^>]*data-core="mto"[\s\S]*?Not enabled/, 'Material Core: shown, aria-disabled, "Not enabled"');
+});
+
+test('C4: the fan opens beside the sidebar, clear of its collapse handle, with a light backdrop over the page only and light pills', () => {
+  const button = { right: 226, top: 74, height: 30, bottom: 104 }, count = 6, offsets = fanOffsets(count);
+  for (const sidebar of [248, 264, 72]) {
+    const place = fanPlace({ ...button, right: Math.min(button.right, sidebar - 8) }, sidebar, count, 900);
+    assert.equal(place.left, sidebar + FAN_SIDEBAR_GAP, 'the fan starts right of the sidebar edge');
+    assert.ok(place.left + Math.min(...offsets.map(at => at.dx)) >= sidebar + 13 + 6, 'no pill and no caption reaches the sidebar or its collapse handle (13 px over the edge)');
+    assert.ok(place.top + offsets[0].dy >= FAN_TOP_CLEAR, 'the caption sits below the collapse handle');
+    assert.ok(place.top + offsets[count - 1].dy <= 900 - 36, 'the lowest pill stays in the window');
+    assert.equal(place.shade, sidebar, 'the backdrop starts where the sidebar ends');
+  }
+  assert.equal(fanPlace(button, undefined, count, 700).shade, 0, 'a drawer over the page (phone): the backdrop covers the window');
+  const css = source('client/pilots.css');
+  assert.match(css, /\.core-fan-backdrop \{ position: absolute; inset: 0 0 0 var\(--fan-shade, 0\);/, 'the sidebar is not dimmed');
+  assert.match(css, /\.core-fan-item \{[^}]*background: #fff; color: var\(--ink/, 'light pills with dark text');
+  assert.doesNotMatch(css, /\.core-fan-item \{[^}]*#0f1b38/, 'no dark navy pills');
+  assert.match(css, /\.core-fan-item\.is-open \{ border: 1\.5px solid var\(--core\);/, 'the Core that opens has its accent border');
+  const pilot = source('client/pilot.tsx');
+  assert.match(pilot, /if \(target\?\.closest\('\.sidebar'\) && !button\.current\?\.contains\(target\)\) close\(false\)/, 'a click in the uncovered sidebar closes the fan; the Switch button toggles it');
 });
 
 /** WCAG relative luminance and contrast of #rrggbb colours. */

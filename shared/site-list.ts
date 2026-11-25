@@ -6,6 +6,8 @@ import type { Row } from './types.ts';
  * 5 / 20 / 50 / 100 / 500, search over the shown columns.
  */
 export const SITE_LIST_COLUMNS = ['name', 'address', 'zip', 'residence'] as const;
+/** The project sites export of the hosted profile: exactly the list's columns, with the list's headers (client change list 22.11.2026, A10). */
+export const SITE_EXPORT_COLUMNS: { key: typeof SITE_LIST_COLUMNS[number]; label: string }[] = [{ key: 'name', label: 'Name' }, { key: 'address', label: 'Address' }, { key: 'zip', label: 'Zip code' }, { key: 'residence', label: 'City' }];
 export const SITE_PAGE_SIZES = [5, 20, 50, 100, 500];
 export const SITE_DEFAULT_SORT = { field: 'name', direction: 1 as 1 | -1 };
 const text = (value: unknown) => String(value ?? '').trim();

@@ -460,6 +460,16 @@ test('hosted export gives the reference columns only (Project, ISO No, IRN, ITP 
   assert.deepEqual((await table('iso-3')).rows, [by('STX-CW-003')], 'Material Core exports the same row');
 });
 
+test('A10: the hosted project sites export holds exactly the list\'s columns: Name, Address, Zip code, City', async t => {
+  const f = await hostedFixture(t); await f.setup();
+  const site = f.store.list('sites')[0];
+  for (const format of ['csv', 'xlsx']) assert.equal((await f.request(`/api/export/sites?format=${format}&archived=true&ids=${site.id}`)).status, 200, format);
+  const text = await (await f.request(`/api/export/sites?format=csv&archived=true&ids=${site.id}`)).text();
+  assert.deepEqual(text.split(/\r?\n/)[0].split(',').map(cell => cell.replace(/^"|"$/g, '')), ['Name', 'Address', 'Zip code', 'City'], 'no Phone, Email, IRN Code, tightening standard, defect norm or other settings');
+  const [line] = parse(text, { columns: true, skip_empty_lines: true }) as Record<string, string>[];
+  assert.deepEqual(line, { Name: String(site.name ?? ''), Address: String(site.address ?? ''), 'Zip code': String(site.zip ?? ''), City: String(site.residence ?? '') });
+});
+
 test('hosted Projects list: Material Core carries the same Status (%) per project as Weld Core, from the server', async t => {
   const f = await hostedFixture(t); await f.setup();
   type Body = { rows: Record<string, Row[]>; projectStatus?: Record<string, number> };

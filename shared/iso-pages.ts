@@ -142,7 +142,8 @@ export const ISO_PAGE_MENU: IsoMenuEntry[] = [
   { key: 'set-phase', label: 'Set phase', group: 'isometric' },
   { key: 'data-lisl', label: 'Open Data LISL', group: 'isometric' },
   { key: 'other-core', label: 'Open in other Core', group: 'isometric' },
-  { key: 'archive', label: 'Archive isometric', group: 'danger' },
+  // The dialog behind it is "Delete isometric" (the isometric moves to the archived list): the entry says the same (D9).
+  { key: 'archive', label: 'Delete isometric', group: 'danger' },
 ];
 export const ISO_MENU_GROUPS: IsoMenuGroup[] = ['welds', 'isometric', 'danger'];
 /** The rendered entries per group in menu order; a group with nothing rendered drops out, so a divider only ever sits between two groups. */

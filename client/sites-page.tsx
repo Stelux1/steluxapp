@@ -63,7 +63,7 @@ export function SitesPage() {
   // MTO Pilot: the row icon "Import Materials DB from another project site" (the same rights as Import material).
   const canImportMaterials = pilot?.pilot.key === 'mto' && canRecord('materials', 'import') && canRecord('materials', 'insert');
   return <div className="page records-page sites-page">
-    <div className="page-heading"><div><div className="eyebrow">GENERAL DATA</div><h1>{def.title}</h1><p>The main projects of your workspace. Open one to work in its projects.</p></div>
+    <div className="page-heading"><div><div className="eyebrow">MAIN PROJECTS</div><h1>{def.title}</h1><p>The main projects of your workspace. Open one to work in its projects.</p></div>
       <div className="heading-actions"><button type="button" className="btn" onClick={() => { setArchived(value => !value); setPage(0); }}>{archived ? 'Back to active sites' : 'Show archived sites'}</button>{canAdd && <button type="button" className="btn primary" onClick={() => setEditor('new')}><Plus size={17}/>Add project site</button>}</div></div>
     <div className="table-card">
       <div className="table-toolbar sites-toolbar">

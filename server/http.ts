@@ -28,6 +28,7 @@ import { assertSignatureImage } from './signatures.ts';
 import { assertPunchAddAllowed, assertPunchFileAllowed, registerPunchRoutes } from './punch.ts';
 import { assertFlangeFileAllowed, registerFlangeRoutes } from './flanges.ts';
 import { ISO_EXPORT_COLUMNS } from '../shared/iso-list.ts';
+import { SITE_EXPORT_COLUMNS } from '../shared/site-list.ts';
 import { priorityShort } from '../shared/priority.ts';
 import { isoSummariesFor, projectStatusesFor } from './iso-summary.ts';
 import { dropCompletionInput } from './releases.ts';
@@ -404,12 +405,17 @@ export function createApp(store: Store, dataDir: string, options: { releaseProfi
     fields: ISO_EXPORT_COLUMNS.flatMap(column => { const field = resource.fields.find(f => f.name === column.key); return field && access.field(resource.key, field.name) ? [{ ...field, label: column.label }] : []; }),
     value: (row: Row, name: string) => name === 'priority' ? priorityShort(row.priority) : undefined,
   });
+  /** The project sites list of the hosted profile exports its own columns only: Name, Address, Zip code, City (shared/site-list.ts). */
+  const siteListExport = (resource: ReturnType<typeof access.resource>) => ({
+    fields: SITE_EXPORT_COLUMNS.flatMap(column => { const field = resource.fields.find(f => f.name === column.key); return field && access.field(resource.key, field.name) ? [{ ...field, label: column.label }] : []; }),
+    value: () => undefined,
+  });
   const exportRows = (req: Request) => {
     const resource = access.resource(String(req.params.resource)); checkResourcePermission(req,resource.key,'export');
     const selected = typeof req.query.ids === 'string' ? new Set(req.query.ids.split(',')) : null;
     const rows = readableRows(req, resource.key, req.query.archived === 'true').filter(r => (!selected || selected.has(r.id))&&canResource((req as AuthRequest).user,resource.key,'export',r));
     // The isometrics list of the hosted profile: the reference's export columns.
-    const flagExport = resource.key === 'isometrics' && availability?.features.includes('pilots') ? isoListExport(resource) : undefined;
+    const flagExport = resource.key === 'isometrics' && availability?.features.includes('pilots') ? isoListExport(resource) : resource.key === 'sites' && availability?.features.includes('pilots') ? siteListExport(resource) : undefined;
     const fields = flagExport ? flagExport.fields : [...resource.fields.filter(f => f.type !== 'password'&&!f.hidden&&!(pilots&&WELD_DATA_EXPORT_HIDDEN[resource.key]?.includes(f.name))),...relationFields(resource.key)].filter(f => access.field(resource.key, f.name));
     const visibleLabel=(target:string,id:unknown)=>{try{const record=store.get(target,id,true);if(!access.visible((req as AuthRequest).user,target,record))return 'Unavailable record';return store.display(target,record);}catch(error){return isSiteRefusal(error)?'Unavailable record':'Archived record';}};
     const output = rows.map(row => Object.fromEntries(fields.map(f => {const flagValue=flagExport?.value(row,f.name);if(flagValue!==undefined)return [f.label,flagValue];const relation=(RELATIONS[resource.key]||[]).find(r=>r.field===f.name);if(relation)return [f.label,JSON.stringify(store.list(relation.resource).filter(l=>l[relation.ownerKey]===row.id&&inSiteScope(relation.resource,l)).map(l=>visibleLabel(relation.target,l[relation.targetKey])))];let value = row[f.name]; if (f.ref && value)value=visibleLabel(f.ref,value);if (typeof value === 'boolean') value = value ? 'Yes' : 'No'; return [f.label, value ?? '']; })));

@@ -126,9 +126,11 @@ export function sideSummary(weld: Values, side: 1 | 2, context: SideContext = {}
   if (context.certificate) return { kind: 'certificate', index: text(context.certificate.indexNo), charge: charge || text(context.certificate.chargeNo), material: certificateMaterialText(context) };
   return charge ? { kind: 'charge', index: '', charge, material: '' } : { kind: 'none', index: '', charge: '', material: '' };
 }
-/** The three cells of a side as the table prints them: an empty cell reads "-". */
-export const sideCellTexts = (summary: SideSummary) => ({ index: summary.index || '-', charge: summary.charge || '-', material: summary.material || '-' });
-/** The Wdr cell: one stamp per welder (text = welder code, tooltip = welder name); "------" when no welder. */
+/** The one placeholder of an empty cell in the isometric page's LISL table (D10): Type, WD, Index, Charge, Material, WPS, Dia., Spool. */
+export const LISL_EMPTY = '—';
+/** The three cells of a side as the table prints them: an empty cell reads the table's placeholder "—". */
+export const sideCellTexts = (summary: SideSummary) => ({ index: summary.index || LISL_EMPTY, charge: summary.charge || LISL_EMPTY, material: summary.material || LISL_EMPTY });
+/** "------" for a weld without welder, as the reference's exports write it. The LISL table shows its own placeholder (LISL_EMPTY) instead. */
 export const NO_WELDER_TEXT = '------';
 export const welderStamps = (welders: Values[]) => welders.map(welder => ({ code: text(welder.welderCode || welder.number), name: text(welder.name || welder.number) }));
 /** The few welder fields a weld's stamps show (code and name), without the rest of the welder record. */
@@ -831,6 +833,14 @@ export const WELD_OPTIONS_MENU: IsoMenuEntry[] = [
   ...ISO_PAGE_MENU.filter(entry => entry.group === 'danger'),
 ];
 export const WELD_DELETE_WORDING = { one: 'Delete weld', many: 'Delete selected', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' } as const;
+/** The question of Delete weld / Delete selected: the weld number for one weld, the count (and numbers, up to five) for several (D9). */
+export function weldDeleteQuestion(weldNos: string[]): string {
+  if (weldNos.length === 1) return `Are you sure you want to delete weld ${weldNos[0]}?`;
+  const shown = weldNos.slice(0, 5).join(', ') + (weldNos.length > 5 ? ', …' : '');
+  return `Are you sure you want to delete these ${weldNos.length} welds (${shown})?`;
+}
+/** The question of Bring weld back, with the weld number. */
+export const weldBringBackQuestion = (weldNo: string) => `Are you sure you want to bring weld ${weldNo} back?`;
 export const WELD_BRING_BACK_WORDING = { title: 'Bring weld back', text: 'Are you sure?', button: 'Bring back', cancel: 'Cancel', icon: 'Bring weld back', showActive: 'Show active welds', emptyTitle: 'No welds added yet for this isometric.', emptyText: 'Use Add weld or Add welds to create the first weld.' } as const;
 /**
  * The deleted-welds view after "Bring back": it stays open while deleted welds are left, otherwise the active welds are shown again (SA2 N-D2).

@@ -18,7 +18,7 @@ import { canAction } from '../shared/permissions.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { isoBlockers } from '../shared/iso-status.ts';
 import {
-  HEAT_LABELS, HEAT_TYPES, KIND_LABELS, heatRequired, ARCHIVE_TITLES, MANAGER_PATH, MANAGER_TABS, cellStatusTitle, heatSections, viCellText, weldArchive, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
+  HEAT_LABELS, HEAT_TYPES, KIND_LABELS, heatRequired, ARCHIVE_TITLES, archiveTitle, columnRequestType, MANAGER_PATH, MANAGER_TABS, cellStatusTitle, heatSections, viCellText, weldArchive, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
   resultLabel, roundErrors, roundLabel, storedResult, tracerError, tracerSummary, inspectionFileError,
   naBlockErrors, roundsHaveNa, roundLockedError, autoReweld, notAccepted, repairDue, repairsOf, tracerProposal, tracerDetail, TRACER_DETAIL_TEXTS,
   ARCHIVE_PAGE_SIZES, MANAGER_PAGE_SIZES, MASS_REQUEST_TEXTS, PWHT_DOCUMENT, archiveViewLabel, filterManagerWelds, groupRequests, keepEligible, managerResults, massRequestPlan, monthRange, nextRequestNumber, openProcessIds, requestNumberShown, requestSelectable,
@@ -129,6 +129,26 @@ test('D5: the weld table shows Pre-HT and PWHT as two columns, each with only it
   assert.deepEqual(weldArchive(both, 'PWHT', rows).map(item => item.number).sort(), ['R00007', 'R00008']);
   // A result recorded without the flag still shows in its own column (Yes), as NDT does.
   assert.equal(inspectionCellState(weld('x'), 'PWHT', { results: [result('x', 'Accepted', '2026-10-01', { type: 'PRE-HT' })] }, 'PRE-HT').required, true);
+});
+
+test('D5: the request and archive icons of the Pre-HT and PWHT columns act on their own treatment; the combined entries keep PWHT', () => {
+  assert.equal(columnRequestType('PWHT', 'PRE-HT'), 'PRE-HT'); assert.equal(columnRequestType('PWHT', 'PWHT'), 'PWHT');
+  assert.equal(columnRequestType('PWHT'), 'PWHT', 'Options → Generate Mass Pre-HT/PWHT request and the NDT/PWHT Manager start with PWHT');
+  assert.deepEqual(['VI', 'NDT PRE', 'NDT'].map(kind => columnRequestType(kind as 'VI' | 'NDT PRE' | 'NDT', 'PRE-HT')), ['VI', 'NDT PRE', 'NDT'], 'a heat type means nothing outside the heat columns');
+  assert.equal(archiveTitle('PWHT', 'PRE-HT'), 'Pre-HT archive'); assert.equal(archiveTitle('PWHT', 'PWHT'), 'PWHT archive'); assert.equal(archiveTitle('PWHT'), ARCHIVE_TITLES.PWHT); assert.equal(archiveTitle('NDT'), 'NDT archive');
+  // A Pre-HT-only weld: its Pre-HT icon offers a PRE-HT request (the PWHT plan would refuse it with "no PWHT").
+  const preOnly = weld('p', { pwhtReqPre: true });
+  assert.equal(massRequestPlan(columnRequestType('PWHT', 'PRE-HT'), [preOnly], [], [], []).error, '', 'the Pre-HT column request has no error');
+  assert.notEqual(massRequestPlan('PWHT', [preOnly], [], [], []).error, '', 'a PWHT request of the same weld is refused');
+  const both = weld('h', { pwhtReqPre: true, pwhtReq: true });
+  const rows = { requests: [row('a-pre', { weldId: 'h', type: 'PRE-HT', status: 'Open', number: 'R00011', date: '2026-10-02' }), row('a-post', { weldId: 'h', type: 'PWHT', status: 'Open', number: 'R00012', date: '2026-10-02' })], attachments: [] };
+  assert.deepEqual(weldArchive(both, 'PWHT', rows, 'PRE-HT').map(item => item.type), ['PRE-HT']); assert.deepEqual(weldArchive(both, 'PWHT', rows, 'PWHT').map(item => item.type), ['PWHT']);
+  const cell = readFileSync(new URL('../client/weld-inspection-cell.tsx', import.meta.url), 'utf8');
+  assert.match(cell, /const type = columnRequestType\(kind, heat\);/);
+  assert.match(cell, /<WeldArchiveDialog weld=\{weld\} kind=\{kind\} heat=\{kind === 'PWHT' \? heat : undefined\}/, 'the archive of a heat column lists that treatment only');
+  assert.match(cell, /<MassRequestDialog kind=\{kind\} type=\{type\} weldIds=\{\[weld\.id\]\}/, 'the request dialog starts with the column\'s treatment');
+  const dialogs = readFileSync(new URL('../client/inspections.tsx', import.meta.url), 'utf8');
+  assert.match(dialogs, /useState<string>\(initial \|\| kind\)/); assert.match(dialogs, /inspectionCellState\(weld, kind, workspaceCellRows\(rows\), kind === 'PWHT' \? heat : undefined\)/);
 });
 
 test('repair welds are numbered R1, R2 along the chain and the original stays open until a repair is accepted', () => {

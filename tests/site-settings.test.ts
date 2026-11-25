@@ -163,7 +163,7 @@ test('a project switched off for a pilot disappears from that pilot together wit
   assert.equal(pilotScope({ ...rows, projects: legacy }, 'mto').projects.length, legacy.length);
 });
 
-test('hosted editing: invalid weights are rejected with a message, valid settings save and reopen intact, pilot switches round-trip', async t => {
+test('hosted editing: weights that no longer add up are accepted (the progress ignores them), an unknown option is rejected, valid settings save and reopen intact, pilot switches round-trip', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'blitzkrieg-site-settings-'));
   const store = new Store(join(dir, 'test.sqlite')); seed(store);
   writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Workspace</title>');

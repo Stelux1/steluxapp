@@ -78,8 +78,9 @@
 .iso-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 10px; min-height: 40px; }
 .iso-crumbs { min-width: 0; flex: 1 1 420px; }
 .iso-crumbs ol { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
-.iso-crumbs li { display: inline-flex; align-items: center; min-width: 0; }
-.iso-crumbs li + li::before { content: "›"; padding: 0 8px; color: var(--muted); }
+/* Each crumb carries its own separator after it and never breaks inside: a wrapped line starts with a crumb, never with an orphaned "›" (D10). */
+.iso-crumbs li { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; white-space: nowrap; }
+.iso-crumbs li:not(:last-child)::after { content: "›"; flex: none; padding: 0 8px; color: var(--muted); }
 .iso-crumbs a { color: var(--muted); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 .iso-crumbs a:hover { color: var(--primary); text-decoration: underline; }
 .iso-crumbs a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }

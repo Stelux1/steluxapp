@@ -91,10 +91,10 @@ test('one Options menu on the isometric page: Attachments, Audit trail and Set p
 
 test('D11: the page part of the Options menu keeps every entry point of the old heading, tab strip and Progress card; destructive last', () => {
   assert.deepEqual(ISO_PAGE_MENU.map(entry => entry.key), ['edit-isometric', 'edit-quantities', 'spools', 'documents', 'attachments', 'audit-trail', 'set-phase', 'data-lisl', 'other-core', 'archive']);
-  assert.deepEqual(ISO_PAGE_MENU.filter(entry => entry.group === 'danger').map(entry => entry.label), ['Archive isometric']);
+  assert.deepEqual(ISO_PAGE_MENU.filter(entry => entry.group === 'danger').map(entry => entry.label), ['Delete isometric']);
   assert.deepEqual(ISO_MENU_GROUPS, ['welds', 'isometric', 'danger']);
   const shown = menuGroups(ISO_PAGE_MENU, entry => ['edit-isometric', 'archive'].includes(entry.key) ? entry.label : null);
-  assert.deepEqual(shown.map(group => [group.group, group.items.map(item => item.node)]), [['isometric', ['Edit isometric']], ['danger', ['Archive isometric']]]);
+  assert.deepEqual(shown.map(group => [group.group, group.items.map(item => item.node)]), [['isometric', ['Edit isometric']], ['danger', ['Delete isometric']]]);
   assert.deepEqual(menuGroups(ISO_PAGE_MENU, () => null), [], 'nothing offered: no menu');
   assert.equal(dataLislUrl({ id: 'iso-7', projectId: 'project-3' } as unknown as Parameters<typeof dataLislUrl>[0]), '/welding/lisl?project_id=project-3&iso_id=iso-7', 'Open Data LISL lands filtered on the isometric');
 });
@@ -183,7 +183,12 @@ test('hosted: Automatically add IRN numbers numbers the isometrics without IRN i
   assert.equal(f.store.get('isometrics', first.id).irn, `${series}0001`);
   // The series is unique per main project.
   const other = f.store.create('sites', { name: 'Other', irnCode: series });
-  assert.equal((await f.request('/api/actions/fill-irn', 'POST', { siteId: other.id })).status, 422);
+  const clash = await f.request('/api/actions/fill-irn', 'POST', { siteId: other.id });
+  assert.equal(clash.status, 422);
+  // The message names the series and the other main project and says who resolves it (the form has no IRN Code field any more).
+  const body = await clash.json() as { error: string; fields?: Record<string, string> };
+  assert.equal(body.fields?.siteId, `IRN series ${series} is also stored on main project "${String(site.name)}", so no IRN numbers were added. Ask an administrator to give one of the two main projects another IRN series, then try again.`);
+  assert.doesNotMatch(JSON.stringify(body), /own IRN code/);
 });
 
 test('hosted: Add new saves the edited header as a new isometric of the same project and copies welds, materials and calculations when ticked', async t => {

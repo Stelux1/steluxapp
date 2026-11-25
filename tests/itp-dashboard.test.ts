@@ -1,7 +1,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../server/store.ts';
@@ -586,4 +586,10 @@ test('HTTP: the dashboard\'s tracer proposal per group and saving it for the gro
   assert.equal(f.store.get('welds', candidates[0]).tracerOfId, 'weld-20');
   const after = (await body<{ proposal: { sources: { linked: number }[]; status: { existingTracers: number } } }>(await f.admin.request(query, { pilot: 'weld' }))).proposal;
   assert.deepEqual([after.sources[0].linked, after.status.existingTracers], [1, 1]);
+});
+
+test('B4: every dashboard filter has one label size and one control height (native selects, dates and the multi-selects)', () => {
+  const css = readFileSync(new URL('../client/itp-dashboard.css', import.meta.url), 'utf8');
+  assert.match(css, /\.wd-filter-grid \.wd-field > label, \.wd-filter-grid \.wd-label \{ display: block; margin: 0 0 7px; font-size: 13px;/);
+  assert.match(css, /\.wd-filter-grid \.wd-field select, \.wd-filter-grid \.wd-field input, \.wd-filter-grid \.wd-multi-trigger \{ box-sizing: border-box; height: 42px; min-height: 42px; padding: 0 11px; font-size: 14px;/);
 });

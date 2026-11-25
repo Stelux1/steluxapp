@@ -151,10 +151,10 @@ test('table cells: material keeps empty slots as -, EXISTING / CONN ISO show in 
   const cap = row('c', { diameter: '1"', schedule: '40', wallThickness: '7.2', indexNo: '3', chargeNo: 'H-3' });
   assert.equal(certificateMaterialText({ certificate: cap, materialPart: 'Cap' }), '1"/40/7.2/-/Cap');
   assert.equal(certificateMaterialText({ certificate: row('c3', {}) }), '-/-/-/-/-');
-  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'EXISTING' }, 1)), { index: '-', charge: '-', material: 'EXISTING' });
-  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo2: 'CONN ISO' }, 2)), { index: '-', charge: '-', material: 'CONN ISO' });
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'EXISTING' }, 1)), { index: '—', charge: '—', material: 'EXISTING' });
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo2: 'CONN ISO' }, 2)), { index: '—', charge: '—', material: 'CONN ISO' });
   assert.deepEqual(sideSummary({ chargeNo1: 'EXISTING' }, 1), { kind: 'existing', index: '', charge: '', material: 'EXISTING' });
-  assert.deepEqual(sideCellTexts(sideSummary({}, 1)), { index: '-', charge: '-', material: '-' });
+  assert.deepEqual(sideCellTexts(sideSummary({}, 1)), { index: '—', charge: '—', material: '—' });
   assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'H-3' }, 1, { certificate: cap })), { index: '3', charge: 'H-3', material: '1"/40/7.2/-/-' });
   assert.deepEqual(welderStamps([row('a', { welderCode: 'ML396', name: 'Aleksandar Djuric' }), row('b', { number: 'W-2', name: '' })]), [{ code: 'ML396', name: 'Aleksandar Djuric' }, { code: 'W-2', name: 'W-2' }], 'one stamp per welder, each with its own tooltip');
   assert.deepEqual(welderStamps([]), []);
@@ -177,8 +177,8 @@ test('Disable welds sorting: the flag is read from the isometric, the menu entry
 
 test('Options menu (client change list 22.11.2026): weld entries first, then the isometric, destructive last; no sorting switch, no Upload NDT', () => {
   assert.deepEqual(WELD_OPTIONS_MENU.map(entry => entry.label), ['Add welds', 'Mass edit welds', 'Visual inspection', 'Generate Mass NDT-Pre request', 'Generate Mass NDT request', 'Generate Mass Pre-HT/PWHT request', 'Upload Pre-HT/PWHT on multiple welds', 'Show deleted welds',
-    'Edit isometric', 'Progress quantities', 'Spools', 'Drawing documents', 'Attachments', 'Punch list', 'Audit trail', 'Set phase', 'Open Data LISL', 'Open in other Core', 'Delete selected', 'Archive isometric']);
-  assert.deepEqual(WELD_OPTIONS_MENU.filter(entry => entry.group === 'danger').map(entry => entry.label), ['Delete selected', 'Archive isometric'], 'destructive entries last');
+    'Edit isometric', 'Progress quantities', 'Spools', 'Drawing documents', 'Attachments', 'Punch list', 'Audit trail', 'Set phase', 'Open Data LISL', 'Open in other Core', 'Delete selected', 'Delete isometric']);
+  assert.deepEqual(WELD_OPTIONS_MENU.filter(entry => entry.group === 'danger').map(entry => entry.label), ['Delete selected', 'Delete isometric'], 'destructive entries last');
   assert.equal(WELD_OPTIONS_MENU.some(entry => /Upload NDT|sorting/i.test(entry.label)), false);
   assert.equal(new Set(WELD_OPTIONS_MENU.map(entry => entry.key)).size, WELD_OPTIONS_MENU.length, 'one entry per key');
   // A group with nothing to show drops out, so a divider never opens or closes the menu.
@@ -862,9 +862,9 @@ test('the weld history route is not offered where the profile has no weld entry'
 test('E9: a fixed part placeholder shows as Material with "-" in Idx / Chg.No.; Mass edit shows the WPS as process | number and refuses an unaccepted certificate with the form\'s sentence', async t => {
   for (const placeholder of ['4 / Flange', '13 / Female Flange']) {
     assert.deepEqual(sideSummary({ chargeNo1: placeholder, certificate1Id: '' }, 1), { kind: 'placeholder', index: '', charge: '', material: placeholder });
-    assert.deepEqual(sideCellTexts(sideSummary({ chargeNo2: placeholder }, 2)), { index: '-', charge: '-', material: placeholder });
+    assert.deepEqual(sideCellTexts(sideSummary({ chargeNo2: placeholder }, 2)), { index: '—', charge: '—', material: placeholder });
   }
-  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'H-77' }, 1)), { index: '-', charge: 'H-77', material: '-' }, 'a plain charge number keeps its cell');
+  assert.deepEqual(sideCellTexts(sideSummary({ chargeNo1: 'H-77' }, 1)), { index: '—', charge: 'H-77', material: '—' }, 'a plain charge number keeps its cell');
   const { readFileSync } = await import('node:fs');
   const source = readFileSync('client/weld-entry.tsx', 'utf8'), mass = source.slice(source.indexOf('function MassEditDialog'), source.indexOf('async function submit', source.indexOf('function MassEditDialog')));
   assert.match(mass, /label: wpsLabel\(row, 'mass'\)/);
@@ -1207,5 +1207,36 @@ test('D1–D9: the LISL table has one title, the client\'s headers, Pre-HT and P
   const keys = [...LISL_COLUMNS.map(column => column.key), 'select'];
   assert.deepEqual(keys.filter(key => !widths.has(key)), ['mat-1', 'mat-2'], 'every column but the two Material columns has a fixed width');
   const total = keys.reduce((sum, key) => sum + (widths.get(key) ?? 0), 0);
-  assert.ok(970 - total >= 2 * 75, `the Material columns keep at least 75 px each at 1280 px (fixed ${total} px)`);
+  // 1280 px viewport minus the 248 px sidebar: the box is about 958 px wide; the table's minimum and the fixed columns fit inside it.
+  assert.ok(920 <= 958 && total <= 920 - 2 * 50, `the fixed columns (${total} px) fit the 920 px minimum with room for both Material columns`);
+  assert.ok(958 - total >= 2 * 70, `the Material columns keep at least 70 px each at 1280 px (fixed ${total} px)`);
+  // The shared .select-cell pads 20 / 7 px with !important: this table overrides it, or the 30 px select column grows to 36 px and the box scrolls sideways.
+  assert.match(readFileSync(new URL('../client/styles.css', import.meta.url), 'utf8'), /\.select-cell\{width:40px;min-width:40px;padding-left:20px!important;padding-right:7px!important\}/, 'the shared select cell is unchanged for the other tables');
+  const select = /\.weld-table \.select-cell \{([^}]*)\}/.exec(css)?.[1] ?? '';
+  assert.match(select, /padding-left: 2px !important;/); assert.match(select, /padding-right: 2px !important;/);
+  assert.ok(2 + 2 + 13 <= widths.get('select')!, 'the checkbox and its padding fit the select column');
+  assert.ok(2 * 26 + 2 * 4 <= widths.get('options')!, 'the two Options icons and the cell padding fit the Options column');
+  assert.match(css, /\.weld-table td \{ overflow: hidden; min-width: 0; \}/, 'a cell clips what does not fit instead of widening the scroll box');
+  assert.match(css, /\.weld-table \.inspection-cell \{[^}]*min-width: 0; max-width: 100%; overflow: hidden; \}/, 'the icons of an inspection cell cannot force the column wider');
+});
+
+test('D9–D11: one placeholder in the LISL, confirmations name the welds, the isometric entry matches its dialog, crumbs never orphan a separator', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { LISL_EMPTY, NO_WELDER_TEXT, weldDeleteQuestion, weldBringBackQuestion } = await import('../shared/weld-entry.ts');
+  const { ISO_PAGE_MENU } = await import('../shared/iso-pages.ts');
+  assert.equal(LISL_EMPTY, '—'); assert.equal(NO_WELDER_TEXT, '------', 'the export text stays');
+  const source = readFileSync('client/weld-entry.tsx', 'utf8'), table = source.slice(source.indexOf('function WeldTable'), source.indexOf('export function WeldsPanel'));
+  assert.doesNotMatch(table, /NO_WELDER_TEXT|<span className="muted">(-|—)<\/span>/, 'the table writes LISL_EMPTY, never "-", "------" or a literal dash');
+  assert.equal((table.match(/<span className="muted">\{LISL_EMPTY\}<\/span>/g) || []).length, 5, 'Type, WD, WPS, Dia. and Spool');
+  assert.deepEqual(sideCellTexts(sideSummary({}, 1)), { index: LISL_EMPTY, charge: LISL_EMPTY, material: LISL_EMPTY });
+  assert.equal(weldDeleteQuestion(['012']), 'Are you sure you want to delete weld 012?');
+  assert.equal(weldDeleteQuestion(['001', '002', '003']), 'Are you sure you want to delete these 3 welds (001, 002, 003)?');
+  assert.equal(weldDeleteQuestion(['1', '2', '3', '4', '5', '6', '7']), 'Are you sure you want to delete these 7 welds (1, 2, 3, 4, 5, …)?');
+  assert.equal(weldBringBackQuestion('012'), 'Are you sure you want to bring weld 012 back?');
+  assert.match(source, /<p>\{weldDeleteQuestion\(items\.map\(weld => str\(weld\.weldNo\)\)\)\}<\/p>/); assert.match(source, /<p>\{weldBringBackQuestion\(str\(weld\.weldNo\)\)\}<\/p>/);
+  assert.equal(ISO_PAGE_MENU.find(entry => entry.key === 'archive')?.label, 'Delete isometric', 'the hosted dialog is titled Delete isometric');
+  assert.match(readFileSync('client/project-workspace.tsx', 'utf8'), /\{hasFeature\('pilots'\) \? label : 'Archive isometric'\}/, 'other profiles archive, and say so');
+  const css = readFileSync('client/project-workspace.css', 'utf8');
+  assert.match(css, /\.iso-crumbs li \{[^}]*white-space: nowrap; \}/); assert.match(css, /\.iso-crumbs li:not\(:last-child\)::after \{ content: "›";/);
+  assert.doesNotMatch(css, /\.iso-crumbs li \+ li::before/, 'no separator at the start of a crumb (it would open a wrapped line alone)');
 });

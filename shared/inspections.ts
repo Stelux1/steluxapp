@@ -166,6 +166,10 @@ export const viCellText = (state: Pick<CellState, 'status' | 'required'>) => !st
 /** One request a weld is on, as the per-weld archive dialogs list it (NDT archive, NDT Pre archive, PWHT archive). */
 export interface WeldArchiveRow { key: string; number: string; shown: string; type: string; requestId: string; /** `20240321_R00011-NDT-Request.pdf` */ document: string; /** "21.03.2024. 15:33" */ date: string; /** The stored request PDF, when it was made. */ file?: Row; }
 export const ARCHIVE_TITLES: Record<InspectionKind, string> = { VI: '', 'NDT PRE': 'NDT Pre archive', NDT: 'NDT archive', PWHT: 'PWHT archive' };
+/** The request type behind one column of the LISL: the Pre-HT column requests and lists PRE-HT, the PWHT column PWHT; the combined Pre-HT/PWHT entries (no heat) start with PWHT as before. */
+export const columnRequestType = (kind: InspectionKind, heat?: HeatType): string => kind === 'PWHT' ? heat ?? 'PWHT' : kind;
+/** Title of a weld's archive dialog: "Pre-HT archive" / "PWHT archive" for one heat column, the kind's title otherwise. */
+export const archiveTitle = (kind: InspectionKind, heat?: HeatType) => kind === 'PWHT' && heat ? `${HEAT_LABELS[heat]} archive` : ARCHIVE_TITLES[kind];
 const pad = (value: number) => String(value).padStart(2, '0');
 /** "dd.mm.yyyy. hh:mm" of the moment a request was made (its creation time); the request date alone when that is missing. */
 export function archiveStamp(request: Row): string {

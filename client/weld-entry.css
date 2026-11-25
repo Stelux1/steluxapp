@@ -10,7 +10,12 @@
 /*
  * The table fits its box (client change list 22.11.2026, D6): fixed layout with deliberate widths, compact type, Material ①,
  * Material ② taking the rest. Long material and WPS texts wrap to two lines with the full text as tooltip. The box scrolls
- * up and down with a sticky header; below about 1100 px of content it scrolls sideways inside the box (no hint line).
+ * up and down with a sticky header; below 920 px of content it scrolls sideways inside the box (no hint line).
+ * Budget: 1280 px viewport minus the 248 px sidebar leaves about 958 px inside the box. The fixed columns add up to 816 px, the
+ * two Material columns share the rest; the table never asks for more than its box above the 920 px minimum. A fixed-layout cell
+ * still widens its column when its padding is wider than the column, so every cell's padding fits its column (the select cell
+ * overrides the 20 / 7 px padding of the shared .select-cell), and the cells clip what does not fit instead of pushing the
+ * scroll width out.
  */
 .weld-table-box { overflow: auto; max-height: max(420px, calc(100vh - 170px)); border-top: 1px solid var(--line); overscroll-behavior: contain; }
 .weld-table-box:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
@@ -23,7 +28,9 @@
 .weld-table td { height: auto; padding: 5px 4px; vertical-align: middle; font-size: 12px; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; border-bottom: 1px solid var(--line); }
 .weld-table tbody tr:last-child td { border-bottom: 0; }
 .weld-table th:first-child, .weld-table td:first-child { padding-left: 10px; }
-.weld-table .select-cell { text-align: center; padding-inline: 2px; }
+.weld-table .select-cell { text-align: center; padding-left: 2px !important; padding-right: 2px !important; }
+.weld-table td { overflow: hidden; min-width: 0; }
+.weld-table td :focus-visible { outline-offset: -2px; }
 .weld-table .weld-no { font-weight: 600; }
 .weld-table .weld-no .record-link { min-height: 0; padding: 0; font-size: 12px; text-align: left; overflow-wrap: anywhere; }
 .weld-table .weld-wrap { overflow-wrap: anywhere; }
@@ -35,7 +42,7 @@
 .weld-type { display: inline-block; min-width: 30px; padding: 1px 4px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface-blue); font-weight: 600; font-size: 11px; text-align: center; cursor: help; }
 .weld-type:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 /* Inspection cells of this table: the icons wrap under Yes / No instead of widening the column. */
-.weld-table .inspection-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 0 1px; white-space: normal; }
+.weld-table .inspection-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 0 1px; white-space: normal; min-width: 0; max-width: 100%; overflow: hidden; }
 .weld-table .inspection-cell-main, .weld-table .inspection-cell-text { min-height: 24px; padding: 1px 3px; }
 .weld-table .inspection-cell-file, .weld-table .inspection-cell-tracer { min-width: 20px; min-height: 20px; }
 .dropdown-menu .dropdown-danger { color: #b4232f; }

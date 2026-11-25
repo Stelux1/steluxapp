@@ -57,15 +57,21 @@ export function guardSiteIrn(value: Input) {
   if (value.irnAuto !== undefined || value.irnCounter !== undefined) throw new AppError(422, 'Use Automatically add IRN numbers to switch the IRN numbers of a main project on.');
 }
 
+/** What the user reads when the main project's stored IRN series is also stored on another main project: nothing was numbered, and who can fix it. */
+export const irnSeriesClashText = (series: string, otherName: string) => `IRN series ${series} is also stored on main project "${otherName || 'another main project'}", so no IRN numbers were added. Ask an administrator to give one of the two main projects another IRN series, then try again.`;
+
 /**
  * Automatically add IRN numbers: reserve a unique letter series for the main project (its own IRN Code when it has one),
  * switch the numbers on, and number the isometrics that have no IRN yet in the order they were created.
  */
 export function fillIrn(store: Store, data: Input, actor: Actor) {
   const site = store.get('sites', data.siteId);
-  const others = store.list('sites', true).filter(row => row.id !== site.id).map(row => text(row.irnCode));
+  const otherSites = store.list('sites', true).filter(row => row.id !== site.id), others = otherSites.map(row => text(row.irnCode));
   let series = text(site.irnCode);
-  if (series && others.some(code => code.toLowerCase() === series.toLowerCase())) throw new AppError(422, 'This IRN series is already used by another main project.', { siteId: 'Choose a main project with its own IRN code.' });
+  // Fires only for an IRN series stored on two main projects (older data: the form no longer has the IRN Code field and Duplicate
+  // does not copy it). The message names the series and the other main project, so an administrator can resolve it.
+  const clash = series ? otherSites.find(row => text(row.irnCode).toLowerCase() === series.toLowerCase()) : undefined;
+  if (clash) throw new AppError(422, 'This IRN series is already used by another main project.', { siteId: irnSeriesClashText(series, text(clash.name)) });
   if (!series) series = nextIrnSeries(others);
   let current = store.update('sites', site.id, { irnCode: series, irnAuto: true }, site._version, actor);
   const numbered: Row[] = [];

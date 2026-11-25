@@ -47,6 +47,11 @@ test('Project sites has no menu entry in either Core (it duplicates Change site)
   assert.deepEqual(pagePilots('/workspace/sites'), ['weld', 'mto'], 'the Project sites page is still a shared workspace page, never No access');
   const picker = readFileSync(join(process.cwd(), 'client', 'project-workspace.tsx'), 'utf8');
   assert.match(picker, /Add main project/); assert.match(picker, /Edit main project/); assert.match(picker, /Archived projects/); assert.match(picker, /<RecordEditor resourceKey="sites"/);
+  // A10: the main-projects screen has Grid / List but no export: an unobtrusive link opens the Project sites list (sortable, CSV / Excel), also before a main project is chosen.
+  assert.match(picker, /\{canRecord\('sites'\) && <Link className="btn" to=\{resourcePath\('sites'\)\}[^>]*>Project sites list<\/Link>\}/);
+  const shell = readFileSync(join(process.cwd(), 'client', 'App.tsx'), 'utf8');
+  assert.match(shell, /const sitesListOpen = location\.pathname === resourcePath\('sites'\);/); assert.equal((shell.match(/projectScopeEnabled && \(!siteId && !sitesListOpen \|\| location\.pathname === '\/workspace\/main-projects'\)/g) || []).length, 2);
+  assert.match(readFileSync(join(process.cwd(), 'client', 'sites-page.tsx'), 'utf8'), /<div className="eyebrow">MAIN PROJECTS<\/div>/, 'no GENERAL DATA eyebrow: that menu group is gone');
   assert.deepEqual(site.columns, ['name', 'address', 'zip', 'residence']);
   assert.deepEqual([...SITE_LIST_COLUMNS], site.columns);
   assert.deepEqual(SITE_PAGE_SIZES, [5, 20, 50, 100, 500]);

@@ -4,8 +4,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { emptyProgressUnits, PROGRESS_MODEL } from '../shared/progress-model.ts';
 import { projectProgress } from '../shared/project-progress.ts';
-import { COMPLETION_TEXTS, RING_CIRCUMFERENCE, nextTabIndex, percentText, pointsText, projectCompletion, ringSegments } from '../shared/project-completion.ts';
-import { ProjectCompletionPanel, ProjectCompletionView } from '../client/project-completion.tsx';
+import { COMPLETION_TEXTS, RING_CIRCUMFERENCE, nextTabIndex, percentText, pointsText, projectCompletion, ringSegments, weightsChip } from '../shared/project-completion.ts';
+import { ProjectCompletionPanel, ProjectCompletionView, completionLoading } from '../client/project-completion.tsx';
 
 /** The client's prototype figures: Shop MTO 85 / Welding 60 / NDT 45 / Fab book 20 (-> 64.5 %), Field erection 70 ... final docs 5. */
 function units() {
@@ -83,4 +83,26 @@ test('loading and error states replace the figures', () => {
   const failed = renderToStaticMarkup(createElement(ProjectCompletionPanel, { progress: null, error: 'Project progress could not be calculated.' }));
   assert.ok(failed.includes('role="alert"') && failed.includes('could not be calculated'));
   assert.ok(renderToStaticMarkup(createElement(ProjectCompletionPanel, { progress: null })).includes(COMPLETION_TEXTS.unavailable));
+  // B3: isometrics present, summaries not yet: the pilots profile is loading (it always sends them), never "not available".
+  assert.equal(completionLoading(false, true, true), true); assert.equal(completionLoading(false, false, true), true); assert.equal(completionLoading(true, true, true), false);
+  assert.equal(completionLoading(false, true, false), false, 'other profiles without summaries: not available'); assert.equal(completionLoading(false, false, false), true);
+});
+
+test('B3: a card that cannot be measured says it is not counted, and the chip names the weights that count', () => {
+  const u = units(); u.field.supports = { done: 0, total: 0 };
+  const view = projectCompletion(projectProgress([{ units: u }])), field = view.phases[1], supports = field.activities.find(card => card.key === 'supports')!;
+  assert.deepEqual([supports.measurable, supports.reason, supports.countNote], [false, 'No supports in the MTO.', 'Not counted — the other weights are scaled up.']);
+  const weight = PROGRESS_MODEL.phases[1].activities.find(activity => activity.key === 'supports')!.weight;
+  assert.equal(field.weightsLabel, `Weights counted: ${percentText(100 - weight)} of 100 %`);
+  assert.equal(view.phases[0].weightsLabel, 'Weights total: 100 %', 'a phase with every activity measured keeps the plain total');
+  assert.equal(view.phases[0].activities[0].countNote, '');
+  // The contributions of the counted cards, scaled to the counted weights, give the phase %.
+  const counted = field.activities.filter(card => card.measurable), points = counted.reduce((sum, card) => sum + card.percent * PROGRESS_MODEL.phases[1].activities.find(activity => activity.key === card.key)!.weight / 100, 0);
+  assert.ok(Math.abs(points / (100 - weight) * 100 - field.percent) < 0.2);
+  assert.equal(weightsChip([{ weight: 60, inScope: true }, { weight: 30, inScope: true }, { weight: 10, inScope: false }]), 'Weights counted: 90 % of 100 %');
+  const html = renderToStaticMarkup(createElement(ProjectCompletionView, { view, initialPhase: 'field' }));
+  assert.ok(html.includes('Not counted — the other weights are scaled up.') && html.includes('Weights counted: '));
+  // A phase with nothing measurable leaves the total; its cards say so.
+  const empty = emptyProgressUnits(); empty.shop.fitUp = { done: 1, total: 2 };
+  assert.equal(projectCompletion(projectProgress([{ units: empty }])).phases[1].activities[0].countNote, COMPLETION_TEXTS.phaseOut);
 });

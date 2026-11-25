@@ -17,6 +17,10 @@ export const COMPLETION_TEXTS = {
   remaining: 'Remaining', loading: 'Loading project progress…', unavailable: 'Project progress is not available for this workspace yet.',
   empty: 'No isometrics in this main project yet, so there is nothing to measure. Progress starts at 0 % and follows as isometrics are added.',
   notMeasurable: 'Nothing to measure yet', noValue: '—',
+  /** On a card that is not measurable while others of its phase are: the phase % is over the measurable weights only. */
+  scaledUp: 'Not counted — the other weights are scaled up.',
+  /** On a card of a phase with nothing measurable at all: the phase leaves the project total. */
+  phaseOut: 'Not counted — this phase is left out of the project total.',
 } as const;
 /** Why an activity cannot be measured yet (its denominator is 0), by phase and activity key. */
 export const NOT_MEASURABLE_REASON: Record<ProgressPhaseKey, Record<string, string>> = {
@@ -57,6 +61,7 @@ export interface ActivityCard {
   key: string; label: string; measurable: boolean; percent: number;
   /** "64 %", or "—" while nothing can be measured. */ percentLabel: string;
   weightLabel: string; contributionLabel: string; /** Why there is no figure ('' when measurable). */ reason: string;
+  /** How a card without a figure enters the phase % ('' when measurable): the other weights are scaled up, or the phase drops out. */ countNote: string;
   /** Text for screen readers / the donut's aria-label. */ summary: string;
 }
 export interface PhaseCompletion {
@@ -72,11 +77,20 @@ export interface ProjectCompletion {
 function activityCard(phase: PhaseProgress, activity: PhaseProgress['activities'][number]): ActivityCard {
   const measurable = activity.inScope && activity.progress !== null, percent = measurable ? activity.progress! : 0;
   const reason = measurable ? '' : NOT_MEASURABLE_REASON[phase.key]?.[activity.key] ?? COMPLETION_TEXTS.notMeasurable;
+  const countNote = measurable ? '' : phase.activities.some(other => other.inScope) ? COMPLETION_TEXTS.scaledUp : COMPLETION_TEXTS.phaseOut;
   const weightLabel = `Weight in phase: ${percentText(activity.weight)}`;
   const contributionLabel = measurable ? `Contribution: ${pointsText(activity.contribution, activity.weight)}` : `Contribution: ${COMPLETION_TEXTS.noValue} / ${round1(activity.weight)} pp`;
   const percentLabel = measurable ? percentText(percent) : COMPLETION_TEXTS.noValue;
-  return { key: activity.key, label: activity.label, measurable, percent, percentLabel, weightLabel, contributionLabel, reason,
-    summary: measurable ? `${activity.label}: ${percentLabel} complete. ${weightLabel}. ${contributionLabel}.` : `${activity.label}: no figure yet. ${reason} ${weightLabel}.` };
+  return { key: activity.key, label: activity.label, measurable, percent, percentLabel, weightLabel, contributionLabel, reason, countNote,
+    summary: measurable ? `${activity.label}: ${percentLabel} complete. ${weightLabel}. ${contributionLabel}.` : `${activity.label}: no figure yet. ${reason} ${weightLabel}. ${countNote}` };
+}
+/**
+ * The chip of a phase: "Weights total: 100 %" while every activity is measured; otherwise the weights that count, e.g.
+ * "Weights counted: 90 % of 100 %" when Supports (10 %) has nothing to measure, so the contributions add up to the phase %.
+ */
+export function weightsChip(activities: Pick<PhaseProgress['activities'][number], 'weight' | 'inScope'>[]): string {
+  const total = activities.reduce((sum, activity) => sum + activity.weight, 0), counted = activities.reduce((sum, activity) => sum + (activity.inScope ? activity.weight : 0), 0);
+  return activities.every(activity => activity.inScope) ? `Weights total: ${percentText(total)}` : `Weights counted: ${percentText(counted)} of ${percentText(total)}`;
 }
 
 /** Everything the section draws, from the main-project aggregate. An empty project gives 0 % and a flag, never NaN. */
@@ -88,7 +102,7 @@ export function projectCompletion(progress: Pick<ProjectProgress, 'total' | 'sho
     const names = COMPLETION_PHASES[phase.key], weightsTotal = phase.activities.reduce((sum, activity) => sum + activity.weight, 0);
     // The ring shows each phase's share of the total: its contribution, rescaled when a phase without anything to measure drops out of the total.
     const ringValue = counted[index] && weightSum > 0 ? round1(phase.weight * phase.percent / weightSum) : 0;
-    return { key: phase.key, tab: names.tab, title: names.title, percent: phase.percent, weight: phase.weight, contribution: phase.contribution, counted: counted[index], ringValue, activities: phase.activities.map(activity => activityCard(phase, activity)), weightsTotal, weightsLabel: `Weights total: ${percentText(weightsTotal)}` };
+    return { key: phase.key, tab: names.tab, title: names.title, percent: phase.percent, weight: phase.weight, contribution: phase.contribution, counted: counted[index], ringValue, activities: phase.activities.map(activity => activityCard(phase, activity)), weightsTotal, weightsLabel: weightsChip(phase.activities) };
   });
   const total = clamp(progress.total, 0, 100), remaining = Math.max(0, round1(100 - phases.reduce((sum, phase) => sum + phase.ringValue, 0)));
   const ring = ringSegments([...phases.map(phase => ({ key: phase.key, value: phase.ringValue })), { key: 'remaining', value: remaining }]);

@@ -227,24 +227,41 @@ export function CoreFanMenu({ items, onOpen, menuRef, style }: { items: CoreFanI
         style={{ '--i': index + 1, '--dx': `${at.dx}px`, '--dy': `${at.dy}px`, '--core': item.color } as React.CSSProperties} onClick={() => { if (live) onOpen?.(item.key as PilotKey); }}>
         <span className="core-fan-icon"><Icon size={17}/></span>
         <span className="core-fan-text"><strong>{item.label}</strong>{item.stateText && <small>{item.stateText}</small>}</span>
-        {item.state === 'active' ? <Check size={16} className="core-fan-mark" aria-hidden="true"/> : live ? <ArrowRight size={16} className="core-fan-mark" aria-hidden="true"/> : null}
+        {item.state === 'active' ? <Check size={14} className="core-fan-mark" aria-hidden="true"/> : live ? <ArrowRight size={16} className="core-fan-mark" aria-hidden="true"/> : null}
       </button>; })}
   </div>;
+}
+
+/** Room between the sidebar's edge and the fan: clears the collapse handle that sits 13 px over the edge. */
+export const FAN_SIDEBAR_GAP = 22;
+/** The caption's centre stays below this line, under the collapse handle (top 20 px, 26 px high) of the sidebar. */
+export const FAN_TOP_CLEAR = 72;
+/**
+ * Where the fan opens beside the Switch button: to the right of the sidebar (its box, or the button when there is none),
+ * centred on the button, but never so high that the caption meets the collapse handle nor so low that a pill leaves the window.
+ * The backdrop starts at the sidebar's edge, so the sidebar stays visible and its Switch button closes the fan.
+ */
+export function fanPlace(button: { right: number; top: number; height: number; bottom: number }, sidebarRight: number | undefined, count: number, viewportHeight: number) {
+  const offsets = fanOffsets(count), above = -offsets[0].dy, below = offsets[count - 1].dy, edge = Math.round(sidebarRight ?? button.right);
+  const lowest = above + FAN_TOP_CLEAR, highest = Math.max(lowest, viewportHeight - below - 36);
+  return { left: edge + FAN_SIDEBAR_GAP, top: Math.round(Math.min(Math.max(button.top + button.height / 2, lowest), highest)), bottom: Math.round(button.bottom + 8), shade: sidebarRight === undefined ? 0 : edge };
 }
 
 /**
  * The Switch button and its fan. Click / Enter / Space opens it; focus moves to the first Core that can be opened; the arrow
  * keys move, Escape, a click outside or a second click on the button close it and focus returns to the button. The fan is
- * drawn in a fixed layer on the page (never clipped by the sidebar), also from the icon-only button of the collapsed menu.
+ * drawn in a fixed layer on the page beside the sidebar, also from the icon-only button of the collapsed menu; the dim
+ * backdrop covers the page only, the sidebar stays as it is.
  */
 export function CoreSwitch({ current, allowed, onOpen }: { current: PilotKey; allowed: PilotKey[]; onOpen: (key: PilotKey) => void }) {
-  const [place, setPlace] = useState<{ left: number; top: number; bottom: number } | null>(null), button = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ left: number; top: number; bottom: number; shade: number } | null>(null), button = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
   const items = coreFanItems(allowed, current), open = place !== null;
   const close = useCallback((restore = true) => { setPlace(null); if (restore) button.current?.focus(); }, []);
   const toggle = () => {
     if (open) return close();
-    const box = button.current!.getBoundingClientRect(), half = ((items.length + 1) * FAN_SPACING) / 2 + 20;
-    setPlace({ left: Math.round(box.right + 14), top: Math.round(Math.min(Math.max(box.top + box.height / 2, half + 12), Math.max(half + 12, window.innerHeight - half - 12))), bottom: Math.round(box.bottom + 8) });
+    const box = button.current!.getBoundingClientRect(), sidebar = button.current!.closest('.sidebar')?.getBoundingClientRect();
+    // A sidebar drawn over the page (the phone drawer) is not beside it: there the backdrop covers the whole window.
+    setPlace(fanPlace(box, sidebar && sidebar.right < window.innerWidth - 200 ? sidebar.right : undefined, items.length + 1, window.innerHeight));
   };
   useEffect(() => {
     if (!open) return;
@@ -259,20 +276,25 @@ export function CoreSwitch({ current, allowed, onOpen }: { current: PilotKey; al
       else if (event.key === 'Home') { event.preventDefault(); list[0]?.focus(); } else if (event.key === 'End') { event.preventDefault(); list.at(-1)?.focus(); }
     };
     const away = () => close(false);
-    document.addEventListener('keydown', key, true); window.addEventListener('resize', away);
-    return () => { document.removeEventListener('keydown', key, true); window.removeEventListener('resize', away); };
+    // The sidebar is not covered: a click there (other than on the Switch button, which toggles) closes the fan too.
+    const outside = (event: MouseEvent) => { const target = event.target instanceof Element ? event.target : null; if (target?.closest('.sidebar') && !button.current?.contains(target)) close(false); };
+    document.addEventListener('keydown', key, true); document.addEventListener('mousedown', outside); window.addEventListener('resize', away);
+    return () => { document.removeEventListener('keydown', key, true); document.removeEventListener('mousedown', outside); window.removeEventListener('resize', away); };
   }, [open, close]);
   return <>
     <button ref={button} type="button" className="pilot-badge-switch" aria-haspopup="menu" aria-expanded={open} aria-label="Switch Core" title="Switch Core" onClick={toggle}><LayoutGrid size={14}/><span>Switch</span></button>
-    {open && createPortal(<div className="core-fan-layer"><div className="core-fan-backdrop" onClick={() => close()} aria-hidden="true"/>
+    {open && createPortal(<div className="core-fan-layer" style={{ '--fan-shade': `${place.shade}px` } as React.CSSProperties}><div className="core-fan-backdrop" onClick={() => close()} aria-hidden="true"/>
       <CoreFanMenu items={items} menuRef={menu} onOpen={key => { close(false); onOpen(key); }} style={{ '--fan-left': `${place.left}px`, '--fan-top': `${place.top}px`, '--fan-bottom': `${place.bottom}px` } as React.CSSProperties}/></div>, document.body)}
   </>;
 }
 
-/** The pilot block in the sidebar: title in the pilot colour and the Switch button that opens the fan of Cores. */
+/**
+ * The pilot block in the sidebar: title in the pilot colour and the Switch button that opens the fan of Cores. The button is
+ * always there inside a Core, also for an account with one Core: the fan then shows the other built Core as "Not enabled".
+ */
 export function PilotBadge() {
   const state = usePilot(); if (!state) return null; const Icon = ICONS[state.pilot.key];
-  return <div className="pilot-badge" title={state.pilot.title}><span className="pilot-badge-icon"><Icon size={16}/></span><strong>{state.pilot.title}</strong>{state.allowed.length > 1 && <CoreSwitch current={state.pilot.key} allowed={state.allowed.map(entry => entry.key)} onOpen={key => state.openPilot(key, '/dashboard')}/>}</div>;
+  return <div className="pilot-badge" title={state.pilot.title}><span className="pilot-badge-icon"><Icon size={16}/></span><strong>{state.pilot.title}</strong><CoreSwitch current={state.pilot.key} allowed={state.allowed.map(entry => entry.key)} onOpen={key => state.openPilot(key, '/dashboard')}/></div>;
 }
 
 /** Whether the current page must be replaced by the no-access state in this pilot. */

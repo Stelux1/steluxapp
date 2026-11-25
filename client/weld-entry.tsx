@@ -20,7 +20,7 @@ import {
   WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, lockContext, locationTooltip, missingMandatoryFields, neighbourOf, orderedWelds,
   planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
   MASS_EDIT_CLEAR_LABEL, MASS_EDIT_COLUMNS, MASS_EDIT_DATES, MASS_EDIT_DATE_HINT, MASS_EDIT_DIAMETER, MASS_EDIT_FLAGS_LABELS, MASS_EDIT_SECTIONS, MASS_EDIT_SELECT_NOTHING,
-  NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, deletedViewEmpty, stayInDeletedView, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, sideCellTexts, stampOptionLabel,
+  LISL_EMPTY, STAMP_NONE, weldBringBackQuestion, weldDeleteQuestion, WELD_BRING_BACK_WORDING, deletedViewEmpty, stayInDeletedView, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, sideCellTexts, stampOptionLabel,
   MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldSortingDisabled, welderStamps, type MassEditItem,
   CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
   chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
@@ -545,7 +545,7 @@ function StampDialog({ weld, data, onClose }: { weld: Row; data: WeldData; onClo
   </div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}Update</button></div></form></Modal>;
 }
 
-/** Delete one or several checked welds: "Are you sure?" first, then each weld on its own (a locked weld stays and says why). */
+/** Delete one or several checked welds: a question naming the weld (or the count) first, then each weld on its own (a locked weld stays and says why). */
 function DeleteDialog({ welds, onClose, onDone }: { welds: Row[]; onClose: () => void; onDone: () => void }) {
   const { refresh, notify } = useWorkspace(); const [items] = useState(welds);
   const [busy, setBusy] = useState(false), [failed, setFailed] = useState<{ id: string; weldNo: string; message: string }[]>([]), [deleted, setDeleted] = useState(0);
@@ -558,19 +558,19 @@ function DeleteDialog({ welds, onClose, onDone }: { welds: Row[]; onClose: () =>
   }
   const finished = failed.length > 0;
   return <Modal title={items.length === 1 ? WELD_DELETE_WORDING.one : WELD_DELETE_WORDING.many} onClose={onClose}>
-    <div className="modal-body">{finished ? <div className="alert error" role="alert"><AlertCircle size={18}/><div><strong>{deleted} deleted, {failed.length} could not be deleted.</strong><ul>{failed.map(item => <li key={item.id}>Weld {item.weldNo}: {item.message}</li>)}</ul></div></div> : <p>{WELD_DELETE_WORDING.text}</p>}</div>
+    <div className="modal-body">{finished ? <div className="alert error" role="alert"><AlertCircle size={18}/><div><strong>{deleted} deleted, {failed.length} could not be deleted.</strong><ul>{failed.map(item => <li key={item.id}>Weld {item.weldNo}: {item.message}</li>)}</ul></div></div> : <p>{weldDeleteQuestion(items.map(weld => str(weld.weldNo)))}</p>}</div>
     <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{finished ? 'Close' : WELD_DELETE_WORDING.cancel}</button>{!finished && <button className="btn primary danger" disabled={busy} onClick={() => void submit()}>{busy && <Loader2 size={15} className="spin"/>}{WELD_DELETE_WORDING.button}</button>}</div>
   </Modal>;
 }
 
-/** The undo icon of a deleted weld: "Bring weld back", "Are you sure?", Bring back / Cancel. */
+/** The undo icon of a deleted weld: "Bring weld back", the question with the weld number, Bring back / Cancel. */
 function BringBackDialog({ weld, onClose, onBack }: { weld: Row; onClose: () => void; onBack: () => void }) {
   const { refresh, notify } = useWorkspace(); const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function bring() {
     setBusy(true); setError('');
     try { await post(`/records/welds/${weld.id}/archive`, { _version: weld._version }); await refresh(); notify(`Weld ${str(weld.weldNo)} is back in the table.`); onBack(); onClose(); } catch (failure) { setError(errorMessage(failure)); } finally { setBusy(false); }
   }
-  return <Modal title={WELD_BRING_BACK_WORDING.title} onClose={onClose}><div className="modal-body"><Failure message={error}/><p>{WELD_BRING_BACK_WORDING.text}</p></div>
+  return <Modal title={WELD_BRING_BACK_WORDING.title} onClose={onClose}><div className="modal-body"><Failure message={error}/><p>{weldBringBackQuestion(str(weld.weldNo))}</p></div>
     <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{WELD_BRING_BACK_WORDING.cancel}</button><button type="button" className="btn primary" disabled={busy} onClick={() => void bring()}>{busy && <Loader2 size={15} className="spin"/>}{WELD_BRING_BACK_WORDING.button}</button></div></Modal>;
 }
 
@@ -670,14 +670,14 @@ function WeldTable({ iso, pageItem, layout }: WeldsPanelProps) {
         const editLabel = readOnly ? `Open weld ${str(weld.weldNo)} (read-only${lock.locked ? `: ${lock.reason}` : ndt.locked ? '; NDT results can be attached' : ''})` : `Edit weld ${str(weld.weldNo)}`;
         return <tr key={weld.id}>
           <td className="weld-no">{canOpen && !showDeleted ? <button type="button" className="record-link" title={readOnly ? editLabel : undefined} onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
-          <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}`}>{abbreviation}</span> : <span className="muted">-</span>}</td>
-          <td className="weld-wrap">{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{NO_WELDER_TEXT}</span>}</td>
+          <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}`}>{abbreviation}</span> : <span className="muted">{LISL_EMPTY}</span>}</td>
+          <td className="weld-wrap">{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{LISL_EMPTY}</span>}</td>
           <td><InspectionCell weld={weld} kind="VI"/></td><td><InspectionCell weld={weld} kind="NDT PRE"/></td><td><InspectionCell weld={weld} kind="NDT"/></td>
           {HEAT_TYPES.map(heat => <td key={heat}><InspectionCell weld={weld} kind="PWHT" heat={heat}/></td>)}
           {sideCells(weld, 1)}{sideCells(weld, 2)}
-          <td>{wps ? <span className="weld-clamp" title={wps}>{wps}</span> : <span className="muted">—</span>}</td>
-          <td className="tabular weld-wrap">{weldDiameterText(weld, data.diameters.get(str(weld.diameterId))) || <span className="muted">—</span>}</td>
-          <td className="weld-wrap">{str(data.spools.get(str(weld.spoolId))?.name) || <span className="muted">—</span>}</td>
+          <td>{wps ? <span className="weld-clamp" title={wps}>{wps}</span> : <span className="muted">{LISL_EMPTY}</span>}</td>
+          <td className="tabular weld-wrap">{weldDiameterText(weld, data.diameters.get(str(weld.diameterId))) || <span className="muted">{LISL_EMPTY}</span>}</td>
+          <td className="weld-wrap">{str(data.spools.get(str(weld.spoolId))?.name) || <span className="muted">{LISL_EMPTY}</span>}</td>
           <td className="weld-options">{showDeleted ? (canDelete && <button type="button" className="icon-btn" aria-label={`${WELD_BRING_BACK_WORDING.icon} ${str(weld.weldNo)}`} title={WELD_BRING_BACK_WORDING.icon} onClick={() => setRestoring(weld)}><RotateCcw size={16}/></button>) : <>
             {canOpen && <button type="button" className="icon-btn" aria-label={editLabel} title={readOnly ? editLabel : 'Edit weld'} onClick={() => setEditing(weld)}><Pencil size={16}/></button>}
             {canEdit && <button type="button" className={`icon-btn ${weld.stampedBy ? 'weld-stamp-set' : ''}`} aria-label={`Stamp weld ${str(weld.weldNo)}${stamper ? `, stamped by ${str(stamper.name)}` : ''}`} title={stamper ? stampOptionLabel(stamper) : 'Stamp'} onClick={() => setStamping(weld)}><Stamp size={16}/></button>}</>}</td>

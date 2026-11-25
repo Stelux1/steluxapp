@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Check, FileText, MoreHorizontal, Printer, X } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
-import { HEAT_LABELS, KIND_LABELS, cellStatusTitle, inspectionCellState, viCellText, workspaceCellRows, type HeatType, type InspectionKind } from '../shared/inspections.ts';
+import { HEAT_LABELS, KIND_LABELS, cellStatusTitle, columnRequestType, inspectionCellState, viCellText, workspaceCellRows, type HeatType, type InspectionKind } from '../shared/inspections.ts';
 import { apiUrl } from './api.ts';
 import { useWorkspace } from './context.tsx';
 import { InspectionDialog, MassRequestDialog, WeldArchiveDialog } from './inspections.tsx';
@@ -18,7 +18,8 @@ const ARCHIVE_ICON_TITLES: Record<InspectionKind, string> = { VI: '', 'NDT PRE':
  *   ✖ NA or ReWeld, ••• In progress; the T button on tracer welds only; the archive icon once the weld is on a request; the
  *   "Generate & Print … Request" icon while the weld still needs one.
  * - `heat` splits the Pre-HT/PWHT kind into its two columns: each reads only its own requirement, requests, results and reports.
- *   The dialogs it opens are the weld's Pre-HT / PWHT dialogs, which list both sections the weld requires.
+ *   The weld's dialog lists both sections the weld requires; the request icon starts with the column's treatment and the archive
+ *   lists the column's treatment only.
  */
 export function InspectionCell({ weld, kind, heat }: { weld: Row; kind: InspectionKind; heat?: HeatType }) {
   const { rows, canRecord, canRun, canReadReport } = useWorkspace();
@@ -37,7 +38,8 @@ export function InspectionCell({ weld, kind, heat }: { weld: Row; kind: Inspecti
     </span>;
   }
   const status = !state.required ? 'not required' : state.status === 'accepted' ? 'accepted' : state.status === 'reweld' ? 'not accepted, ReWeld' : state.status === 'rejected' ? 'not accepted' : state.status === 'requested' ? 'requested, result pending' : state.status === 'not-applicable' ? 'not applicable' : 'open';
-  const type = kind === 'PWHT' ? 'PWHT' : kind;
+  // The Pre-HT column requests and lists PRE-HT, the PWHT column PWHT (each column acts on its own treatment only).
+  const type = columnRequestType(kind, heat);
   const archiveTitle = kind === 'PWHT' && heat ? `Show ${HEAT_LABELS[heat]} archive` : ARCHIVE_ICON_TITLES[kind], printTitle = kind === 'PWHT' && heat ? `Generate & Print ${HEAT_LABELS[heat]} Request` : PRINT_TITLES[kind];
   const printable = state.printable && canRun('mass-inspection-request', { type });
   const icon = state.status === 'accepted' ? <Check size={13} aria-hidden="true"/> : state.status === 'rejected' || state.status === 'reweld' ? <X size={13} aria-hidden="true"/> : state.status === 'requested' ? <MoreHorizontal size={13} aria-hidden="true"/> : null;
@@ -48,7 +50,7 @@ export function InspectionCell({ weld, kind, heat }: { weld: Row; kind: Inspecti
     {state.archive.length > 0 && readable && <button type="button" className="inspection-cell-file" onClick={() => setOpen('archive')} aria-label={`${archiveTitle} of weld ${weld.weldNo}`} title={archiveTitle}><FileText size={13} aria-hidden="true"/></button>}
     {printable && <button type="button" className="inspection-cell-file" onClick={() => setOpen('print')} aria-label={`${printTitle} for weld ${weld.weldNo}`} title={printTitle}><Printer size={13} aria-hidden="true"/></button>}
     {(open === 'cell' || open === 'tracer') && <InspectionDialog weld={weld} kind={kind} tracer={open === 'tracer'} onClose={() => setOpen(null)}/>}
-    {open === 'archive' && <WeldArchiveDialog weld={weld} kind={kind} onClose={() => setOpen(null)}/>}
-    {open === 'print' && <MassRequestDialog kind={kind} weldIds={[weld.id]} onClose={() => setOpen(null)}/>}
+    {open === 'archive' && <WeldArchiveDialog weld={weld} kind={kind} heat={kind === 'PWHT' ? heat : undefined} onClose={() => setOpen(null)}/>}
+    {open === 'print' && <MassRequestDialog kind={kind} type={type} weldIds={[weld.id]} onClose={() => setOpen(null)}/>}
   </span>;
 }
