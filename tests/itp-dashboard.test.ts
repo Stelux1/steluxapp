@@ -14,8 +14,8 @@ import { RESOURCE_MAP } from '../shared/resources.ts';
 import { areaPilots, canResource } from '../shared/permissions.ts';
 import { DEFAULT_NDT_PERCENT, isoItpId, isoItpLinks, itpNdtPercent, itpSlotRefresh, itpUsage, itpsForProject, weldItpId } from '../shared/itp-dashboard.ts';
 import {
-  COMPLIANCE_PAGE_SIZE, DASHBOARD_REFRESH_MS, NO_DASHBOARD_FILTERS, NO_TRACER_CANDIDATES, VIEW_OPTIONS, barPercent, breakdownText, dashboardFilterCount, defaultDashboardFilters, defectFlag, filterGroups, filterSummary,
-  groupTracerProposal, headerDate, isNdtCompleted, isTracerWeld, itpOptionLabel, ndtProcessLabel, pageOf, pageRange, percentLabel, requiredExaminations, scheduleDashboardRefresh, share, tracerStatus, viewLabel, weldDashboard,
+  DASHBOARD_REFRESH_MS, FILTER_LABELS, FILTER_PLACEHOLDERS, NO_DASHBOARD_FILTERS, NO_TRACER_CANDIDATES, barPercent, breakdownText, dashboardFilterCount, defaultDashboardFilters, defectFlag,
+  groupTracerProposal, headerDate, isNdtCompleted, isTracerWeld, itpOptionLabel, percentLabel, requiredExaminations, scheduleDashboardRefresh, share, tracerStatus, weldDashboard,
   weldTypeLabel, welderLabel, welderOptionLabel, type DashboardFilters, type DashboardRows, type WeldView,
 } from '../shared/weld-dashboard.ts';
 import { weldItpCode } from '../shared/inspections.ts';
@@ -117,8 +117,6 @@ test('View: Welds length sums the weld length in mm; Repair rate becomes repaire
   assert.equal(length.repairPerformance.scopePercent, 11.8);   // 100 / 850
   assert.equal(length.welded, 3);                       // a count in both views
   assert.deepEqual([count.totalWelds, count.examinedPercent, count.repaired, count.repairRate, count.repairPerformance.scopePercent], [4, 50, 1, 33.3, 25]);   // 2/4, 1 of 3 welded, 1/4
-  assert.deepEqual(VIEW_OPTIONS.map(option => option.label), ['Welds length', 'Number of welds']);
-  assert.deepEqual([viewLabel('welds'), viewLabel('length')], ['View: Number of welds', 'View: Welds length']);
 });
 
 test('repair performance uses the fixed limit of 5 % (the site setting was removed, client change list 22.11.2026) and the badge only fires above it', () => {
@@ -238,7 +236,7 @@ test('To Date defaults to today and an undated weld stays in scope under a date 
   assert.deepEqual([dash({ to: '2026-10-07' }, null, 'welds', undated).kpis.totalWelds, dash({ to: '2026-10-07' }, null, 'welds', undated).kpis.welded], [9, 8]);   // a1..a7 + d1 + u; welded a1..a7 + u
 });
 
-test('filters narrow the welds: dates, company, weld type, the four multi-selects, ITP, isometric fields, NDT process (weld-dashboard-reports-015)', () => {
+test('filters narrow the welds: dates, company, weld type, the three multi-selects, ITP, isometric fields (weld-dashboard-reports-015; the NDT process filters were removed 22.11.2026)', () => {
   const count = (filters: Partial<DashboardFilters>) => dash(filters).kpis.totalWelds;
   assert.equal(count({ from: '2026-11-01' }), 4);                 // f1..f3 + d1 (undated)
   assert.equal(count({ to: '2026-10-07' }), 8);                   // a1..a7 + d1
@@ -255,23 +253,24 @@ test('filters narrow the welds: dates, company, weld type, the four multi-select
   assert.equal(count({ ped: 'Cat II' }), 9);
   assert.equal(count({ material: 'A106 Gr B' }), 9);
   assert.deepEqual([count({ wpsIds: ['w2'] }), count({ wpsIds: ['w1', 'w2'] })], [4, 16]);
-  assert.equal(count({ ndtProcessId: 'pRT' }), 1);                // a1 (the VI request of a3 is not an NDT process)
-  assert.equal(count({ ndtProcessId: 'pUT' }), 1);
-  assert.deepEqual([count({ ndtGroupIds: ['g2'] }), count({ ndtGroupIds: ['g1', 'g2'] })], [1, 2]);
-  assert.equal(count({ ndtGroupIds: ['g1'], ndtProcessId: 'pUT' }), 0);
   const field = dash({ location: 'Field' });
   // Field: 7 welds on iso2 and iso3 of p1 and p2; examined f1, c1, c2 = 3/7; no repair; groups wa/'' and wb/i50.
   assert.deepEqual([field.kpis.projects, field.kpis.isometrics, field.kpis.examinedPercent, field.kpis.repairRate, field.compliance.length], [2, 2, 42.9, 0, 2]);
-  assert.deepEqual(filterSummary({ ...NO_DASHBOARD_FILTERS, from: '2026-11-01', welderIds: ['wa', 'wb'] }, { project: id => id, welder: id => id.toUpperCase(), date: value => value.split('-').reverse().join('.') }),
-    [['From Date', '01.11.2026'], ['Project', 'All'], ['Welder', 'WA, WB']]);
+});
+
+test('the filter form: Sub-project / ITP / Custom field labels, no NDT process (group) filter anywhere (client change list 22.11.2026, B4)', () => {
+  assert.deepEqual([FILTER_LABELS.project, FILTER_LABELS.itp, FILTER_LABELS.customField], ['Sub-project', 'ITP', 'Custom field']);
+  assert.deepEqual([FILTER_PLACEHOLDERS.projects, FILTER_PLACEHOLDERS.itp, FILTER_PLACEHOLDERS.customField], ['All sub-projects', 'All ITPs', 'All custom fields']);
+  assert.deepEqual(Object.keys(NO_DASHBOARD_FILTERS).sort(), ['companyId', 'from', 'irn', 'itpId', 'location', 'material', 'ped', 'pipingClass', 'projectIds', 'to', 'welderIds', 'wpsIds']);
+  assert.equal(Object.keys(FILTER_PLACEHOLDERS).some(key => /ndt/i.test(key)), false);
+  // A stale filter object that still carries the removed keys changes nothing.
+  assert.equal(dash({ ndtProcessId: 'pRT', ndtGroupIds: ['g2'] } as unknown as Partial<DashboardFilters>).kpis.totalWelds, 16);
 });
 
 test('option labels and group wording follow the reference (weld-dashboard-reports-016/-017)', () => {
   assert.equal(welderOptionLabel(row('w', { number: 'ML396', name: 'Aleksandar Djuric' })), 'ML396 | Aleksandar Djuric');
   assert.equal(itpOptionLabel(row('i', { number: '111111', ndtPercent: 14 })), '111111 | 14%');
   assert.equal(itpOptionLabel(row('i', { number: '1', ndtPercent: null })), '1 | 10%');
-  assert.equal(ndtProcessLabel(row('p', { name: 'RT', description: 'Execution: EN ISO 17636-1 class B / acceptance: EN ISO 10675 Lv1' })), 'RT - Execution: EN ISO 17636-1 class B / acceptance: EN ISO 10675 Lv1');
-  assert.equal(ndtProcessLabel(row('p', { name: 'UT' })), 'UT');
   assert.deepEqual([welderLabel(row('w', { number: 'ML396', name: 'Aleksandar Djuric' })), welderLabel(row('w', { number: 'W01', name: '' })), welderLabel(undefined)], ['ML396 - Aleksandar Djuric', 'W01', 'Unknown welder']);
   const alt: DashboardRows = { ...rows, isometrics: rows.isometrics.map(iso => iso.id === 'iso2' ? { ...iso, itpId: 'i-empty' } as Row : iso) };
   const missing = weldDashboard(alt, NO_DASHBOARD_FILTERS, null).compliance.find(item => item.itpNumber === 'ITP-E');
@@ -284,23 +283,6 @@ test('option labels and group wording follow the reference (weld-dashboard-repor
   const free = weldDashboard(zero, NO_DASHBOARD_FILTERS, null).compliance.find(item => item.itpId === 'i30')!;
   assert.deepEqual([free.required, free.compliant, free.testedPercent, free.selectedPercent, free.remainingPercent, free.percentLabel], [0, true, 0, 0, 0, '0.0 %']);
   assert.equal(itpNdtPercent(row('x', { ndtPercent: 120 })), null); assert.equal(itpNdtPercent(null), null);
-});
-
-test('group filter, search, paging by 50 with the range text (weld-dashboard-reports-018)', () => {
-  const groups = dash().compliance;
-  assert.equal(filterGroups(groups, 'Not compliant', '').length, 0);
-  assert.equal(filterGroups(groups, 'Compliant', '').length, 3);
-  assert.equal(filterGroups(groups, 'All groups', '').length, 3);
-  assert.deepEqual(filterGroups(groups, 'All groups', ' ROBIN ').map(group => group.welderLabel), ['WB2 - Robin Lane']);
-  assert.deepEqual(filterGroups(groups, 'All groups', 'wb2').length, 1);
-  assert.deepEqual(filterGroups(groups, 'All groups', 'wps-135').length, 1);
-  assert.equal(filterGroups(groups, 'All groups', 'unassigned').length, 1);
-  assert.equal(COMPLIANCE_PAGE_SIZE, 50);
-  const items = Array.from({ length: 120 }, (_, index) => index);
-  assert.deepEqual(pageOf(items, 0).items, items.slice(0, 50));
-  assert.deepEqual([pageOf(items, 2).items.length, pageOf(items, 2).pages, pageOf(items, 9).page, pageOf(items, -3).page], [20, 3, 2, 0]);
-  assert.deepEqual(pageOf([], 4), { items: [], page: 0, pages: 1 });
-  assert.deepEqual([pageRange(3, 0), pageRange(120, 1), pageRange(120, 2), pageRange(0, 0)], ['1–3 of 3', '51–100 of 120', '101–120 of 120', '0–0 of 0']);
 });
 
 test('the dashboard reloads every 3 minutes and stops when it closes (weld-dashboard-reports-029)', () => {

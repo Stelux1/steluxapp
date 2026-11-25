@@ -83,11 +83,11 @@ const text = (value: unknown) => String(value ?? '').trim();
 /** One filter value as a list: the dashboard keeps single values today and lists for its multi-select filters. */
 const list = (value: unknown): string[] => (Array.isArray(value) ? value : [value]).map(text).filter(item => item && item !== '0');
 
-/** The dashboard filter behind each reference name (the dashboard's Weld type is Shop / Field). */
+/** The dashboard filter behind each reference name (the dashboard's Weld type is Shop / Field). The dashboard has no NDT filter (22.11.2026); `ndt` is set in the report dialog only. */
 function dashboardValue(filters: DashboardFilters, name: ReportFilter): string[] {
   const f = filters as unknown as Record<string, unknown>;
   const source: Record<ReportFilter, unknown> = {
-    project: f.projectId ?? f.projectIds, ndt: f.ndtProcessId ?? f.ndtProcessIds, wps: f.wpsId ?? f.wpsIds, welder: f.welderId ?? f.welderIds, from: f.from, to: f.to,
+    project: f.projectId ?? f.projectIds, ndt: undefined, wps: f.wpsId ?? f.wpsIds, welder: f.welderId ?? f.welderIds, from: f.from, to: f.to,
     company: f.companyId, weldType: f.location, itp: f.itpId, pipingClass: f.pipingClass, irn: f.irn, material: f.material, ped: f.ped,
     testSystemFilter: f.testSystemId, tracer: f.tracer,
   };
@@ -449,7 +449,7 @@ export function revisionsReport(rows: Record<string, Row[]>, filters: ReportScop
 // ----- header ----------------------------------------------------------------------------------------------------
 
 export interface HeaderItem { label: string; value: string }
-/** The header block of the reports (vendor-kb 5-05: Home location, Project, Date range, Welder, WPS method, Weld type; PED Cat.-Mod, ITP nr., IRN, Company, Piping class, Test system). */
+/** The header block of the reports (vendor-kb 5-05: Home location, Project, Date range, Welder, WPS method, Weld type; PED Cat.-Mod, ITP, Custom field, Company, Piping class, Test system). */
 export function reportHeader(report: DashboardReport, rows: Record<string, Row[]>, filters: ReportScopeFilters, site: Row | null): { left: HeaderItem[]; box: HeaderItem[] } {
   const names = (key: string, field: string, values: string[] = []) => values.map(id => text(byId(rows[key]).get(id)?.[field]) || id).join(', ');
   const all = (name: ReportFilter, value: string) => report.carries.includes(name) ? value || 'All' : 'All';
@@ -458,15 +458,15 @@ export function reportHeader(report: DashboardReport, rows: Record<string, Row[]
   return {
     left: [
       { label: 'Home location', value: report.allSites ? 'All sites' : text(site?.name) || 'All sites' },
-      { label: 'Project', value: all('project', names('projects', 'internnumber', filters.project)) },
+      { label: 'Sub-project', value: all('project', names('projects', 'internnumber', filters.project)) },
       { label: 'Date range', value: from || to ? `${from ? printDay(from) : '…'} - ${to ? printDay(to) : '…'}` : 'All dates' },
       { label: 'Welder', value: all('welder', welders) },
       { label: 'WPS method', value: all('wps', names('wps', 'name', filters.wps)) },
       { label: 'Weld type', value: all('weldType', (filters.weldType || []).join(', ')) },
     ],
     box: [
-      { label: 'PED Cat.-Mod', value: all('ped', (filters.ped || []).join(', ')) }, { label: 'ITP nr.', value: all('itp', names('itps', 'number', filters.itp)) },
-      { label: 'IRN', value: all('irn', (filters.irn || []).join(', ')) }, { label: 'Company', value: all('company', names('companies', 'name', filters.company)) },
+      { label: 'PED Cat.-Mod', value: all('ped', (filters.ped || []).join(', ')) }, { label: 'ITP', value: all('itp', names('itps', 'number', filters.itp)) },
+      { label: 'Custom field', value: all('irn', (filters.irn || []).join(', ')) }, { label: 'Company', value: all('company', names('companies', 'name', filters.company)) },
       { label: 'Piping class', value: all('pipingClass', (filters.pipingClass || []).join(', ')) }, { label: 'Test system', value: all('testSystemFilter', names('test_systems', 'name', filters.testSystemFilter)) },
       ...(report.carries.includes('ndt') && (filters.ndt || []).length ? [{ label: 'NDT process', value: names('ndt_processes', 'name', filters.ndt) }] : []),
     ],
