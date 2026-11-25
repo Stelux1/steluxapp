@@ -9,11 +9,10 @@ import { allowedSites, isSiteRefusal, offProjects, scopeRows, SiteScope, singleS
 import type { releaseAccess } from '../release-access.ts';
 import { canDocument, PDF_DOCUMENTS } from './documents.ts';
 import { bookPlans, partState, type Rows } from './iso-book-parts.ts';
-import { appendBook, Budget, collectChunks, createBook, type BookEnvironment, type Chunk, type CoverModel, type SkippedFile } from './iso-book.ts';
+import { appendBook, Budget, collectChunks, createBook, type BookEnvironment, type Chunk, type SkippedFile } from './iso-book.ts';
 import { RESOURCES } from '../../shared/resources.ts';
 import { canResource, REPORT_RESOURCES } from '../../shared/permissions.ts';
 import { bookRequestError, ISO_BOOK_LIMITS, type BookPartInfo, type BookPartsResponse, type BookRequest } from '../../shared/iso-book.ts';
-import { currentRevision } from '../../shared/revisions.ts';
 import { projectInPilot } from '../../shared/project-scope.ts';
 import { PILOT_KEYS } from '../../shared/release.ts';
 import type { Availability, Row, User } from '../../shared/types.ts';
@@ -184,26 +183,18 @@ export function registerIsoBookRoutes({ app, store, documents, availability, acc
       if (!states.some(state => state.available)) throw new AppError(422, `${plan.label}: ${states[0]?.reason || 'This part is not available.'}`, { parts: plan.label });
     }
     const budget = new Budget(), { out, font } = await createBook(isometrics.length === 1 ? `ISO Book ${String(isometrics[0].isoNo)}` : 'ISO Book');
-    const withCover = chosen.has('task-sheet');
-    const user = (req as unknown as AuthRequest).user;
-    const coverFor = (list: Row[]): CoverModel | null => {
-      if (!withCover) return null;
-      const rows = environment(list[0]).rows;
-      const project = (rows.projects || []).find(row => row.id === list[0].projectId);
-      const client = String((rows.companies || []).find(row => row.id === project?.companyId)?.name ?? '');
-      return { project, client, single: list.length === 1, preparedBy: user.name, now, isometrics: list.map(iso => ({ isoNo: String(iso.isoNo ?? ''), revision: currentRevision(environment(iso).rows, iso.id, 'ISO'), drawingNo: String(iso.drawingNo ?? '') })) };
-    };
+    // Task sheet (the cover page with the contents) is no part of the book any more (shared/iso-book.ts REMOVED_BOOK_PARTS): no cover.
     if (request.grouping === 'by-part' && isometrics.length > 1) {
       const skipped: SkippedFile[] = [], all: Chunk[] = [];
       for (const iso of isometrics) all.push(...await collectChunks(environment(iso), selected, iso, budget, skipped));
       // The chunks were collected isometric by isometric; a stable sort by part keeps that order inside each part.
       const order = new Map(selected.map((plan, index) => [plan.key, index]));
       all.sort((a, b) => order.get(a.key)! - order.get(b.key)!);
-      await appendBook(out, font, { cover: coverFor(isometrics), chunks: all, skipped, now }, budget);
+      await appendBook(out, font, { cover: null, chunks: all, skipped, now }, budget);
     } else {
       for (const iso of isometrics) {
         const skipped: SkippedFile[] = [], chunks = await collectChunks(environment(iso), selected, iso, budget, skipped);
-        await appendBook(out, font, { cover: coverFor([iso]), chunks, skipped, now }, budget);
+        await appendBook(out, font, { cover: null, chunks, skipped, now }, budget);
       }
     }
     if (!out.getPageCount()) throw new AppError(422, 'None of the chosen parts could be included in the book.');

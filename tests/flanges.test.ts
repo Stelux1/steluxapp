@@ -87,6 +87,37 @@ test('choosing the isometric fills the empty flange fields from it and keeps wha
   assert.deepEqual(flangeIsoPrefill(undefined, {}), {});
 });
 
+test('client change list 22.11.2026 (image 3): each flange names its own tightening standard; older flanges follow their main project', async () => {
+  const field = FLANGE_FIELDS.find(item => item.name === 'tightening_standard')!;
+  assert.deepEqual([field.label, field.type, field.section, field.default], ['Tightening standard', 'select', 'Tightening', FLANGE_STANDARDS[0]]);
+  assert.deepEqual(field.options, FLANGE_STANDARDS, 'the options of the old main project setting');
+  assert.equal(FLANGE_FIELDS[FLANGE_FIELDS.indexOf(field) + 1].name, 'torque_wrench_type', 'with the tightening and torque fields');
+  assert.ok(F.flangeDialogFields(true, false).includes(field) && F.flangeDialogFields(true, true).includes(field), 'in Add and Edit');
+  const site = { flangeStandard: 'Gasunie CSW-43 table B' };
+  assert.equal(F.flangeTighteningStandard({ tightening_standard: 'ASME B16.5 torque table (2012)' }, site), 'ASME B16.5 torque table (2012)', 'its own choice wins');
+  assert.equal(F.flangeTighteningStandard({}, site), 'Gasunie CSW-43 table B', 'a flange saved before reads its main project');
+  assert.equal(F.flangeTighteningStandard({ tightening_standard: 'Made up' }, site), 'Gasunie CSW-43 table B');
+  assert.equal(F.flangeTighteningStandard({}, undefined), FLANGE_STANDARDS[0]);
+  // Shown on the flange (detail page, card Bolting & torque) and in the flange report, row by row.
+  const projects = [row({ id: 'p1', internnumber: 'P-1', siteId: 's1' })], isos = [row({ id: 'i1', isoNo: 'ISO-1', projectId: 'p1' })], sites = [row({ id: 's1', ...site })];
+  const items = flangeItems([row({ id: 'old', isoId: 'i1', flange_id: 'FL-OLD' }), row({ id: 'own', isoId: 'i1', flange_id: 'FL-OWN', tightening_standard: FLANGE_STANDARDS[0] })], isos, projects, sites);
+  assert.deepEqual(items.map(item => item.standard), ['Gasunie CSW-43 table B', FLANGE_STANDARDS[0]]);
+  const card = F.FLANGE_DETAIL_CARDS.find(item => item.title === 'Bolting & torque')!.rows.find(([label]) => label === 'Tightening standard')!;
+  assert.equal(card[1](items[0]), 'Gasunie CSW-43 table B'); assert.equal(card[1](flangeItems([row({ id: 'n', isoId: 'i1' })], isos, projects)[0]), FLANGE_STANDARDS[0], 'never empty, so it never marks master data missing');
+  const { FLANGE_PDF_COLUMNS, FLANGE_STANDARD_MIXED, flangeReportModel } = await import('../shared/pdf-lists.ts');
+  const column = FLANGE_PDF_COLUMNS.find(item => Array.isArray(item.header) && item.header.join(' ') === 'Tightening standard')!;
+  assert.deepEqual(items.map(item => column.cell(item)), ['Gasunie CSW-43 table B', FLANGE_STANDARDS[0]]);
+  const rows = { isometrics: isos, projects, sites, flanges: items.map(item => item.row), companies: [] };
+  assert.equal(flangeReportModel(rows, { isoId: 'i1', projectId: '', finished: '', q: '' }, new Set(['i1'])).standard, FLANGE_STANDARD_MIXED, 'the header says the flanges differ');
+  assert.equal(flangeReportModel(rows, { isoId: 'i1', projectId: '', finished: '', q: '', ids: ['old'] }, new Set(['i1'])).standard, 'Gasunie CSW-43 table B', 'one standard: the header names it');
+  // Edit of an older flange opens with the standard it follows, so saving it does not silently switch to the first option.
+  const dialog = readFileSync(new URL('../client/dialogs.tsx', import.meta.url), 'utf8');
+  assert.match(dialog, /record && !FLANGE_STANDARDS\.includes\(String\(record\.tightening_standard \?\? ''\)\) \? \{ \.\.\.next, tightening_standard: flangeTighteningStandard\(record,/);
+  // The main project form no longer shows the setting (hosted); its stored value stays the fallback.
+  const { projectResource } = await import('../shared/release.ts');
+  assert.equal(projectResource(availabilityFor(HOSTED_RELEASE_PROFILE), RESOURCE_MAP.sites).fields.find(item => item.name === 'flangeStandard')?.hidden, true);
+});
+
 test('every standard is free entry: no torque table is installed and nothing is suggested', () => {
   assert.deepEqual(FLANGE_TORQUE_CATALOGS, {});
   for (const standard of FLANGE_STANDARDS) assert.equal(flangeTorqueSuggestion(standard, { flange_size: '6"', flange_rating: 'Class 150' }), null);
@@ -531,7 +562,7 @@ test('SB2 N9-3: the flange protocol PDF prints every moment in local time (signa
   const flange = row({ id: 'f1', flange_id: 'SB2-FL-01', target_moment_nm: 300 });
   const signature = (role: string) => ({ row: row({ id: `s-${role}`, role, signer_name: role === 'QA/QC' ? 'QC Person' : 'Tech Person', _createdAt: '2026-11-16T18:09:00.000Z' }), image: null });
   const { bytes } = await flangeProtocolPdf({
-    item: { row: flange, isoNo: 'STX-CW-002', projectId: 'p', projectName: 'STX-2401', status: 'Planned' }, record: row({ id: 'r1', flangeId: 'f1' }),
+    item: { row: flange, isoNo: 'STX-CW-002', projectId: 'p', projectName: 'STX-2401', status: 'Planned', standard: 'No catalog (free entry)' }, record: row({ id: 'r1', flangeId: 'f1' }),
     passes: [row({ id: 'p1', pass_number: 1, torque_nm: 295, stress_value: null, tool_id: 'TW', operator_name: 'Op', performed_at: '2026-11-16T19:07', result: 'OK' })],
     bolts: [], leakTests: [row({ id: 'l1', test_type: 'Hydrostatic', result: 'Passed', tested_at: '2026-11-16T19:08' })], labels: [], deviations: [],
     signatures: { Technician: signature('Technician'), 'QA/QC': signature('QA/QC') } as never, procedureNo: '', company: null, generatedAt: new Date('2026-11-16T18:10:00.000Z'), preview: false,

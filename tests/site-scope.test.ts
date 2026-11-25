@@ -461,10 +461,10 @@ test('documents, the ISO Book and the MTO dashboard inputs follow project site a
   // ISO Book: the isometrics of the other main project are refused (403), also next to an allowed one.
   assert.equal(await status(north.as, '/iso-book/parts?isoIds=iso-4', 'weld'), 403);
   assert.equal(await status(north.as, '/iso-book/parts?isoIds=iso-1', 'weld'), 200);
-  assert.equal(await status(north.as, '/iso-book', 'weld', { method: 'POST', data: { isoIds: ['iso-1', 'iso-4'], parts: ['task-sheet'] } }), 403);
-  assert.equal(await status(river.as, '/iso-book', 'mto', { method: 'POST', data: { isoIds: ['iso-1'], parts: ['task-sheet'] } }), 403);
+  assert.equal(await status(north.as, '/iso-book', 'weld', { method: 'POST', data: { isoIds: ['iso-1', 'iso-4'], parts: ['punch-list'] } }), 403);
+  assert.equal(await status(river.as, '/iso-book', 'mto', { method: 'POST', data: { isoIds: ['iso-1'], parts: ['punch-list'] } }), 403);
   const riverFile = (await json<{ record: Row }>(await f.upload(f.admin, 'mto', 'isometrics', 'iso-4', 'river-book.txt'))).record;
-  const book = await north.as.request('/iso-book', { pilot: 'weld', method: 'POST', data: { isoIds: ['iso-1'], parts: ['task-sheet', 'punch-list', 'flange-report', 'ndt'] } });
+  const book = await north.as.request('/iso-book', { pilot: 'weld', method: 'POST', data: { isoIds: ['iso-1'], parts: ['punch-list', 'flange-report', 'ndt'] } });
   assert.equal(book.status, 200, await book.clone().text());
   assert.ok(!Buffer.from(await book.arrayBuffer()).includes(String(riverFile.name)), 'no file of the other main project');
 

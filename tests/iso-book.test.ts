@@ -12,7 +12,9 @@ import { passwordHash } from '../server/auth.ts';
 import { PDF_DOCUMENTS } from '../server/pdf/documents.ts';
 import { bookPlans, NOT_IN_BOOK, partOfDocument } from '../server/pdf/iso-book-parts.ts';
 import { HOSTED_RELEASE_PROFILE, type ReleaseProfile } from '../shared/release.ts';
-import { bookRequestError, FIXED_PART_ORDER, ISO_BOOK_LIMITS, type BookPartsResponse } from '../shared/iso-book.ts';
+import { bookRequestError, FIXED_PART_ORDER, ISO_BOOK_LIMITS, REMOVED_BOOK_PARTS, type BookPartsResponse } from '../shared/iso-book.ts';
+import { BOOK_WELD_LABEL_GRID, bookWeldLabelsPdf, weldLabelContext } from '../server/pdf/iso-book-weld-labels.ts';
+import { weldFacts } from '../server/pdf/weld-cards.ts';
 import { qualificationStatusAt, weldersSummaryModel } from '../shared/welders-summary.ts';
 import type { Row } from '../shared/types.ts';
 import { readPdf } from './pdf-helpers.ts';
@@ -68,7 +70,7 @@ const pdfOf = async (response: Response) => {
   const bytes = new Uint8Array(await response.arrayBuffer()); assert.equal(Buffer.from(bytes.subarray(0, 5)).toString(), '%PDF-'); return bytes;
 };
 const texts = async (response: Response) => { const document = await readPdf(await pdfOf(response)); return { document, pages: document.pages, all: document.pages.flatMap(page => page.text) }; };
-const ALL_GENERATED = ['task-sheet', 'lisl:lisl', 'lisl:lisl-a3', 'lisl-blank', 'welders-summary'];
+const ALL_GENERATED = ['lisl:lisl-gu', 'lisl-blank', 'weld-labels', 'welders-summary'];
 const pageOf = (pages: { text: string[] }[], marker: string) => pages.findIndex(page => page.text.includes(marker));
 
 test('the dialog lists every part in the reference order; parts without a generator or files are disabled with a reason, nothing is faked', async t => {
@@ -76,14 +78,18 @@ test('the dialog lists every part in the reference order; parts without a genera
   const listing = await f.parts(f.admin, 'iso-1');
   assert.deepEqual(listing.isometrics, [{ id: 'iso-1', isoNo: 'STX-CW-001' }]);
   const labels = listing.parts.map(part => part.label);
-  const order = ['Task sheet', 'ITP documents', 'ITP 2 document', 'Isometric drawing', 'ITP', 'Isometric', 'NDT report', 'Material certificate', 'Signed release', 'NDT Pre', 'NDT', 'PWHT', 'LISL Report', 'LISL Report (A3)', 'Blank LISL', 'Pick lists', 'Punch list', 'Punch list (blank)', 'Flange report', 'Certificate index', 'PQR', 'WPS', 'NDT process documents', "Welder's summary", 'Visual reports', 'Prefab release', 'Field release', 'Material certificates', 'MTO report per operation phase'];
+  const order = ['ITP documents', 'Isometric drawing', 'ITP', 'Isometric', 'NDT report', 'Material certificate', 'Signed release', 'NDT Pre', 'NDT', 'PWHT', 'LISL Report [GU]', 'Blank LISL', 'Weld Label', 'Pick lists', 'Punch list', 'Punch list (blank)', 'Flange report', 'Certificate index', 'PQR', 'WPS', 'NDT process documents', "Welder's summary", 'Visual reports', 'Prefab release', 'Field release', 'Material certificates', 'MTO report per operation phase'];
   assert.deepEqual(labels.filter(label => order.includes(label)), order.filter(label => label !== 'Blank LISL' || labels.includes('Blank LISL')).filter(label => labels.includes(label)));
   assert.ok(!labels.includes('Hydrotest report'), 'attachment names not flagged "ISO Book" get no checkbox');
   const part = (key: string) => listing.parts.find(item => item.key === key)!;
   for (const key of ALL_GENERATED) assert.equal(part(key).available, true, key);
   // Documents of other tasks fill their parts when the isometric has something to print: the NDT request of iso-1, its punch
   // items and flanges, the project's certificate index.
-  for (const key of ['ndt', 'punch-list', 'punch-list-blank', 'flange-report', 'certificate-index', 'lisl:lisl-gu', 'lisl:lisl-wq2']) assert.equal(part(key).available, true, key);
+  for (const key of ['ndt', 'punch-list', 'punch-list-blank', 'flange-report', 'certificate-index']) assert.equal(part(key).available, true, key);
+  // Client change list 22.11.2026 (image 8): the removed parts are not offered at all.
+  for (const key of REMOVED_BOOK_PARTS) assert.ok(!listing.parts.some(item => item.key === key), `${key} is not offered`);
+  for (const label of ['Task sheet', 'ITP 2 document', 'LISL Report', 'LISL Report (A3)', 'LISL Report [MV]', 'LISL Report [WQ]', 'LISL Report [GU Rev 2]', 'LISL Report [ISS]', 'LISL Report [GU Rev 3]', 'LISL Report [WQ ver 2]']) assert.ok(!labels.includes(label), label);
+  assert.deepEqual(listing.parts.filter(item => item.key.startsWith('lisl')).map(item => item.key), ['lisl:lisl-gu', 'lisl-blank'], 'LISL [GU] and Blank LISL stay');
   for (const key of ['itp', 'isometric', 'wps', 'pqr', 'material-certificates', 'pick-lists', 'prefab-release', 'field-release']) {
     assert.equal(part(key).available, false, key); assert.ok(part(key).reason && part(key).reason!.length > 10, `${key} says why`);
   }
@@ -107,7 +113,7 @@ test('registry-driven: documents added to PDF_DOCUMENTS by other tasks are offer
   const plan = (key: string) => plans.find(item => item.key === key)!;
   assert.equal(plan('pick-lists').generators.length, 1); assert.equal(plan('punch-list-blank').generators.length, 1); assert.equal(plan('punch-list').generators.length, 0);
   assert.equal(plan('prefab-release').generators[0].key, 'anything');
-  assert.deepEqual(plans.filter(item => item.key.startsWith('lisl:')).map(item => item.label), ['LISL Report', 'LISL Report (A3)', 'LISL [GU]']);
+  assert.deepEqual(plans.filter(item => item.key.startsWith('lisl:')).map(item => item.label), ['LISL [GU]'], 'LISL and LISL A3 are no part of the book any more');
   assert.equal(partOfDocument({ key: 'lisl-blank', title: '', report: 'lisl', build }), 'lisl-blank');
 });
 
@@ -118,8 +124,7 @@ test('every document of PDF_DOCUMENTS fills its part of the book in the referenc
   assert.deepEqual(Object.keys(NOT_IN_BOOK).filter(key => !PDF_DOCUMENTS.some(definition => definition.key === key)), [], 'NOT_IN_BOOK names registry documents only');
   assert.deepEqual(Object.fromEntries(placed), {
     'ndt-pre-request': 'ndt-pre', 'ndt-request': 'ndt', 'pwht-request': 'pwht',
-    lisl: 'lisl:lisl', 'lisl-a3': 'lisl:lisl-a3', 'lisl-gu': 'lisl:lisl-gu', 'lisl-mv': 'lisl:lisl-mv', 'lisl-gu-rev2': 'lisl:lisl-gu-rev2', 'lisl-gu-rev3': 'lisl:lisl-gu-rev3',
-    'lisl-iss': 'lisl:lisl-iss', 'lisl-wq': 'lisl:lisl-wq', 'lisl-wq2': 'lisl:lisl-wq2', 'lisl-blank': 'lisl-blank',
+    'lisl-gu': 'lisl:lisl-gu', 'lisl-blank': 'lisl-blank', 'iso-book-weld-labels': 'weld-labels',
     'pick-list': 'pick-lists', 'punch-list': 'punch-list', 'punch-list-blank': 'punch-list-blank', 'flange-report': 'flange-report', 'certification-index': 'certificate-index',
     'welders-summary': 'welders-summary', 'visual-report': 'visual-reports', 'prefab-release': 'prefab-release', 'field-release': 'field-release', 'mto-report': 'mto-report',
   });
@@ -130,9 +135,38 @@ test('every document of PDF_DOCUMENTS fills its part of the book in the referenc
   const variants = order.filter(key => key.startsWith('lisl:'));
   assert.deepEqual(variants, PDF_DOCUMENTS.filter(definition => placed.get(definition.key)?.startsWith('lisl:')).map(definition => `lisl:${definition.key}`));
   assert.ok(position('pwht') < position(variants[0]) && position(variants.at(-1)!) < position('lisl-blank'));
+  assert.equal(position('weld-labels'), position('lisl-blank') + 1, 'Weld Label follows the LISL parts');
+  for (const key of REMOVED_BOOK_PARTS) assert.equal(position(key), -1, key);
+  for (const key of ['lisl', 'lisl-a3', 'lisl-mv', 'lisl-wq', 'lisl-gu-rev2', 'lisl-iss', 'lisl-gu-rev3', 'lisl-wq2']) assert.ok(PDF_DOCUMENTS.some(definition => definition.key === key) && NOT_IN_BOOK[key], `${key} stays a report, outside the book`);
 });
 
-test('the merged book: cover with project, isometric, revision, date and contents; parts in order; footer numbering; unreadable files are listed', async t => {
+test('Weld Label: one label per weld with weld number, ISO number, spool, main project and a QR code of the weld link', async t => {
+  const f = await fixture(t);
+  const rows = Object.fromEntries(['isometrics', 'projects', 'sites', 'welds', 'spools', 'weld_types', 'diameters', 'wps'].map(key => [key, f.store.list(key)]));
+  const iso = f.store.get('isometrics', 'iso-1'), welds = f.store.list('welds').filter(weld => weld.isoId === 'iso-1');
+  const context = weldLabelContext(rows, iso);
+  const site = f.store.get('sites', String(f.store.get('projects', String(iso.projectId)).siteId));
+  assert.deepEqual([context.isoNo, context.mainProject], ['STX-CW-001', String(site.name)]);
+  const facts = welds.map(weld => weldFacts(rows, weld, iso, 'https://app.example.test'));
+  assert.ok(facts.every(fact => fact.url.startsWith('https://app.example.test/') && fact.url.includes('iso-1') && fact.url.includes(fact.id)), 'the QR opens the isometric page of that weld');
+  const { bytes, layout } = await bookWeldLabelsPdf({ welds: facts, context, generatedAt: new Date('2026-11-25T10:00:00Z') });
+  const document = await readPdf(bytes), text = document.pages.flatMap(page => page.text);
+  assert.equal(document.pages.length, Math.ceil(welds.length / (BOOK_WELD_LABEL_GRID.columns * BOOK_WELD_LABEL_GRID.rows)));
+  for (const fact of facts) assert.ok(text.includes(fact.weldNo), fact.weldNo);
+  for (const label of ['ISO', 'Spool', 'Main project', 'STX-CW-001', String(site.name)]) assert.ok(text.includes(label), label);
+  const spooled = facts.find(fact => fact.spool); if (spooled) assert.ok(text.includes(spooled.spool), 'the spool of the weld');
+  assert.equal(layout.pages.reduce((sum, page) => sum + page.images, 0), welds.length, 'one QR code per weld');
+  // In the book: offered for an isometric with welds, delivered as its own part, refused with its reason for one without welds.
+  const delivered = await texts(await f.book(f.admin, { isoIds: ['iso-1'], parts: ['weld-labels'] }));
+  assert.ok(delivered.all.includes('Main project') && facts.every(fact => delivered.all.includes(fact.weldNo)));
+  const empty = f.store.create('isometrics', { isoNo: 'STX-EMPTY-01', projectId: iso.projectId }, SYSTEM);
+  const listing = await f.parts(f.admin, empty.id);
+  const part = listing.parts.find(item => item.key === 'weld-labels')!;
+  assert.deepEqual([part.label, part.available, part.reason], ['Weld Label', false, 'No weld is recorded for this isometric.']);
+  assert.equal((await f.book(f.admin, { isoIds: [empty.id], parts: ['weld-labels'] })).status, 422);
+});
+
+test('the merged book: no cover (Task sheet left the book); parts in order; footer numbering; unreadable files are listed', async t => {
   const f = await fixture(t);
   const iso = f.store.get('isometrics', 'iso-1');
   const ok = async (response: Response) => assert.equal(response.status, 201, await response.clone().text());
@@ -152,7 +186,7 @@ test('the merged book: cover with project, isometric, revision, date and content
   await ok(await f.upload(f.admin, 'certifications', 'cert-h1043', Buffer.from('PK\x03\x04 a word document'), 'cert-h1043.pdf'));
   const older = f.store.list('attachments').find(row => row.name === 'cert-h1043.pdf')!; f.store.update('attachments', older.id, { name: 'cert-h1043.docx' }, older._version, SYSTEM);
   await ok(await f.upload(f.admin, 'certifications', 'certificate-3', await f.document('CERT3', 1), 'unused.pdf'));
-  const parts = ['task-sheet', 'itp', 'isometric', 'ndt', 'wps', 'material-certificates', 'lisl:lisl', 'lisl-blank', 'welders-summary', ...(await f.parts(f.admin, 'iso-1')).parts.filter(part => part.source === 'custom' && part.available).map(part => part.key)];
+  const parts = ['itp', 'isometric', 'ndt', 'wps', 'material-certificates', 'lisl:lisl-gu', 'lisl-blank', 'weld-labels', 'welders-summary', ...(await f.parts(f.admin, 'iso-1')).parts.filter(part => part.source === 'custom' && part.available).map(part => part.key)];
   const response = await f.book(f.admin, { isoIds: ['iso-1'], parts });
   assert.match(response.headers.get('content-disposition') || '', /^attachment; filename="\d{4}-\d\d-\d\d-STX-2401-ISO-Book-STX-CW-001\.pdf"$/);
   assert.equal(response.headers.get('cache-control'), 'no-store');
@@ -161,30 +195,23 @@ test('the merged book: cover with project, isometric, revision, date and content
   if (process.env.ISO_BOOK_DUMP) writeFileSync(process.env.ISO_BOOK_DUMP, bytes);
   const { pages, all } = await texts(response);
   assert.equal(String(pages.length), response.headers.get('x-iso-book-pages'));
-  // Cover.
-  const cover = pages[0].text;
-  for (const label of ['Task sheet', 'Project', 'Iso number', 'Revision', 'Drawing number', 'Date', 'Contents', 'Part', 'Content', 'From page', 'STX-CW-001', 'DWG-2401', 'Isometric', 'ITP documents']) assert.ok(cover.includes(label), label);
-  assert.ok(cover.some(line => line.includes('STX-2401')), 'project number');
-  assert.ok(cover.includes(String(iso.revNo)), 'revision of the drawing');
-  assert.ok(cover.some(line => /^\d\d\.\d\d\.\d{4}$/.test(line)), 'date');
+  // No cover: the book starts with its first part (the ITP document of the current revision).
+  assert.ok(!pages[0].text.includes('Task sheet') && !pages[0].text.includes('Contents'));
+  assert.ok(pages[0].text.includes('ITPDOC-1'));
   // Order of the uploaded parts: ITP documents (current revision, then the custom "ITP" attachment is "before"), isometric, ... after-isometric attachment.
   const at = (marker: string) => { const index = pageOf(pages, marker); assert.ok(index > 0, `${marker} is in the book`); return index; };
   assert.ok(at('FRONT-1') < at('DRAWING-1'), 'custom attachment "before" the isometric');
   assert.equal(at('DRAWING-2'), at('DRAWING-1') + 1, 'uploaded PDFs are appended page by page');
   assert.ok(at('DRAWING-2') < at('SIGNED-1'), 'custom attachment "after" the isometric');
-  assert.ok(at('ITPDOC-1') < at('DRAWING-1'));
+  assert.ok(pageOf(pages, 'ITPDOC-1') < at('DRAWING-1'));
   assert.ok(at('SIGNED-1') < at('WPSDOC-1') && at('WPSDOC-1') < at('CERT1-1'), 'reference order of the remaining parts');
   assert.equal(pageOf(pages, 'OLDREV-1'), -1, 'only the current revision of the drawing');
   assert.equal(pageOf(pages, 'CERT3-1'), -1, 'a certificate of an unused certificate is not in the book');
-  // The cover's contents carry the real starting pages.
-  const row = (name: string) => { const index = cover.indexOf(name); return index; };
-  assert.ok(row('ITP documents') > 0 && row('Isometric') > 0);
-  assert.ok(cover.includes(String(at('DRAWING-1') + 1)), 'page number of the isometric in the contents');
   // Generated parts carry the continuous book number; uploaded pages stay untouched.
   const total = pages.length;
-  assert.ok(pages[0].text.includes(`ISO book page 1/${total}`));
-  const lisl = pages.findIndex(page => page.text.includes('ISO STX-CW-001 - LISL Report'));
-  assert.ok(pages[lisl].text.includes(`ISO book page ${lisl + 1}/${total}`), 'LISL page number inside the book');
+  const label = pages.findIndex(page => page.text.includes('Main project'));
+  assert.ok(label > at('DRAWING-1') && pages[label].text.includes(`ISO book page ${label + 1}/${total}`), 'Weld Label page number inside the book');
+  assert.ok(!pages[0].text.some(line => line.startsWith('ISO book page')), 'an uploaded first page stays untouched');
   assert.ok(!pages[at('DRAWING-1')].text.some(line => line.startsWith('ISO book page')));
   // The image is placed on a page of its own; unreadable files are listed with their names and reasons.
   const last = pages.at(-1)!.text;
@@ -227,25 +254,23 @@ test('several isometrics: one book per isometric one after the other, or one boo
   assert.ok(second);
   const listing = await f.parts(f.admin, `iso-1,${second.id}`);
   assert.equal(listing.isometrics.length, 2);
-  const parts = ['task-sheet', 'lisl-blank', 'welders-summary'];
+  const parts = ['lisl-blank', 'welders-summary'];
   const separate = await texts(await f.book(f.admin, { isoIds: ['iso-1', second.id], parts, grouping: 'by-isometric' }));
-  const tasks = separate.pages.map((page, index) => page.text.includes('Task sheet') ? index : -1).filter(index => index >= 0);
-  assert.equal(tasks.length, 2, 'a cover per isometric');
-  assert.ok(separate.pages[tasks[0]].text.includes('STX-CW-001') && separate.pages[tasks[1]].text.includes(String(second.isoNo)));
-  assert.ok(separate.pages[tasks[1]].text.some(line => line === 'ISO book page 1/' + (separate.pages.length - tasks[1])), 'numbering restarts with each book');
+  const starts = separate.pages.map((page, index) => page.text.some(line => line.startsWith('ISO book page 1/')) ? index : -1).filter(index => index >= 0);
+  assert.equal(starts.length, 2, 'a book per isometric, its numbering restarting');
+  assert.equal(starts[0], 0); assert.ok(separate.pages[starts[1]].text.some(line => line === 'ISO book page 1/' + (separate.pages.length - starts[1])));
   const grouped = await texts(await f.book(f.admin, { isoIds: ['iso-1', second.id], parts, grouping: 'by-part' }));
-  assert.equal(grouped.pages.filter(page => page.text.includes('Task sheet')).length, 1, 'one cover for the grouped book');
+  assert.equal(grouped.pages.filter(page => page.text.some(line => line.startsWith('ISO book page 1/'))).length, 1, 'one grouped book');
   const kinds = grouped.pages.map(page => page.text.some(line => line.includes('Blank')) || page.text.includes('Iso number') && page.text.includes('Chg.No.') ? 'lisl' : page.text.some(line => line.includes("Welder's summary")) ? 'summary' : 'other');
   const firstSummary = kinds.indexOf('summary'), lastLisl = kinds.lastIndexOf('lisl');
   assert.ok(lastLisl < firstSummary, 'all blank LISL pages come before the first welder\'s summary');
-  assert.ok(grouped.pages[0].text.includes(String(second.isoNo)) && grouped.pages[0].text.includes('STX-CW-001'));
   assert.equal((await f.book(f.admin, { isoIds: ['iso-1', second.id], parts, grouping: 'sideways' })).status, 422);
 });
 
 test('limits: total size and page count are enforced with a clear message', async t => {
   const f = await fixture(t);
   assert.equal((await f.upload(f.admin, 'isometrics', 'iso-1', await f.document('BIG', 30), 'big.pdf', 'ISO revision 2')).status, 201);
-  const request = { isoIds: ['iso-1'], parts: ['isometric', 'task-sheet'] };
+  const request = { isoIds: ['iso-1'], parts: ['isometric', 'lisl-blank'] };
   const savedPages = ISO_BOOK_LIMITS.pages, savedBytes = ISO_BOOK_LIMITS.inputBytes;
   try {
     ISO_BOOK_LIMITS.pages = 20;
@@ -256,8 +281,10 @@ test('limits: total size and page count are enforced with a clear message', asyn
     assert.equal(size.status, 413); assert.match((await size.json() as { error: string }).error, /larger than/);
   } finally { ISO_BOOK_LIMITS.pages = savedPages; ISO_BOOK_LIMITS.inputBytes = savedBytes; }
   assert.equal((await f.book(f.admin, request)).status, 200, 'within the limits again');
-  assert.match(bookRequestError({ isoIds: Array.from({ length: ISO_BOOK_LIMITS.isometrics + 1 }, (_, i) => `i${i}`), parts: ['task-sheet'] }), /at most/);
-  assert.equal((await f.book(f.admin, { isoIds: [], parts: ['task-sheet'] })).status, 422);
+  assert.match(bookRequestError({ isoIds: Array.from({ length: ISO_BOOK_LIMITS.isometrics + 1 }, (_, i) => `i${i}`), parts: ['isometric'] }), /at most/);
+  assert.equal((await f.book(f.admin, { isoIds: [], parts: ['isometric'] })).status, 422);
+  // A removed part cannot be requested through the route either.
+  for (const removed of REMOVED_BOOK_PARTS) assert.equal((await f.book(f.admin, { isoIds: ['iso-1'], parts: [removed] })).status, 422, removed);
   assert.equal((await f.book(f.admin, { isoIds: ['iso-1'], parts: [] })).status, 422);
   assert.equal((await f.book(f.admin, { isoIds: ['iso-1'], parts: ['no-such-part'] })).status, 422);
   assert.equal((await f.book(f.admin, { isoIds: ['iso-1'], parts: ['itp'] })).status, 422, 'a part without content is refused with its reason');
@@ -288,25 +315,25 @@ test('access: the book never yields a file the account could not download direct
   assert.ok((await texts(withIt)).all.includes('SECRETCERT-1'));
   const without = await f.book(a, { isoIds: ['iso-1'], parts: ['material-certificates'] });
   assert.equal(without.status, 422, 'asking for the part is refused');
-  const mixed = await texts(await f.book(a, { isoIds: ['iso-1'], parts: ['isometric', 'task-sheet'] }));
+  const mixed = await texts(await f.book(a, { isoIds: ['iso-1'], parts: ['isometric'] }));
   assert.ok(mixed.all.includes('OPENDRAWING-1') && !mixed.all.includes('SECRETCERT-1'), 'the accessible parts still work and the other file is absent');
   // Pilot boundary, both directions.
   assert.equal((await a.request('/iso-book/parts?isoIds=iso-1', { pilot: 'mto' })).status, 403, 'weld-only account in MTO Pilot');
   assert.equal((await book(c, 'weld')).status, 403, 'MTO-only account in Weld Pilot');
   assert.equal((await f.admin.request('/iso-book/parts?isoIds=iso-1')).status, 403, 'no pilot');
-  assert.equal((await f.book(f.admin, { isoIds: ['iso-1'], parts: ['task-sheet'] }, '')).status, 403, 'no pilot on the POST');
+  assert.equal((await f.book(f.admin, { isoIds: ['iso-1'], parts: ['isometric'] }, '')).status, 403, 'no pilot on the POST');
   const mto = await f.parts(c, 'iso-1', 'mto');
-  assert.equal(mto.parts.find(item => item.key === 'task-sheet')!.available, true);
-  assert.equal(mto.parts.find(item => item.key === 'lisl:lisl')!.available, false, 'MTO Pilot has no LISL report, so no LISL part');
-  assert.equal((await f.book(c, { isoIds: ['iso-1'], parts: ['lisl:lisl'] }, 'mto')).status, 422);
-  assert.equal((await f.book(c, { isoIds: ['iso-1'], parts: ['task-sheet'] }, 'mto')).status, 200, 'the cover alone works in both pilots');
+  assert.equal(mto.parts.find(item => item.key === 'isometric')!.available, true);
+  assert.equal(mto.parts.find(item => item.key === 'lisl:lisl-gu')!.available, false, 'MTO Pilot has no LISL report, so no LISL part');
+  assert.equal((await f.book(c, { isoIds: ['iso-1'], parts: ['lisl:lisl-gu'] }, 'mto')).status, 422);
+  assert.equal((await f.book(c, { isoIds: ['iso-1'], parts: ['isometric'] }, 'mto')).status, 200, 'the book works in both pilots');
   // Unknown or unreadable isometrics.
-  assert.equal((await f.book(b, { isoIds: ['missing'], parts: ['task-sheet'] })).status, 404);
+  assert.equal((await f.book(b, { isoIds: ['missing'], parts: ['isometric'] })).status, 404);
   const skid = f.store.get('projects', 'project-skid'); f.store.update('projects', skid.id, { weldPilot: false }, skid._version, SYSTEM);
   const skidIso = f.store.list('isometrics').find(row => row.projectId === 'project-skid')!;
-  assert.equal((await f.book(f.admin, { isoIds: [skidIso.id], parts: ['task-sheet'] })).status, 404, 'an isometric of a project not enabled in this pilot');
+  assert.equal((await f.book(f.admin, { isoIds: [skidIso.id], parts: ['isometric'] })).status, 404, 'an isometric of a project not enabled in this pilot');
   assert.equal((await f.admin.request(`/iso-book/parts?isoIds=iso-1,${skidIso.id}`, { pilot: 'weld' })).status, 404);
-  async function book(client: ReturnType<typeof f.client>, pilot: string) { return f.book(client, { isoIds: ['iso-1'], parts: ['task-sheet'] }, pilot); }
+  async function book(client: ReturnType<typeof f.client>, pilot: string) { return f.book(client, { isoIds: ['iso-1'], parts: ['isometric'] }, pilot); }
 });
 
 test('project-specific certificates: only the project\'s certificates are printed when the setting is on', async t => {
@@ -332,7 +359,7 @@ test('other profiles keep behaving as before: no ISO Book endpoints', async t =>
   for (const profile of ['welding-demo', 'access-prototype', 'full'] as ReleaseProfile[]) {
     const f = await fixture(t, profile);
     assert.equal((await f.admin.request('/iso-book/parts?isoIds=iso-1')).status, 404, profile);
-    assert.equal((await f.admin.request('/iso-book', { method: 'POST', data: { isoIds: ['iso-1'], parts: ['task-sheet'] } })).status, 404, profile);
+    assert.equal((await f.admin.request('/iso-book', { method: 'POST', data: { isoIds: ['iso-1'], parts: ['isometric'] } })).status, 404, profile);
   }
 });
 

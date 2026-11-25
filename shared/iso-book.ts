@@ -32,23 +32,33 @@ export interface BookPartInfo {
   position?: 'Before Isometric' | 'After Isometric';
 }
 
-/** The reference's parts in their order (LISL variants and custom attachment names are inserted where noted by the server). */
+/**
+ * The parts in book order (LISL variants and custom attachment names are inserted where noted by the server). Weld Label
+ * (the reference's "Weld record") follows the LISL parts: one QR label per weld of the isometric.
+ */
 export const FIXED_PART_ORDER = [
-  'task-sheet', 'itp', 'itp2', 'isometric', 'ndt-pre', 'ndt', 'pwht',
-  'lisl', 'lisl-blank', 'pick-lists', 'punch-list', 'punch-list-blank', 'flange-report', 'certificate-index',
+  'itp', 'isometric', 'ndt-pre', 'ndt', 'pwht',
+  'lisl', 'lisl-blank', 'weld-labels', 'pick-lists', 'punch-list', 'punch-list-blank', 'flange-report', 'certificate-index',
   'pqr', 'wps', 'ndt-process-docs', 'welders-summary', 'visual-reports', 'prefab-release', 'field-release',
   'material-certificates', 'mto-report',
 ] as const;
 
 export const FIXED_PART_LABELS: Record<string, string> = {
-  'task-sheet': 'Task sheet', itp: 'ITP documents', itp2: 'ITP 2 document', isometric: 'Isometric',
+  itp: 'ITP documents', isometric: 'Isometric',
   'ndt-pre': 'NDT Pre', ndt: 'NDT', pwht: 'PWHT',
-  'lisl-blank': 'Blank LISL', 'pick-lists': 'Pick lists', 'punch-list': 'Punch list', 'punch-list-blank': 'Punch list (blank)',
+  'lisl-blank': 'Blank LISL', 'weld-labels': 'Weld Label', 'pick-lists': 'Pick lists', 'punch-list': 'Punch list', 'punch-list-blank': 'Punch list (blank)',
   'flange-report': 'Flange report', 'certificate-index': 'Certificate index', pqr: 'PQR', wps: 'WPS',
   'ndt-process-docs': 'NDT process documents', 'welders-summary': "Welder's summary", 'visual-reports': 'Visual reports',
   'prefab-release': 'Prefab release', 'field-release': 'Field release', 'material-certificates': 'Material certificates',
   'mto-report': 'MTO report per operation phase',
 };
+
+/**
+ * Parts the ISO Book no longer offers (client change list 22.11.2026, image 8): every LISL variant except LISL [GU] and
+ * Blank LISL, Task sheet (it was the cover page with the contents) and ITP 2 documents. They are not listed in the dialog
+ * and a request that names one is refused. The LISL reports themselves stay in the Reports menu.
+ */
+export const REMOVED_BOOK_PARTS = ['task-sheet', 'itp2', 'lisl:lisl', 'lisl:lisl-a3', 'lisl:lisl-mv', 'lisl:lisl-wq', 'lisl:lisl-gu-rev2', 'lisl:lisl-iss', 'lisl:lisl-gu-rev3', 'lisl:lisl-wq2'];
 
 /** Keys: `lisl:<registry key>` for each LISL document, `attachment:<attachment name id>` for each custom attachment name. */
 export const lislPartKey = (documentKey: string) => `lisl:${documentKey}`;

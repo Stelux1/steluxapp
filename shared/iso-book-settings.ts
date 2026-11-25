@@ -1,15 +1,12 @@
 /**
- * "ISO Book" tab of Edit project site (capture weld__general__project-sites__edit-zandbak.txt:84-160): 12 LISL variants,
- * then 25 document types, each a switch of the main project. The Add dialog has no such tab; a new site has every switch
- * on (as Zandbak; the value for a new site is not captured), and a site saved before the tab existed reads every switch as
- * on (`isoBookSwitchOn`), so no stored row needs a value.
+ * The ISO Book switches of the earlier "ISO Book" tab of Edit project site (capture weld__general__project-sites__edit-zandbak.txt:84-160).
  *
- * Effect (our default, the capture shows only the switches and the LISL help line): the ISO Book of an isometric of that
- * main project offers only the parts switched on. A switch without a part in our ISO Book (`part` undefined) is kept
- * with the site and copied by Duplicate, but has nothing to switch off yet.
+ * Client change list 22.11.2026 (images 8 and 9): the ISO Book is standard. The tab is gone from the main project form and
+ * the switches no longer remove any part; the choice is made when the book is printed (ISO Book dialog, a checkbox per
+ * part). The switches stay defined as hidden site fields only so the values stored on older sites are kept and a site
+ * that stores them still saves (the server answers 404 for an unknown field). Nothing reads them.
  */
 export const ISO_BOOK_SECTION = 'ISO Book';
-export const ISO_BOOK_LISL_HELP = 'These variants are grouped together. Turn on the LISL that this site uses in the ISO Book.';
 export interface IsoBookSwitch { name: string; label: string; group: 'LISL' | 'Documents'; part?: string }
 const lisl = (name: string, label: string, part?: string): IsoBookSwitch => ({ name, label, group: 'LISL', part });
 const doc = (name: string, label: string, part?: string): IsoBookSwitch => ({ name, label, group: 'Documents', part });
@@ -17,7 +14,8 @@ export const ISO_BOOK_SWITCHES: IsoBookSwitch[] = [
   lisl('isoBookLislOld', 'LISL', 'lisl:lisl'),
   lisl('isoBookLislOldSignature', 'LISL V2'),
   lisl('isoBookLislA3', 'LISL A3', 'lisl:lisl-a3'),
-  lisl('isoBookLislOldV2', 'Weld record'),
+  // "Weld record" of the reference is the ISO Book part Weld Label now (one QR label per weld, server/pdf/iso-book-weld-labels.ts).
+  lisl('isoBookLislOldV2', 'Weld Label', 'weld-labels'),
   lisl('isoBookLislNew', 'LISL [GU]', 'lisl:lisl-gu'),
   lisl('isoBookLislMv', 'LISL [MV]', 'lisl:lisl-mv'),
   lisl('isoBookLislWq', 'LISL [WQ]', 'lisl:lisl-wq'),
@@ -53,12 +51,5 @@ export const ISO_BOOK_SWITCHES: IsoBookSwitch[] = [
   doc('isoBookFlangeLabels', 'Flange labels'),
 ];
 export const ISO_BOOK_SWITCH_NAMES = ISO_BOOK_SWITCHES.map(item => item.name);
-export const ISO_BOOK_OFF_REASON = 'Switched off for this project site (Edit project site → ISO Book).';
-
-/** A switch of a site record; one that was never saved (older sites) is on. */
+/** A stored switch of a site record, as the earlier tab read it (never saved = on). Kept for data checks; no part depends on it. */
 export const isoBookSwitchOn = (site: Record<string, unknown> | undefined | null, name: string) => site?.[name] !== false;
-/** Whether the site switches this ISO Book part off (parts without a switch are never off). */
-export function isoBookPartOff(site: Record<string, unknown> | undefined | null, part: string): boolean {
-  const item = ISO_BOOK_SWITCHES.find(entry => entry.part === part);
-  return Boolean(item) && !isoBookSwitchOn(site, item!.name);
-}

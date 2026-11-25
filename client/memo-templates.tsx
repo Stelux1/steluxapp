@@ -4,13 +4,12 @@ import { api, post, ApiError } from './api.ts';
 import { Badge, TableScroll } from './components.tsx';
 import { useWorkspace } from './context.tsx';
 import { MEMO_DEFAULT_SORT, MEMO_LIMITS, MEMO_TEXTS, insertMemoTemplate, memoEditorButtons, type MemoInsertMode, type MemoTemplate } from '../shared/memo-templates.ts';
-import { ISO_BOOK_LISL_HELP, ISO_BOOK_SWITCHES } from '../shared/iso-book-settings.ts';
-import type { Field } from '../shared/types.ts';
 
 /**
- * Memo templates (rules in shared/memo-templates.ts, server in server/memo-templates.ts): the "Memo templates" tab of
- * Edit project site and the template buttons of the isometric memo. The tab saves on its own (the reference saves each
- * template at once, without Update); it sits inside the site form, so it uses no form element of its own.
+ * Memo templates (rules in shared/memo-templates.ts, server in server/memo-templates.ts): the template buttons of the
+ * isometric memo, and the template editor `MemoTemplatesTab`. The editor was the "Memo templates" tab of Edit project
+ * site; the client removed that section from the form (change list 22.11.2026, image 9), so it is mounted nowhere until
+ * the client names a new place for it. It saves on its own and uses no form element, so it fits inside any form.
  */
 interface Listing { siteId: string; templates: MemoTemplate[]; canEdit: boolean; message?: string }
 interface Draft { id?: string; scope: 'global' | 'site'; key: string; label: string; sortOrder: string; content: string }
@@ -92,14 +91,4 @@ export function MemoTemplateToolbar({ projectId, value, onChange }: { projectId:
       {templates ? templates.map(template => <button type="button" className="btn small" key={template.id} onClick={() => onChange(insertMemoTemplate(value, template.content, mode))}>{template.label}</button>) : <Loader2 size={14} className="spin" aria-label="Loading templates"/>}
     </div>
   </div>;
-}
-
-/** Edit project site → ISO Book: the LISL variants under their heading and help line, then the document types. */
-export function IsoBookSwitches({ fields, values, onChange }: { fields: Field[]; values: Record<string, unknown>; onChange: (name: string, value: unknown) => void }) {
-  const shown = new Set(fields.filter(field => !field.hidden).map(field => field.name)), id = useId().replaceAll(':', '');
-  const group = (kind: 'LISL' | 'Documents') => ISO_BOOK_SWITCHES.filter(item => item.group === kind && shown.has(item.name)).map(item => <div className="field checkbox-field" key={item.name}><label htmlFor={`${id}-${item.name}`}><input id={`${id}-${item.name}`} type="checkbox" checked={values[item.name] !== false} onChange={event => onChange(item.name, event.target.checked)}/><span>{item.label}</span></label></div>);
-  return <>
-    <div className="form-grid" role="group" aria-labelledby={`${id}-lisl`}><h3 className="full-width" id={`${id}-lisl`}>LISL</h3><p className="field-hint full-width">{ISO_BOOK_LISL_HELP}</p>{group('LISL')}</div>
-    <div className="form-grid" role="group" aria-label="Documents of the ISO Book" style={{ marginTop: 12 }}>{group('Documents')}</div>
-  </>;
 }

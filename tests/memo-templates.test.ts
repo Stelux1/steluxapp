@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../server/store.ts';
@@ -15,7 +15,8 @@ import { SITE_RULES } from '../shared/site-scope.ts';
 import { editFields } from '../shared/weld-catalogs.ts';
 import { DUPLICATE_PARTS, duplicateFields } from '../shared/site-duplicate.ts';
 import { BUILTIN_MEMO_TEMPLATES, MEMO_TEMPLATES, MEMO_TEXTS, MemoInputError, effectiveMemoTemplates, insertMemoTemplate, memoEditorButtons, memoText, planMemoSave, type MemoTemplate } from '../shared/memo-templates.ts';
-import { ISO_BOOK_OFF_REASON, ISO_BOOK_SECTION, ISO_BOOK_SWITCHES, isoBookPartOff, isoBookSwitchOn } from '../shared/iso-book-settings.ts';
+import { ISO_BOOK_SECTION, ISO_BOOK_SWITCHES, isoBookSwitchOn } from '../shared/iso-book-settings.ts';
+import { REMOVED_BOOK_PARTS } from '../shared/iso-book.ts';
 import { bookPlans, partState, type BookContext } from '../server/pdf/iso-book-parts.ts';
 import { PDF_DOCUMENTS } from '../server/pdf/documents.ts';
 import type { Row, User } from '../shared/types.ts';
@@ -165,51 +166,51 @@ test('delta-I2b-001 (server): an account without the right to edit the project s
   assert.equal((await editor.request(`/memo-templates?projectId=${project.id}`)).status, 404, 'a project the account cannot read is not found');
 });
 
-test('delta-I2b-001 / shell-general-012 (server): Duplicate Project site offers ISO Book and Memo templates and copies the switches and the site\'s templates', async t => {
+test('client change list 22.11.2026 (server): Duplicate Project site no longer offers ISO Book, Memo templates or Iso progress; the source keeps its own templates', async t => {
   const f = await fixture(t);
-  assert.deepEqual(DUPLICATE_PARTS.filter(part => part.group === 'Site settings').map(part => part.label), ['Project settings', 'Document settings', 'Iso progress', 'ISO Book']);
-  assert.deepEqual(DUPLICATE_PARTS.filter(part => part.group === 'Activated lists').map(part => part.label).slice(0, 5), ['NDT process', 'Weld types', 'WPS methods', 'Welders', 'Memo templates']);
-  assert.deepEqual(duplicateFields(DUPLICATE_PARTS.find(part => part.key === 'isobook')!), ISO_BOOK_SWITCHES.map(item => item.name));
-  const site = f.store.get('sites', 'site-north');
-  f.store.update('sites', site.id, { isoBookFlangeReport: false, isoBookLislMv: false }, site._version);
+  assert.deepEqual(DUPLICATE_PARTS.filter(part => part.group === 'Site settings').map(part => part.label), ['Project settings', 'Document settings']);
+  assert.deepEqual(DUPLICATE_PARTS.filter(part => part.group === 'Activated lists').map(part => part.label).slice(0, 5), ['NDT process', 'Weld types', 'WPS methods', 'Welders', 'Spools']);
+  assert.ok(!DUPLICATE_PARTS.some(part => ['isobook', 'memoTemplates', 'isoProgress'].includes(part.key)));
+  // A request that still names a removed part is refused as an unknown option.
+  assert.equal((await f.admin.request('/actions/duplicate-site', { siteId: 'site-north', parts: ['isobook'] })).status, 422);
+  assert.equal((await f.admin.request('/actions/duplicate-site', { siteId: 'site-north', parts: ['memoTemplates'] })).status, 422);
+  // Templates of the source stay with the source; the copy starts from the global templates.
   assert.equal((await f.admin.request('/memo-templates/save', { siteId: 'site-north', recordId: 'memo-global-hydro', label: 'Pressure test', content: 'Hydro of North' })).status, 200);
-  const response = await f.admin.request('/actions/duplicate-site', { siteId: 'site-north', parts: ['isobook', 'memoTemplates'] });
+  const response = await f.admin.request('/actions/duplicate-site', { siteId: 'site-north', parts: ['projectSettings'] });
   assert.equal(response.status, 201, await response.clone().text());
   const copy = (await response.json() as { record: Row }).record;
-  assert.equal(copy.isoBookFlangeReport, false); assert.equal(copy.isoBookLislMv, false); assert.equal(copy.isoBookTask, true);
-  const templates = effectiveMemoTemplates(f.store.list(MEMO_TEMPLATES), copy.id);
-  assert.deepEqual([templates.find(item => item.key === 'hydro')!.scope, templates.find(item => item.key === 'hydro')!.content], ['site', 'Hydro of North']);
+  assert.equal(effectiveMemoTemplates(f.store.list(MEMO_TEMPLATES), copy.id).find(item => item.key === 'hydro')!.scope, 'global');
   assert.equal(effectiveMemoTemplates(f.store.list(MEMO_TEMPLATES), 'site-north').find(item => item.key === 'hydro')!.content, 'Hydro of North', 'the source keeps its own');
 });
 
-// ----- shell-general-012: the ISO Book tab --------------------------------------------------------------------------------
+// ----- client change list 22.11.2026: no ISO Book and no Memo templates section in the main project form --------------------
 
-test('shell-general-012: Edit project site has the ISO Book tab with 12 LISL variants and 25 document types in the captured order, all on; Add has no such tab', () => {
-  assert.deepEqual(ISO_BOOK_SWITCHES.filter(item => item.group === 'LISL').map(item => item.label), ['LISL', 'LISL V2', 'LISL A3', 'Weld record', 'LISL [GU]', 'LISL [MV]', 'LISL [WQ]', 'LISL [GU Rev 2]', 'Blank LISL', 'LISL [ISS]', 'LISL [GU Rev 3]', 'LISL [WQ ver 2]']);
-  assert.deepEqual(ISO_BOOK_SWITCHES.filter(item => item.group === 'Documents').map(item => item.label), ['Task sheet', 'ITP documents', 'ITP 2 documents', 'Isometric', 'NDT Pre', 'NDT', 'Pre-HT/PWHT', 'Pick Lists', 'PQR', 'WPS', 'WPS (Group)', "Welder's summary lists", "Welders' certifications", 'Visual reports', 'Welding wires', 'Certificate Index', 'Material certificates', 'Material certificates (Group)', 'Prefab release document', 'Field release document', 'Punch list (blank)', 'Punch list', 'NDT Process documents', 'Flange report', 'Flange labels']);
+test('the main project form has no ISO Book and no Memo templates section; the switches stay stored, hidden in Add and Edit', () => {
   const sites = projectResource(availabilityFor(HOSTED_RELEASE_PROFILE), RESOURCE_MAP.sites);
   const book = sites.fields.filter(field => field.section === ISO_BOOK_SECTION);
-  assert.equal(book.length, 37);
-  assert.ok(book.every(field => field.type === 'checkbox' && field.default === true && field.hidden === true), 'Add project site: not shown, every switch on for a new site');
-  const sections = [...new Set(editFields('sites', sites.fields).filter(field => !field.hidden).map(field => field.section))];
-  assert.deepEqual(sections.slice(-2), ['Iso progress', ISO_BOOK_SECTION], 'Edit project site: the ISO Book tab after Iso progress');
-  assert.equal(isoBookSwitchOn({}, 'isoBookTask'), true, 'a site saved before the tab existed has every switch on');
-  assert.equal(isoBookSwitchOn({ isoBookTask: false }, 'isoBookTask'), false);
+  assert.equal(book.length, 37, 'every switch stays defined, so a site that stores them still saves');
+  assert.ok(book.every(field => field.type === 'checkbox' && field.hidden === true));
+  assert.ok(editFields('sites', sites.fields).filter(field => field.section === ISO_BOOK_SECTION).every(field => field.hidden), 'Edit project site shows no ISO Book tab either');
+  assert.ok(!editFields('sites', sites.fields).some(field => !field.hidden && field.section === ISO_BOOK_SECTION));
+  assert.equal(ISO_BOOK_SWITCHES.find(item => item.name === 'isoBookLislOldV2')!.label, 'Weld Label', '"Weld record" is renamed');
+  assert.equal(isoBookSwitchOn({}, 'isoBookTask'), true); assert.equal(isoBookSwitchOn({ isoBookTask: false }, 'isoBookTask'), false);
+  const dialog = readFileSync(new URL('../client/dialogs.tsx', import.meta.url), 'utf8');
+  assert.ok(!dialog.includes('MemoTemplatesTab') && !dialog.includes('IsoBookSwitches') && !dialog.includes('ISO_BOOK_SECTION'), 'neither section is rendered');
+  assert.match(dialog, /MemoTemplateToolbar projectId=/, 'the template buttons of the isometric memo stay');
 });
 
-test('shell-general-012: the ISO Book of an isometric offers only the parts its main project switches on', () => {
+test('the ISO Book is standard: a part switched off on the main project is still offered; removed parts are never planned', () => {
   const plans = bookPlans(PDF_DOCUMENTS, []);
-  const plan = (key: string) => plans.find(item => item.key === key)!;
-  const off = { id: 'site-a', isoBookFlangeReport: false, isoBookLislMv: false };
-  const context = (site: Record<string, unknown>): BookContext => ({ user: { id: 'u', permissions: { general: 3, materials: 3, welding: 3, tools: 3, settings: 3 } } as unknown as User, rows: { projects: [row('p1', { siteId: 'site-a' })] }, registry: PDF_DOCUMENTS, canFile: () => true, site: () => site as Row, certificateLinks: () => [] });
+  const plan = (key: string) => plans.find(item => item.key === key);
+  const off = { id: 'site-a', ...Object.fromEntries(ISO_BOOK_SWITCHES.map(item => [item.name, false])) };
+  const context = (site: Record<string, unknown>): BookContext => ({ user: { id: 'u', permissions: { general: 3, materials: 3, welding: 3, tools: 3, settings: 3 } } as unknown as User, rows: { projects: [row('p1', { siteId: 'site-a' })], welds: [row('w1', { isoId: 'iso-a', weldNo: '1' })] }, registry: PDF_DOCUMENTS, canFile: () => true, site: () => site as Row, certificateLinks: () => [] });
   const iso = row('iso-a', { projectId: 'p1' });
-  for (const key of ['flange-report', 'lisl:lisl-mv']) {
+  for (const key of ['lisl:lisl-gu', 'lisl-blank', 'weld-labels']) {
     assert.ok(plan(key), key);
-    assert.deepEqual(partState(plan(key), context(off), iso), { available: false, reason: ISO_BOOK_OFF_REASON, generators: [], files: [] }, key);
-    assert.notEqual(partState(plan(key), context({ id: 'site-a' }), iso).reason, ISO_BOOK_OFF_REASON, `${key} is offered while switched on`);
+    assert.deepEqual(partState(plan(key)!, context(off), iso), partState(plan(key)!, context({ id: 'site-a' }), iso), `${key}: the switches change nothing`);
+    assert.equal(partState(plan(key)!, context(off), iso).available, true, key);
   }
-  assert.equal(partState(plan('task-sheet'), context(off), iso).available, true, 'other parts stay');
-  assert.equal(isoBookPartOff(off, 'mto-report'), false, 'a part without a switch is never off');
-  // Every part key a switch names exists in the book.
-  for (const item of ISO_BOOK_SWITCHES.filter(entry => entry.part)) assert.ok(plans.some(candidate => candidate.key === item.part), item.part);
+  for (const key of REMOVED_BOOK_PARTS) assert.equal(plan(key), undefined, key);
+  // Every part a kept switch names exists in the book.
+  for (const item of ISO_BOOK_SWITCHES.filter(entry => entry.part && !REMOVED_BOOK_PARTS.includes(entry.part))) assert.ok(plan(item.part!), item.part);
 });

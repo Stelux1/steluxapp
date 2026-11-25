@@ -53,6 +53,9 @@ export const FLANGE_FIELDS: Field[] = [
   text('lubricant_used', 'Lubricant used', SECTION.bolting),
   text('matl_studbolts', 'Stud bolt material', SECTION.bolting),
   text('materiaal_moer', 'Nut material', SECTION.bolting),
+  // Chosen per flange (client change list 22.11.2026, image 3: it left the main project form). A new flange starts with the first
+  // option; a flange saved before reads the standard of its main project (`flangeTighteningStandard`). Printed on the flange report.
+  { name: 'tightening_standard', label: 'Tightening standard', type: 'select', options: FLANGE_STANDARDS, default: FLANGE_STANDARDS[0], section: SECTION.tightening, hint: 'The standard the torque values of this flange follow. It is printed on the flange report.' },
   text('torque_wrench_type', 'Torque wrench type', SECTION.tightening),
   text('torque_wrench_id', 'Torque wrench ID', SECTION.tightening),
   torque('first_pass_nm', 'First pass (Nm)', 'Entered by hand; it must not exceed the second pass.'),
@@ -183,16 +186,24 @@ export function flangeStandardNotice(site: Record<string, unknown> | undefined |
 }
 
 /* ---------------------------------------------------------------- list */
-export interface FlangeItem { row: Row; isoNo: string; projectId: string; projectName: string; status: FlangeStatus }
+export interface FlangeItem { row: Row; isoNo: string; projectId: string; projectName: string; status: FlangeStatus; /** The flange's tightening standard (its own, else its main project's). */ standard: string }
 export interface FlangeFilters { projectId: string; finished: '' | 'No' | 'Yes'; isoId: string; query: string }
 export const NO_FLANGE_FILTERS: FlangeFilters = { projectId: '', finished: '', isoId: '', query: '' };
 
-/** The list rows with the isometric number, the project and the derived status. */
-export function flangeItems(flanges: Row[], isometrics: Row[], projects: Row[]): FlangeItem[] {
-  const isoById = new Map(isometrics.map(row => [row.id, row])), projectById = new Map(projects.map(row => [row.id, row]));
+/**
+ * The tightening standard of one flange: its own choice, else (a flange saved before the field existed, or with a value
+ * that is no option) the standard named on its main project, else the first option.
+ */
+export function flangeTighteningStandard(flange: Record<string, unknown>, site?: Record<string, unknown> | null): string {
+  const own = String(flange.tightening_standard ?? '').trim();
+  return FLANGE_STANDARDS.includes(own) ? own : flangeStandard(site);
+}
+/** The list rows with the isometric number, the project, the derived status and the tightening standard (`sites` gives the fallback of older flanges). */
+export function flangeItems(flanges: Row[], isometrics: Row[], projects: Row[], sites: Row[] = []): FlangeItem[] {
+  const isoById = new Map(isometrics.map(row => [row.id, row])), projectById = new Map(projects.map(row => [row.id, row])), siteById = new Map(sites.map(row => [row.id, row]));
   return flanges.map(row => {
     const iso = isoById.get(String(row.isoId)), projectId = String(iso?.projectId || row.projectId || ''), project = projectById.get(projectId);
-    return { row, isoNo: String(iso?.isoNo ?? ''), projectId, projectName: project ? String(project.internnumber || project.description || '') : '', status: flangeStatus(row) };
+    return { row, isoNo: String(iso?.isoNo ?? ''), projectId, projectName: project ? String(project.internnumber || project.description || '') : '', status: flangeStatus(row), standard: flangeTighteningStandard(row, siteById.get(String(project?.siteId ?? ''))) };
   });
 }
 export function filterFlanges(items: FlangeItem[], filters: FlangeFilters): FlangeItem[] {
@@ -574,7 +585,7 @@ export const FLANGE_DETAIL_CARDS: { title: string; rows: [label: string, value: 
   { title: 'Overview', rows: [['Project', item => item.projectName], ['Iso number', item => item.isoNo], ['Flange ID', item => String(item.row.flange_id ?? '')], ['IRN', item => String(item.row.irnno ?? '')], ['Criticality', item => String(item.row.criticality ?? '')], ['Status', item => item.status]] },
   { title: 'Piping', rows: [['P&ID', item => String(item.row.pid ?? '')], ['Asset tag', item => flangeAssetTag(item.row)], ['Fluid Code', item => String(item.row.fluid_code ?? '')], ['Area/Unit', item => String(item.row.area_unit ?? '')], ['Pipe Class', item => String(item.row.pipe_class ?? '')], ['Location', item => String(item.row.location ?? '')]] },
   { title: 'Flange Size', rows: [['Flange Size', item => String(item.row.flange_size ?? '')], ['Flange Rating', item => String(item.row.flange_rating ?? '')], ['Flange Type', item => String(item.row.flange_type ?? '')], ['Flange Rate & Size', item => String(item.row.flange_rate_size ?? '')], ['Gasket Type', item => String(item.row.gasket_type ?? '')], ['Gasket Material', item => String(item.row.gasket_material ?? '')]] },
-  { title: 'Bolting & torque', rows: [['Studbolt Size', item => String(item.row.studbolt_afmeting ?? '')], ['Studbolt Diameter', item => String(item.row.stud_dia ?? '')], ['No of Studbolts', item => String(item.row.aantal_studbolts ?? '')], ['Material of Studbolts', item => String(item.row.matl_studbolts ?? '')], ['Material of Nut', item => String(item.row.materiaal_moer ?? '')], ['Target Moment (Nm)', item => String(item.row.target_moment_nm ?? '')], ['Target Stress', item => String(item.row.target_stress ?? '')], ['Lubricant Used', item => String(item.row.lubricant_used ?? '')]] },
+  { title: 'Bolting & torque', rows: [['Studbolt Size', item => String(item.row.studbolt_afmeting ?? '')], ['Studbolt Diameter', item => String(item.row.stud_dia ?? '')], ['No of Studbolts', item => String(item.row.aantal_studbolts ?? '')], ['Material of Studbolts', item => String(item.row.matl_studbolts ?? '')], ['Material of Nut', item => String(item.row.materiaal_moer ?? '')], ['Target Moment (Nm)', item => String(item.row.target_moment_nm ?? '')], ['Target Stress', item => String(item.row.target_stress ?? '')], ['Lubricant Used', item => String(item.row.lubricant_used ?? '')], ['Tightening standard', item => item.standard]] },
   { title: 'Operating conditions', rows: [['Operating Pressure', item => String(item.row.operatingPressure ?? '')], ['Operating Temperature', item => String(item.row.operatingTemp ?? '')], ['Test pressure', item => String(item.row.testPressure ?? '')], ['Note', item => String(item.row.note ?? '')]] },
 ];
 /** Whether a master field shown on the cards is empty (the page then shows the missing master data bar). */

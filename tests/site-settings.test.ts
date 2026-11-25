@@ -12,7 +12,12 @@ import { availabilityFor, deliverResource, HOSTED_RELEASE_PROFILE, projectResour
 import { pilotScope, projectInPilot, projectScope } from '../shared/project-scope.ts';
 import { wdiProgress } from '../shared/wdi.ts';
 import { PROGRESS_FIELDS, PROGRESS_HELP, PROGRESS_MODEL, PROGRESS_PHASES, defectNorm, flangeStandard, mandatoryFields, ndtMeasurement, projectCertificates, repairPerformanceLimit, wpsValidation } from '../shared/site-settings.ts';
-import type { Availability, Bootstrap } from '../shared/types.ts';
+import { HOSTED_HIDDEN_SITE_FIELDS, PROGRESS_FIXED_NOTE } from '../shared/site-settings.ts';
+import { editorFieldValues, editorPayload } from '../client/editor-values.ts';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ProgressGroups } from '../client/dialogs.tsx';
+import type { Availability, Bootstrap, Row } from '../shared/types.ts';
 
 const valid = { weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10, fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 };
 const allRows = (store: Store) => Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key, true)]));
@@ -25,6 +30,47 @@ test('Iso progress weights are fixed in code (client change list 22.11.2026): Sh
   assert.equal(PROGRESS_HELP.lines.length, 11); assert.ok(PROGRESS_HELP.lines.every(([term]) => !/Site|Distribution/.test(term)));
   // The legacy weight fields stay defined so older saves are accepted (the server answers 404 for unknown fields).
   assert.equal(PROGRESS_FIELDS.length, 16);
+});
+
+test('hosted main project form (images 1–4): Name, Address, Zip code, City first, then the settings that stay; the removed ones are hidden, still defined', () => {
+  const site = projectResource(availabilityFor(HOSTED_RELEASE_PROFILE)!, RESOURCE_MAP.sites);
+  const shown = site.fields.filter(field => field.section === 'Project settings' && !field.hidden);
+  assert.deepEqual(shown.map(field => field.name), ['name', 'address', 'zip', 'residence', 'mandatoryFields', 'wpsValidation', 'projectCertificates', 'materialManagementDisplay', 'diameterStandard']);
+  assert.deepEqual(shown.slice(0, 4).map(field => field.label), ['Name', 'Address', 'Zip code', 'City']);
+  for (const name of ['phone', 'email', 'flangeStandard', 'defectNorm', 'repairLimit', 'ndtMeasurement', 'irnCode', 'archived']) {
+    const field = site.fields.find(item => item.name === name);
+    assert.ok(field, `${name} stays defined (the server answers 404 for an unknown field)`); assert.equal(field!.hidden, true, name);
+  }
+  assert.deepEqual([...HOSTED_HIDDEN_SITE_FIELDS].sort(), ['archived', 'defectNorm', 'email', 'flangeStandard', 'irnCode', 'ndtMeasurement', 'phone', 'repairLimit']);
+  // Iso progress: no input at all; the legacy weights are hidden and a new site still stores their defaults.
+  assert.ok(site.fields.filter(field => field.section === 'Iso progress').every(field => field.hidden));
+  assert.ok(site.fields.filter(field => field.section === 'Document settings' && !field.hidden).length > 20, 'Document settings stay');
+  // Other profiles keep the shared form.
+  const demo = projectResource(availabilityFor('welding-demo')!, RESOURCE_MAP.sites);
+  assert.deepEqual(demo.fields.filter(field => !field.hidden).map(field => field.name), ['name', 'address', 'zip', 'residence', 'phone', 'email']);
+});
+
+test('Iso progress section: the fixed Shop and Field weights read-only, with the note and how each activity is measured', () => {
+  const html = renderToStaticMarkup(createElement(ProgressGroups));
+  assert.ok(html.includes(PROGRESS_FIXED_NOTE)); assert.equal(PROGRESS_FIXED_NOTE, 'Fixed for all projects');
+  assert.ok(!/<input|<select|<textarea/.test(html), 'no input');
+  for (const phase of PROGRESS_MODEL.phases) {
+    assert.ok(html.includes(`${phase.label}<span>${phase.weight}% of the project</span>`), phase.key);
+    for (const activity of phase.activities) assert.ok(html.includes(`<dt>${activity.label}</dt><dd>${activity.weight}%</dd>`), activity.label);
+  }
+  for (const [, text] of PROGRESS_HELP.lines) assert.ok(html.includes(text), text);
+  assert.ok(!/Distribution|Site/.test(html), 'no distribution inputs and no Site phase');
+});
+
+test('an order printed for a main project without a phone has no empty Phone line (the field left the form); a stored phone still prints', async t => {
+  const { orderDocumentModel } = await import('../shared/pdf-documents.ts');
+  const store = new Store(':memory:'); seed(store); t.after(() => store.close());
+  const order = store.list('orders').find(row => row.projectId)!, project = store.get('projects', String(order.projectId)), site = store.get('sites', String(project.siteId));
+  const rows = () => Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key)]));
+  const labels = () => orderDocumentModel(rows(), order.id, new Set([project.id]))!.items.map(item => item.label);
+  if (String(site.phone ?? '').trim()) assert.ok(labels().includes('Phone'), 'a stored phone still prints');
+  store.update('sites', site.id, { phone: '' }, site._version);
+  assert.deepEqual(labels(), ['Home location', 'Address', 'Order number']);
 });
 
 test('removed settings read their defaults whatever is stored: NDT inch-weighted, repair performance 5 %, no defect norm', () => {
@@ -49,11 +95,11 @@ test('the hosted profile delivers every site setting and both pilot switches, ot
     assert.deepEqual(projectResource(availability, RESOURCE_MAP.sites).columns, ['name', 'residence', 'phone', 'email'].filter(name => availability.resources.sites.includes(name)), profile);
   }
   const site = projectResource(hosted, RESOURCE_MAP.sites);
-  assert.deepEqual(site.columns, ['name', 'address', 'phone', 'email', 'irnCode']);
+  assert.deepEqual(site.columns, ['name', 'address', 'zip', 'residence']);
   const sections = [...new Set(site.fields.map(field => field.section || 'Details'))];
-  // ISO Book follows Iso progress; it is a tab of Edit project site only (shell-general-012).
+  // Every stored section stays defined (hidden where the form no longer shows it).
   assert.deepEqual(sections.slice(-4), ['Project settings', 'Document settings', 'Iso progress', 'ISO Book']);
-  assert.deepEqual(site.fields.filter(field => field.section === 'Iso progress').map(field => field.name), PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(activity => activity.field)]));
+  assert.deepEqual(site.fields.filter(field => field.section === 'Iso progress').map(field => field.name).sort(), PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(activity => activity.field)]).sort());
   const project = projectResource(hosted, RESOURCE_MAP.projects);
   assert.deepEqual(project.fields.filter(field => field.name === 'weldPilot' || field.name === 'mtoPilot').map(field => [field.name, field.label, field.default]), [['weldPilot', 'Weld Core', true], ['mtoPilot', 'Material Core', true]]);
   assert.deepEqual(availabilityFor('full'), undefined);
@@ -141,6 +187,17 @@ test('hosted editing: invalid weights are rejected with a message, valid setting
   assert.deepEqual([reopened.weightShop, reopened.weightField, reopened.weightSite, reopened.sitePaintTracing, reopened.irnCode, reopened.ndtMeasurement, reopened.defectNorm, reopened.repairLimit, reopened.mandatoryFields, reopened.hydrotestPlan], [38, 54, 8, 60, 'RIV-IRN', 'Per weld', 'API 1104', 2.5, true, 'HEP-RIV-007']);
   const invalidOption = await request(`/api/records/sites/${site.id}`, 'PUT', { defectNorm: 'Made up', _version: reopened._version });
   assert.equal(invalidOption.status, 422);
+  // The form of an old site: only what was changed is sent, so the hidden stored values (phone, weights, IRN code …) never block a save.
+  const old = data.rows.sites.find(row => row.id === 'site-north')!, fields = projectResource(availabilityFor(HOSTED_RELEASE_PROFILE)!, RESOURCE_MAP.sites).fields;
+  const values = { ...editorFieldValues(fields, old as Row), name: `${String(old.name)} renamed` };
+  const payload = editorPayload(values, old as Row, true, name => old[name] ?? fields.find(field => field.name === name)?.default ?? '');
+  assert.deepEqual(Object.keys(payload), ['name']);
+  assert.equal((await request(`/api/records/sites/${old.id}`, 'PUT', { ...payload, _version: old._version })).status, 200);
+  // Add project site sends every value of the form, the hidden defaults included.
+  const created = await request('/api/records/sites', 'POST', { ...editorFieldValues(fields), name: 'New yard', address: '1 New Road', zip: '1000', residence: 'Ghent' });
+  assert.equal(created.status, 201, await created.clone().text());
+  const fresh = (await created.json() as { record: Row }).record;
+  assert.deepEqual([fresh.residence, fresh._archived, fresh.weightShop], ['Ghent', false, 50]);
   const project = data.rows.projects.find(row => row.id === 'project-cooling')!;
   assert.equal((await request(`/api/records/projects/${project.id}`, 'PUT', { mtoPilot: false, _version: project._version })).status, 200);
   const after = (await (await request('/api/bootstrap')).json() as Bootstrap).rows.projects.find(row => row.id === project.id)!;

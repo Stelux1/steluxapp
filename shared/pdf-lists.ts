@@ -103,14 +103,20 @@ export interface FlangeReportModel { options: FlangeReportOptions; items: Flange
 export function flangeReportModel(rows: Rows, options: FlangeReportOptions, isoIds: Set<string>): FlangeReportModel {
   const isometrics = live(rows.isometrics).filter(iso => isoIds.has(iso.id));
   const flanges = live(rows.flanges).filter(row => isoIds.has(text(row.isoId)));
-  const all = flangeItems(flanges, isometrics, live(rows.projects));
+  const all = flangeItems(flanges, isometrics, live(rows.projects), rows.sites || []);
   const items = (options.ids ? selectedFlanges(all, options.ids) : filterFlanges(all, { projectId: options.projectId, isoId: options.isoId, finished: options.finished, query: options.q }))
     .sort((a, b) => naturalCompare(a.isoNo, b.isoNo) || naturalCompare(text(a.row.flange_id), text(b.row.flange_id)));
   const used = [...new Set(items.map(item => text(item.row.isoId)))].map(id => find(rows, 'isometrics', id)!).filter(Boolean);
   const chosen = options.isoId ? isometrics.filter(iso => iso.id === options.isoId) : [];
   const context = projectContext(rows, chosen.length ? chosen : used);
   const project = context.project ?? find(rows, 'projects', options.projectId), site = context.site ?? find(rows, 'sites', project?.siteId);
-  return { options, items, context: { ...context, project, site, client: context.client || text(find(rows, 'companies', project?.companyId)?.name) }, standard: flangeStandard(site), procedureNo: text(site?.flangeProcedureNo) };
+  return { options, items, context: { ...context, project, site, client: context.client || text(find(rows, 'companies', project?.companyId)?.name) }, standard: reportStandard(items, site), procedureNo: text(site?.flangeProcedureNo) };
+}
+/** The header's tightening standard: the one every listed flange follows, "Per flange" when they differ (each row prints its own). */
+export const FLANGE_STANDARD_MIXED = 'Per flange (see the list)';
+function reportStandard(items: FlangeItem[], site: Row | undefined): string {
+  const standards = [...new Set(items.map(item => item.standard))];
+  return standards.length > 1 ? FLANGE_STANDARD_MIXED : standards[0] ?? flangeStandard(site);
 }
 export const FLANGE_PDF_COLUMNS: { header: string | string[]; width: number; cell(item: FlangeItem): string }[] = [
   { header: 'Flange ID', width: 7, cell: item => text(item.row.flange_id) },
@@ -120,6 +126,7 @@ export const FLANGE_PDF_COLUMNS: { header: string | string[]; width: number; cel
   { header: ['Flange', 'rating'], width: 5, cell: item => text(item.row.flange_rating) },
   { header: ['Gasket', 'type'], width: 7, cell: item => text(item.row.gasket_type) },
   { header: ['Stud bolts', '(dim. x no.)'], width: 8, cell: item => [text(item.row.studbolt_afmeting), number(item.row.aantal_studbolts) && `x ${number(item.row.aantal_studbolts)}`].filter(Boolean).join(' ') },
+  { header: ['Tightening', 'standard'], width: 7, cell: item => item.standard },
   { header: ['Torque', 'wrench'], width: 6, cell: item => [text(item.row.torque_wrench_type), text(item.row.torque_wrench_id)].filter(Boolean).join(' ') },
   { header: ['First', 'pass (Nm)'], width: 4.5, cell: item => number(item.row.first_pass_nm) },
   { header: ['Second', 'pass (Nm)'], width: 4.5, cell: item => number(item.row.second_pass_nm) },

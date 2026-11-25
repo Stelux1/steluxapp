@@ -6,6 +6,7 @@ import { HYDROTEST_ACTIONS, HYDROTEST_RESOURCES } from './hydrotest.ts';
 import { FLANGE_ATTACHMENT_FIELDS, FLANGE_RECORD_RESOURCES } from './flanges.ts';
 import { CATALOG_SITES, HOSTED_COMPANY_FIELDS, HOSTED_REQUIRED, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogField, catalogResource } from './weld-catalogs.ts';
 import { hostedSiteFields } from './site-settings.ts';
+import { SITE_LIST_COLUMNS } from './site-list.ts';
 import { itpHostedField } from './itps.ts';
 import { hostedIsometricResource, hostedProjectResource } from './project-iso-forms.ts';
 import { WELDERCARD_PATH, HOSTED_COLUMNS, HOSTED_DROPPED_FIELDS, HOSTED_COLUMN_LABELS, SITE_OWNED, WELDER_DATA_PAGES, WELDER_DATA_RECORDS, hostedField, hostedFieldOrder } from './welder-data.ts';
@@ -288,7 +289,7 @@ export function projectResource(availability: Availability | undefined, resource
   if (!availability) return resource;
   const prototype = availability.features.includes('lisl');
   const pilots = availability.features.includes('pilots');
-  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? ['name', 'address', 'phone', 'email', 'irnCode'] : pilots && resource.key === 'operation_phases' ? ['number', 'name'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'mtoEnabled', 'weldEnabled'] : pilots && resource.key === 'profiles' ? ['name', 'description'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
+  const columns = pilots && WELD_CATALOG_COLUMNS[resource.key] ? WELD_CATALOG_COLUMNS[resource.key] : pilots && resource.key === 'sites' ? [...SITE_LIST_COLUMNS] : pilots && resource.key === 'operation_phases' ? ['number', 'name'] : pilots && resource.key === 'users' ? ['email', 'name', 'title', 'companyId', 'phone', 'mtoEnabled', 'weldEnabled'] : pilots && resource.key === 'profiles' ? ['name', 'description'] : prototype && resource.key === 'certifications' ? ['name', 'indexNo', 'chargeNo', 'materialId', 'date'] : prototype && resource.key === 'wps' ? [...resource.columns, 'active'] : prototype && resource.key === 'weld_types' ? ['abbreviation', ...resource.columns] : resource.columns;
   const listed = pilots ? HOSTED_COLUMNS[resource.key] ?? WELD_DATA_COLUMNS[resource.key] : undefined;
   const ordered = (fields: Field[]) => pilots && resource.key === 'wps' ? orderWpsFields(fields) : fields;
   const projected: Resource = {

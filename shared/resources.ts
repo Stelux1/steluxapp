@@ -39,7 +39,8 @@ function catalog(key: string, title: string, singular: string, module: Module, g
 const SETTINGS = 'Project settings', DOCUMENTS = 'Document settings', PROGRESS = 'Iso progress';
 const siteSettings: Field[] = [
   b('mandatoryFields', 'Mandatory fields', { section: SETTINGS, hint: 'Require the reference fields when a weld with a welder or a material certificate is saved.' }),
-  s('flangeStandard', 'Flange tightening standard', FLANGE_STANDARDS, { section: SETTINGS, default: FLANGE_STANDARDS[0], hint: 'Pre-fills torque values; values already entered are kept.' }),
+  // Each flange names its own tightening standard now (shared/flanges.ts); this one is read for flanges saved without one. The hosted form hides it.
+  s('flangeStandard', 'Flange tightening standard', FLANGE_STANDARDS, { section: SETTINGS, default: FLANGE_STANDARDS[0], hint: 'Used for flanges saved without their own tightening standard.' }),
   b('wpsValidation', 'Validation on WPS', { section: SETTINGS, hint: 'Only welders qualified for the weld’s WPS can be assigned.' }),
   b('projectCertificates', 'Project-specific Material Certificates', { section: SETTINGS, hint: 'Offer and print only certificates linked to the project.' }),
   b('materialManagementDisplay', 'Material Management Display Setting', { section: SETTINGS, hint: 'Ticked: the M indicator lights up once materials are added to an isometric. Not ticked: once a pick list exists.' }),
@@ -51,7 +52,7 @@ const siteSettings: Field[] = [
   // Automatic IRN numbers: switched on only by the fill-irn action (server/iso-pages.ts); the counter is the last number given.
   b('irnAuto', 'Automatic IRN numbers', { hidden: true, section: SETTINGS }),
   n('irnCounter', 'IRN counter', { hidden: true, section: SETTINGS }),
-  // Hosted "Archived" (reference: last field of Project settings): ticked, the saved site moves to the archived list (server/user-admin.ts `siteArchiveInput`).
+  // Archived: never shown in a form; the Archive action of the Project sites list sends it (server/user-admin.ts `siteArchiveInput`) and the saved site moves to the archived list.
   b('archived', 'Archived', { hidden: true, section: SETTINGS, hint: 'Moves this project site to the archived list. Its records stay available there.' }),
   t('prefix', 'Prefix', { section: DOCUMENTS }),
   s('releaseDocDrawing', 'Release doc drawing no', RELEASE_DOC_DRAWINGS, { section: DOCUMENTS, default: RELEASE_DOC_DRAWINGS[0] }),
@@ -72,7 +73,7 @@ const siteSettings: Field[] = [
   s('issNdtStandard', 'LISL [ISS] NDT standard', ISS_NDT_STANDARDS, { section: DOCUMENTS, hint: 'Ticks ASME or EN ISO; empty uses the isometric’s NDT norm.' }),
   ...PROGRESS_PHASES.map(phase => n(phase.field, `${phase.label} phase (%)`, { section: PROGRESS, max: 100, step: 1 })),
   ...PROGRESS_PHASES.flatMap(phase => phase.activities.map(activity => n(activity.field, `${phase.label} · ${activity.label} (%)`, { section: PROGRESS, max: 100, step: 1 }))),
-  // ISO Book (Edit project site only, hosted profile: shown by EDIT_FIELD_OVERRIDES in shared/weld-catalogs.ts); every switch is on by default.
+  // ISO Book switches of the earlier Edit project site tab: no longer shown and no longer applied (the ISO Book is standard, shared/iso-book-settings.ts); stored values stay.
   ...ISO_BOOK_SWITCHES.map(item => b(item.name, item.label, { section: ISO_BOOK_SECTION, default: true, hidden: true })),
 ];
 add('sites', 'Project sites', 'project site', 'general', 'Workspace', 'The locations where your projects come together.', [t('name', 'Site name', { required: true }), ...contact, ...siteSettings], ['name', 'residence', 'phone', 'email'], { unique: [['name']] });
@@ -297,7 +298,7 @@ applyMtoStock(resources);
 // Memo templates of the project sites (shared/memo-templates.ts): written only by server/memo-templates.ts.
 resources.push(MEMO_TEMPLATE_RESOURCE);
 /** Fields above that only the pilots profile shows. */
-export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope', 'storehouseManager'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'], sites: ['archived'] };
+export const PILOT_ONLY_FIELDS: Record<string, string[]> = { users: ['title', 'address', 'phone', 'companyId', 'weldEnabled', 'weldProfileId', 'mtoEnabled', 'mtoProfileId', 'weldSiteScope', 'mtoSiteScope', 'storehouseManager'], signatures: ['userId', 'kind', 'nameUnder'], welder_certificates: ['notifyDays', 'notify'], isometrics: ['itpId', 'itp2Id'], suppliers: ['mailbox', 'mnzip', 'mnresidence', 'fax'], welding_wires: ['typeMaterial'] };
 export const RESOURCES = resources;
 export const RESOURCE_MAP = Object.fromEntries(resources.map(r => [r.key, r])) as Record<string, Resource>;
 export const MODULES = {
