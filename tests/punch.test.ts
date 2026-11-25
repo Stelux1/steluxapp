@@ -79,18 +79,16 @@ test('punch progress reads the stored percentage as 0..1 and is unset until ente
   assert.deepEqual(['0 %', '100 %', '', '30 %'].map(value => hasPunchProgress(row('i', { punchProgress: value }))), [true, true, false, false]);
 });
 
-test('the isometric blockers and the punch driver of the progress read these functions', () => {
-  const site = row('site', { weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10, fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 });
-  const input = (punch: Row[] | null, iso: Row = row('iso')): IsoStatusInput => ({ iso, site, welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch });
+test('the isometric blockers read these functions; punch is no progress driver any more (client change list 22.11.2026)', () => {
+  const input = (punch: Row[] | null, iso: Row = row('iso')): IsoStatusInput => ({ iso, site: null, welds: [], weldTypes: [], diameters: [], results: [], releases: null, punch });
   const punch = [row('1', { isoId: 'iso', category: A }), row('2', { isoId: 'iso', category: C }), row('3', { isoId: 'iso', category: B, status: 'Finished' }), row('4', { isoId: 'other', category: A })];
   const blockers = isoBlockers(input(punch));
   assert.equal(blockers.total, 1); assert.equal(blockers.groups[0].key, 'punch'); assert.equal(blockers.groups[0].items[0].message, '1 open punch');
   assert.equal(isoBlockers(input([row('c', { isoId: 'iso', category: D })])).total, 0, 'non-blocking categories do not block');
-  const driver = (iso: Row, extra: Partial<IsoStatusInput> = {}) => isoProgress({ ...input([], iso), ...extra }).phases[1].drivers.find(item => item.key === 'punch')!;
-  assert.equal(driver(row('iso')).inScope, false, 'out of scope until a punch progress is entered');
-  assert.equal(driver(row('iso', { punchProgress: '75 %' })).progress, 0.75);
-  assert.equal(driver(row('iso', { punchProgress: '0 %' })).inScope, true);
-  assert.equal(driver(row('iso', { punchProgress: '75 %' }), { punchProgress: 1 }).progress, 1, 'a value passed by the caller wins');
+  // The punch progress stays stored and shown, but the progress of the isometric does not change with it.
+  const progress = (iso: Row, extra: Partial<IsoStatusInput> = {}) => isoProgress({ ...input([], iso), ...extra });
+  assert.ok(progress(row('iso')).phases.every(phase => phase.activities.every(item => item.key !== 'punch')));
+  assert.deepEqual(progress(row('iso', { punchProgress: '75 %' }), { punchProgress: 1 }), progress(row('iso')));
 });
 
 test('input and sign-off rules', () => {

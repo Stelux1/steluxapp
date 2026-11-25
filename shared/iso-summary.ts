@@ -1,5 +1,5 @@
 import type { Row } from './types.ts';
-import { PROGRESS_PHASES, type PhaseKey } from './site-settings.ts';
+import { progressFromUnits, type ProgressPhaseKey, type ProgressUnits } from './progress-model.ts';
 import { isoBlockers, isoBudgets, isoProgress, isoQuality, type BlockerKey, type IsoProgress, type ProgressBudgets } from './iso-status.ts';
 import { materialStatus } from './mto-materials.ts';
 import { punchCounts, type PunchCounts } from './punch.ts';
@@ -24,12 +24,14 @@ import { qaCounts, type QaCounts } from './iso-overview.ts';
  */
 export interface IsoSummary {
   progress: {
-    /** False while the site has no progress weights. */
-    configured: boolean;
-    /** Shop / Field / Site, one decimal (0 while nothing weighted of the phase is in scope); null only while not configured. */
-    phases: { key: PhaseKey; percent: number | null }[];
-    /** The isometric's percentage, one decimal; null only while not configured. */
-    total: number | null;
+    /** Always true: the weights are fixed in code (shared/progress-model.ts). */
+    configured: true;
+    /** Shop / Field, one decimal. */
+    phases: { key: ProgressPhaseKey; percent: number }[];
+    /** The isometric's percentage, one decimal. */
+    total: number;
+    /** What each activity has done of what there is to do (dia-inch, pieces, 0/1): `summaryProgress()` and `projectProgress()` build the full figures from it. */
+    units: ProgressUnits;
   };
   /** Accepted NDT / NDT PRE results ÷ (accepted + NA) over the welds that are not repair welds (`isoQuality`). */
   quality: { percent: number | null; accepted: number; rejected: number };
@@ -64,6 +66,8 @@ export interface IsoSummarySource {
   results: Row[] | null;
   releases: Row[] | null;
   punch: Row[] | null;
+  /** Flanges (the Reinstatement activity of the progress); absent or null: none read, Reinstatement follows Pressure tests. */
+  flanges?: Row[] | null;
   /** Test systems and hydrotest requests (the hydrotest driver, shared/hydrotest.ts); absent or null when unreadable. */
   testSystems?: Row[] | null;
   hydrotestRequests?: Row[] | null;
@@ -111,6 +115,7 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
   const releases = groupBy(source.releases, row => String(row.isoId));
   const punch = groupBy(source.punch, row => String(row.isoId));
   const spools = groupBy(source.spools ?? null, row => String(row.isoId));
+  const flanges = groupBy(source.flanges ?? null, row => String(row.isoId));
   const requirements = groupBy(source.requirements, row => String(row.isoId));
   const projects = new Map(source.projects.map(row => [row.id, row]));
   const sites = new Map(source.sites.map(row => [row.id, row]));
@@ -134,13 +139,14 @@ export function isoSummaries(source: IsoSummarySource): Record<string, IsoSummar
       iso, site, welds: welds.get(iso.id) || [], weldTypes: source.weldTypes || [], diameters: source.diameters || [], results: results.get(iso.id) || [],
       releases: source.releases ? releases.get(iso.id) || [] : null, punch: source.punch ? punch.get(iso.id) || [] : null,
       testSystems: source.testSystems ?? null, hydrotestRequests: source.hydrotestRequests ?? null, spools: source.spools ? spools.get(iso.id) || [] : null, hydrotestResults: source.hydrotestResults ?? null,
+      flanges: source.flanges ? flanges.get(iso.id) || [] : null,
       budgets: source.requirements ? isoBudgets(iso, { iso_materials: requirements.get(iso.id) || [], materials: source.materials || [], custom_materials: source.customMaterials || [], operation_phases: source.operationPhases || [], ...(source.picklists ? { picklists: source.picklists } : {}) }) : undefined,
     };
     const blockers = isoBlockers(input), quality = isoQuality(input), progress = isoProgress(input), flags = isoFlags(iso, context);
     const material = source.requirements && source.materials ? materialStatus(iso, materialRows(source, iso, requirements.get(iso.id) || [])).percent : null;
     const hydrotest = hydrotestState(iso, { test_systems: source.testSystems ?? null, hydrotest_requests: source.hydrotestRequests ?? null, releases: source.releases ? releases.get(iso.id) || [] : null, spools: input.spools, hydrotest_results: source.hydrotestResults ?? null });
     output[iso.id] = {
-      progress: { configured: progress.configured, phases: progress.phases.map(phase => ({ key: phase.key, percent: phase.percent })), total: progress.total },
+      progress: { configured: true, phases: progress.phases.map(phase => ({ key: phase.key, percent: phase.percent })), total: progress.total, units: progress.units },
       quality: { percent: quality.percent, accepted: quality.accepted, rejected: quality.rejected },
       blockers: { total: blockers.total, groups: blockers.groups.map(group => ({ key: group.key, count: group.count })) },
       flags, kpi: isoKpiFacts(flags),
@@ -175,18 +181,17 @@ export function projectStatuses(source: { projects: Row[]; isometrics: Row[]; we
 /** A percentage as the reference writes it: one decimal at most and no space before the sign ('0%', '72.7%'). */
 export const percentText = (value: number) => `${Math.round((Number(value) || 0) * 10) / 10}%`;
 
-/** Texts of the Progress card (reference weld__iso__0001__progress-card.txt; Field and Site tips from _interactive/I1). */
+/** Texts of the Progress card (reference weld__iso__0001__progress-card.txt). */
 export const PROGRESS_CARD_TEXTS = {
   phase: {
-    shop: 'Shop prefab phase (welds, NDT, shop-typed material).',
-    field: 'Field erection phase (pipe, welds, NDT, supports, appendages, punch).',
-    site: 'Site is its own share of the total (Shop + Field + Site = 100%). Hydrotest and Paint/Tracing split the Site phase.',
-  } as Record<PhaseKey, string>,
+    shop: 'Shop prefab phase: fit-up, welding, NDT and the Fabrication Book (50% of the isometric).',
+    field: 'Field erection phase: spools erection, supports, welding, NDT, pressure tests, reinstatement and final documentation (50% of the isometric).',
+  } as Record<ProgressPhaseKey, string>,
   percent: 'Weighted completion of this phase. Same source as Status and BBE.',
   budgetColumn: { shop: 'Ceiling: Shop issued / Shop MTO', field: 'Budget (MTO)' },
   specification: 'Specification',
   finish: 'Mark as done, or N/A when paint, tracing or insulation is not required on this ISO.',
-  save: 'Save shop, field and site values.',
+  save: 'Save the entered quantities and finish states.',
 };
 /** The bar text of a quantity row: its share in whole percent, or without a budget 'N/A' (Shop) / '0%' (Field) as in the reference. */
 export function quantityBarText(phase: 'shop' | 'field', budget: number, progress: number | null): string {
@@ -197,11 +202,8 @@ export function quantityBarText(phase: 'shop' | 'field', budget: number, progres
 export const FINISH_SPECIFICATION_FIELDS: Record<string, string> = { paintState: 'paintSpec', tracingState: 'tracing', insulationState: 'insulation' };
 export const finishSpecification = (iso: Row, finishField: string) => String(iso[FINISH_SPECIFICATION_FIELDS[finishField]] ?? '').trim() || '—';
 
-/** The progress card's view of a summary (no driver detail: the summary does not carry it). */
-export const summaryProgress = (summary: IsoSummary): IsoProgress => ({
-  configured: summary.progress.configured, total: summary.progress.total,
-  phases: PROGRESS_PHASES.map(phase => ({ key: phase.key, label: phase.label, weight: 0, percent: summary.progress.phases.find(item => item.key === phase.key)?.percent ?? null, drivers: [] })),
-});
+/** The full progress of a summary (phases with every activity's weight, progress and contribution), from its units. */
+export const summaryProgress = (summary: IsoSummary): IsoProgress => ({ configured: true, units: summary.progress.units, ...progressFromUnits(summary.progress.units) });
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 /** The line a blocker group shows when its items cannot be listed (the welds are not readable in this pilot). */

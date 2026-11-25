@@ -11,55 +11,30 @@ import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, deliverResource, HOSTED_RELEASE_PROFILE, projectResource } from '../shared/release.ts';
 import { pilotScope, projectInPilot, projectScope } from '../shared/project-scope.ts';
 import { wdiProgress } from '../shared/wdi.ts';
-import { PROGRESS_FIELDS, PROGRESS_PHASES, defectNorm, mandatoryFields, ndtMeasurement, progressTotals, progressWeights, projectCertificates, repairPerformanceLimit, validateProgressWeights, wpsValidation } from '../shared/site-settings.ts';
+import { PROGRESS_FIELDS, PROGRESS_HELP, PROGRESS_MODEL, PROGRESS_PHASES, defectNorm, flangeStandard, mandatoryFields, ndtMeasurement, projectCertificates, repairPerformanceLimit, wpsValidation } from '../shared/site-settings.ts';
 import type { Availability, Bootstrap } from '../shared/types.ts';
 
 const valid = { weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10, fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60 };
 const allRows = (store: Store) => Object.fromEntries(RESOURCES.map(resource => [resource.key, store.list(resource.key, true)]));
 
-test('progress weights: a complete 38 / 54 / 8 split is valid and all-empty means not configured', () => {
-  assert.deepEqual(validateProgressWeights(valid), { valid: true, message: '', fields: {} });
-  for (const empty of [{}, undefined, null, Object.fromEntries(PROGRESS_FIELDS.map(name => [name, null])), Object.fromEntries(PROGRESS_FIELDS.map(name => [name, '']))]) assert.equal(validateProgressWeights(empty).valid, true);
-  assert.equal(progressWeights({}).configured, false);
-  assert.equal(progressWeights(valid).configured, true);
+test('Iso progress weights are fixed in code (client change list 22.11.2026): Shop and Field 50 / 50, each phase 100', () => {
+  assert.deepEqual(PROGRESS_MODEL.phases.map(phase => [phase.key, phase.weight]), [['shop', 50], ['field', 50]]);
+  assert.deepEqual(PROGRESS_MODEL.phases[0].activities.map(item => [item.label, item.weight]), [['MTO / Cut-Bev / Fit-up', 40], ['Welding', 40], ['NDT', 10], ['Fabrication Book', 10]]);
+  assert.deepEqual(PROGRESS_MODEL.phases[1].activities.map(item => [item.label, item.weight]), [['Spools erection / Fit-up', 30], ['Supports erection', 10], ['Welding', 20], ['NDT', 10], ['Pressure tests', 15], ['Reinstatement', 5], ['Final documentation', 10]]);
+  // The help text of the form is built from the model: one line per activity, no "Site" and no input to fill in.
+  assert.equal(PROGRESS_HELP.lines.length, 11); assert.ok(PROGRESS_HELP.lines.every(([term]) => !/Site|Distribution/.test(term)));
+  // The legacy weight fields stay defined so older saves are accepted (the server answers 404 for unknown fields).
+  assert.equal(PROGRESS_FIELDS.length, 16);
 });
 
-test('progress weights: phases must total 100 and every phase with a weight needs activities totalling 100', () => {
-  const phases = validateProgressWeights({ ...valid, weightSite: 10 });
-  assert.equal(phases.valid, false); assert.match(phases.message, /Shop, Field and Site must total 100% \(now 102%\)/);
-  assert.deepEqual(['weightShop', 'weightField', 'weightSite'].filter(name => phases.fields[name]), ['weightShop', 'weightField', 'weightSite']);
-  const activities = validateProgressWeights({ ...valid, fieldPunch: 5 });
-  assert.equal(activities.valid, false); assert.match(activities.message, /Field activities must total 100% \(now 95%\)/);
-  assert.ok(activities.fields.fieldPunch && activities.fields.fieldWelds && !activities.fields.shopWelds);
-  assert.match(validateProgressWeights({ ...valid, shopWelds: 41, siteHydrotest: 30 }).message, /Shop activities.*Site activities/);
-  // Entering a single weight is enough to require a complete configuration.
-  assert.equal(validateProgressWeights({ shopWelds: 100 }).valid, false);
-  assert.equal(validateProgressWeights({ weightShop: 100, shopWelds: 100 }).valid, false, 'Field activities are needed even at weight 0 (only Site is excused)');
-  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 100, fieldWelds: 100 }).valid, true, 'every phase with activities of 100 is complete');
-  assert.equal(validateProgressWeights({ weightShop: 100 }).valid, false, 'a phase with a weight needs its activities');
-});
-
-test('progress weights: Site activities are optional while Site is 0, and weights are whole numbers from 0 to 100', () => {
-  const noSite = { ...valid, weightShop: 40, weightField: 60, weightSite: 0, siteHydrotest: null, sitePaintTracing: null };
-  assert.equal(validateProgressWeights(noSite).valid, true);
-  assert.equal(validateProgressWeights({ ...noSite, weightSite: null }).valid, true);
-  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 60, shopNdt: 40 }).valid, false, 'Field activities must total 100 at weight 0');
-  assert.equal(validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 60, shopNdt: 40, fieldWelds: 100 }).valid, true);
-  assert.equal(validateProgressWeights({ ...valid, weightSite: 8.5 }).valid, false);
-  assert.equal(validateProgressWeights({ ...valid, shopWelds: -1 }).valid, false);
-  assert.equal(validateProgressWeights({ ...valid, shopWelds: 101 }).valid, false);
-  assert.deepEqual(progressTotals(valid), { phases: 100, activities: { shop: 100, field: 100, site: 100 } });
-});
-
-test('setting accessors apply the reference defaults', () => {
-  assert.equal(repairPerformanceLimit({}), 5); assert.equal(repairPerformanceLimit({ repairLimit: null }), 5); assert.equal(repairPerformanceLimit({ repairLimit: '' }), 5);
-  assert.equal(repairPerformanceLimit({ repairLimit: 0 }), 0); assert.equal(repairPerformanceLimit({ repairLimit: 3.5 }), 3.5);
+test('removed settings read their defaults whatever is stored: NDT inch-weighted, repair performance 5 %, no defect norm', () => {
+  assert.deepEqual([repairPerformanceLimit({}), repairPerformanceLimit({ repairLimit: null }), repairPerformanceLimit({ repairLimit: 0 }), repairPerformanceLimit({ repairLimit: 3.5 })], [5, 5, 5, 5]);
+  assert.deepEqual([defectNorm({}), defectNorm({ defectNorm: 'API 1104' }), defectNorm({ defectNorm: 'ISO 6520-1' })], [null, null, null]);
+  assert.deepEqual([ndtMeasurement({}), ndtMeasurement({ ndtMeasurement: 'Per weld' })], ['inch-weighted', 'inch-weighted']);
+  // The flange standard is still read from the site (the fallback of a flange without its own standard).
+  assert.equal(flangeStandard({ flangeStandard: 'Gasunie CSW-43 table B' }), 'Gasunie CSW-43 table B'); assert.equal(flangeStandard({}), 'No catalog (free entry)');
   assert.deepEqual([mandatoryFields({}), wpsValidation(undefined), projectCertificates(null)], [false, false, false]);
   assert.deepEqual([mandatoryFields({ mandatoryFields: true }), wpsValidation({ wpsValidation: true }), projectCertificates({ projectCertificates: true })], [true, true, true]);
-  assert.equal(defectNorm({}), null); assert.equal(defectNorm({ defectNorm: 'No norm selected' }), null); assert.equal(defectNorm({ defectNorm: 'API 1104' }), 'API 1104'); assert.equal(defectNorm({ defectNorm: 'unknown' }), null);
-  assert.equal(ndtMeasurement({}), 'inch-weighted'); assert.equal(ndtMeasurement({ ndtMeasurement: 'Per weld' }), 'per-weld');
-  const weights = progressWeights({ weightShop: 38, weightField: 54, weightSite: 8, siteHydrotest: 40 });
-  assert.deepEqual(weights.phases, { shop: 38, field: 54, site: 8 }); assert.equal(weights.activities.site.hydrotest, 40); assert.equal(weights.activities.site.paintTracing, 0);
 });
 
 test('the hosted profile delivers every site setting and both pilot switches, other profiles stay as they were', () => {
@@ -93,22 +68,19 @@ test('deliverResource adds a whole resource or only the named fields, keeps exis
   assert.throws(() => deliverResource(availability, 'nothing'), /Unknown resource/);
 });
 
-test('the store rejects inconsistent progress weights with a clear message and stores valid ones', t => {
+test('the store never rejects a site because of progress weights; old weight values are stored as they come', t => {
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
-  assert.throws(() => store.create('sites', { name: 'Bad weights', ...valid, weightSite: 12 }), (error: unknown) => error instanceof AppError && error.status === 422 && /must total 100% \(now 104%\)/.test(error.message) && Boolean(error.fields?.weightSite));
-  const created = store.create('sites', { name: 'Good weights', ...valid });
-  assert.equal(created.weightShop, 38); assert.equal(created.sitePaintTracing, 60);
-  assert.equal(store.create('sites', { name: 'Not configured yet' }).weightShop, null);
-  assert.throws(() => store.update('sites', created.id, { weightShop: 90 }, created._version), /Shop, Field and Site must total 100%/);
-  assert.equal(store.update('sites', created.id, { weightSite: 0, weightShop: 46, siteHydrotest: null, sitePaintTracing: null }, created._version).weightShop, 46);
+  const created = store.create('sites', { name: 'Old weights', ...valid, weightSite: 12 });
+  assert.equal(created.weightSite, 12); assert.equal(created.sitePaintTracing, 60);
+  assert.equal(store.create('sites', { name: 'No weights' }).weightShop, null);
+  assert.equal(store.update('sites', created.id, { weightShop: 90 }, created._version).weightShop, 90);
 });
 
-test('sample data carries a configured site; every sample project is enabled for both pilots', t => {
+test('sample data keeps its stored settings, read as the defaults; every sample project is enabled for both pilots', t => {
   const store = new Store(':memory:'); seed(store); t.after(() => store.close());
   const north = store.get('sites', 'site-north');
-  assert.deepEqual(progressWeights(north).phases, { shop: 38, field: 54, site: 8 }); assert.equal(validateProgressWeights(north).valid, true);
-  assert.equal(repairPerformanceLimit(north), 4); assert.equal(defectNorm(north), 'ISO 6520-1'); assert.equal(mandatoryFields(north), true);
-  assert.equal(repairPerformanceLimit(store.get('sites', 'site-river')), 5);
+  assert.equal(north.weightShop, 38, 'stored values are left alone');
+  assert.equal(repairPerformanceLimit(north), 5); assert.equal(defectNorm(north), null); assert.equal(mandatoryFields(north), true);
   const projects = store.list('projects');
   // STX-2403 carries the sample MTO requirements, orders and reservations, so it is on for Material Core too.
   assert.deepEqual(projects.filter(project => !projectInPilot(project, 'mto')).map(project => project.id), []);
@@ -158,11 +130,11 @@ test('hosted editing: invalid weights are rejected with a message, valid setting
   };
   assert.equal((await request('/api/auth/setup', 'POST', { name: 'Settings admin', email: 'settings-admin@example.test', password: 'Settings-Test-Password' })).status, 201);
   const site = store.get('sites', 'site-river');
-  const rejected = await request(`/api/records/sites/${site.id}`, 'PUT', { ...valid, weightField: 50, _version: site._version });
-  assert.equal(rejected.status, 422);
-  const body = await rejected.json() as { error?: string; message?: string; fields?: Record<string, string> };
-  assert.match(String(body.error ?? body.message), /must total 100% \(now 96%\)/); assert.ok(body.fields?.weightField);
-  const saved = await request(`/api/records/sites/${site.id}`, 'PUT', { ...valid, irnCode: 'RIV-IRN', ndtMeasurement: 'Per weld', defectNorm: 'API 1104', repairLimit: 2.5, mandatoryFields: true, hydrotestPlan: 'HEP-RIV-007', _version: site._version });
+  // Weights that no longer add up are accepted and stored (they are ignored by the progress).
+  const accepted = await request(`/api/records/sites/${site.id}`, 'PUT', { ...valid, weightField: 50, _version: site._version });
+  assert.equal(accepted.status, 200);
+  const current = (await accepted.json() as { record: { _version: number } }).record;
+  const saved = await request(`/api/records/sites/${site.id}`, 'PUT', { ...valid, irnCode: 'RIV-IRN', ndtMeasurement: 'Per weld', defectNorm: 'API 1104', repairLimit: 2.5, mandatoryFields: true, hydrotestPlan: 'HEP-RIV-007', _version: current._version });
   assert.equal(saved.status, 200);
   const data = await (await request('/api/bootstrap')).json() as Bootstrap;
   const reopened = data.rows.sites.find(row => row.id === site.id)!;

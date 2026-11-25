@@ -59,24 +59,27 @@ test('hydrotestState: a Hydrotest release of the isometric still counts, and unr
 
 // ----- the progress driver ------------------------------------------------------------------------------------
 
-const SITE = row('site', { weightShop: 38, weightField: 54, weightSite: 8, shopWelds: 40, shopNdt: 15, shopMaterialPipe: 25, shopSupports: 10, shopAppendages: 10, fieldMaterialPipe: 20, fieldWelds: 35, fieldNdt: 15, fieldSupports: 10, fieldAppendages: 10, fieldPunch: 10, siteHydrotest: 40, sitePaintTracing: 60, ndtMeasurement: 'Inch-weighted' });
-const input = (data: Partial<IsoStatusInput> = {}): IsoStatusInput => ({ site: SITE, welds: [], weldTypes: [], diameters: [], results: [], releases: [], punch: [], iso: iso({ paintState: 'Done', tracingState: 'Done', insulationState: 'Done' }), ...data });
-const driver = (progress: ReturnType<typeof isoProgress>) => progress.phases[2].drivers.find(item => item.key === 'hydrotest')!;
+const input = (data: Partial<IsoStatusInput> = {}): IsoStatusInput => ({ site: null, welds: [], weldTypes: [], diameters: [], results: [], releases: [], punch: [], iso: iso({ paintState: 'Done', tracingState: 'Done', insulationState: 'Done' }), ...data });
+/** The Field activity "Pressure tests" (the former Site hydrotest driver) and, without flanges, Reinstatement that follows it. */
+const field = (progress: ReturnType<typeof isoProgress>, key = 'pressureTests') => progress.phases.find(phase => phase.key === 'field')!.activities.find(item => item.key === key)!;
 
-test('the hydrotest driver follows hydrotestState: passed request completes it, N/A drops it out and the finish driver carries the phase', () => {
+test('the Pressure tests activity follows hydrotestState: a passed request completes it, N/A leaves it out of the Field phase', () => {
   const completed = isoProgress(input({ testSystems: [SYSTEM], hydrotestRequests: [PASSED] }));
-  assert.equal(driver(completed).inScope, true); assert.equal(driver(completed).progress, 1); assert.equal(completed.phases[2].percent, 100);
+  assert.equal(field(completed).inScope, true); assert.equal(field(completed).progress, 100); assert.equal(field(completed).contribution, 15);
+  assert.equal(field(completed, 'reinstatement').progress, 100, 'no flanges: Reinstatement follows Pressure tests');
+  // Field without welds: Pressure tests 15 + Reinstatement 5 of the measurable 15 + 5 + Final documentation 10.
+  assert.equal(completed.phases[1].percent, 66.7);
   const open = isoProgress(input({ testSystems: [SYSTEM], hydrotestRequests: [row('r', { testSystemId: 'ts', result: '' })] }));
-  assert.equal(driver(open).progress, 0); assert.equal(open.phases[2].percent, 60, 'finish 60 of 100 weight, hydrotest 0 of 40');
+  assert.equal(field(open).progress, 0); assert.equal(open.phases[1].percent, 0);
   const na = isoProgress(input({ testSystems: [row('ts', { accepted: TS_NOT_APPLICABLE })], hydrotestRequests: [PASSED] }));
-  assert.equal(driver(na).inScope, false); assert.equal(na.phases[2].percent, 100, 'renormalised on the finish driver');
+  assert.equal(field(na).inScope, false); assert.equal(field(na, 'reinstatement').inScope, false);
 });
 
-test('the driver behaves as before for callers that pass only releases', () => {
-  assert.equal(driver(isoProgress(input({ releases: [row('r1', { isoId: 'iso', type: 'Hydrotest' })] }))).progress, 1);
-  assert.equal(driver(isoProgress(input({ releases: [] }))).progress, 0);
-  assert.equal(driver(isoProgress(input({ releases: null }))).inScope, false);
-  assert.equal(driver(isoProgress(input({ iso: iso({ testSystemId: '' }) }))).inScope, false);
+test('Pressure tests behave as the hydrotest driver did for callers that pass only releases', () => {
+  assert.equal(field(isoProgress(input({ releases: [row('r1', { isoId: 'iso', type: 'Hydrotest' })] }))).progress, 100);
+  assert.equal(field(isoProgress(input({ releases: [] }))).progress, 0);
+  assert.equal(field(isoProgress(input({ releases: null }))).inScope, false);
+  assert.equal(field(isoProgress(input({ iso: iso({ testSystemId: '' }) }))).inScope, false);
 });
 
 // ----- records and actions on the store -----------------------------------------------------------------------
@@ -397,9 +400,9 @@ test('the welding demo profile does not deliver the hydrotest records or actions
   assert.equal((await f.request('/api/actions/hydrotest-result', 'POST', {})).status, 404);
 });
 
-test('the Shop Welds driver counts a weld as welded with a welder and the weld date (client, 17.11.2026)', () => {
+test('the Shop Welding activity counts a weld as welded with a welder and the weld date (client, 17.11.2026)', () => {
   const types = [row('ws', { location: 'Shop' })], diameters = [row('d2', { sizeinch: 2 })];
   const weld = (id: string, data: Record<string, unknown>) => row(id, { isoId: 'iso', typeId: 'ws', diameterId: 'd2', lengthMode: 'Diameter', ...data });
-  const welds = (progress: ReturnType<typeof isoProgress>) => progress.phases[0].drivers.find(item => item.key === 'welds')!.progress;
-  assert.equal(welds(isoProgress(input({ weldTypes: types, diameters, welds: [weld('a', { welder1Id: 'w', date: '2026-11-01' }), weld('b', { welder1Id: 'w', date: '' })] }))), 0.5, 'the weld without a date is not welded yet');
+  const welds = (progress: ReturnType<typeof isoProgress>) => progress.phases[0].activities.find(item => item.key === 'welding')!.progress;
+  assert.equal(welds(isoProgress(input({ weldTypes: types, diameters, welds: [weld('a', { welder1Id: 'w', date: '2026-11-01' }), weld('b', { welder1Id: 'w', date: '' })] }))), 50, 'the weld without a date is not welded yet');
 });

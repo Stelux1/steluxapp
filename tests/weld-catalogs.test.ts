@@ -16,7 +16,6 @@ import { PILOT_MAP } from '../shared/pilots.ts';
 import { ATTACHMENT_POSITIONS, CATALOG_SITES, enablementKey, CATALOG_WORDING, DEFECT_CODE_NORMS, DEFECT_GROUPS, DELETE_WORDING_RESOURCES, EDIT_FIELD_OVERRIDES, FORM_ENABLEMENT, HOSTED_TITLES, NEW_RECORDS_OFF, OPTIONS_WORDING, SITE_ENABLED_RESOURCES, WELD_CATALOG_COLUMNS, WELD_CATALOG_RESOURCES, catalogFormLabels, editFields, enabledOnSite, enabledOptions, isLockedRecord, missingRequired, orderedAttachmentNames, pageSizes, pilotResource, qaEngineerCompany, rowDeleteLabel, deleteWording, selectableDefectCodes } from '../shared/weld-catalogs.ts';
 import { STANDARD_DEFECT_CODES, isStandardDefectCode, standardDefectCodeId } from '../shared/defect-codes.ts';
 import { upgradeWeldCatalogs } from '../server/catalog-upgrade.ts';
-import { PROGRESS_DEFAULTS, PROGRESS_PHASES, progressSumsOk } from '../shared/site-settings.ts';
 import { dedicatedEditor } from '../client/dialogs.tsx';
 import { copyTargets } from '../client/wps.tsx';
 import type { Bootstrap, Row } from '../shared/types.ts';
@@ -802,12 +801,3 @@ test('the Copy WPS dialogs list every project site in creation order with the cu
   assert.deepEqual(copyTargets(same, 'site-2').sites.map(site => site.id), ['site-1', 'site-2', 'site-10']);
 });
 
-test('the Site activities sum is green when the Site phase is 0; Shop, Field and the phase total only at exactly 100', () => {
-  const site = (extra: Record<string, unknown>) => ({ ...PROGRESS_DEFAULTS, ...extra });
-  assert.equal(progressSumsOk(site({})).activities.site, true, 'Site phase 0 and Site activities 0');
-  assert.equal(progressSumsOk(site({ [PROGRESS_PHASES[0].field]: 40, [PROGRESS_PHASES[1].field]: 40, [PROGRESS_PHASES[2].field]: 20 })).activities.site, false, 'Site phase 20 and Site activities 0');
-  const siteFields = PROGRESS_PHASES[2].activities.map(activity => activity.field);
-  const filled = site({ [PROGRESS_PHASES[0].field]: 40, [PROGRESS_PHASES[1].field]: 40, [PROGRESS_PHASES[2].field]: 20, [siteFields[0]]: 60, [siteFields[1]]: 40 });
-  assert.equal(progressSumsOk(filled).activities.site, true, 'Site activities 60 + 40');
-  assert.deepEqual([progressSumsOk(site({})).activities.shop, progressSumsOk(site({})).activities.field, progressSumsOk(site({})).phases], [false, false, true], 'Shop and Field activities need 100 whatever the phase; the phases total 50 + 50 + 0');
-});

@@ -54,7 +54,7 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
   // computed here only where this pilot reads welds; elsewhere each group shows its count. Other profiles: computed here.
   const summary = isoSummaries?.[iso.id], weldItems = canRecord('welds');
   const status = useMemo(() => {
-    const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, testSystems: rows.test_systems ?? null, hydrotestRequests: rows.hydrotest_requests ?? null, spools: rows.spools ?? null, hydrotestResults: rows.hydrotest_results ?? null, budgets };
+    const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, testSystems: rows.test_systems ?? null, hydrotestRequests: rows.hydrotest_requests ?? null, spools: rows.spools ?? null, hydrotestResults: rows.hydrotest_results ?? null, flanges: rows.flanges ?? null, budgets };
     const local = !summary || weldItems ? isoBlockers(input) : null;
     if (!summary) return { blockers: local!, quality: isoQuality(input), progress: isoProgress(input) };
     // A group lists its items only when the local calculation agrees with the server's count; otherwise its count line.
@@ -120,7 +120,7 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     <Card title="Status" className="iso-status-card">
       <div className="iso-total" role="group" aria-label="Isometric progress">
         <strong>{status.progress.total === null ? '—' : percentText(status.progress.total)}</strong>
-        <span>{status.progress.configured ? 'of the isometric' : 'weights not configured'}</span>
+        <span>of the isometric</span>
       </div>
       <Progress value={status.progress.total ?? 0}/>
       <dl className="iso-facts">
@@ -234,17 +234,17 @@ function ProgressCard({ iso, progress, budgets, editable }: { iso: Row; progress
     finally { setBusy(false); }
   }
 
-  const phases = progress.phases;
+  // Shop and Field carry their percentages; the finish states (paint, tracing, insulation) are no progress driver but stay editable here.
+  const phases: { key: string; label: string; percent: number | null }[] = [...progress.phases, { key: 'finish', label: 'Paint / Tracing / Insulation', percent: null }];
   return <Card title="Progress" className="iso-progress-card">
-    {!progress.configured && <p className="iso-hint" role="status">Progress weights are not configured. Set them under Iso progress on the main project.</p>}
     <div className="iso-phase-list">{phases.map(phase => {
       const id = `iso-phase-${iso.id}-${phase.key}`, expanded = open === phase.key;
       const label = phase.key === 'shop' ? 'Shop prefab' : phase.label;
       return <div key={phase.key} className="iso-phase">
         <h3><button aria-expanded={expanded} aria-controls={id} onClick={() => setOpen(expanded ? '' : phase.key)}>
-          <span className="iso-phase-name" title={PROGRESS_CARD_TEXTS.phase[phase.key]}>{label}</span><span className="iso-phase-value" title={PROGRESS_CARD_TEXTS.percent}>{phase.percent === null ? '—' : percentText(phase.percent)}</span><ChevronDown size={16} className="iso-chevron" aria-hidden="true"/></button></h3>
+          <span className="iso-phase-name" title={phase.key === 'finish' ? PROGRESS_CARD_TEXTS.finish : PROGRESS_CARD_TEXTS.phase[phase.key as 'shop']}>{label}</span>{phase.percent !== null && <span className="iso-phase-value" title={PROGRESS_CARD_TEXTS.percent}>{percentText(phase.percent)}</span>}<ChevronDown size={16} className="iso-chevron" aria-hidden="true"/></button></h3>
         {expanded && <div id={id} className="iso-phase-body">
-          {phase.key === 'site' ? <div className="iso-finish">
+          {phase.key === 'finish' ? <div className="iso-finish">
             {ISO_FINISH_ITEMS.map(item => <fieldset key={item.field} disabled={!editable} title={PROGRESS_CARD_TEXTS.finish}><legend>{item.label}<small title={PROGRESS_CARD_TEXTS.specification}> · {finishSpecification(iso, item.field)}</small></legend>
               <div className="iso-segmented">{ISO_FINISH_STATES.map(state => <label key={state} className={draft[item.field] === state ? 'on' : ''}><input type="radio" name={`${id}-${item.field}`} value={state} checked={draft[item.field] === state} onChange={() => set(item.field, state)}/>{state}</label>)}</div>
               {fieldErrors[item.field] && <small className="field-error">{fieldErrors[item.field]}</small>}</fieldset>)}
@@ -266,6 +266,5 @@ function ProgressCard({ iso, progress, budgets, editable }: { iso: Row; progress
       <button className="btn small" disabled={busy} onClick={setAll}>Set all to 100%</button>
       {changed.length > 0 && <span className="iso-unsaved" role="status">Unsaved changes</span>}
     </div>}
-    {!progress.configured && <Link className="text-link iso-weights-link" to="/workspace/main-projects">Open main projects</Link>}
   </Card>;
 }

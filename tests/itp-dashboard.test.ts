@@ -121,11 +121,12 @@ test('View: Welds length sums the weld length in mm; Repair rate becomes repaire
   assert.deepEqual([viewLabel('welds'), viewLabel('length')], ['View: Number of welds', 'View: Welds length']);
 });
 
-test('repair performance uses the main project limit, 5 % when it is empty, and the badge only fires above the limit', () => {
-  assert.equal(dash({}, row('s', { repairLimit: 8 })).kpis.repairPerformance.aboveLimit, false);
-  assert.equal(dash({}, row('s', { repairLimit: 6.7 })).kpis.repairPerformance.aboveLimit, false);   // equal is not above
-  assert.deepEqual([dash({}, row('s', { repairLimit: null })).kpis.repairPerformance.limit, dash({}, null).kpis.repairPerformance.limit], [5, 5]);
-  assert.equal(dash({}, row('s', { repairLimit: 0 })).kpis.repairPerformance.limit, 0);
+test('repair performance uses the fixed limit of 5 % (the site setting was removed, client change list 22.11.2026) and the badge only fires above it', () => {
+  // 6.7 % repaired in the fixture: above 5 % whatever limit a site still stores.
+  for (const site of [row('s', { repairLimit: 8 }), row('s', { repairLimit: null }), row('s', { repairLimit: 0 }), null]) {
+    const performance = dash({}, site).kpis.repairPerformance;
+    assert.deepEqual([performance.limit, performance.aboveLimit], [5, true]);
+  }
 });
 
 test('an empty selection shows zeros, never NaN', () => {
@@ -554,8 +555,8 @@ test('the sample data gives the dashboard figures, weld type abbreviations and t
   const list = (key: string) => store.list(key);
   const data: DashboardRows = { welds: list('welds'), isometrics: list('isometrics'), projects: list('projects'), weldTypes: list('weld_types'), welders: list('welders'), wps: list('wps'), itps: list('itps'), ndtProcesses: list('ndt_processes'), requests: list('inspection_requests'), results: list('inspection_results') };
   const result = weldDashboard(data, NO_DASHBOARD_FILTERS, list('sites').find(site => site.id === 'site-north'));
-  // 31 welds in the sample, one without a welder (W031); the main project's limit is 4 %; W005 was repaired.
-  assert.deepEqual([result.kpis.totalWelds, result.kpis.welded, result.kpis.repaired, result.kpis.repairPerformance.limit], [31, 30, 1, 4]);
+  // 31 welds in the sample, one without a welder (W031); the limit is the fixed 5 % (the stored 4 % is ignored); W005 was repaired.
+  assert.deepEqual([result.kpis.totalWelds, result.kpis.welded, result.kpis.repaired, result.kpis.repairPerformance.limit], [31, 30, 1, 5]);
   assert.equal(result.kpis.repairRate, 3.3);                                          // 1 / 30
   assert.equal(result.kpis.repairPerformance.scopePercent, 3.2);                      // 1 / 31
   // Abbreviations come from the weld catalog owner (server/weld-catalogs-seed.ts): the Shop / Field code of the reference (WS / FW).

@@ -8,7 +8,6 @@ import { RELATIONS, relationMatches } from '../shared/welding.ts';
 import { SITE_REFUSED } from '../shared/site-scope.ts';
 import { SITE_OWNED, SITE_UNIQUE, inOwnerSite, ownerRows, siteUniqueClash } from '../shared/welder-data.ts';
 import { parsePermissionRules } from '../shared/permissions.ts';
-import { validateProgressWeights } from '../shared/site-settings.ts';
 import { isoBudgets, isoInputErrors } from '../shared/iso-status.ts';
 import { APPROVAL_NEEDS_DOCUMENT, TS_APPROVED, hasSignedDocument, hydrotestErrors, spoolsOfSystem } from '../shared/hydrotest.ts';
 import { flangeInputErrors, flangeStoredValue } from '../shared/flanges.ts';
@@ -283,7 +282,7 @@ export class Store {
     // The ID of an operation phase is given on create, one above every ID so far (deleted phases included); it never changes.
     if (key === 'operation_phases') data.number = existing ? existing.number ?? null : Object.keys(errors).length ? null : this.phaseNumber();
     if (Object.keys(errors).length) throw new AppError(422, 'Please check the highlighted fields.', errors);
-    if(key==='sites'){const progress=validateProgressWeights(data);if(!progress.valid)throw new AppError(422,progress.message,progress.fields);}
+    // Sites: the old Iso progress weights are still accepted in a save and stored, but never checked: progress uses the fixed weights of shared/progress-model.ts.
     if(key==='iso_materials')data.quantity=qty(data.quantity);
     if(key==='profiles'&&data.permissionMode==='Detailed permissions'){try{data.permissionRules=JSON.stringify(parsePermissionRules(data.permissionRules));}catch(e){throw new AppError(422,(e as Error).message,{permissionRules:(e as Error).message});}}
     if(key==='pqr'&&!data.name)data.name=this.next('PQR');

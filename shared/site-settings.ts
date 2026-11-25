@@ -3,6 +3,8 @@
  * them; the rules they drive (mandatory weld fields, WPS validation, certificate scoping, defect codes,
  * progress calculation) are enforced by later tasks through the accessors below.
  */
+import { PROGRESS_MODEL, PROGRESS_MODEL_HELP } from './progress-model.ts';
+
 type SiteLike = Record<string, unknown> | undefined | null;
 
 export const FLANGE_STANDARDS = ['No catalog (free entry)', 'ASME B16.5 torque table (2012)', 'Gasunie CSW-43 table B'];
@@ -19,11 +21,17 @@ export const LISL_VT_SOURCE_LABEL = 'LISL ISS — VT source';
 /** Used by the weld dashboard KPI when a site leaves the repair performance limit empty. */
 export const DEFAULT_REPAIR_PERFORMANCE_LIMIT = 5;
 
+/**
+ * The progress model (phases, activities, fixed weights) lives in shared/progress-model.ts, the one place to change it.
+ * What follows are the LEGACY weight fields a site still stores (`weightShop`, `shopWelds`, `fieldPunch`, …): they stay
+ * defined so older saves and stored values are accepted, but nothing reads them any more.
+ */
+export { PROGRESS_MODEL } from './progress-model.ts';
 export type PhaseKey = 'shop' | 'field' | 'site';
 export interface ProgressActivity { key: string; field: string; label: string; }
 export interface ProgressPhase { key: PhaseKey; field: string; label: string; activities: ProgressActivity[]; }
 const activity = (phase: PhaseKey, key: string, label: string): ProgressActivity => ({ key, label, field: `${phase}${key[0].toUpperCase()}${key.slice(1)}` });
-/** Phases and activities in the order of the reference. Field names are `weightShop`, `shopWelds`, `fieldPunch`, … */
+/** Legacy stored weight fields, in the order of the reference. Field names are `weightShop`, `shopWelds`, `fieldPunch`, … (ignored by the progress). */
 export const PROGRESS_PHASES: ProgressPhase[] = [
   { key: 'shop', field: 'weightShop', label: 'Shop', activities: [activity('shop', 'welds', 'Welds'), activity('shop', 'ndt', 'NDT'), activity('shop', 'materialPipe', 'Material pipe'), activity('shop', 'supports', 'Supports'), activity('shop', 'appendages', 'Appendages')] },
   { key: 'field', field: 'weightField', label: 'Field', activities: [activity('field', 'materialPipe', 'Material pipe'), activity('field', 'welds', 'Welds'), activity('field', 'ndt', 'NDT'), activity('field', 'supports', 'Supports'), activity('field', 'appendages', 'Appendages'), activity('field', 'punch', 'Punch')] },
@@ -33,13 +41,6 @@ export const PROGRESS_FIELDS = PROGRESS_PHASES.flatMap(phase => [phase.field, ..
 
 const flag = (site: SiteLike, name: string) => site?.[name] === true;
 const text = (site: SiteLike, name: string) => typeof site?.[name] === 'string' ? String(site[name]).trim() : '';
-/** A stored weight: null when the field is empty or not a number. */
-const weight = (site: SiteLike, name: string): number | null => {
-  const value = site?.[name];
-  if (value === null || value === undefined || value === '') return null;
-  const number = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(number) ? number : null;
-};
 
 /** Project settings: "Mandatory fields". Weld and certificate forms require their reference fields when true. */
 export const mandatoryFields = (site: SiteLike) => flag(site, 'mandatoryFields');
@@ -54,75 +55,14 @@ export const flangeStandard = (site: SiteLike) => FLANGE_STANDARDS.find(option =
  * check box `materialManagementDisplay` is read: a value of the earlier select (`materialDisplay`) reads as unticked.
  */
 export const materialManagementDisplay = (site: SiteLike) => flag(site, 'materialManagementDisplay');
-/** The chosen defect norm, or null when none is selected. */
-export const defectNorm = (site: SiteLike): string | null => { const value = text(site, 'defectNorm'); return DEFECT_NORMS.slice(1).includes(value) ? value : null; };
-/** Repair performance limit in percent; an empty value means 5. */
-export const repairPerformanceLimit = (site: SiteLike) => weight(site, 'repairLimit') ?? DEFAULT_REPAIR_PERFORMANCE_LIMIT;
-export const ndtMeasurement = (site: SiteLike): 'inch-weighted' | 'per-weld' => text(site, 'ndtMeasurement') === NDT_MEASUREMENTS[1] ? 'per-weld' : 'inch-weighted';
-
-export interface ProgressWeights {
-  /** False while no weight has been entered; progress is then not weighted yet. */
-  configured: boolean;
-  phases: Record<PhaseKey, number>;
-  /** Activity weights inside each phase, in percent of that phase. */
-  activities: Record<PhaseKey, Record<string, number>>;
-}
-export function progressWeights(site: SiteLike): ProgressWeights {
-  const phases = {} as Record<PhaseKey, number>, activities = {} as Record<PhaseKey, Record<string, number>>;
-  for (const phase of PROGRESS_PHASES) {
-    phases[phase.key] = weight(site, phase.field) ?? 0;
-    activities[phase.key] = Object.fromEntries(phase.activities.map(a => [a.key, weight(site, a.field) ?? 0]));
-  }
-  return { configured: PROGRESS_FIELDS.some(name => weight(site, name) !== null), phases, activities };
-}
-
-/** Running totals shown in the form and used by the validation. */
-export function progressTotals(site: SiteLike) {
-  const sum = (names: string[]) => names.reduce((total, name) => total + (weight(site, name) ?? 0), 0);
-  return {
-    phases: sum(PROGRESS_PHASES.map(phase => phase.field)),
-    activities: Object.fromEntries(PROGRESS_PHASES.map(phase => [phase.key, sum(phase.activities.map(a => a.field))])) as Record<PhaseKey, number>,
-  };
-}
-
-/**
- * Which running sums of the hosted form count as OK (green): the phases and the Shop and Field activities at exactly 100;
- * the Site activities also while the Site phase is 0 (reference paint(): a Site phase of 0 excuses them, as in the validation below).
- */
-export function progressSumsOk(site: SiteLike) {
-  const totals = progressTotals(site), weights = progressWeights(site);
-  return { phases: totals.phases === 100, activities: Object.fromEntries(PROGRESS_PHASES.map(phase => [phase.key, totals.activities[phase.key] === 100 || (phase.key === 'site' && weights.phases.site <= 0)])) as Record<PhaseKey, boolean> };
-}
-
-export interface ProgressValidation { valid: boolean; message: string; fields: Record<string, string>; }
-/**
- * All-empty is valid (weights never entered: records written before the weights existed, or without them). Once any
- * weight is entered the three phases must total 100, and the Shop and Field activities each total 100 whatever the
- * phase weight is. Only Site is excused: its activities count when the Site phase is above 0 (reference: "Site
- * activities are required only when the Site phase is greater than 0"). Weights are whole percentages from 0 to 100.
- */
-export function validateProgressWeights(site: SiteLike): ProgressValidation {
-  const fields: Record<string, string> = {}, issues: string[] = [];
-  for (const phase of PROGRESS_PHASES) for (const [name, label] of [[phase.field, `${phase.label} phase`], ...phase.activities.map(a => [a.field, `${phase.label} · ${a.label}`])]) {
-    const value = weight(site, name);
-    if (value !== null && (!Number.isInteger(value) || value < 0 || value > 100)) fields[name] = `${label} must be a whole number from 0 to 100.`;
-  }
-  if (Object.keys(fields).length) return { valid: false, message: 'Progress weights must be whole numbers from 0 to 100.', fields };
-  const weights = progressWeights(site);
-  if (!weights.configured) return { valid: true, message: '', fields };
-  const totals = progressTotals(site);
-  if (totals.phases !== 100) {
-    const message = `Shop, Field and Site must total 100% (now ${totals.phases}%).`;
-    issues.push(message); for (const phase of PROGRESS_PHASES) fields[phase.field] = message;
-  }
-  for (const phase of PROGRESS_PHASES) {
-    if (phase.key === 'site' && weights.phases.site <= 0) continue;
-    if (totals.activities[phase.key] === 100) continue;
-    const message = `${phase.label} activities must total 100% (now ${totals.activities[phase.key]}%).`;
-    issues.push(message); for (const a of phase.activities) fields[a.field] = message;
-  }
-  return { valid: issues.length === 0, message: issues.join(' '), fields };
-}
+// Settings removed from the main project form (client change list 22.11.2026, F6): the stored value stays in the
+// database, but every rule reads the default. The parameter is kept so callers need not change.
+/** Defect norm: none (the setting was removed; a stored norm is ignored). */
+export const defectNorm = (_site: SiteLike): string | null => null;
+/** Repair performance limit in percent: always 5 (the setting was removed; a stored value is ignored). */
+export const repairPerformanceLimit = (_site: SiteLike) => DEFAULT_REPAIR_PERFORMANCE_LIMIT;
+/** NDT measurement: always inch-weighted (the setting was removed; a stored 'Per weld' is ignored). */
+export const ndtMeasurement = (_site: SiteLike): 'inch-weighted' | 'per-weld' => 'inch-weighted';
 
 // ----- the main project form of the hosted profile (reference "Add project site") -------------------------------------
 /** Label of a weight field in the reference: "Distribution - Shop", "Welds - Shop", … and, for the Site phase, "Hydrotest" / "Paint/Tracing". */
@@ -132,24 +72,15 @@ export const progressLabel = (phase: ProgressPhase, activityKey?: string) => {
   return phase.key === 'site' ? found.label : `${found.label} - ${phase.label}`;
 };
 /**
- * The explanation the main project form shows above the Iso progress weights (client, 20.11.2026: "ne razumem detalje
- * za Iso Progress"). Each line names one input and what it measures on an isometric (shared/iso-status.ts isoProgress).
+ * The explanation of Iso progress for the main project form: the fixed model of shared/progress-model.ts, one line per
+ * activity ([term, text]), built from PROGRESS_MODEL so it never disagrees with the calculation.
  */
 export const PROGRESS_HELP = {
-  intro: 'The progress of an isometric is built from three phases, and each phase from its activities. You give each part a weight in percent.',
-  lines: [
-    ['Distribution - Shop / Field / Site', 'The share of each phase in the isometric total. The three must add up to 100% (for example Shop 50, Field 50, Site 0).'],
-    ['Welds', 'Weld inches of the phase welds that are welded (a welder and the weld date filled in), against all weld inches of the phase.'],
-    ['NDT', 'Welds of the phase that need NDT and whose latest NDT result (after any repair) is Accepted.'],
-    ['Material pipe', 'Metres of pipe entered on the isometric Progress card, against the pipe of the MTO.'],
-    ['Supports / Appendages', 'Pieces entered on the isometric Progress card, against the supports or appendages of the MTO.'],
-    ['Punch (Field)', 'The punch progress entered on the isometric.'],
-    ['Hydrotest / Paint/Tracing (Site)', 'Hydrotest counts when its test system is Approved; Paint/Tracing when the finish items of the isometric are Done.'],
-  ] as [string, string][],
-  rule: 'Inside each phase the activities must add up to 100%. An activity with weight 0, or one that does not apply to an isometric, is left out and the others share its weight.',
-  example: 'Example: Shop 50, Field 50; Shop activities Welds 25, NDT 25, Material pipe 25, Supports 25. When every shop weld is welded and nothing else is done, Shop is 25% and the isometric 12.5%.',
+  intro: PROGRESS_MODEL_HELP.intro,
+  lines: PROGRESS_MODEL.phases.flatMap(phase => phase.activities.map(activity => [`${activity.label} (${phase.label}, ${activity.weight}%)`, (PROGRESS_MODEL_HELP.lines[phase.key] as Record<string, string>)[activity.key]] as [string, string])),
+  rule: PROGRESS_MODEL_HELP.rule,
 };
-/** What a new main project starts with: Shop 50, Field 50, Site 0 and every activity 0. */
+/** Defaults of the legacy weight fields on a new main project (Shop 50, Field 50, Site 0, activities 0); stored and ignored. */
 export const PROGRESS_DEFAULTS: Record<string, number> = Object.fromEntries(PROGRESS_PHASES.flatMap(phase => [[phase.field, phase.key === 'site' ? 0 : 50], ...phase.activities.map(a => [a.field, 0])]));
 const SITE_FORM_SECTION = 'Project settings';
 const SITE_CONTACT_LABELS: Record<string, string> = { name: 'Name', address: 'Address', zip: 'Zip code', residence: 'Residence', phone: 'Phone', email: 'Email address' };

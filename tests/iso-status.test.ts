@@ -4,7 +4,7 @@ import { Store, AppError } from '../server/store.ts';
 import { seed } from '../server/seed.ts';
 import { RESOURCES, RESOURCE_MAP } from '../shared/resources.ts';
 import { availabilityFor, HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
-import { isoBlockers, isoInputErrors, isoProgress, isoQuality, isoBudgets, noBudgetText, type IsoStatusInput } from '../shared/iso-status.ts';
+import { isoBlockers, isoInputErrors, isoProgress, isoQuality, isoBudgets, noBudgetText, quantityProgress, type IsoStatusInput } from '../shared/iso-status.ts';
 import { isoBudgets as mtoBudgets } from '../shared/mto-materials.ts';
 import { PROGRESS_CARD_TEXTS, finishSpecification, percentText, quantityBarText } from '../shared/iso-summary.ts';
 import { LEGACY_PRIORITY, PRIORITY_OPTIONS, priorityLabel, priorityStored } from '../shared/priority.ts';
@@ -31,78 +31,89 @@ const worked = (extra: Setup = {}) => base({
   ...extra,
 });
 
-test('progress follows the driver model: Shop 66.7 / Field 40 / Site 70 gives 52.5 and hydrotest is worth 3.2 points', () => {
+/** One activity of a phase ('shop' = phases[0], 'field' = phases[1]). */
+const activity = (progress: ReturnType<typeof isoProgress>, phase: 'shop' | 'field', key: string) => progress.phases.find(item => item.key === phase)!.activities.find(item => item.key === key)!;
+
+test('progress uses the fixed model: Shop 60 / Field 54 gives 57, with weights, progress and contribution per activity', () => {
   const progress = isoProgress(worked());
   assert.equal(progress.configured, true);
-  const [shop, field, site] = progress.phases;
-  // Shop: welds 4 of 6 inch, NDT 4 of 6 inch, pipe / supports / appendages without a budget are out of scope.
-  assert.deepEqual(shop.drivers.filter(driver => driver.inScope).map(driver => driver.key), ['welds', 'ndt']);
-  assert.equal(shop.percent, 66.7);
-  // Field: welds 8 of 14 inch (weight 35 -> 20 points of 50), NDT: the only accepted-free weld set is rejected / open -> 0 of 12 inch.
-  assert.deepEqual(field.drivers.filter(driver => driver.inScope).map(driver => driver.key), ['welds', 'ndt']);
-  assert.equal(field.percent, 40);
-  // Site: hydrotest released (40) + finish 1 of 2 (paint done, tracing open, insulation N/A drops out) -> (40 + 30) / 100.
-  assert.equal(site.percent, 70);
-  // 38 x 66.667 / 100 + 54 x 40 / 100 + 8 x 70 / 100 = 25.333 + 21.6 + 5.6 = 52.533
-  assert.equal(progress.total, 52.5);
-  close(site.drivers.find(driver => driver.key === 'hydrotest')!.earned, 3.2);
-  close(site.drivers.find(driver => driver.key === 'paintTracing')!.earned, 2.4);
+  assert.deepEqual(progress.phases.map(phase => [phase.key, phase.weight]), [['shop', 50], ['field', 50]], 'no Site phase any more');
+  const [shop, field] = progress.phases;
+  // Shop: fit-up 4 of 6 inch (welded counts as fitted), welding 4 of 6, NDT 4 of 6, Fabrication Book 0 (Prefab not completed).
+  assert.deepEqual(shop.activities.map(item => [item.key, item.label, item.weight, item.progress, item.contribution]), [['fitUp', 'MTO / Cut-Bev / Fit-up', 40, 66.7, 26.7], ['welding', 'Welding', 40, 66.7, 26.7], ['ndt', 'NDT', 10, 66.7, 6.7], ['fabricationBook', 'Fabrication Book', 10, 0, 0]]);
+  assert.equal(shop.percent, 60); assert.equal(shop.contribution, 30);
+  // Field: erection and welding 8 of 14 inch, supports without a budget not measurable, NDT 0 of 12 inch, hydrotest released,
+  // no flanges so Reinstatement follows Pressure tests, Final documentation 0. (30 + 20) x 8/14 + 15 + 5 = 48.57 of the 90 measurable.
+  assert.deepEqual(field.activities.map(item => [item.key, item.progress]), [['erection', 57.1], ['supports', null], ['welding', 57.1], ['ndt', 0], ['pressureTests', 100], ['reinstatement', 100], ['finalDocumentation', 0]]);
+  assert.equal(activity(progress, 'field', 'supports').inScope, false); assert.equal(activity(progress, 'field', 'supports').contribution, 0);
+  assert.equal(field.percent, 54); assert.equal(progress.total, 57);
+  assert.deepEqual(progress.units.shop.fitUp, { done: 4, total: 6 });
 });
 
-test('NDT driver counts accepted results only, per weld or inch-weighted, and a later accepted result replaces a rejection', () => {
-  const rejectedFirst = worked({ results: [result('s1', 'Rejected', '2026-10-06'), result('f1', 'Rejected', '2026-10-07')] });
-  assert.equal(isoProgress(rejectedFirst).phases[0].drivers.find(driver => driver.key === 'ndt')!.progress, 0, 'a rejected result is not done');
-  const repaired = worked({ results: [result('s1', 'Rejected', '2026-10-06'), result('s1', 'Accepted', '2026-10-09'), result('f1', 'Rejected', '2026-10-07')] });
-  close(isoProgress(repaired).phases[0].drivers.find(driver => driver.key === 'ndt')!.progress, 4 / 6);
-  // Per weld: s1 accepted of two welds requiring NDT = 50 %, so Shop = (40 x 2/3 + 15 x 1/2) / 55.
-  const perWeld = isoProgress(worked({ site: row('site-pw', { ...SITE, ndtMeasurement: 'Per weld' }) }));
-  close(perWeld.phases[0].drivers.find(driver => driver.key === 'ndt')!.progress, 0.5);
-  assert.equal(perWeld.phases[0].percent, 62.1);
+test('stored weights and the removed NDT measurement are ignored: every site gives the same progress', () => {
+  const reference = isoProgress(worked({ site: null }));
+  for (const site of [undefined, row('empty'), row('zero', Object.fromEntries(['weightShop', 'weightField', 'weightSite', 'shopWelds', 'shopNdt', 'fieldWelds', 'siteHydrotest'].map(name => [name, 0]))), row('per-weld', { ...SITE, ndtMeasurement: 'Per weld' })]) {
+    assert.deepEqual(isoProgress(worked({ site })), reference);
+  }
+  // NDT is inch-weighted whatever the site says: s1 4" accepted of 4" + 2".
+  close(activity(isoProgress(worked({ site: row('site-pw', { ...SITE, ndtMeasurement: 'Per weld' }) })), 'shop', 'ndt').progress, 66.7);
 });
 
-test('a driver without scope drops out and the rest renormalise; quantity drivers need a budget', () => {
-  // No NDT required in Shop: its NDT driver leaves, welds alone carry the phase.
+test('fit-up counts welds with a fit-up date or welded; welding needs a welder and the weld date', () => {
+  const fitted = base({ welds: [weld('a', { welder1Id: '', date: '', datefit: '2026-10-01' }), weld('b', { welder1Id: '', date: '' }), weld('c', { diameterId: 'd2' })] });
+  const progress = isoProgress(fitted);
+  assert.deepEqual(progress.units.shop.fitUp, { done: 6, total: 10 }, 'a (fit-up date) and c (welded) of a, b and c');
+  assert.deepEqual(progress.units.shop.welding, { done: 2, total: 10 });
+  // A weld without weld type counts in neither phase; field welds do not count in Shop.
+  const field = isoProgress(base({ welds: [weld('f', { typeId: 'wt-field', datefit: '2026-10-01', welder1Id: '' }), weld('x', { typeId: '' })] }));
+  assert.deepEqual([field.units.shop.fitUp.total, field.units.field.erection.done, field.units.field.erection.total], [0, 4, 4]);
+});
+
+test('an activity with nothing to measure drops out and the others of its phase share its weight', () => {
+  // No NDT required in Shop: NDT leaves, Shop = (40 x 2/3 + 40 x 2/3 + 10 x 0) / 90.
   const noNdt = isoProgress(worked({ welds: worked().welds.map(item => item.id === 's1' || item.id === 's2' ? { ...item, ndoReq: false } : item) }));
-  assert.deepEqual(noNdt.phases[0].drivers.filter(driver => driver.inScope).map(driver => driver.key), ['welds']);
-  assert.equal(noNdt.phases[0].percent, 66.7);
-  // A pipe budget of 100 m with 50 m entered adds a driver at 50 %: (40 x 2/3 + 15 x 2/3 + 25 x 1/2) / 80 = 61.46 -> 61.5.
-  const withBudget = isoProgress(worked({ iso: { testSystemId: 'ts', shopPipeM: 50 }, budgets: { shop: { materialPipe: 100 } } }));
-  assert.equal(withBudget.phases[0].percent, 61.5);
-  // Entered quantity above the budget is capped at 100 %; a zero budget is no budget.
-  assert.equal(isoProgress(worked({ iso: { testSystemId: 'ts', shopPipeM: 500 }, budgets: { shop: { materialPipe: 100 } } })).phases[0].drivers.find(driver => driver.key === 'materialPipe')!.progress, 1);
-  assert.equal(isoProgress(worked({ budgets: { shop: { materialPipe: 0 } } })).phases[0].drivers.find(driver => driver.key === 'materialPipe')!.inScope, false);
-  // Punch is out of scope until punch data supplies it, then counts in Field: (35 x 8/14 + 15 x 0 + 10 x 1) / 60 = 50 %.
-  assert.equal(isoProgress(worked()).phases[1].drivers.find(driver => driver.key === 'punch')!.inScope, false);
-  assert.equal(isoProgress(worked({ punchProgress: 1 })).phases[1].percent, 50);
-  // A phase with nothing in scope drops out of the isometric total as well: no field welds, no hydrotest, finish open -> Shop and Site only.
-  const shopOnly = isoProgress(worked({ welds: worked().welds.filter(item => item.typeId === 'wt-shop') }));
-  assert.equal(shopOnly.phases[1].percent, 0, 'a phase with nothing in scope shows 0 %');
-  // Shop 66.67 % and Site 70 % share the total by their weights: (38 x 66.667 + 8 x 70) / 46 = 67.2.
-  assert.equal(shopOnly.total, 67.2);
+  assert.equal(activity(noNdt, 'shop', 'ndt').progress, null);
+  assert.equal(noNdt.phases[0].percent, 59.3);
+  // No welds at all: only the 0/1 activities remain (Fabrication Book; Final documentation and, with a test system, Pressure tests).
+  const empty = isoProgress(base({ iso: { prefabCompletedAt: '2026-10-10' } }));
+  assert.deepEqual(empty.phases.map(phase => phase.percent), [100, 0]);
+  assert.equal(empty.total, 50);
 });
 
-test('hydrotest needs a test system; finish items that are all N/A leave the finish driver; missing finish states count as open', () => {
-  const noSystem = isoProgress(worked({ iso: { paintState: 'Done', tracingState: 'Open', insulationState: 'N/A' } }));
-  assert.equal(noSystem.phases[2].drivers.find(driver => driver.key === 'hydrotest')!.inScope, false);
-  assert.equal(noSystem.phases[2].percent, 50, 'only the finish driver remains: paint done, tracing open');
-  const allNa = isoProgress(worked({ iso: { testSystemId: 'ts', paintState: 'N/A', tracingState: 'N/A', insulationState: 'N/A' } }));
-  assert.equal(allNa.phases[2].percent, 100, 'hydrotest alone carries the phase: released');
-  const noRelease = isoProgress(worked({ iso: { testSystemId: 'ts' }, releases: [] }));
-  assert.equal(noRelease.phases[2].percent, 0, 'states missing on old records read as Open');
-  // Unreadable releases: hydrotest cannot be judged, so it is out of scope instead of 0 %.
-  assert.equal(isoProgress(worked({ releases: null })).phases[2].drivers.find(driver => driver.key === 'hydrotest')!.inScope, false);
+test('Fabrication Book and Final documentation follow the completed Prefab / Field phases', () => {
+  const done = isoProgress(worked({ iso: { testSystemId: 'ts', prefabCompletedAt: '2026-10-10', fieldCompletedAt: '2026-10-20' } }));
+  assert.deepEqual([activity(done, 'shop', 'fabricationBook').progress, activity(done, 'field', 'finalDocumentation').progress], [100, 100]);
+  // Records from before the two steps: a live Prefab / Field release counts, a reopened one does not.
+  const released = isoProgress(worked({ releases: [row('r1', { isoId: 'iso', type: 'Hydrotest' }), row('r2', { isoId: 'iso', type: 'Prefab' }), row('r3', { isoId: 'iso', type: 'Field', status: 'Reopened' })] }));
+  assert.deepEqual([activity(released, 'shop', 'fabricationBook').progress, activity(released, 'field', 'finalDocumentation').progress], [100, 0]);
+});
+
+test('Pressure tests need a test system; Reinstatement counts Finished flanges and without flanges follows Pressure tests', () => {
+  const noSystem = isoProgress(worked({ iso: {} }));
+  assert.deepEqual([activity(noSystem, 'field', 'pressureTests').progress, activity(noSystem, 'field', 'reinstatement').progress], [null, null]);
+  const open = isoProgress(worked({ releases: [] }));
+  assert.deepEqual([activity(open, 'field', 'pressureTests').progress, activity(open, 'field', 'reinstatement').progress], [0, 0]);
+  // Unreadable releases: the hydrotest cannot be judged, so it is out of scope instead of 0 %.
+  assert.equal(activity(isoProgress(worked({ releases: null })), 'field', 'pressureTests').inScope, false);
+  const flanges = [row('fl1', { isoId: 'iso', finished: true }), row('fl2', { isoId: 'iso', insp_result: 'OK', commisioning_date: '2026-10-12' }), row('fl3', { isoId: 'iso', insp_result: 'OK' }), row('fl4', { isoId: 'iso', finished: true, _archived: true }), row('fl5', { isoId: 'other', finished: true })];
+  const withFlanges = isoProgress(worked({ releases: [], flanges }));
+  assert.deepEqual(withFlanges.units.field.reinstatement, { done: 2, total: 3 }, 'Finished of the live flanges of this isometric, whatever the hydrotest');
+});
+
+test('punch, paint / tracing, material pipe and appendages are no progress drivers any more; field supports are', () => {
+  const reference = isoProgress(worked());
+  assert.deepEqual(reference.phases.flatMap(phase => phase.activities.map(item => item.key)).filter(key => ['punch', 'paintTracing', 'materialPipe', 'appendages', 'hydrotest'].includes(key)), []);
+  assert.deepEqual(isoProgress(worked({ punchProgress: 1, iso: { testSystemId: 'ts', paintState: 'Done', tracingState: 'Done', insulationState: 'Done', shopPipeM: 50, fieldPipeM: 20 }, budgets: { shop: { materialPipe: 100 }, field: { materialPipe: 100 } } })).total, reference.total);
+  // Supports: 6 of 8 pieces installed, capped by the picked 5.
+  const supports = isoProgress(worked({ iso: { testSystemId: 'ts', fieldSupportsPcs: 6 }, budgets: { field: { supports: 8 } } }));
+  assert.equal(activity(supports, 'field', 'supports').progress, 75);
+  assert.deepEqual(isoProgress(worked({ iso: { testSystemId: 'ts', fieldSupportsPcs: 6 }, budgets: { field: { supports: 8 }, issued: { field: { supports: 5 } } } })).units.field.supports, { done: 5, total: 8 });
+  assert.equal(activity(isoProgress(worked({ iso: { testSystemId: 'ts', fieldSupportsPcs: 20 }, budgets: { field: { supports: 8 } } })), 'field', 'supports').progress, 100, 'capped at the budget');
 });
 
 test('welds without an inch diameter are left out of the inch-weighted drivers; archived welds never count', () => {
   const mixed = base({ welds: [weld('a', { diameterId: 'd4' }), weld('b', { lengthMode: 'Length in mm', diameterId: '', dialen: 150, welder1Id: '' }), weld('c', { welder1Id: '', _archived: true })] });
-  assert.equal(isoProgress(mixed).phases[0].drivers.find(driver => driver.key === 'welds')!.progress, 1);
-});
-
-test('without weights nothing is calculated and no default is invented', () => {
-  for (const site of [undefined, null, row('empty'), row('blank', { weightShop: '', shopWelds: null })]) {
-    const progress = isoProgress(worked({ site }));
-    assert.equal(progress.configured, false); assert.equal(progress.total, null); assert.ok(progress.phases.every(phase => phase.percent === null));
-  }
+  assert.equal(activity(isoProgress(mixed), 'shop', 'welding').progress, 100);
 });
 
 test('quantity budgets do not exist yet: isoBudgets returns none and entered quantities need a budget', () => {
@@ -301,7 +312,7 @@ test('the hosted profile delivers every isometric field and the records the head
   assert.ok(RESOURCES.find(resource => resource.key === 'isometrics')!.fields.some(field => field.name === 'shopPipeM'), 'the full profile carries the additional fields');
 });
 
-test('the sample data shows a meaningful picture: one isometric with every blocker group, one clean, weights missing on another site', () => {
+test('the sample data shows a meaningful picture: one isometric with every blocker group, one clean, progress on every site', () => {
   const store = new Store(':memory:'); seed(store);
   try {
     const byNumber = (isoNo: string) => store.list('isometrics').find(iso => iso.isoNo === isoNo)!;
@@ -310,23 +321,16 @@ test('the sample data shows a meaningful picture: one isometric with every block
     assert.deepEqual(everything.groups.map(group => group.key), ['release', 'welds', 'ndt', 'repair', 'punch']);
     assert.equal(everything.total, 7, 'both phases are not complete: two release items');
     assert.equal(isoBlockers(input(byNumber('STX-CW-003'))).total, 0, 'released for prefab and field before the two steps: both count as completed');
-    assert.equal(isoProgress(input(byNumber('STX-CW-003'))).total, 100);
-    assert.equal(isoProgress(input(byNumber('STX-ST-004'))).configured, false, 'the second main project has no weights');
-    assert.equal(isoProgress(input(byNumber('STX-CW-001'))).configured, true);
+    const finished = isoProgress(input(byNumber('STX-CW-003')));
+    assert.deepEqual([finished.phases[0].percent, activity(finished, 'shop', 'fabricationBook').progress, activity(finished, 'field', 'finalDocumentation').progress], [100, 100, 100]);
+    assert.deepEqual(isoProgress(input(byNumber('STX-ST-004'))), isoProgress({ ...input(byNumber('STX-ST-004')), site: store.get('sites', 'site-north') }), 'the main project without weights is calculated like any other');
     assert.equal(isoQuality(input(byNumber('STX-CW-002'))).percent, 50);
   } finally { store.close(); }
 });
 
 // ----- wave 3: the reference figures -------------------------------------------------------------------------------
 
-/** Every weight entered as 0, as on the reference sandbox (weld__iso__0005.txt:1574: every driver weight 0). */
-const ZERO_SITE = row('site-zero', Object.fromEntries(['weightShop', 'weightField', 'weightSite', 'shopWelds', 'shopNdt', 'shopMaterialPipe', 'shopSupports', 'shopAppendages', 'fieldMaterialPipe', 'fieldWelds', 'fieldNdt', 'fieldSupports', 'fieldAppendages', 'fieldPunch', 'siteHydrotest', 'sitePaintTracing'].map(name => [name, 0])));
-
-test('with every weight 0 the phases and the isometric show 0 %, not a dash (reference Shop prefab 0%, Field 0%, Site 0%, Status 0%)', () => {
-  const progress = isoProgress(base({ site: ZERO_SITE, welds: [weld('a', { ndoReq: true })], results: [result('a', 'Accepted', '2026-10-06')] }));
-  assert.equal(progress.configured, true);
-  assert.deepEqual(progress.phases.map(phase => phase.percent), [0, 0, 0]);
-  assert.equal(progress.total, 0);
+test('percentages are written as the reference writes them', () => {
   assert.deepEqual([percentText(0), percentText(72.7), percentText(66.66), percentText(100)], ['0%', '72.7%', '66.7%', '100%'], 'no space before the sign, one decimal at most');
 });
 
@@ -336,25 +340,24 @@ const repaired0003 = () => {
   const results = [result('o1', 'Rejected', '2026-10-06'), result('r1', 'Accepted', '2026-10-08'), result('o2', 'Rejected', '2026-10-06'), result('r2', 'Accepted', '2026-10-08')];
   return { welds, results };
 };
-const NDT_ONLY = row('site-ndt', { weightShop: 100, weightField: 0, weightSite: 0, shopNdt: 100, shopWelds: 0, ndtMeasurement: 'Per weld' });
 
 test('repairs: a rejected weld counts as done once its repair is accepted, and repair welds add no units of their own', () => {
   // 0003: units 001_1 and 001_2 (the repairs, one linked by repairOfId and one numbered "001_2 R1", add none); both done by their repairs → 2 / 2.
   const { welds, results } = repaired0003();
-  const ndt = (input: IsoStatusInput) => isoProgress(input).phases[0].drivers.find(driver => driver.key === 'ndt')!.progress;
-  assert.equal(ndt(base({ site: NDT_ONLY, welds, results })), 1);
-  assert.equal(isoProgress(base({ site: NDT_ONLY, welds, results })).total, 100);
+  // Every weld is 4": the units are inches, so the fractions equal the per-weld counts of the reference.
+  const ndt = (input: IsoStatusInput) => { const value = activity(isoProgress(input), 'shop', 'ndt').progress; return value === null ? null : value / 100; };
+  assert.equal(ndt(base({ welds, results })), 1);
   // The repair still waiting for its result: that unit is not done (1 / 2).
-  assert.equal(ndt(base({ site: NDT_ONLY, welds, results: results.filter(item => item.weldId !== 'r2') })), 0.5);
+  assert.equal(ndt(base({ welds, results: results.filter(item => item.weldId !== 'r2') })), 0.5);
   // A rejected repair is not done either; a later accepted repair of the repair is (001_1 → R1 rejected → R2 accepted).
   const chain = [...welds, weld('r1b', { weldNo: '001_1R2', ndoReq: true, repairOfId: 'r1', _createdAt: '2026-10-03T00:00:00.000Z' })];
   const rejectedRepair = [...results.filter(item => item.weldId !== 'r1'), result('r1', 'Rejected', '2026-10-08')];
-  assert.equal(ndt(base({ site: NDT_ONLY, welds: chain, results: rejectedRepair })), 0.5);
-  assert.equal(ndt(base({ site: NDT_ONLY, welds: chain, results: [...rejectedRepair, result('r1b', 'Accepted', '2026-10-09')] })), 1);
+  assert.equal(ndt(base({ welds: chain, results: rejectedRepair })), 0.5);
+  assert.equal(ndt(base({ welds: chain, results: [...rejectedRepair, result('r1b', 'Accepted', '2026-10-09')] })), 1);
   // 0005: a lower-case "003r1" is not linked as a repair in the reference, so it is a unit of its own: 3 of 4 accepted = 0.75.
   const welds0005 = [weld('a', { weldNo: '001', ndoReq: true }), weld('b', { weldNo: '002', ndoReq: true }), weld('c', { weldNo: '003', ndoReq: true }), weld('d', { weldNo: '003r1', ndoReq: true, _createdAt: '2026-10-02T00:00:00.000Z' })];
   const results0005 = [result('a', 'Accepted', '2026-10-06'), result('b', 'Accepted', '2026-10-06'), result('c', 'Rejected', '2026-10-06'), result('d', 'Accepted', '2026-10-08')];
-  assert.equal(ndt(base({ site: NDT_ONLY, welds: welds0005, results: results0005 })), 0.75);
+  assert.equal(ndt(base({ welds: welds0005, results: results0005 })), 0.75);
 });
 
 test('quality leaves repair welds out: reference 0003 0 %, 0005 75 %, 0007 0 %', () => {
@@ -378,27 +381,23 @@ function fieldPipe(picked: { shop: number; field: number }, installed: number) {
     picklists: [row('p-shop', { isoId: 'iso', requirementId: 'l-shop', materialId: 'pipe', quantity: picked.shop }), row('p-field', { isoId: 'iso', requirementId: 'l-field', materialId: 'pipe', quantity: picked.field })],
   } as Record<string, Row[]>;
   const budgets = mtoBudgets(rows.isometrics[0], rows);
-  const site = row('site-field', { weightShop: 0, weightField: 100, weightSite: 0, fieldMaterialPipe: 100 });
-  return { budgets, progress: isoProgress(base({ site, budgets, iso: { fieldPipeM: installed } })) };
+  return { budgets };
 }
 
-test('Field pipe is measured against the whole ISO and capped by the picked quantity (30 m Shop + 70 m Field)', () => {
-  // Budget 30 + 70 = 100 m. 70 m installed, 100 m picked: min(70, 100) / 100 = 70 %.
+test('Field pipe is budgeted against the whole ISO and capped by the picked quantity (30 m Shop + 70 m Field)', () => {
   const full = fieldPipe({ shop: 30, field: 70 }, 70);
   assert.deepEqual([full.budgets?.shop?.materialPipe, full.budgets?.field?.materialPipe, full.budgets?.issued?.field?.materialPipe], [30, 100, 100]);
-  assert.equal(full.progress.phases[1].percent, 70); assert.equal(full.progress.total, 70);
-  // 70 m installed but only 40 m picked (30 + 10): min(70, 40) / 100 = 40 %.
-  assert.equal(fieldPipe({ shop: 30, field: 10 }, 70).progress.total, 40);
+  // The entered pipe is no progress driver any more, but its bar still reads min(installed, picked) / budget.
+  assert.equal(quantityProgress(70, full.budgets, 'field', 'materialPipe'), 0.7);
+  assert.equal(quantityProgress(70, fieldPipe({ shop: 30, field: 10 }, 70).budgets, 'field', 'materialPipe'), 0.4);
   // Entry is allowed up to the whole ISO for Field (100 m), not beyond; Shop up to the Shop-typed MTO (30 m).
   assert.deepEqual(isoInputErrors({ isoNo: 'ISO-1', fieldPipeM: 100 }, row('iso', { isoNo: 'ISO-1' }), full.budgets), {});
   assert.match(isoInputErrors({ isoNo: 'ISO-1', fieldPipeM: 101 }, row('iso', { isoNo: 'ISO-1' }), full.budgets).fieldPipeM, /above the MTO budget of 100 m/);
   assert.match(isoInputErrors({ isoNo: 'ISO-1', shopPipeM: 31 }, row('iso', { isoNo: 'ISO-1' }), full.budgets).shopPipeM, /above the MTO budget of 30 m/);
-  // Shop: 20 m handled with 30 m Shop-typed picked → 20 / 30; with only 10 m picked → 10 / 30.
-  const shopSite = row('site-shop', { weightShop: 100, weightField: 0, weightSite: 0, shopMaterialPipe: 100 });
-  assert.equal(isoProgress(base({ site: shopSite, budgets: full.budgets, iso: { shopPipeM: 20 } })).total, 66.7);
-  assert.equal(isoProgress(base({ site: shopSite, budgets: fieldPipe({ shop: 10, field: 70 }, 0).budgets, iso: { shopPipeM: 20 } })).total, 33.3);
-  // Without pick lists (no `issued`) nothing caps the entry.
-  assert.equal(isoProgress(base({ site: row('s', { weightField: 100, fieldMaterialPipe: 100 }), budgets: { field: { materialPipe: 100 } }, iso: { fieldPipeM: 70 } })).total, 70);
+  // Shop: 20 m handled with 30 m Shop-typed picked → 20 / 30; with only 10 m picked → 10 / 30. Without pick lists nothing caps the entry.
+  close(quantityProgress(20, full.budgets, 'shop', 'materialPipe'), 2 / 3);
+  close(quantityProgress(20, fieldPipe({ shop: 10, field: 70 }, 0).budgets, 'shop', 'materialPipe'), 1 / 3);
+  assert.equal(quantityProgress(70, { field: { materialPipe: 100 } }, 'field', 'materialPipe'), 0.7);
 });
 
 test('Progress card texts follow the reference', () => {
@@ -408,8 +407,9 @@ test('Progress card texts follow the reference', () => {
   assert.equal(noBudgetText('shop', 'materialPipe'), 'No Shop-typed material on this ISO.');
   assert.deepEqual([quantityBarText('shop', 0, null), quantityBarText('field', 0, null), quantityBarText('field', 100, 0.7)], ['N/A', '0%', '70%']);
   assert.deepEqual(PROGRESS_CARD_TEXTS.budgetColumn, { shop: 'Ceiling: Shop issued / Shop MTO', field: 'Budget (MTO)' });
-  assert.equal(PROGRESS_CARD_TEXTS.save, 'Save shop, field and site values.');
-  assert.equal(PROGRESS_CARD_TEXTS.phase.shop, 'Shop prefab phase (welds, NDT, shop-typed material).');
+  assert.equal(PROGRESS_CARD_TEXTS.save, 'Save the entered quantities and finish states.');
+  assert.deepEqual(Object.keys(PROGRESS_CARD_TEXTS.phase), ['shop', 'field']);
+  assert.match(PROGRESS_CARD_TEXTS.phase.shop, /Fabrication Book/);
   // Reference 0001: Paint A10, Tracing —, Insulation A15.
   const iso = row('iso', { paintSpec: 'A10', tracing: '', insulation: 'A15' });
   assert.deepEqual(['paintState', 'tracingState', 'insulationState'].map(field => finishSpecification(iso, field)), ['A10', '—', 'A15']);

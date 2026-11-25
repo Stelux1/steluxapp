@@ -9,7 +9,7 @@ import { withLegacyStock } from './mto-stock.ts';
  *
  * Inside a pilot the other pilot's records are refused. The isometric header and the isometrics list must
  * nevertheless show the same numbers in Weld Pilot and MTO Pilot, so the summaries are computed here from every
- * record the release profile delivers (welds, inspection results, releases, punch items, test systems, spools, hydrotest releases and results, material requirements with
+ * record the release profile delivers (welds, inspection results, releases, punch items, flanges, test systems, spools, hydrotest releases and results, material requirements with
  * the orders, stock and pick lists that cover them),
  * whatever the caller's pilot or profile may read. Only aggregates leave this function (see `IsoSummary`):
  * percentages, counts per blocker group, punch counts, budget totals and yes / no flags, never a weld, result, welder or material line,
@@ -29,7 +29,7 @@ export function isoSummariesFor(store: Store, availability: Availability | undef
   return isoSummaries({
     isometrics, projects: load('projects') || [], sites: load('sites') || [],
     welds: load('welds'), weldTypes: load('weld_types'), diameters: load('diameters'), results: load('inspection_results'),
-    releases: load('releases'), punch: load('punchlists'), testSystems: resourceAvailable(availability, 'test_systems') ? store.list('test_systems', true).filter(row => rowAvailable(availability, 'test_systems', row)) : null, hydrotestRequests: load('hydrotest_requests'), spools: load('spools'), hydrotestResults: load('hydrotest_results'), requirements: load('iso_materials'),
+    releases: load('releases'), punch: load('punchlists'), flanges: load('flanges'), testSystems: resourceAvailable(availability, 'test_systems') ? store.list('test_systems', true).filter(row => rowAvailable(availability, 'test_systems', row)) : null, hydrotestRequests: load('hydrotest_requests'), spools: load('spools'), hydrotestResults: load('hydrotest_results'), requirements: load('iso_materials'),
     materials: load('materials'), customMaterials: load('custom_materials'), operationPhases: load('operation_phases'),
     orders: load('orders'), orderLines: load('order_lines'), stock: load('stock'), warehouses: load('warehouses'), picklists: load('picklists'), reservations: load('reservations'), allIsometrics: load('isometrics'),
     calculations: load('calculation_lines'), attachments: load('attachments'), revisions: load('revisions'),

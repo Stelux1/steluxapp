@@ -1,7 +1,8 @@
 import type { Row } from './types.ts';
 import { hydrotestState } from './hydrotest.ts';
-import { hasPunchProgress, punchBlocking, punchKind, punchListLink, punchProgress } from './punch.ts';
-import { PROGRESS_PHASES, ndtMeasurement, progressWeights, type PhaseKey } from './site-settings.ts';
+import { punchBlocking, punchKind, punchListLink } from './punch.ts';
+import { progressFromUnits, emptyProgressUnits, type ProgressResult, type ProgressUnit, type ProgressUnits } from './progress-model.ts';
+import { flangeStatus } from './flanges.ts';
 import { ndtAccepted, nextRepairNumber, notAccepted, openRejection, repairChain, repairParent } from './inspections.ts';
 import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 
@@ -13,7 +14,7 @@ import { isoBudgets as mtoBudgets } from './mto-materials.ts';
 /** Rows the calculations read. Collections may hold other isometrics' rows; each function picks its own. */
 export interface IsoStatusInput {
   iso: Row;
-  /** The project site row carrying the progress weights and the NDT measurement. */
+  /** The project site row (not read by the progress: its weights and NDT measurement are ignored, shared/progress-model.ts). */
   site?: Row | null;
   welds: Row[];
   weldTypes: Row[];
@@ -32,8 +33,10 @@ export interface IsoStatusInput {
   punch?: Row[] | null;
   /** Budgets of the pipe / supports / appendages drivers. Absent: those drivers are out of scope. */
   budgets?: ProgressBudgets;
-  /** Punch driver progress 0..1 (overrides the isometric's own). Absent until punch progress is entered: the driver is out of scope. */
+  /** Punch progress 0..1; no longer a progress driver (kept so existing callers compile). */
   punchProgress?: number | null;
+  /** Flanges (Reinstatement driver: share of the isometric's flanges that are Finished); null or absent: no flanges, Reinstatement follows Pressure tests. */
+  flanges?: Row[] | null;
 }
 
 // ----- finish states and entered quantities -------------------------------------------------------------------
@@ -77,10 +80,14 @@ const issuedOf = (budgets: ProgressBudgets | undefined, phase: QuantityPhase, ke
  * quantity over the whole ISO, counted up to the picked quantity of the whole ISO.
  */
 export function quantityProgress(entered: unknown, budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey): number | null {
+  const units = quantityUnits(entered, budgets, phase, key);
+  return units.total ? units.done / units.total : null;
+}
+/** The same as units: done = min(entered, picked, budget), total = the budget (0 without one). Pools across isometrics. */
+export function quantityUnits(entered: unknown, budgets: ProgressBudgets | undefined, phase: QuantityPhase, key: QuantityKey): ProgressUnit {
   const budget = budgetOf(budgets, phase, key);
-  if (!budget) return null;
-  const counted = Math.min(Math.max(0, quantityOf(entered) ?? 0), issuedOf(budgets, phase, key));
-  return Math.min(1, counted / budget);
+  if (!budget) return { done: 0, total: 0 };
+  return { done: Math.min(budget, Math.max(0, quantityOf(entered) ?? 0), issuedOf(budgets, phase, key)), total: budget };
 }
 const quantityOf = (value: unknown) => {
   if (value === null || value === undefined || value === '') return null;
@@ -144,7 +151,6 @@ const inchesOf = (weld: Row, diameters: Row[]) => {
   return Number.isFinite(size) && size > 0 ? size : 0;
 };
 const percent1 = (fraction: number) => Math.round(fraction * 1000) / 10;
-const round1 = (value: number) => Math.round(value * 10) / 10;
 
 // ----- blockers ------------------------------------------------------------------------------------------------
 
@@ -247,102 +253,52 @@ export function isoQuality(input: Pick<IsoStatusInput, 'iso' | 'welds' | 'result
 
 // ----- progress ------------------------------------------------------------------------------------------------
 
-export interface DriverProgress {
-  key: string; label: string;
-  /** Weight inside the phase, percent. */
-  weight: number;
-  /** Counts toward the phase: in scope and weighted above 0. */
-  inScope: boolean;
-  /** 0..1 while in scope. */
-  progress: number | null;
-  /** Points of the isometric's 100 % this driver has earned (unrounded). */
-  earned: number | null;
-}
-export interface PhaseProgress {
-  key: PhaseKey; label: string; weight: number;
-  /** One decimal; 0 while no weighted driver of the phase is in scope; null only while the weights are not configured. */
-  percent: number | null;
-  drivers: DriverProgress[];
-}
-export interface IsoProgress {
-  /** False while the site has no progress weights: no percentages are produced. */
-  configured: boolean;
-  phases: PhaseProgress[];
-  /** The isometric's percentage, one decimal; 0 when nothing is in scope; null only when not configured. */
-  total: number | null;
+/** Progress of an isometric: the fixed model of shared/progress-model.ts (always configured) and the measured units behind it. */
+export interface IsoProgress extends ProgressResult {
+  /** Always true: the weights are fixed in code. Kept for callers that still read it. */
+  configured: true;
+  units: ProgressUnits;
 }
 
 /**
- * Weighted progress of an isometric, following the reference's driver model:
- * phase % = Σ(weight × progress) over the drivers that are in scope and weighted above 0 ÷ Σ of those weights;
- * isometric % = Σ(phase weight × phase %) ÷ 100.
- * A phase without any such driver drops out like a driver does, and the remaining phases renormalise
- * (with every phase in scope this is exactly the formula above).
+ * What each activity of PROGRESS_MODEL has done on one isometric (client change list 22.11.2026, F3):
+ * Shop MTO / Cut-Bev / Fit-up and Field Spools erection / Fit-up: dia-inch of the phase's welds with a fit-up date
+ * (`datefit`; a welded weld counts as fitted). Welding: dia-inch of the phase's welds with a welder and the weld date.
+ * NDT: dia-inch of the phase's welds that need NDT (`ndoReq`, repair welds add nothing), done once the latest weld of
+ * the repair chain has an Accepted NDT result; always inch-weighted. Fabrication Book / Final documentation: the
+ * Prefab / Field phase is completed (1 of 1). Supports erection: the field supports quantity against the MTO budget
+ * (`quantityUnits`). Pressure tests: the hydrotest, 1 of 1 while in scope, 0 of 0 otherwise. Reinstatement: Finished
+ * flanges of the isometric of all its flanges; without flanges the Pressure tests units.
+ * Phase of a weld: the location of its weld type (Shop / Field); a weld without one counts in neither phase.
  */
-export function isoProgress(input: IsoStatusInput): IsoProgress {
-  const weights = progressWeights(input.site);
-  if (!weights.configured) return { configured: false, phases: PROGRESS_PHASES.map(phase => ({ key: phase.key, label: phase.label, weight: 0, percent: null, drivers: [] })), total: null };
-  const welds = isoWelds(input), allWelds = live(input.welds), inch = ndtMeasurement(input.site) === 'inch-weighted';
-  const finish = ISO_FINISH_ITEMS.map((item): number | null => { const state = text(input.iso[item.field]) || 'Open'; return state === 'Done' ? 1 : state === 'Open' ? 0 : null; }).filter((value): value is number => value !== null);
-  const hydrotest = hydrotestState(input.iso, { test_systems: input.testSystems, hydrotest_requests: input.hydrotestRequests, releases: input.releases, spools: input.spools, hydrotest_results: input.hydrotestResults });
-
-  /** Progress 0..1 of one driver, or null when it is out of scope. */
-  const progressOf = (phase: PhaseKey, key: string): number | null => {
-    if (phase === 'site') {
-      if (key === 'hydrotest') return hydrotest.inScope ? (hydrotest.completed ? 1 : 0) : null;
-      return finish.length ? finish.reduce((sum, value) => sum + value, 0) / finish.length : null;
-    }
-    const inPhase = welds.filter(weld => locationOf(weld, input.weldTypes) === phase);
-    if (key === 'welds') {
-      let total = 0, done = 0;
-      // Welded = a welder and the weld date (client, 17.11.2026), the same rule as the WDI of the project status.
-      for (const weld of inPhase) { const size = inchesOf(weld, input.diameters); total += size; if (hasWelder(weld) && text(weld.date)) done += size; }
-      return total > 0 ? done / total : null;
-    }
-    if (key === 'ndt') {
-      // Repair welds add no units; an original counts as done once the latest weld of its repair chain is Accepted
-      // ("Reject does not count as done. Repair welds add no extra earned units.", weld__general__project-sites.txt:162).
-      let total = 0, done = 0;
-      for (const weld of inPhase.filter(weld => weld.ndoReq === true && !isRepairWeld(weld, allWelds))) {
-        const size = inch ? inchesOf(weld, input.diameters) : 1;
-        total += size;
-        const last = [weld, ...repairChain(weld, allWelds).filter(repair => isRepairWeld(repair, allWelds))].at(-1)!;
-        if (resultsOf(input.results, last.id, ['NDT'])[0]?.result === 'Accepted') done += size;
-      }
-      return total > 0 ? done / total : null;
-    }
-    if (key === 'punch') {
-      if (phase !== 'field') return null;
-      // The progress entered on the isometric counts once there is one; a caller may still pass its own value.
-      if (typeof input.punchProgress === 'number') return Math.min(1, Math.max(0, input.punchProgress));
-      return hasPunchProgress(input.iso) ? punchProgress(input.iso) : null;
-    }
-    const quantity = ISO_QUANTITIES.find(item => item.phase === phase && item.key === key);
-    return quantity ? quantityProgress(input.iso[quantity.field], input.budgets, quantity.phase, quantity.key) : null;
-  };
-
-  const phases = PROGRESS_PHASES.map(phase => {
-    const drivers: DriverProgress[] = phase.activities.map(activity => {
-      const weight = weights.activities[phase.key][activity.key] ?? 0, progress = progressOf(phase.key, activity.key);
-      return { key: activity.key, label: activity.label, weight, inScope: progress !== null && weight > 0, progress: progress !== null && weight > 0 ? progress : null, earned: null };
-    });
-    const scope = drivers.filter(driver => driver.inScope), sum = scope.reduce((total, driver) => total + driver.weight, 0);
-    const fraction = sum > 0 ? scope.reduce((total, driver) => total + driver.weight * driver.progress!, 0) / sum : null;
-    return { phase, drivers, sum, fraction, weight: weights.phases[phase.key] };
+export function isoProgressUnits(input: IsoStatusInput): ProgressUnits {
+  const units = emptyProgressUnits(), welds = isoWelds(input), allWelds = live(input.welds);
+  const inPhase = (phase: QuantityPhase) => welds.filter(weld => locationOf(weld, input.weldTypes) === phase);
+  const welded = (weld: Row) => hasWelder(weld) && text(weld.date) !== '';
+  const inches = (rows: Row[], done: (weld: Row) => boolean): ProgressUnit => rows.reduce((unit, weld) => { const size = inchesOf(weld, input.diameters); return { total: unit.total + size, done: unit.done + (done(weld) ? size : 0) }; }, { done: 0, total: 0 });
+  // Repair welds add no units; an original counts as done once the latest weld of its repair chain is Accepted
+  // ("Reject does not count as done. Repair welds add no extra earned units.", weld__general__project-sites.txt:162).
+  const ndt = (rows: Row[]) => inches(rows.filter(weld => weld.ndoReq === true && !isRepairWeld(weld, allWelds)), weld => {
+    const last = [weld, ...repairChain(weld, allWelds).filter(repair => isRepairWeld(repair, allWelds))].at(-1)!;
+    return resultsOf(input.results, last.id, ['NDT'])[0]?.result === 'Accepted';
   });
-  // Phases with a weight and something in scope share the isometric's 100 %.
-  const active = phases.filter(entry => entry.weight > 0 && entry.fraction !== null);
-  const activeWeight = active.reduce((total, entry) => total + entry.weight, 0);
-  let total = 0;
-  for (const entry of active) {
-    for (const driver of entry.drivers.filter(driver => driver.inScope)) driver.earned = entry.weight / activeWeight * (driver.weight / entry.sum) * driver.progress! * 100;
-    total += entry.weight / activeWeight * entry.fraction! * 100;
-  }
-  // Once weights are configured every figure is a number: a phase without a weighted driver in scope is 0 %, and so is
-  // the isometric when no phase shares in it (phaseCompletion / den of the reference, weld__iso__0001.txt:2706-2748).
-  return {
-    configured: true,
-    phases: phases.map(entry => ({ key: entry.phase.key, label: entry.phase.label, weight: entry.weight, percent: entry.fraction === null ? 0 : percent1(entry.fraction), drivers: entry.drivers })),
-    total: active.length ? round1(total) : 0,
+  const shop = inPhase('shop'), field = inPhase('field');
+  const once = (done: boolean): ProgressUnit => ({ done: done ? 1 : 0, total: 1 });
+  units.shop = { fitUp: inches(shop, weld => text(weld.datefit) !== '' || welded(weld)), welding: inches(shop, welded), ndt: ndt(shop), fabricationBook: once(phaseCompleted(input.iso, 'Prefab', input.releases)) };
+  const hydrotest = hydrotestState(input.iso, { test_systems: input.testSystems, hydrotest_requests: input.hydrotestRequests, releases: input.releases, spools: input.spools, hydrotest_results: input.hydrotestResults });
+  const pressureTests: ProgressUnit = hydrotest.inScope ? once(hydrotest.completed) : { done: 0, total: 0 };
+  const flanges = live(input.flanges).filter(row => row.isoId === input.iso.id);
+  units.field = {
+    erection: inches(field, weld => text(weld.datefit) !== '' || welded(weld)), supports: quantityUnits(input.iso.fieldSupportsPcs, input.budgets, 'field', 'supports'),
+    welding: inches(field, welded), ndt: ndt(field), pressureTests,
+    reinstatement: flanges.length ? { done: flanges.filter(row => flangeStatus(row) === 'Finished').length, total: flanges.length } : { ...pressureTests },
+    finalDocumentation: once(phaseCompleted(input.iso, 'Field', input.releases)),
   };
+  return units;
+}
+
+/** Weighted progress of an isometric with the fixed weights of PROGRESS_MODEL (see `progressFromUnits` for the rule). */
+export function isoProgress(input: IsoStatusInput): IsoProgress {
+  const units = isoProgressUnits(input);
+  return { configured: true, units, ...progressFromUnits(units) };
 }

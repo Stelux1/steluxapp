@@ -15,7 +15,8 @@ import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { HOSTED_RELEASE_PROFILE, availabilityFor, projectResource } from '../shared/release.ts';
 import { NO_RIGHTS_TEXT, PILOTS, PILOT_MAP, pilotItemPath, pilotItemState, pilotPageState, type MenuRights } from '../shared/pilots.ts';
-import { PROGRESS_DEFAULTS, PROGRESS_FIELDS, PROGRESS_PHASES, validateProgressWeights } from '../shared/site-settings.ts';
+import { PROGRESS_DEFAULTS, PROGRESS_FIELDS, PROGRESS_MODEL } from '../shared/site-settings.ts';
+import { isoProgress } from '../shared/iso-status.ts';
 import { HOSTED_DEFAULT_SORT, listDefaultSort } from '../shared/welder-data.ts';
 import { ATTACHMENT_POSITIONS, attachmentNamesInOrder, isStandardAttachmentName, moveEntry, orderedAttachmentNames, reorderedAttachmentIds, missingRequired } from '../shared/weld-catalogs.ts';
 import { DUPLICATE_PARTS, copyName, duplicateParts } from '../shared/site-duplicate.ts';
@@ -91,16 +92,13 @@ test('Iso progress weights come phase by phase with the reference labels, and a 
   assert.equal(Object.keys(PROGRESS_DEFAULTS).length, PROGRESS_FIELDS.length);
   assert.equal(RESOURCE_MAP.sites.fields.find(item => item.name === 'weightShop')?.default, undefined, 'the shared definition keeps an empty start');
 });
-test('weight check: Shop and Field activities must total 100 whatever the phase weight; only Site is excused at 0', () => {
-  const field0 = validateProgressWeights({ weightShop: 0, weightField: 100, weightSite: 0, fieldWelds: 100 });
-  assert.equal(field0.valid, false); assert.match(field0.message, /Shop activities must total 100% \(now 0%\)/); assert.ok(field0.fields.shopWelds);
-  const noSite = validateProgressWeights({ weightShop: 50, weightField: 50, weightSite: 0, shopWelds: 100, fieldWelds: 100 });
-  assert.deepEqual(noSite, { valid: true, message: '', fields: {} }, 'Site 0 needs no Site activities');
-  const field100 = validateProgressWeights({ weightShop: 100, weightField: 0, weightSite: 0, shopWelds: 100 });
-  assert.equal(field100.valid, false); assert.match(field100.message, /Field activities must total 100%/);
-  assert.equal(validateProgressWeights({ weightShop: 50, weightField: 40, weightSite: 10, shopWelds: 100, fieldWelds: 100 }).valid, false, 'Site above 0 needs its activities');
-  assert.equal(validateProgressWeights({}).valid, true, 'weights never entered stay "not configured"');
-  assert.equal(PROGRESS_PHASES.length, 3);
+test('no weight check any more: the stored weights are ignored and progress uses the fixed Shop 50 / Field 50 model', () => {
+  assert.equal(PROGRESS_MODEL.phases.length, 2, 'Shop and Field; the Site phase is gone');
+  for (const phase of PROGRESS_MODEL.phases) assert.equal(phase.activities.reduce((sum, item) => sum + item.weight, 0), 100, phase.key);
+  const iso = { id: 'iso', _version: 1, _archived: false, _createdAt: '', _updatedAt: '', prefabCompletedAt: '2026-11-01' };
+  const progress = (site: Record<string, unknown> | null) => isoProgress({ iso, site: site as never, welds: [], weldTypes: [], diameters: [], results: [] }).total;
+  assert.equal(progress(null), 50);
+  assert.equal(progress({ weightShop: 0, weightField: 100, weightSite: 0, fieldWelds: 100 }), 50, 'weights that would have been refused change nothing');
 });
 
 // ----- -010 duplicate project site -------------------------------------------------------------------------------------
@@ -218,11 +216,11 @@ test('hosted: a duplicate is refused for an account limited to other main projec
   assert.equal(done.status, 201); assert.equal(f.store.list('sites').length, before + 1);
   assert.equal((await f.admin.request('/actions/duplicate-site', 'POST', { siteId: NORTH, parts: ['everything'] })).status, 422);
 });
-test('hosted: a site needs an address; the weights are checked on the server too', async t => {
+test('hosted: a site needs an address; old progress weights in a save are accepted and ignored', async t => {
   const f = await fixture(t);
   let response = await f.admin.request('/records/sites', 'POST', { name: 'No address' }); assert.equal(response.status, 422); assert.ok((await json<{ fields: Record<string, string> }>(response)).fields.address);
-  response = await f.admin.request('/records/sites', 'POST', { name: 'Complete', address: '1 Dock Road', weightShop: 0, weightField: 100, weightSite: 0, fieldWelds: 100 }); assert.equal(response.status, 422, 'Shop activities must total 100 even at weight 0');
-  response = await f.admin.request('/records/sites', 'POST', { name: 'Complete', address: '1 Dock Road' }); assert.equal(response.status, 201);
+  response = await f.admin.request('/records/sites', 'POST', { name: 'Complete', address: '1 Dock Road', weightShop: 0, weightField: 100, weightSite: 0, fieldWelds: 100 }); assert.equal(response.status, 201, 'weights that do not add up no longer block a save');
+  response = await f.admin.request('/records/sites', 'POST', { name: 'Complete 2', address: '1 Dock Road' }); assert.equal(response.status, 201);
 });
 test('hosted: Attachment names are sorted per mode, saved by the server, and a standard document cannot be archived', async t => {
   const f = await fixture(t);

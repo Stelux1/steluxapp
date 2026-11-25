@@ -407,7 +407,7 @@ test('one isometric summary for both pilots: the same numbers under Weld and MTO
   for (const id of inMto) assert.deepEqual(mto.isoSummaries![id], weld.isoSummaries![id], id);
   // The numbers are the shared formulas over every record (here: what Weld Core reads for this account).
   const iso2 = weld.rows.isometrics.find(iso => iso.id === 'iso-2')!, site = weld.rows.sites.find(row => row.id === 'site-north');
-  const input = { iso: iso2, site, welds: weld.rows.welds, weldTypes: weld.rows.weld_types, diameters: weld.rows.diameters, results: weld.rows.inspection_results, releases: weld.rows.releases, punch: weld.rows.punchlists, testSystems: weld.rows.test_systems, hydrotestRequests: weld.rows.hydrotest_requests };
+  const input = { iso: iso2, site, welds: weld.rows.welds, weldTypes: weld.rows.weld_types, diameters: weld.rows.diameters, results: weld.rows.inspection_results, releases: weld.rows.releases, punch: weld.rows.punchlists, testSystems: weld.rows.test_systems, hydrotestRequests: weld.rows.hydrotest_requests, flanges: weld.rows.flanges };
   const summary = mto.isoSummaries!['iso-2'];
   assert.equal(summary.blockers.total, isoBlockers(input).total); assert.ok(summary.blockers.total > 0);
   assert.deepEqual(summary.blockers.groups, isoBlockers(input).groups.map(group => ({ key: group.key, count: group.count })));
