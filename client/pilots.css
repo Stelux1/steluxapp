@@ -147,3 +147,34 @@ a.pilot-tile:hover { border-color: var(--border-strong); border-top-color: var(-
 .company-logo-preview strong { font-size: 12px; }
 .company-logo-preview-tiles { display: flex; gap: 6px; }
 .company-logo-preview-tiles i { display: block; width: 72px; height: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-blue); }
+
+/* The Switch fan (client video 25.11.2026): a dim backdrop and one pill per Core on an arc beside the Switch button. Drawn in a fixed layer on the page. */
+.core-fan-layer { position: fixed; inset: 0; z-index: 400; pointer-events: none; }
+.core-fan-backdrop { position: absolute; inset: 0; pointer-events: auto; background: rgba(4, 10, 28, .58); animation: core-fan-dim .2s ease-out both; }
+.core-fan { position: absolute; left: var(--fan-left); top: var(--fan-top); width: 0; height: 0; pointer-events: none; }
+.core-fan-caption, .core-fan-item { position: absolute; left: 0; top: 0; transform: translate(var(--dx), calc(var(--dy) - 50%)); animation: core-fan-in .2s cubic-bezier(.2, .8, .25, 1) both; animation-delay: calc(var(--i) * 40ms); pointer-events: auto; }
+.core-fan-caption { padding: 0 6px; font-size: 11px; font-weight: 700; letter-spacing: .22em; text-transform: uppercase; color: #dbe4f5; white-space: nowrap; pointer-events: none; }
+.core-fan-item { display: flex; align-items: center; gap: 10px; width: 250px; min-height: 46px; padding: 6px 12px 6px 7px; border: 1px solid #ffffff2e; border-radius: 999px; background: #0f1b38; color: #fff; font: inherit; text-align: left; cursor: pointer; box-shadow: 0 8px 22px #00000066; }
+.core-fan-icon { display: grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--core, #64748b); color: #fff; }
+.core-fan-text { display: grid; flex: 1; min-width: 0; line-height: 1.2; }
+.core-fan-text strong { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.core-fan-text small { font-size: 11px; color: #c3cbdc; }
+.core-fan-mark { flex: none; color: #fff; }
+.core-fan-item.is-open { border-color: var(--core); background: color-mix(in srgb, var(--core) 22%, #0f1b38); }
+.core-fan-item.is-open:hover, .core-fan-item.is-open:focus-visible { background: color-mix(in srgb, var(--core) 38%, #0f1b38); }
+.core-fan-item.is-active .core-fan-mark { color: #4ade80; }
+.core-fan-item.is-active, .core-fan-item.is-soon, .core-fan-item.is-disabled { cursor: default; }
+.core-fan-item.is-soon, .core-fan-item.is-disabled { opacity: .62; }
+.core-fan-item.is-soon .core-fan-icon, .core-fan-item.is-disabled .core-fan-icon { filter: saturate(.6); }
+.core-fan-item:focus-visible { outline: 2px solid var(--cyan, #38bdf8); outline-offset: 2px; }
+@keyframes core-fan-in { from { opacity: 0; transform: translate(calc(var(--dx) - 28px), calc(var(--dy) - 50%)) scale(.94); } to { opacity: 1; transform: translate(var(--dx), calc(var(--dy) - 50%)); } }
+@keyframes core-fan-dim { from { opacity: 0; } to { opacity: 1; } }
+/* A phone: no arc, a plain list of the same pills under the button. */
+@media (max-width: 760px) {
+  .core-fan { left: 16px; right: 16px; top: var(--fan-bottom); width: auto; height: auto; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - var(--fan-bottom) - 12px); overflow: auto; }
+  .core-fan-caption, .core-fan-item { position: static; transform: none; width: auto; animation-name: core-fan-rise; }
+  .core-fan-caption { padding: 2px 6px; }
+  @keyframes core-fan-rise { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+}
+@media (prefers-reduced-motion: reduce) { .core-fan-backdrop, .core-fan-caption, .core-fan-item { animation: none; } }
+@media (forced-colors: active) { .core-fan-item { border-color: CanvasText; background: Canvas; color: CanvasText; } .core-fan-item.is-soon, .core-fan-item.is-disabled { opacity: 1; } }

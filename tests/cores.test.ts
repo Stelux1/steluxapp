@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { COMING_CORES, MATERIAL_CORE_COLOR, PILOTS, PILOT_MAP, WELD_CORE_COLOR, pathAfterSignIn } from '../shared/pilots.ts';
-import { PilotSelector } from '../client/pilot.tsx';
+import { COMING_CORES, coreFanItems, MATERIAL_CORE_COLOR, PILOTS, PILOT_MAP, WELD_CORE_COLOR, pathAfterSignIn } from '../shared/pilots.ts';
+import { CoreFanMenu, CoreSwitch, PilotSelector, fanOffsets } from '../client/pilot.tsx';
 import { readMainProjectView } from '../client/project-workspace.tsx';
 import type { User } from '../shared/types.ts';
 
@@ -52,6 +52,29 @@ test('the selector shows five Cores: Weld and Material Core open, the other thre
   const css = source('client/pilots.css');
   assert.match(css, /\.pilot-tiles \{[^}]*repeat\(6, minmax\(0, 1fr\)\)/); assert.match(css, /\.pilot-tiles > li:nth-child\(4\):nth-last-child\(2\) \{ grid-column: 2 \/ span 2; \}/);
   assert.match(css, /@media \(max-width: 640px\) \{[\s\S]*?\.pilot-tiles \{ grid-template-columns: 1fr;/);
+});
+
+test('the Switch fan lists the five Cores in order with their states; the button alone shows while it is closed', () => {
+  assert.deepEqual(coreFanItems(['weld', 'mto'], 'weld').map(item => [item.label, item.state, item.stateText]), [['Weld Core', 'active', 'Active'], ['Material Core', 'open', ''], ['Tools & Equipment', 'soon', 'Coming soon'], ['Finance & Calculation', 'soon', 'Coming soon'], ['Teams Core', 'soon', 'Coming soon']]);
+  assert.deepEqual(coreFanItems(['mto', 'weld'], 'mto').map(item => item.state).slice(0, 2), ['open', 'active']);
+  assert.deepEqual(coreFanItems(['weld'], 'weld').map(item => [item.label, item.state, item.stateText]).slice(0, 2), [['Weld Core', 'active', 'Active'], ['Material Core', 'disabled', 'Not enabled']]);
+  assert.deepEqual(coreFanItems(['weld', 'mto'], 'weld').map(item => item.color), [WELD_CORE_COLOR, MATERIAL_CORE_COLOR, ...COMING_CORES.map(core => core.color)]);
+  const closed = renderToStaticMarkup(createElement(CoreSwitch, { current: 'weld', allowed: ['weld', 'mto'], onOpen: () => undefined }));
+  assert.match(closed, /aria-haspopup="menu"/); assert.match(closed, /aria-expanded="false"/); assert.doesNotMatch(closed, /role="menu"/); assert.doesNotMatch(closed, /Coming soon/);
+  const open = renderToStaticMarkup(createElement(CoreFanMenu, { items: coreFanItems(['weld', 'mto'], 'weld') }));
+  assert.match(open, /role="menu"/); assert.match(open, /Switch Core/);
+  assert.deepEqual([...open.matchAll(/<strong>([^<]+)<\/strong>/g)].map(match => match[1]), ['Weld Core', 'Material Core', 'Tools &amp; Equipment', 'Finance &amp; Calculation', 'Teams Core']);
+  assert.equal((open.match(/role="menuitem"/g) || []).length, 5);
+  assert.equal((open.match(/aria-disabled="true"/g) || []).length, 4, 'the active Core and the three coming-soon Cores do not act');
+  assert.equal((open.match(/aria-current="true"/g) || []).length, 1); assert.equal((open.match(/Coming soon/g) || []).length, 3);
+  assert.match(open, /is-active[^>]*aria-current="true"[\s\S]*?Active/); assert.doesNotMatch(open, /<a /);
+  const notEnabled = renderToStaticMarkup(createElement(CoreFanMenu, { items: coreFanItems(['weld'], 'weld') }));
+  assert.match(notEnabled, /Not enabled/); assert.equal((notEnabled.match(/aria-disabled="true"/g) || []).length, 5);
+  // Arc: staggered, one offset per pill, the middle pills furthest out.
+  const arc = fanOffsets(6); assert.equal(arc.length, 6); assert.ok(arc[2].dx > arc[0].dx && arc[3].dx > arc[5].dx); assert.ok(arc.every((at, index) => index === 0 || at.dy > arc[index - 1].dy));
+  const css = source('client/pilots.css');
+  assert.match(css, /animation-delay: calc\(var\(--i\) \* 40ms\)/); assert.match(css, /prefers-reduced-motion: reduce\) \{ \.core-fan-backdrop, \.core-fan-caption, \.core-fan-item \{ animation: none; \}/);
+  assert.match(css, /\.core-fan-layer \{ position: fixed; inset: 0;/); assert.match(css, /@media \(max-width: 760px\) \{\s*\.core-fan \{/);
 });
 
 /** WCAG relative luminance and contrast of #rrggbb colours. */

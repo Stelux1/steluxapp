@@ -1,7 +1,8 @@
+import { createPortal } from 'react-dom';
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { BrowserRouter, Link, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BadgeCheck, Boxes, Building2, Calculator, ChevronDown, ClipboardList, Flame, FolderKanban, HardHat, Layers3, LayoutDashboard, LayoutGrid, Loader2, LogOut, Package, ScanLine, ScanSearch, Settings2, ShieldAlert, ShoppingCart, Truck, Users, Wrench } from 'lucide-react';
-import { COMING_CORES, NO_RIGHTS_TEXT, PILOTS, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemState, pilotPageState, splitPilotPath, type MenuRights, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey, type ComingCore } from '../shared/pilots.ts';
+import { ArrowRight, BadgeCheck, Check, Boxes, Calculator, ChevronDown, ClipboardList, Flame, FolderKanban, HardHat, Layers3, LayoutDashboard, LayoutGrid, Loader2, LogOut, Package, ScanLine, ScanSearch, Settings2, ShieldAlert, ShoppingCart, Truck, Users, Wrench } from 'lucide-react';
+import { COMING_CORES, NO_RIGHTS_TEXT, coreFanItems, PILOTS, PILOT_MAP, allowedPilots, legacyPilotPath, pagePilots, pilotItemPath, pilotItemState, pilotPageState, splitPilotPath, type MenuRights, type Pilot, type PilotGroupIcon, type PilotItem, type PilotKey, type ComingCore, type CoreFanItem } from '../shared/pilots.ts';
 import { pageAvailable } from '../shared/release.ts';
 import type { User } from '../shared/types.ts';
 import { RESOURCES, RESOURCE_MAP } from './catalog.ts';
@@ -32,7 +33,7 @@ const ICONS: Record<PilotKey, typeof ScanLine> = { weld: ScanLine, mto: Package 
 const COMING_ICONS: Record<ComingCore['icon'], typeof ScanLine> = { tools: Wrench, finance: Calculator, teams: Users };
 /** Icons of the menu groups: beside the group title, and alone when the menu is collapsed to icons. */
 const GROUP_ICONS: Record<PilotGroupIcon, typeof ScanLine> = {
-  general: Building2, start: LayoutDashboard, welders: HardHat, weld: Flame, material: Layers3, ndt: ScanSearch, welding: ClipboardList, releases: BadgeCheck,
+  start: LayoutDashboard, welders: HardHat, weld: Flame, material: Layers3, ndt: ScanSearch, welding: ClipboardList, releases: BadgeCheck,
   materials: Boxes, orders: ShoppingCart, projects: FolderKanban, logistics: Truck, calculations: Calculator, system: Settings2,
 };
 
@@ -204,10 +205,74 @@ export function PilotNavigation({ onPassword, collapsed = false }: { onPassword:
   </details>; })}</>;
 }
 
-/** The pilot block in the sidebar: title in the pilot colour and the way back to the selector. */
+/** Where the pills of the fan sit: a gentle arc bulging to the right, centred on the Switch button. */
+export const FAN_SPACING = 54, FAN_BULGE = 34;
+export function fanOffsets(count: number): { dx: number; dy: number }[] {
+  const mid = (count - 1) / 2;
+  return Array.from({ length: count }, (_, index) => { const t = mid ? (index - mid) / mid : 0; return { dx: Math.round(FAN_BULGE * (1 - t * t)), dy: Math.round((index - mid) * FAN_SPACING) }; });
+}
+const fanIcon = (icon: CoreFanItem['icon']) => icon === 'weld' || icon === 'mto' ? ICONS[icon] : COMING_ICONS[icon];
+
+/**
+ * The pills of the Switch fan (client video 25.11.2026): a caption, then one pill per Core. Only the Cores that are open
+ * to the account are buttons that act; the active Core ("Active" with a check), Cores that are not enabled and the Cores that
+ * are coming soon are `aria-disabled` and do nothing. Free of state so it renders on the server; `CoreSwitch` adds the behaviour.
+ */
+export function CoreFanMenu({ items, onOpen, menuRef, style }: { items: CoreFanItem[]; onOpen?: (key: PilotKey) => void; menuRef?: React.Ref<HTMLDivElement>; style?: React.CSSProperties }) {
+  const offsets = fanOffsets(items.length + 1);
+  return <div ref={menuRef} className="core-fan" role="menu" aria-label="Switch Core" style={style}>
+    <span className="core-fan-caption" aria-hidden="true" style={{ '--i': 0, '--dx': `${offsets[0].dx}px`, '--dy': `${offsets[0].dy}px` } as React.CSSProperties}>Switch Core</span>
+    {items.map((item, index) => { const Icon = fanIcon(item.icon), at = offsets[index + 1], live = item.state === 'open';
+      return <button key={item.key} type="button" role="menuitem" tabIndex={-1} className={`core-fan-item is-${item.state}`} aria-disabled={live ? undefined : true} aria-current={item.state === 'active' ? 'true' : undefined} data-core={item.key}
+        style={{ '--i': index + 1, '--dx': `${at.dx}px`, '--dy': `${at.dy}px`, '--core': item.color } as React.CSSProperties} onClick={() => { if (live) onOpen?.(item.key as PilotKey); }}>
+        <span className="core-fan-icon"><Icon size={17}/></span>
+        <span className="core-fan-text"><strong>{item.label}</strong>{item.stateText && <small>{item.stateText}</small>}</span>
+        {item.state === 'active' ? <Check size={16} className="core-fan-mark" aria-hidden="true"/> : live ? <ArrowRight size={16} className="core-fan-mark" aria-hidden="true"/> : null}
+      </button>; })}
+  </div>;
+}
+
+/**
+ * The Switch button and its fan. Click / Enter / Space opens it; focus moves to the first Core that can be opened; the arrow
+ * keys move, Escape, a click outside or a second click on the button close it and focus returns to the button. The fan is
+ * drawn in a fixed layer on the page (never clipped by the sidebar), also from the icon-only button of the collapsed menu.
+ */
+export function CoreSwitch({ current, allowed, onOpen }: { current: PilotKey; allowed: PilotKey[]; onOpen: (key: PilotKey) => void }) {
+  const [place, setPlace] = useState<{ left: number; top: number; bottom: number } | null>(null), button = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
+  const items = coreFanItems(allowed, current), open = place !== null;
+  const close = useCallback((restore = true) => { setPlace(null); if (restore) button.current?.focus(); }, []);
+  const toggle = () => {
+    if (open) return close();
+    const box = button.current!.getBoundingClientRect(), half = ((items.length + 1) * FAN_SPACING) / 2 + 20;
+    setPlace({ left: Math.round(box.right + 14), top: Math.round(Math.min(Math.max(box.top + box.height / 2, half + 12), Math.max(half + 12, window.innerHeight - half - 12))), bottom: Math.round(box.bottom + 8) });
+  };
+  useEffect(() => {
+    if (!open) return;
+    const buttons = () => Array.from(menu.current?.querySelectorAll<HTMLElement>('[role=menuitem]') || []);
+    (buttons().find(el => el.getAttribute('aria-disabled') !== 'true') || buttons()[0])?.focus();
+    const key = (event: KeyboardEvent) => {
+      const list = buttons(), at = list.indexOf(document.activeElement as HTMLElement);
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+      else if (event.key === 'Tab') { event.preventDefault(); close(); }
+      else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') { event.preventDefault(); list[(at + 1) % list.length]?.focus(); }
+      else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') { event.preventDefault(); list[(at - 1 + list.length) % list.length]?.focus(); }
+      else if (event.key === 'Home') { event.preventDefault(); list[0]?.focus(); } else if (event.key === 'End') { event.preventDefault(); list.at(-1)?.focus(); }
+    };
+    const away = () => close(false);
+    document.addEventListener('keydown', key, true); window.addEventListener('resize', away);
+    return () => { document.removeEventListener('keydown', key, true); window.removeEventListener('resize', away); };
+  }, [open, close]);
+  return <>
+    <button ref={button} type="button" className="pilot-badge-switch" aria-haspopup="menu" aria-expanded={open} aria-label="Switch Core" title="Switch Core" onClick={toggle}><LayoutGrid size={14}/><span>Switch</span></button>
+    {open && createPortal(<div className="core-fan-layer"><div className="core-fan-backdrop" onClick={() => close()} aria-hidden="true"/>
+      <CoreFanMenu items={items} menuRef={menu} onOpen={key => { close(false); onOpen(key); }} style={{ '--fan-left': `${place.left}px`, '--fan-top': `${place.top}px`, '--fan-bottom': `${place.bottom}px` } as React.CSSProperties}/></div>, document.body)}
+  </>;
+}
+
+/** The pilot block in the sidebar: title in the pilot colour and the Switch button that opens the fan of Cores. */
 export function PilotBadge() {
   const state = usePilot(); if (!state) return null; const Icon = ICONS[state.pilot.key];
-  return <div className="pilot-badge" title={state.pilot.title}><span className="pilot-badge-icon"><Icon size={16}/></span><strong>{state.pilot.title}</strong>{state.allowed.length > 1 && <button type="button" className="pilot-badge-switch" onClick={state.selectPilot} aria-label="Select application workspace" title="Select application workspace"><LayoutGrid size={14}/><span>Switch</span></button>}</div>;
+  return <div className="pilot-badge" title={state.pilot.title}><span className="pilot-badge-icon"><Icon size={16}/></span><strong>{state.pilot.title}</strong>{state.allowed.length > 1 && <CoreSwitch current={state.pilot.key} allowed={state.allowed.map(entry => entry.key)} onOpen={key => state.openPilot(key, '/dashboard')}/>}</div>;
 }
 
 /** Whether the current page must be replaced by the no-access state in this pilot. */

@@ -23,14 +23,16 @@ export interface PilotItem {
   area?: string;
 }
 /** Icon of a menu group, drawn by the client (`client/pilot.tsx`); it stands for the group when the menu is collapsed to icons. */
-export type PilotGroupIcon = 'general' | 'start' | 'welders' | 'weld' | 'material' | 'ndt' | 'welding' | 'releases' | 'materials' | 'orders' | 'projects' | 'logistics' | 'calculations' | 'system';
+export type PilotGroupIcon = 'start' | 'welders' | 'weld' | 'material' | 'ndt' | 'welding' | 'releases' | 'materials' | 'orders' | 'projects' | 'logistics' | 'calculations' | 'system';
 export interface PilotGroup { title: string; icon: PilotGroupIcon; items: PilotItem[]; }
 export interface Pilot { key: PilotKey; title: string; module: Module; color: string; description: string; groups: PilotGroup[]; }
 
 const r = (label: string, resource: string): PilotItem => ({ label, resource });
 const p = (label: string, path: string, need: Pick<PilotItem, 'resources' | 'reports' | 'area'> = {}): PilotItem => ({ label, path, ...need });
-/** General data → Project sites: the table of main projects (the card screen "Select a main project" stays the choice after sign-in). */
-const PROJECT_SITES = r('Project sites', 'sites');
+/**
+ * Project sites (the main projects) have no menu entry any more (client 25.11.2026: it duplicates "Change site"): the sidebar's
+ * main-project card leads to the same add / edit / archive screen. The page `/workspace/sites` stays a shared workspace page.
+ */
 const PASSWORD: PilotItem = { label: 'Change password', action: 'password' };
 const DASHBOARD = p('Dashboard', '/dashboard');
 /** Iso overview: every isometric of every sub-project of the current main project, with filters and mass edit (needs projects and isometrics). */
@@ -50,7 +52,6 @@ export const MATERIAL_CORE_COLOR = '#f07a1a';
 /** Menus in the reference order and wording. Reference items without a page here are left out until they exist. */
 export const PILOTS: Pilot[] = [
   { key: 'weld', title: 'Weld Core', module: 'welding', color: WELD_CORE_COLOR, description: 'Welds, inspections and releases for every isometric.', groups: [
-    { title: 'General data', icon: 'general', items: [PROJECT_SITES, r('Companies', 'companies'), r('Attachment names', 'attachment_names'), r('Documents', 'attachments')] },
     { title: 'Start', icon: 'start', items: [WELD_DASHBOARD] },
     { title: 'Welder data', icon: 'welders', items: [r('Welders', 'welders'), r('Certificates', 'certificate_types')] },
     { title: 'Weld data', icon: 'weld', items: [r('PQR', 'pqr'), r('WPS methods', 'wps'), r('Weld type', 'weld_types'), r('Coating', 'coatings'), r('Welding wire', 'welding_wires'), r('Spools', 'spool_names'), r('Customs', 'welder_customs_catalog')] },
@@ -58,17 +59,16 @@ export const PILOTS: Pilot[] = [
     { title: 'NDT data', icon: 'ndt', items: [r('NDT process groups', 'ndt_groups'), r('NDT process', 'ndt_processes'), r('Defect codes', 'ndt_defect_codes'), r('NDT locations', 'ndt_locations'), r('PWHT process', 'pwht_processes'), r('PWHT locations', 'pwht_locations')] },
     { title: 'Welding data', icon: 'welding', items: [r('Sub-projects', 'projects'), r('Isometrics list', 'isometrics'), r('ITPs', 'itps'), WELD_ISO_OVERVIEW, r('Weld register', 'welds'), p('NDT/PWHT Manager', MANAGER_PATH, { resources: ['welds', 'inspection_requests'] }), p(NDT_BATCH_TITLE, NDT_BATCH_PATH, { resources: ['welds', 'inspection_results', 'inspection_requests'], area: NDT_BATCH_AREA }), r('QA/QC engineers', 'qa_engineers'), p('Export weld data', '/welding/reports', { reports: ['lisl', 'wdi', 'inspection-results', 'weld-cards', 'tracer', 'welder', 'open-welds'], area: '81' })] },
     { title: 'Releases', icon: 'releases', items: [p('Prefab release', '/welding/releases?view=prefab', { resources: ['releases'] }), p('Field release', '/welding/releases?view=field', { resources: ['releases'] }), p('Assign Iso to FWP', '/welding/field_packages?tab=assign', { resources: ['field_packages'] }), r('Hydrotest release', 'test_systems'), r('Punch lists', 'punchlists'), r('Flange Management', 'flanges')] },
-    { title: 'System', icon: 'system', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Signatures', 'signatures'), r('Company data', 'company_data')] },
+    { title: 'System', icon: 'system', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Signatures', 'signatures'), r('Company data', 'company_data'), r('Companies', 'companies'), r('Attachment names', 'attachment_names'), r('Documents', 'attachments')] },
   ] },
   { key: 'mto', title: 'Material Core', module: 'materials', color: MATERIAL_CORE_COLOR, description: 'Material take-off, ordering, stock and logistics.', groups: [
-    { title: 'General data', icon: 'general', items: [PROJECT_SITES, r('Storehouses', 'warehouses'), r('Documents', 'attachments')] },
     { title: 'Start', icon: 'start', items: [DASHBOARD] },
     { title: 'Materials', icon: 'materials', items: [r('Material database', 'materials'), r('Material part', 'material_parts'), r('Type of material', 'material_types'), r('UOMs', 'uoms'), r('Spools', 'spool_names'), r('Operation Phases', 'operation_phases'), r('Material supplier', 'suppliers')] },
     { title: 'Order / Take in', icon: 'orders', items: [p('Request for Quotation', '/materials/request-for-quotation', { resources: ['iso_materials', 'orders', 'order_lines'] }), p('Order materials', '/materials/order-materials', { resources: ['iso_materials', 'orders', 'order_lines'] }), p('Pending order', '/materials/pending-orders', { resources: ['orders', 'order_lines'] }), p('Material take in', '/materials/take-in', { resources: ['receipts', 'orders', 'order_lines'] }), r('Material inventory', 'stock'), p('Materials list', '/materials/materials-list', { resources: ['iso_materials', 'stock'], area: '78' }), p('Order archive', '/materials/order-archive', { resources: ['orders', 'order_lines'] }), r('Certifications', 'certifications')] },
     { title: 'Projects data', icon: 'projects', items: [r('Sub-projects', 'projects'), r('Isometrics list', 'isometrics'), p('Isometric execution', '/materials/iso-execution', { resources: ['iso_materials', 'stock', 'reservations'] }), r('Pick List archive', 'picklists'), ISO_OVERVIEW] },
     { title: 'Cut List', icon: 'calculations', items: [r('Cut list standards', 'cut_fittings')] },
     { title: 'Logistic', icon: 'logistics', items: [r('Service companies', 'service_companies'), p('Service request', '/materials/service-spools', { resources: ['spools', 'service_requests'] }), p('Service req. - Materials', '/materials/service-materials', { resources: ['iso_materials', 'material_locations'] }), r('Request archive', 'service_requests'), r('Laydown areas', 'laydowns'), r('Laydown materials', 'material_laydowns')] },
-    { title: 'System', icon: 'system', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Company data', 'company_data')] },
+    { title: 'System', icon: 'system', items: [PASSWORD, r('User accounts', 'users'), r('Profiles', 'profiles'), r('Company data', 'company_data'), r('Storehouses', 'warehouses'), r('Documents', 'attachments')] },
   ] },
 ];
 export const PILOT_MAP = Object.fromEntries(PILOTS.map(pilot => [pilot.key, pilot])) as Record<PilotKey, Pilot>;
@@ -164,4 +164,18 @@ const CORE_START = /^\/(?:|dashboard|workspace\/main-projects)\/?$/;
 export function pathAfterSignIn(pathname: string): string {
   const { pilot, path } = splitPilotPath(pathname);
   return CORE_START.test(pilot ? path : pathname) ? '/' : pathname;
+}
+
+// ----- the Switch fan ----------------------------------------------------------------------------------------------------
+/** How a Core appears in the fan that opens from the sidebar's Switch button. */
+export type CoreFanState = 'active' | 'open' | 'soon' | 'disabled';
+export interface CoreFanItem { key: string; label: string; color: string; icon: PilotKey | ComingCore['icon']; state: CoreFanState; /** Text shown under the name: "Active", "Coming soon", "Not enabled"; empty for a Core that opens. */ stateText: string }
+const FAN_LABELS: Record<string, string> = { tools: 'Tools & Equipment', finance: 'Finance & Calculation', teams: 'Teams Core' };
+/**
+ * The pills of the Switch fan, in order: Weld Core, Material Core, then the Cores that are not built yet. `allowed`: the Cores
+ * the account may enter; `current`: the Core in use ("Active", not a link). A built Core the account may not enter is "Not enabled".
+ */
+export function coreFanItems(allowed: PilotKey[], current: PilotKey): CoreFanItem[] {
+  const built = PILOTS.map((pilot): CoreFanItem => { const state: CoreFanState = pilot.key === current ? 'active' : allowed.includes(pilot.key) ? 'open' : 'disabled'; return { key: pilot.key, label: pilot.title, color: pilot.color, icon: pilot.key, state, stateText: state === 'active' ? 'Active' : state === 'disabled' ? 'Not enabled' : '' }; });
+  return [...built, ...COMING_CORES.map((core): CoreFanItem => ({ key: core.key, label: FAN_LABELS[core.key] || core.title, color: core.color, icon: core.icon, state: 'soon', stateText: 'Coming soon' }))];
 }
