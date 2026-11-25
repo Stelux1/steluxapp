@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Download, FileText, Filter, Loader2, Pencil, Printer, RefreshCw, Search, Upload } from 'lucide-react';
 import type { Row } from '../shared/types.ts';
 import {
-  ARCHIVE_PAGE_SIZES, ARCHIVE_VIEWS, HEAT_LABELS, MANAGER_PATH, archiveTitle, heatSections, massRequestAlert, requestCreatedText, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
+  ARCHIVE_PAGE_SIZES, ARCHIVE_VIEWS, HEAT_LABELS, MANAGER_PATH, archiveTitle, heatRequestTitle, heatSections, massRequestAlert, requestCreatedText, requestNumberShown, weldRequests, MANAGER_PAGE_SIZES, MANAGER_TABS, MASS_REQUEST_TEXTS, NDT_RESULT_CHOICES, NDT_ROUNDS, NDT_DOCUMENT, PWHT_DOCUMENT, REQUEST_DOCUMENT, REQUEST_PREFIX, TRACERS_REQUIRED, currentRequest, inspectionCellState, workspaceCellRows,
   archiveViewLabel, filterManagerWelds, groupRequests, inspectionFileError, keepEligible, locationField, managerColumns, managerResults, managerWelds, massRequestPlan, monthRange, processField, requestArchiveArea, requestDetail, requestFlag, requestSelectable, resultLabel, roundErrors, roundLabel,
   weldResults, DEFECT_EMPTY_OPTION, defectOptionLabel, type ArchiveFilter, type ArchiveRow, type ArchiveView, type HeatType, type InspectionKind, type ManagerFilter, type ManagerTab, type MassRequestPlan, type RequestDetailLine, type RequestFilter, type RequestGroup, type RoundInput,
   VT_CHOOSE_REPORT, VT_DELETE_CONFIRM, VT_DOCUMENT, VT_FILTERS, VT_ITPS, VT_NEW_LABELS, VT_NOTHING_TO_DELETE, VT_NO_OPEN_REPORT, VT_PICKER_COLUMNS, VT_TABS, VT_TICK_ONE, VT_UPLOAD_COLUMNS, VT_UPLOAD_HELP,
@@ -278,9 +278,9 @@ type HeatDraft = { locationId: string; processId: string; requestId: string; dat
  * requests of that treatment), date, Rp/Nr. and, for PWHT, "PWHT 100%"; one PDF document, the stored documents with a delete box.
  * Save writes location and process on the weld and date, report number, 100% and the document on the result.
  */
-export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => void }) {
+export function PwhtWeldDialog({ weld, heat, onClose }: { weld: Row; /** The column it was opened from: the title says Pre-HT or PWHT; none = the combined title. */ heat?: HeatType; onClose: () => void }) {
   const { rows, canRecord, canRun } = useWorkspace(); const context = weldContext(rows, weld);
-  const sections = heatSections(weld);
+  const sections = heatSections(weld), title = heat ? heatRequestTitle(heat) : 'PWHT request';
   const requestsOf = (type: string) => weldRequests(rows.inspection_requests, weld.id, [type]).filter(row => row.status !== 'Cancelled' && String(row.number || '').trim());
   const [drafts, setDrafts] = useState<Record<string, HeatDraft>>(() => Object.fromEntries(sections.map(section => {
     const last = weldResults(rows.inspection_results, weld.id, [section.type])[0], request = requestsOf(section.type).find(row => row.id === last?.requestId) ?? requestsOf(section.type)[0];
@@ -305,10 +305,10 @@ export function PwhtWeldDialog({ weld, onClose }: { weld: Row; onClose: () => vo
       // The document goes on the PWHT report, else on the Pre-HT report (or the weld's newest stored one).
       const target = saved.records.find(row => row.type === 'PWHT') ?? saved.records[0] ?? weldResults(rows.inspection_results, weld.id, ['PWHT', 'PRE-HT'])[0];
       const failed = files.length && target ? await uploadFiles('inspection_results', target.id, files, PWHT_DOCUMENT) : 0;
-      return failed ? 'Saved; the document could not be uploaded.' : 'PWHT request saved.';
+      return failed ? 'Saved; the document could not be uploaded.' : `${title} saved.`;
     });
   }
-  return <Modal title="PWHT request" subtitle={`${context.projectName} / ${context.isoName} / ${weldName(weld)}`} onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
+  return <Modal title={title} subtitle={`${context.projectName} / ${context.isoName} / ${weldName(weld)}`} onClose={onClose}><form onSubmit={submit}><div className="modal-body"><Alert message={error}/>
     {sections.length ? sections.map(section => { const draft = drafts[section.type]; const key = section.type === 'PRE-HT' ? 'pre' : 'pwht'; return <section className="inspection-section" key={section.type} aria-label={section.label}><h3>{section.label}</h3><div className="form-grid">
       <Select id={`${key}-location`} label={`${section.label} location`} value={draft.locationId} onChange={locationId => change(section.type, { locationId })} options={catalog('pwht_locations', draft.locationId)} disabled={!editable} empty="------------"/>
       <Select id={`${key}-process`} label={`${section.label} process`} value={draft.processId} onChange={processId => change(section.type, { processId })} options={catalog('pwht_processes', draft.processId)} disabled={!editable} empty="------------"/>
@@ -374,21 +374,22 @@ export interface MassRequestFormProps {
   kind: 'NDT PRE' | 'NDT' | 'PWHT'; type: string; onType: (type: string) => void; plan: MassRequestPlan; processes: { id: string; label: string }[];
   chosen: string[]; onChosen: (ids: string[]) => void; note: string; onNote: (note: string) => void; include: boolean; onInclude: (value: boolean) => void;
   error: string; busy: boolean; onClose: () => void; onSubmit: (event: FormEvent) => void;
+  /** Opened from one Pre-HT / PWHT column: the title follows the chosen type; the combined entries keep "PWHT request". */ byColumn?: boolean;
 }
 /**
  * The print dialog of "Generate Mass … request" (reference pdfNdtRequestLanguageISO / pdfNdtPreRequestLanguageISO / pdfPwhtRequestLanguageISO):
- * the open processes of the ticked welds (NDT) or Pre-WHT / PWHT (radio), a note, the isometric option and Go. Go is the only way
+ * the open processes of the ticked welds (NDT) or Pre-HT / PWHT (radio), a note, the isometric option and Go. Go is the only way
  * a request is made: it creates the request and its PDF in one step.
  */
-export function MassRequestForm({ kind, type, onType, plan, processes, chosen, onChosen, note, onNote, include, onInclude, error, busy, onClose, onSubmit }: MassRequestFormProps) {
+export function MassRequestForm({ kind, type, onType, plan, processes, chosen, onChosen, note, onNote, include, onInclude, error, busy, onClose, onSubmit, byColumn }: MassRequestFormProps) {
   const ndt = kind !== 'PWHT';
-  const title = kind === 'NDT PRE' ? 'NDT-Pre Request' : kind === 'NDT' ? 'NDT Request' : 'PWHT request';
+  const title = kind === 'NDT PRE' ? 'NDT-Pre Request' : kind === 'NDT' ? 'NDT Request' : byColumn ? heatRequestTitle(type) : 'PWHT request';
   return <Modal title={title} onClose={onClose}><form onSubmit={onSubmit}><div className="modal-body"><Alert message={error}/>
     <div className="alert" role="note"><span>{massRequestAlert(kind)}</span></div>
     {ndt ? (plan.error ? <p className="muted" role="status">{plan.error}</p>
         : <fieldset className="field full-width inspection-processes"><legend>{kind === 'NDT PRE' ? 'NDT-Pre Process' : 'NDT Process'}</legend>{processes.map(process => <label key={process.id}><input type="checkbox" checked={chosen.includes(process.id)} onChange={e => onChosen(e.target.checked ? [...chosen, process.id] : chosen.filter(id => id !== process.id))}/>{process.label}</label>)}</fieldset>)
-      : <><fieldset className="field inspection-processes"><legend className="sr-only">Pre-HT or PWHT</legend>
-          <label><input type="radio" name="mass-pwht-type" checked={type === 'PRE-HT'} onChange={() => onType('PRE-HT')}/>Pre-WHT</label>
+      : <><fieldset className="field full-width inspection-processes inspection-heat-type"><legend className="sr-only">Pre-HT or PWHT</legend>
+          <label><input type="radio" name="mass-pwht-type" checked={type === 'PRE-HT'} onChange={() => onType('PRE-HT')}/>Pre-HT</label>
           <label><input type="radio" name="mass-pwht-type" checked={type === 'PWHT'} onChange={() => onType('PWHT')}/>PWHT</label></fieldset>
         {plan.error && <p className="muted" role="status">{plan.error}</p>}</>}
     {ndt && <div className="field full-width"><label htmlFor="mass-note">Note</label><textarea id="mass-note" rows={3} maxLength={2000} value={note} onChange={e => onNote(e.target.value)}/></div>}
@@ -417,7 +418,7 @@ export function MassRequestDialog({ kind, type: initial, weldIds, onClose }: Mas
       catch (failure) { return `${made} Its PDF could not be made (${(failure as ApiError).message || 'try again'}); print it from the request archive.`; }
     });
   }
-  return <MassRequestForm kind={kind} type={type} onType={setType} plan={plan} processes={processes} chosen={picked} onChosen={setChosen} note={note} onNote={setNote} include={include} onInclude={setInclude} error={error} busy={busy} onClose={onClose} onSubmit={submit}/>;
+  return <MassRequestForm kind={kind} type={type} onType={setType} plan={plan} processes={processes} chosen={picked} onChosen={setChosen} note={note} onNote={setNote} include={include} onInclude={setInclude} error={error} busy={busy} onClose={onClose} onSubmit={submit} byColumn={Boolean(initial)}/>;
 }
 
 /** Upload NDT on multiple welds: report number and result per round, and files. */
@@ -641,11 +642,11 @@ function VtArchiveTab({ reports, legacy, editable, busy, error, setError, act, o
 // ----- the cell's dialog and the isometric Options menu -------------------------------------------------------
 
 /** The dialog a weld-table cell opens. */
-export function InspectionDialog({ weld, kind, tracer = false, onClose }: { weld: Row; kind: InspectionKind; tracer?: boolean; onClose: () => void }) {
+export function InspectionDialog({ weld, kind, heat, tracer = false, onClose }: { weld: Row; kind: InspectionKind; heat?: HeatType; tracer?: boolean; onClose: () => void }) {
   if (tracer) return <TracerDialog weld={weld} onClose={onClose}/>;
   if (kind === 'NDT' || kind === 'NDT PRE') return <NdtWeldDialog weld={weld} type={kind} onClose={onClose}/>;
   if (kind === 'VI') return <VisualInspectionHub isoId={String(weld.isoId)} weldIds={[weld.id]} onClose={onClose}/>;
-  return <PwhtWeldDialog weld={weld} onClose={onClose}/>;
+  return <PwhtWeldDialog weld={weld} heat={heat} onClose={onClose}/>;
 }
 
 export interface InspectionMenuProps { isoId: string; weldIds: string[]; onClose: () => void; }

@@ -214,7 +214,7 @@ test('weld form layout: Add weld is one flat form with all four welders and with
   assert.deepEqual(labels('add'), [
     ['Weld no.', 'Weld type', 'Welder', 'Welder 3', 'Coating 1', 'Welding wire 1', 'Pos 1', 'Charge number 1'],
     ['WPS number', 'Welder 2', 'Welder 4', 'Coating 2', 'Welding wire 2', 'Pos 2', 'Charge number 2'],
-    ['Fitup date', 'Weld Date', 'Dia.', 'Length in mm', 'Spool', 'NDT Req. Pre', 'NDT Req.', 'Pre-WHT', 'PWHT Req.', 'Repair', 'Tracer'],
+    ['Fitup date', 'Weld Date', 'Dia.', 'Length in mm', 'Spool', 'NDT Req. Pre', 'NDT Req.', 'Pre-HT', 'PWHT Req.', 'Repair', 'Tracer'],
   ]);
   assert.ok(!labels('add').flat().includes('Multiple welders?'));
   // weld-iso-welds-016: the Edit-only fields and Weld process are not in Add weld; Edit has them (Weld process never).
@@ -880,9 +880,9 @@ test('E9: a fixed part placeholder shows as Material with "-" in Idx / Chg.No.; 
 
 // ---------------------------------------------------------------------------------------------------- w4-weld-form-rules
 
-test('Add weld calls the Pre-HT box Pre-WHT (bound to pwhtReqPre); Edit weld and Mass edit keep Pre-HT (weld-iso-welds-019)', () => {
+test('Add weld, Edit weld and Mass edit all call the box Pre-HT, never Pre-WHT (add is bound to pwhtReqPre)', () => {
   const add = weldFormLayout('add').flat().find(item => item.name === 'pwhtReqPre');
-  assert.deepEqual(add, { name: 'pwhtReqPre', label: 'Pre-WHT' }); assert.equal(ADD_PRE_HT_LABEL, 'Pre-WHT');
+  assert.deepEqual(add, { name: 'pwhtReqPre', label: 'Pre-HT' }); assert.equal(ADD_PRE_HT_LABEL, 'Pre-HT');
   assert.equal(weldFormLayout('edit').flat().find(item => item.name === 'pwhtReqPre')!.label, 'Pre-HT');
   assert.ok(massEditLabels().includes('Pre-HT') && !massEditLabels().includes('Pre-WHT'));
 });
@@ -1212,6 +1212,8 @@ test('D1–D9: the LISL table has one title, the client\'s headers, Pre-HT and P
   assert.ok(958 - total >= 2 * 70, `the Material columns keep at least 70 px each at 1280 px (fixed ${total} px)`);
   // The shared .select-cell pads 20 / 7 px with !important: this table overrides it, or the 30 px select column grows to 36 px and the box scrolls sideways.
   assert.match(readFileSync(new URL('../client/styles.css', import.meta.url), 'utf8'), /\.select-cell\{width:40px;min-width:40px;padding-left:20px!important;padding-right:7px!important\}/, 'the shared select cell is unchanged for the other tables');
+  assert.match(css, /\.weld-table \.weld-no \{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/, 'weld numbers never break inside');
+  assert.match(css, /\.weld-table \.weld-stamp \{[^}]*white-space: nowrap;/, 'one welder stamp never breaks inside');
   const select = /\.weld-table \.select-cell \{([^}]*)\}/.exec(css)?.[1] ?? '';
   assert.match(select, /padding-left: 2px !important;/); assert.match(select, /padding-right: 2px !important;/);
   assert.ok(2 + 2 + 13 <= widths.get('select')!, 'the checkbox and its padding fit the select column');

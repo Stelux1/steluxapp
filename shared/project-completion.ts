@@ -86,7 +86,7 @@ function activityCard(phase: PhaseProgress, activity: PhaseProgress['activities'
 }
 /**
  * The chip of a phase: "Weights total: 100 %" while every activity is measured; otherwise the weights that count, e.g.
- * "Weights counted: 90 % of 100 %" when Supports (10 %) has nothing to measure, so the contributions add up to the phase %.
+ * "Weights counted: 90 % of 100 %" when Supports (10 %) has nothing to measure. The contributions then add up to the phase % times the counted weight / 100 (e.g. 80 % x 90 / 100 = 72 points), not to the phase % itself.
  */
 export function weightsChip(activities: Pick<PhaseProgress['activities'][number], 'weight' | 'inScope'>[]): string {
   const total = activities.reduce((sum, activity) => sum + activity.weight, 0), counted = activities.reduce((sum, activity) => sum + (activity.inScope ? activity.weight : 0), 0);

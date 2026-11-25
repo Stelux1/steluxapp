@@ -363,7 +363,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason, onDeleted }
     const options = welderOptionList(welderFor(name), mode);
     return <SelectField key={name} label={label} value={values[name]} error={e[name] && !missing[name] ? e[name] : undefined} placeholder={mode === 'add' && values.wpsId ? WELDER_PLACEHOLDER.add : WELDER_PLACEHOLDER.edit} placeholderDisabled={mode === 'add' && Boolean(values.wpsId)} disabled={welderFieldsDisabled(data.site, values.wpsId) && mode === 'add'} options={options} groups={welderGroups(options)} onChange={value => chooseWelder(name, value)}/>;
   };
-  // Labels of the check boxes (Add weld says Pre-WHT): defined before the columns that use them while rendering.
+  // Labels of the check boxes (all spell it Pre-HT): defined before the columns that use them while rendering.
   const flagLabel = (name: string) => weldFormLayout(mode).flat().find(item => item.name === name)?.label ?? name;
   const columns: Record<string, ReactNode> = {
     weldNo: <TextField label="Weld no." required value={values.weldNo} error={e.weldNo} onChange={chooseWeldNo}/>,
@@ -620,7 +620,7 @@ function WeldTable({ iso, pageItem, layout }: WeldsPanelProps) {
   const unlocked = showDeleted ? [] : listed.filter(weld => !locks.get(weld.id)!.locked);
   // Checked welds still go to the NDT / VT / PWHT actions; Mass edit and Delete refuse a checked weld locked by its NDT request.
   const ndtFrozen = checked.find(frozen);
-  const editChecked = (open: () => void) => { if (!checked.length) notify(MASS_EDIT_SELECT_NOTHING); else if (ndtFrozen) notify(ndtLockRefusal(ndtFrozen.weldNo)); else open(); };
+  const editChecked = (open: () => void) => { if (!checked.length) notify(MASS_EDIT_SELECT_NOTHING, 'warning'); else if (ndtFrozen) notify(ndtLockRefusal(ndtFrozen.weldNo), 'warning'); else open(); };
   const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canOpen = canEdit || NDT_TYPES.some(type => canRun('inspection-upload', { type })), canMass = canRun('mass-edit-welds'), canDelete = canRecord('welds', 'delete');
   async function toggleDeleted() { setShowDeleted(value => !value); setSelected([]); try { await refresh(); } catch { /* the workspace shows its own connection error */ } }
   const sideCells = (weld: Row, side: 1 | 2) => {
@@ -669,9 +669,9 @@ function WeldTable({ iso, pageItem, layout }: WeldsPanelProps) {
         const readOnly = lock.locked || !(ndt.editable && canEdit);
         const editLabel = readOnly ? `Open weld ${str(weld.weldNo)} (read-only${lock.locked ? `: ${lock.reason}` : ndt.locked ? '; NDT results can be attached' : ''})` : `Edit weld ${str(weld.weldNo)}`;
         return <tr key={weld.id}>
-          <td className="weld-no">{canOpen && !showDeleted ? <button type="button" className="record-link" title={readOnly ? editLabel : undefined} onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
+          <td className="weld-no" title={str(weld.weldNo)}>{canOpen && !showDeleted ? <button type="button" className="record-link" title={readOnly ? editLabel : str(weld.weldNo)} onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
           <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}`}>{abbreviation}</span> : <span className="muted">{LISL_EMPTY}</span>}</td>
-          <td className="weld-wrap">{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{LISL_EMPTY}</span>}</td>
+          <td className="weld-stamps" title={stamps.map(stamp => `${stamp.code} ${stamp.name}`.trim()).join(', ') || undefined}>{stamps.length ? stamps.map((stamp, index) => <Fragment key={index}>{index ? ', ' : ''}<span className="weld-stamp" title={stamp.name}>{stamp.code}</span></Fragment>) : <span className="muted">{LISL_EMPTY}</span>}</td>
           <td><InspectionCell weld={weld} kind="VI"/></td><td><InspectionCell weld={weld} kind="NDT PRE"/></td><td><InspectionCell weld={weld} kind="NDT"/></td>
           {HEAT_TYPES.map(heat => <td key={heat}><InspectionCell weld={weld} kind="PWHT" heat={heat}/></td>)}
           {sideCells(weld, 1)}{sideCells(weld, 2)}

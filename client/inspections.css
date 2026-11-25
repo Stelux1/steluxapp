@@ -55,6 +55,9 @@
 .inspection-weld-picker legend, .inspection-processes legend { font-size: 13px; font-weight: 600; padding: 0 4px; }
 .inspection-pick-all { font-weight: 500; }
 .inspection-processes { border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.inspection-heat-type { min-width: 0; flex-wrap: nowrap; }
+.inspection-heat-type label { flex: 0 0 auto; white-space: nowrap; }
+.inspection-heat-type label input { flex: none; }
 .inspection-tabs { padding: 0 4px 10px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
 .inspection-tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
 .inspection-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

@@ -170,6 +170,8 @@ export const ARCHIVE_TITLES: Record<InspectionKind, string> = { VI: '', 'NDT PRE
 export const columnRequestType = (kind: InspectionKind, heat?: HeatType): string => kind === 'PWHT' ? heat ?? 'PWHT' : kind;
 /** Title of a weld's archive dialog: "Pre-HT archive" / "PWHT archive" for one heat column, the kind's title otherwise. */
 export const archiveTitle = (kind: InspectionKind, heat?: HeatType) => kind === 'PWHT' && heat ? `${HEAT_LABELS[heat]} archive` : ARCHIVE_TITLES[kind];
+/** Title of the Pre-HT / PWHT request dialogs of one column: "Pre-HT request" for PRE-HT, "PWHT request" otherwise. */
+export const heatRequestTitle = (type?: string) => type === 'PRE-HT' ? 'Pre-HT request' : 'PWHT request';
 const pad = (value: number) => String(value).padStart(2, '0');
 /** "dd.mm.yyyy. hh:mm" of the moment a request was made (its creation time); the request date alone when that is missing. */
 export function archiveStamp(request: Row): string {
@@ -178,8 +180,8 @@ export function archiveStamp(request: Row): string {
   const [year, month, day] = textOf(request.date).split('-');
   return year && month && day ? `${day}.${month}.${year}.` : '';
 }
-/** File name of a request's PDF: `<yyyymmdd>_<number>-NDT-Request.pdf`, `-NDT-RequestPre.pdf` for NDT Pre, `-PWHT-Request.pdf` for Pre-HT / PWHT. */
-export const requestDocumentName = (request: Row) => `${textOf(request.date).replace(/-/g, '')}_${textOf(request.number)}-${request.type === 'NDT PRE' ? 'NDT-RequestPre' : request.type === 'NDT' ? 'NDT-Request' : 'PWHT-Request'}.pdf`;
+/** File name of a request's PDF: `<yyyymmdd>_<number>-NDT-Request.pdf`, `-NDT-RequestPre.pdf` for NDT Pre, `-Pre-HT-Request.pdf` for Pre-HT, `-PWHT-Request.pdf` for PWHT. */
+export const requestDocumentName = (request: Row) => `${textOf(request.date).replace(/-/g, '')}_${textOf(request.number)}-${request.type === 'NDT PRE' ? 'NDT-RequestPre' : request.type === 'NDT' ? 'NDT-Request' : request.type === 'PRE-HT' ? 'Pre-HT-Request' : 'PWHT-Request'}.pdf`;
 /** The requests a weld is on in a column (cancelled and numberless ones leave out), one row per request number, newest first. */
 export function weldArchive(weld: Row, kind: InspectionKind, rows: Pick<CellRows, 'requests' | 'attachments'>, heat?: HeatType): WeldArchiveRow[] {
   if (kind === 'VI') return [];

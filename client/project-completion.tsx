@@ -73,17 +73,20 @@ export function ProjectCompletionPanel({ progress, loading = false, error = '' }
   </section>;
 }
 
-/** Loading while the summaries are missing: always in the pilots profile (they follow the rows), elsewhere only until the isometrics arrive. */
-export const completionLoading = (summaries: boolean, isometrics: boolean, pilots: boolean) => !summaries && (pilots || !isometrics);
+/**
+ * Loading only while the workspace itself is still being (re)loaded (a new main project was chosen and its rows have not arrived), never merely because
+ * the summaries are absent: a pilots session with no Core chosen never receives them, so once the workspace has loaded they read "not available".
+ */
+export const completionLoading = (summaries: boolean, workspaceLoading: boolean) => !summaries && workspaceLoading;
 
 /** The dashboard's first section: the whole main project (every sub-project), from the workspace's isometrics and their summaries. */
 export function ProjectCompletionSection() {
-  const { rows, isoSummaries, hasFeature } = useWorkspace();
+  const { rows, isoSummaries, loading } = useWorkspace();
   const result = useMemo(() => {
     if (!isoSummaries) return { progress: null as ProjectProgress | null, error: '' };
     try { return { progress: mainProjectProgress(rows.isometrics, isoSummaries), error: '' }; }
     catch { return { progress: null as ProjectProgress | null, error: 'Project progress could not be calculated. Reload the page to try again.' }; }
   }, [rows.isometrics, isoSummaries]);
-  // The pilots profile always sends iso summaries: until they arrive the section is loading, not "not available".
-  return <ProjectCompletionPanel progress={result.progress} error={result.error} loading={completionLoading(Boolean(isoSummaries), Boolean(rows.isometrics), hasFeature('pilots'))}/>;
+  // Summaries absent: loading while the workspace reloads, "not available" once it has loaded without them (no Core chosen).
+  return <ProjectCompletionPanel progress={result.progress} error={result.error} loading={completionLoading(Boolean(isoSummaries), loading)}/>;
 }

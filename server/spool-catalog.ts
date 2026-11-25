@@ -1,7 +1,7 @@
 import { CATALOG_SITES, enabledOnSite } from '../shared/weld-catalogs.ts';
 import { SPOOL_LETTERS, SPOOL_NAMES, firstUseSpool, missingSpoolNames, spoolChoiceError, type SpoolImportEntry } from '../shared/spool-catalog.ts';
 import { AppError, SYSTEM, type Actor, type Store } from './store.ts';
-import { setAvailability } from './weld-catalogs.ts';
+import { availabilityLinks, reloadAvailabilityLinks, setAvailability, type AvailabilityLinks } from './weld-catalogs.ts';
 import { withEveryMainProject } from './site-scope.ts';
 
 /**
@@ -51,11 +51,12 @@ export function seedSpoolNames(store: Store, options: { dryRun?: boolean; actor?
 }
 
 /** The catalog record a name stands for: the first live one of that exact name, else a new one that is off on every other main project (it is not enabled here yet). */
-function catalogRecordOf(store: Store, name: string, abbreviation: string, siteId: string, actor: Actor): string {
+function catalogRecordOf(store: Store, name: string, abbreviation: string, siteId: string, actor: Actor, links?: AvailabilityLinks): string {
   const found = store.list(SPOOL_NAMES).find(row => String(row.name ?? '').trim() === name);
   if (found) return found.id;
   const created = store.create(SPOOL_NAMES, { name, abbreviation }, actor);
-  for (const site of store.list('sites', true)) if (site.id !== siteId) setAvailability(store, SPOOL_NAMES, created.id, site.id, false, SYSTEM);
+  if (links) reloadAvailabilityLinks(store, SPOOL_NAMES, links);
+  for (const site of store.list('sites', true)) if (site.id !== siteId) setAvailability(store, SPOOL_NAMES, created.id, site.id, false, SYSTEM, links);
   return created.id;
 }
 
@@ -66,9 +67,9 @@ function catalogRecordOf(store: Store, name: string, abbreviation: string, siteI
  */
 export function applyDefaultSpoolNames(store: Store, siteId: string, actor: Actor): void {
   withEveryMainProject(store, () => {
-    const keep = new Set<string>();
-    for (const letter of SPOOL_LETTERS) { const id = catalogRecordOf(store, letter, letter, siteId, actor); keep.add(id); setAvailability(store, SPOOL_NAMES, id, siteId, true, SYSTEM); }
-    for (const row of store.list(SPOOL_NAMES, true)) if (!keep.has(row.id)) setAvailability(store, SPOOL_NAMES, row.id, siteId, false, SYSTEM);
+    const keep = new Set<string>(), links = availabilityLinks(store, SPOOL_NAMES);
+    for (const letter of SPOOL_LETTERS) { const id = catalogRecordOf(store, letter, letter, siteId, actor, links); keep.add(id); setAvailability(store, SPOOL_NAMES, id, siteId, true, SYSTEM, links); }
+    for (const row of store.list(SPOOL_NAMES, true)) if (!keep.has(row.id)) setAvailability(store, SPOOL_NAMES, row.id, siteId, false, SYSTEM, links);
   });
 }
 

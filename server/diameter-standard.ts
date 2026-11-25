@@ -2,7 +2,7 @@ import { CATALOG_SITES, enabledOnSite } from '../shared/weld-catalogs.ts';
 import { DIAMETER_CHART, DIAMETER_STANDARDS, chartRecord, diameterStandard, type DiameterStandard } from '../shared/diameter-standard.ts';
 import type { Row } from '../shared/types.ts';
 import { SYSTEM, type Actor, type Store } from './store.ts';
-import { setAvailability } from './weld-catalogs.ts';
+import { availabilityLinks, reloadAvailabilityLinks, setAvailability, type AvailabilityLinks } from './weld-catalogs.ts';
 import { withEveryMainProject } from './site-scope.ts';
 
 /**
@@ -12,19 +12,20 @@ import { withEveryMainProject } from './site-scope.ts';
  */
 
 /** The live record the chart size stands for (first of that exact name; `DN50` written without the space counts as `DN 50`), else a new one that is off on every other main project. */
-function chartRecordOf(store: Store, index: number, standard: DiameterStandard, siteId: string, actor: Actor): string {
+function chartRecordOf(store: Store, index: number, standard: DiameterStandard, siteId: string, actor: Actor, links: AvailabilityLinks): string {
   const size = DIAMETER_CHART[index], record = chartRecord(size, standard, index), name = String(record.diameter);
   const found = store.list('diameters').find(row => String(row.diameter ?? '').trim() === name);
   if (found) return found.id;
   const created = store.create('diameters', record, actor);
-  for (const site of store.list('sites', true)) if (site.id !== siteId) setAvailability(store, 'diameters', created.id, site.id, false, SYSTEM);
+  reloadAvailabilityLinks(store, 'diameters', links);
+  for (const site of store.list('sites', true)) if (site.id !== siteId) setAvailability(store, 'diameters', created.id, site.id, false, SYSTEM, links);
   return created.id;
 }
 
 /** Switch the 36 sizes of a standard on for a main project (creating the missing records); returns their ids. */
-function enableChart(store: Store, siteId: string, standard: DiameterStandard, actor: Actor): Set<string> {
+function enableChart(store: Store, siteId: string, standard: DiameterStandard, actor: Actor, links: AvailabilityLinks = availabilityLinks(store, 'diameters')): Set<string> {
   const ids = new Set<string>();
-  for (let index = 0; index < DIAMETER_CHART.length; index++) { const id = chartRecordOf(store, index, standard, siteId, actor); ids.add(id); setAvailability(store, 'diameters', id, siteId, true, SYSTEM); }
+  for (let index = 0; index < DIAMETER_CHART.length; index++) { const id = chartRecordOf(store, index, standard, siteId, actor, links); ids.add(id); setAvailability(store, 'diameters', id, siteId, true, SYSTEM, links); }
   return ids;
 }
 
@@ -34,8 +35,9 @@ function enableChart(store: Store, siteId: string, standard: DiameterStandard, a
  */
 export function applyDefaultDiameters(store: Store, siteId: string, actor: Actor): void {
   withEveryMainProject(store, () => {
-    const keep = enableChart(store, siteId, diameterStandard(store.get('sites', siteId, true)), actor);
-    for (const row of store.list('diameters', true)) if (!keep.has(row.id)) setAvailability(store, 'diameters', row.id, siteId, false, SYSTEM);
+    const links = availabilityLinks(store, 'diameters');
+    const keep = enableChart(store, siteId, diameterStandard(store.get('sites', siteId, true)), actor, links);
+    for (const row of store.list('diameters', true)) if (!keep.has(row.id)) setAvailability(store, 'diameters', row.id, siteId, false, SYSTEM, links);
   });
 }
 

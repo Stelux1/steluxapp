@@ -21,7 +21,7 @@ import {
   HEAT_LABELS, HEAT_TYPES, KIND_LABELS, heatRequired, ARCHIVE_TITLES, archiveTitle, columnRequestType, MANAGER_PATH, MANAGER_TABS, cellStatusTitle, heatSections, viCellText, weldArchive, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
   resultLabel, roundErrors, roundLabel, storedResult, tracerError, tracerSummary, inspectionFileError,
   naBlockErrors, roundsHaveNa, roundLockedError, autoReweld, notAccepted, repairDue, repairsOf, tracerProposal, tracerDetail, TRACER_DETAIL_TEXTS,
-  ARCHIVE_PAGE_SIZES, MANAGER_PAGE_SIZES, MASS_REQUEST_TEXTS, PWHT_DOCUMENT, archiveViewLabel, filterManagerWelds, groupRequests, keepEligible, managerResults, massRequestPlan, monthRange, nextRequestNumber, openProcessIds, requestNumberShown, requestSelectable,
+  ARCHIVE_PAGE_SIZES, heatRequestTitle, requestDocumentName, MANAGER_PAGE_SIZES, MASS_REQUEST_TEXTS, PWHT_DOCUMENT, archiveViewLabel, filterManagerWelds, groupRequests, keepEligible, managerResults, massRequestPlan, monthRange, nextRequestNumber, openProcessIds, requestNumberShown, requestSelectable,
 } from '../shared/inspections.ts';
 import { MassRequestForm, TracerDetailBody, weldingProcessText } from '../client/inspections.tsx';
 import type { Row, User } from '../shared/types.ts';
@@ -302,8 +302,13 @@ test('the mass request is made only by the print dialog\'s Go: one button, no we
   assert.match(html, /<button class="btn primary" disabled="">Go<\/button>/, 'Go stays disabled until a process is ticked');
   assert.doesNotMatch(html, /Create request|Request date|NDT location|PWHT location|PWHT process|All welds/);
   const pwht = form('PWHT', massRequestPlan('PWHT', [weld('h', { pwhtReq: true })], [], [], []), []);
-  assert.match(pwht, />PWHT request</); assert.match(pwht, /Pre-WHT/); assert.doesNotMatch(pwht, />Note</);
+  assert.match(pwht, />PWHT request</); assert.match(pwht, /Pre-HT/); assert.doesNotMatch(pwht, /Pre-WHT/); assert.doesNotMatch(pwht, />Note</);
   assert.match(pwht, /<button class="btn primary">Go<\/button>/);
+  const column = (type: string) => renderToStaticMarkup(createElement(MassRequestForm, { kind: 'PWHT', type, byColumn: true, onType: () => {}, plan: massRequestPlan(type, [weld('h', { pwhtReqPre: true, pwhtReq: true })], [], [], []), processes: [], chosen: [], onChosen: () => {}, note: '', onNote: () => {}, include: false, onInclude: () => {}, error: '', busy: false, onClose: () => {}, onSubmit: () => {} }));
+  assert.match(column('PRE-HT'), />Pre-HT request</); assert.match(column('PWHT'), />PWHT request</);
+  assert.equal(heatRequestTitle('PRE-HT'), 'Pre-HT request'); assert.equal(heatRequestTitle(), 'PWHT request');
+  assert.equal(requestDocumentName(row('p', { date: '2024-10-11', number: 'R00006', type: 'PRE-HT' })), '20241011_R00006-Pre-HT-Request.pdf');
+  assert.equal(requestDocumentName(row('p', { date: '2024-10-11', number: 'R00006', type: 'PWHT' })), '20241011_R00006-PWHT-Request.pdf');
 });
 
 test('changing Treatment or Examination keeps the ticked welds that are still offered (scn-SA-D4)', () => {

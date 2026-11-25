@@ -121,12 +121,12 @@ function reportStandard(items: FlangeItem[], site: Row | undefined): string {
 export const FLANGE_PDF_COLUMNS: { header: string | string[]; width: number; cell(item: FlangeItem): string }[] = [
   { header: 'Flange ID', width: 7, cell: item => text(item.row.flange_id) },
   { header: 'Iso number', width: 7, cell: item => item.isoNo },
-  { header: 'Asset tag', width: 7, cell: item => flangeAssetTag(item.row) },
+  { header: 'Asset tag', width: 6, cell: item => flangeAssetTag(item.row) },
   { header: ['Flange', 'size'], width: 5, cell: item => text(item.row.flange_size) },
   { header: ['Flange', 'rating'], width: 5, cell: item => text(item.row.flange_rating) },
   { header: ['Gasket', 'type'], width: 7, cell: item => text(item.row.gasket_type) },
   { header: ['Stud bolts', '(dim. x no.)'], width: 8, cell: item => [text(item.row.studbolt_afmeting), number(item.row.aantal_studbolts) && `x ${number(item.row.aantal_studbolts)}`].filter(Boolean).join(' ') },
-  { header: ['Tightening', 'standard'], width: 7, cell: item => item.standard },
+  { header: ['Tightening', 'standard'], width: 9, cell: item => item.standard },
   { header: ['Torque', 'wrench'], width: 6, cell: item => [text(item.row.torque_wrench_type), text(item.row.torque_wrench_id)].filter(Boolean).join(' ') },
   { header: ['First', 'pass (Nm)'], width: 4.5, cell: item => number(item.row.first_pass_nm) },
   { header: ['Second', 'pass (Nm)'], width: 4.5, cell: item => number(item.row.second_pass_nm) },
@@ -135,7 +135,7 @@ export const FLANGE_PDF_COLUMNS: { header: string | string[]; width: number; cel
   { header: ['Tightening', 'date'], width: 5.5, cell: item => printDate(item.row.tightning_date) },
   { header: 'Operator', width: 5.5, cell: item => text(item.row.operator) },
   { header: ['Report', 'no.'], width: 5, cell: item => text(item.row.report_nr) },
-  { header: ['Inspection', 'result'], width: 7, cell: item => [text(item.row.insp_result), text(item.row.rejection_type) && `(${text(item.row.rejection_type)})`].filter(Boolean).join(' ') },
+  { header: ['Inspection', 'result'], width: 6, cell: item => [text(item.row.insp_result), text(item.row.rejection_type) && `(${text(item.row.rejection_type)})`].filter(Boolean).join(' ') },
   { header: 'Status', width: 5, cell: item => item.status },
 ];
 

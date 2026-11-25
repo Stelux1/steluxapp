@@ -316,6 +316,8 @@
   .auth-form>p { font-size: 14px; }
   .network-error { left: 16px; right: 16px; }
 }
+/* A toast for something that did not happen (nothing selected, a refusal): a warning mark instead of the tick. */
+.toast.toast-warning > span { color: #f5b942; font-weight: 700; }
 @media print {
   .skip-link, .table-scroll-hint, .dropdown-panel, .applied-filters, .mobile-nav-close, .search-results-count { display: none !important; }
 }

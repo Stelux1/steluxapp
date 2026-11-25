@@ -32,7 +32,7 @@
 .progress-totals li.idle { border-left-color: var(--line); }
 
 /* A checkbox with a hint or an error stacks them under its label. */
-.checkbox-field:has(> small) { flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; padding-top: 6px; }
+.checkbox-field:has(> small) { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 3px; padding-top: 6px; }
 .checkbox-field > small { margin-left: 26px; }
 
 /* General data → Project sites and Attachment names sorting. */
@@ -63,8 +63,15 @@
 .main-project-list .data-table th[scope="row"] { font-weight: 600; color: var(--ink); text-align: left; }
 .main-project-list .numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .main-project-list-name { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The shared table never wraps (nowrap): in this list the long text columns wrap and the figures stay narrow, so the table fits its box and the action column stays in view. */
+.main-project-list .data-table { white-space: normal; }
+.main-project-list .data-table th, .main-project-list .data-table td { padding-inline: 10px; }
+.main-project-list .data-table th.numeric { white-space: normal; }
+.main-project-list .data-table th[scope="row"] { overflow-wrap: anywhere; min-width: 120px; }
+.main-project-list-address { min-width: 140px; max-width: 280px; overflow-wrap: anywhere; }
+.main-project-list .data-table td:last-child { width: 1%; white-space: nowrap; }
 .main-project-list-muted { color: var(--muted); }
-.main-project-list-wdi { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.main-project-list-wdi { display: flex; align-items: center; gap: 8px; min-width: 96px; }
 .main-project-list-wdi .progress { flex: 1; }
 .main-project-list-wdi > span { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); min-width: 4ch; text-align: right; }
 .main-project-list-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
@@ -105,5 +112,11 @@
   .iso-switcher select { flex: 1; max-width: none; min-width: 0; }
   .iso-topline-actions { width: 100%; margin-left: 0; }
   .iso-topline-actions > .btn, .iso-topline-actions > .dropdown { flex: 1 1 auto; }
+}
+/* Phones: row 1 = main project › sub-project (no trailing separator), row 2 = the isometric switcher at full width; the "› LISL" tail goes (the panel title says it). */
+@media (max-width: 600px) {
+  .iso-crumbs li:nth-last-child(3)::after, .iso-crumbs li.iso-switcher::after { content: none; }
+  .iso-crumbs li.iso-switcher { flex: 1 1 100%; max-width: 100%; margin-top: 2px; }
+  .iso-crumbs li[aria-current="page"] { display: none; }
 }
 @media print { .iso-topline-actions, .iso-switcher .icon-btn, .iso-strips { display: none; } }

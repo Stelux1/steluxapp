@@ -429,8 +429,8 @@ export function addNewEnabled(weldNo: unknown, original: unknown, existing: unkn
   return current !== '' && current !== text(original) && !existing.map(text).includes(current);
 }
 
-/** The reference's Add weld calls the Pre-HT required box 'Pre-WHT' (Edit weld and Mass edit say 'Pre-HT'); it is bound to Pre-HT required (pwhtReqPre). */
-export const ADD_PRE_HT_LABEL = 'Pre-WHT';
+/** Add weld, Edit weld, Mass edit, the LISL column and the request dialog all spell the box 'Pre-HT'; in Add weld it is bound to Pre-HT required (pwhtReqPre). */
+export const ADD_PRE_HT_LABEL = 'Pre-HT';
 export interface WeldFormField { name: string; label: string; }
 const field = (name: string, label: string): WeldFormField => ({ name, label });
 /**

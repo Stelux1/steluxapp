@@ -119,6 +119,39 @@ Klijent je odgovorio na skraćenu verziju pitanja (`pitanja- Odgovori_171126.doc
 
 Za sastanak („meet"): 4 (field pick lista), 5, 6, 7c, 9, 10, 12, 13, 15c/f, 21, 22, 24, 25, 28, 32, 35, 36, 38; od klijenta čekamo CSV izvoze izometrija i sertifikata iz Websonika i primere PDF-ova izveštaja.
 
+### Forma projekta, dashboard, meni, izometrija / LISL (poruke od 22.11.2026, 20 slika i 2 videa)
+
+| Zahtev | Urađeno |
+|---|---|
+| Kreiranje projekta: prva četiri polja Name, Address, Zip code, City; „Residence" → „City"; bez Phone i Email address. | Forma Add / Edit main project počinje sa ta četiri polja tim redom; Phone i Email address nisu u formi. Lista Project sites ima kolone Name, Address, Zip code, City (i izvoz CSV / Excel). |
+| Flange tightening standard izbaciti iz projekta, birati po prirubnici u Flange Management. | Polje nije u formi projekta. Svaka prirubnica ima „Tightening standard" (iste tri opcije); izveštaj prirubnica štampa standard svake prirubnice; stare prirubnice čitaju vrednost svog glavnog projekta. |
+| Ukloniti Defect norm, Repair performance, NDT measurement, IRN Code, Archived. | Nisu u formi. Važe podrazumevane vrednosti: NDT po inčima, Repair performance 5 %, bez norme. Projekat se arhivira preko Delete na listi (Show archived sites ga vraća). |
+| Gotovost: fiksne težine, bez izmene u aplikaciji. | Shop: MTO / Cut-Bev / Fit-up 40, Welding 40, NDT 10, Fabrication Book 10. Field: Spools erection / Fit-up 30, Supports erection 10, Welding 20, NDT 10, Pressure tests 15, Reinstatement 5, Final documentation 10. Projekat = 50 % Shop + 50 % Field. Menja se samo u kodu (`shared/progress-model.ts`). Forma ih prikazuje samo za čitanje. Faza „Site" više ne postoji. |
+| ISO Book: bez izbora u projektu, bira se pri štampi iz izometrije; precrtane stavke izbaciti; „Weld record" → „Weld Label" (QR po zavaru). | Odeljak ISO Book nije u formi; podešavanja projekta više ne isključuju delove. Iz ISO Book-a su izbačeni LISL, LISL V2, LISL A3, [MV], [WQ], [GU Rev 2], [ISS], [GU Rev 3], [WQ ver 2], Task sheet i ITP 2 documents. „Weld Label" je nov deo knjige: jedna nalepnica po zavaru (broj zavara, ISO, Spool, Main project, QR kod koji otvara izometriju) — prva verzija, detalji po dogovoru. |
+| Memo templates ukloniti. | Odeljak nije u formi. |
+| Dashboard: PIE posebno Shop i posebno Field; jedan PIE za ceo projekat; filteri; ukloniti Inspection compliance. | „Project completion": jedan PIE za ceo glavni projekat sa udelima Shop i Field, prekidač Prefabrication / Erection i po jedan PIE za svaku aktivnost (ostvarenje, težina, doprinos). Filteri: „Sub-project", „ITP", „Custom field"; uklonjeni „NDT process group" i „NDT process". Blok Inspection compliance sa trakom (Manage ITP/KNR, View) je uklonjen. |
+| General data ukloniti iz menija. | Grupe nema. Project sites se otvara preko „Change site". Companies, Attachment names i Documents su pod System (vidi pitanje 3). |
+| Switch core kao u videu. | „Switch" otvara lepezu: Weld Core (Active), Material Core, Tools & Equipment / Finance & Calculation / Teams Core (Coming soon). |
+| Izometrija: bez kartica Welds / Spools / Documents, naslov „LISL"; bez pomeranja zavara gore / dole; Wdr → WD, VI → VT, S → Spool; Pre-HT i PWHT odvojene kolone; bez vodoravnog skrola; bez Search; bez katanca; bez korpe na zavaru; gornji deo po skici. | Sve urađeno. Spools i Drawing documents (Upload document) su u meniju Options. „Delete weld" je u Edit weld (sa potvrdom; Show deleted welds ga vraća). Gornji deo: četiri kartice (Identification, Compliance, Technical, Progress & Status), LISL zauzima ostatak ekrana; ostalo (blokade, kvalitet, faze, izdavanja) je pod „Details" i u Options. |
+| (usput, nije traženo) | Add main project je na popunjenoj bazi trajao preko minut i za to vreme blokirao server (dodela 36 prečnika i slova A–Z čitala je sve veze iznova za svaki zapis). Sada traje oko sekunde. |
+
+Pitanja uz ove izmene:
+
+1. **Kako se meri svaka aktivnost gotovosti.** Uzeli smo: MTO / Cut-Bev / Fit-up = inči Shop zavara sa Fitup datumom (zavaren zavar se računa kao fitovan); Welding = zavarivač + datum; NDT = prihvaćen NDT; Fabrication Book = završen Prefab release; Spools erection / Fit-up = isto za Field zavare; Supports erection = uneti komadi prema MTO; Pressure tests = hydrotest; Reinstatement = udeo prirubnica izometrije sa statusom Finished (bez prirubnica prati Pressure tests); Final documentation = završen Field release. Da li je to dobro?
+2. **Aktivnost koja nema šta da se meri** (npr. izometrija bez oslonaca u MTO) se ne računa, a ostale težine faze se srazmerno uvećavaju. Ili treba da se računa kao 0 %?
+3. **Companies** (pitanje sa slike 14): to su firme — naručilac projekta, poslodavac zavarivača, izvođač na punch listi, firma u potpisima. Zato nije obrisano nego je pod System. Attachment names su nazivi priloga izometrije (i delovi ISO Book-a), Documents je spisak svih otpremljenih fajlova. Da li je System dobro mesto? Šta znači znak pitanja kod kolone Address?
+4. **Katanac**: uklonjen je iz tabele, ali pravila ostaju na serveru (zavar završene faze i zavar sa NDT zahtevom menja samo administrator, uz komentar); takav zavar se otvara samo za čitanje, sa razlogom. Da li i sama pravila treba ukinuti i prepustiti sve dozvolama profila?
+5. **Precrtane LISL varijante** su izbačene iz ISO Book-a. U meniju Reports na izometriji i dalje postoje kao pojedinačni izveštaji. Da li i tamo da se uklone?
+6. **Task sheet** je bila naslovna strana ISO Book-a sa sadržajem. Bez nje knjiga nema naslovnu. Da li naslovna treba da se štampa uvek, bez izbora?
+7. **Weld Label**: veličina nalepnice (sada 2 × 7 na A4), koja polja i šta QR kod otvara.
+8. **„Custom field"**: sada je to dosadašnji IRN izometrije pod novim imenom na dashboardu i na izometriji. Na ostalim mestima (Iso overview, Fill IRN) i dalje piše IRN. Da li svuda preimenovati, i da li polje treba da dobije naziv koji korisnik sam zadaje?
+9. **Redosled zavara**: bez kolone za pomeranje redosled se više ne može menjati; ostaje zatečeni. Da li LISL uvek da se ređa po broju zavara?
+10. **Memo templates**: bez odeljka u projektu šabloni se više nigde ne uređuju (dugmad šablona u memo polju izometrije i dalje rade sa postojećim). Da li je to u redu?
+11. **„Mass edit welds" i „Add welds"** su u meniju Options da bi gornja linija ostala čista. Da li treba da budu stalna dugmad?
+12. **Manage ITP/KNR** je otišao sa dashboarda; ITP-ovi se uređuju na stranici ITPs (bez Archive / Restore, samo Delete). Predlozi tracera iz bloka Inspection compliance više nemaju ulaz. Da li to treba negde da ostane?
+13. **Material Core**: i tamo je uklonjena grupa General data; Storehouses i Documents su pod System. Da li Storehouses treba pod Logistic?
+
+
 ---
 
 ## Deo 1 — Pitanja za klijenta (srpski)

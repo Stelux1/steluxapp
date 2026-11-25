@@ -57,10 +57,23 @@ export function enablementErrors(store: Store, key: string, data: Record<string,
 }
 
 /** Write one availability: switching on a record with no explicit row needs no row; a row is kept once it exists. */
-export function setAvailability(store: Store, key: string, id: string, siteId: string, enabled: boolean, actor: Actor) {
-  const link = store.list(CATALOG_SITES).find(row => row.resourceKey === key && row.recordId === id && row.siteId === siteId);
-  if (link) { if ((link.enabled !== false) !== enabled) store.update(CATALOG_SITES, link.id, { enabled }, link._version, actor); }
-  else if (!enabled) store.create(CATALOG_SITES, { resourceKey: key, recordId: id, siteId, enabled: false }, actor);
+/**
+ * The links of one catalog, read once for a run of `setAvailability` calls: a new main project switches hundreds of records, and
+ * reading every link again for each of them made Add main project take over a minute on a filled workspace.
+ */
+export type AvailabilityLinks = Map<string, Row>;
+const linkKey = (id: string, siteId: string) => `${id}|${siteId}`;
+export function availabilityLinks(store: Store, key: string): AvailabilityLinks {
+  const links: AvailabilityLinks = new Map();
+  for (const row of store.list(CATALOG_SITES)) if (row.resourceKey === key && !links.has(linkKey(String(row.recordId), String(row.siteId)))) links.set(linkKey(String(row.recordId), String(row.siteId)), row);
+  return links;
+}
+/** Read the links again into the same map: after a catalog record is created, since creating one may write links of its own. */
+export function reloadAvailabilityLinks(store: Store, key: string, links: AvailabilityLinks) { links.clear(); for (const [linkId, row] of availabilityLinks(store, key)) links.set(linkId, row); }
+export function setAvailability(store: Store, key: string, id: string, siteId: string, enabled: boolean, actor: Actor, links?: AvailabilityLinks) {
+  const link = links ? links.get(linkKey(id, siteId)) : store.list(CATALOG_SITES).find(row => row.resourceKey === key && row.recordId === id && row.siteId === siteId);
+  if (link) { if ((link.enabled !== false) !== enabled) { const updated = store.update(CATALOG_SITES, link.id, { enabled }, link._version, actor); links?.set(linkKey(id, siteId), updated); } }
+  else if (!enabled) { const created = store.create(CATALOG_SITES, { resourceKey: key, recordId: id, siteId, enabled: false }, actor); links?.set(linkKey(id, siteId), created); }
 }
 
 /**

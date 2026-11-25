@@ -49,7 +49,7 @@ export function InspectionCell({ weld, kind, heat }: { weld: Row; kind: Inspecti
     {state.tracer && <button type="button" className="inspection-cell-tracer" onClick={() => setOpen('tracer')} aria-label={`Tracer details of weld ${weld.weldNo}`} title="Tracer details">T</button>}
     {state.archive.length > 0 && readable && <button type="button" className="inspection-cell-file" onClick={() => setOpen('archive')} aria-label={`${archiveTitle} of weld ${weld.weldNo}`} title={archiveTitle}><FileText size={13} aria-hidden="true"/></button>}
     {printable && <button type="button" className="inspection-cell-file" onClick={() => setOpen('print')} aria-label={`${printTitle} for weld ${weld.weldNo}`} title={printTitle}><Printer size={13} aria-hidden="true"/></button>}
-    {(open === 'cell' || open === 'tracer') && <InspectionDialog weld={weld} kind={kind} tracer={open === 'tracer'} onClose={() => setOpen(null)}/>}
+    {(open === 'cell' || open === 'tracer') && <InspectionDialog weld={weld} kind={kind} heat={kind === 'PWHT' ? heat : undefined} tracer={open === 'tracer'} onClose={() => setOpen(null)}/>}
     {open === 'archive' && <WeldArchiveDialog weld={weld} kind={kind} heat={kind === 'PWHT' ? heat : undefined} onClose={() => setOpen(null)}/>}
     {open === 'print' && <MassRequestDialog kind={kind} type={type} weldIds={[weld.id]} onClose={() => setOpen(null)}/>}
   </span>;

@@ -83,9 +83,10 @@ test('loading and error states replace the figures', () => {
   const failed = renderToStaticMarkup(createElement(ProjectCompletionPanel, { progress: null, error: 'Project progress could not be calculated.' }));
   assert.ok(failed.includes('role="alert"') && failed.includes('could not be calculated'));
   assert.ok(renderToStaticMarkup(createElement(ProjectCompletionPanel, { progress: null })).includes(COMPLETION_TEXTS.unavailable));
-  // B3: isometrics present, summaries not yet: the pilots profile is loading (it always sends them), never "not available".
-  assert.equal(completionLoading(false, true, true), true); assert.equal(completionLoading(false, false, true), true); assert.equal(completionLoading(true, true, true), false);
-  assert.equal(completionLoading(false, true, false), false, 'other profiles without summaries: not available'); assert.equal(completionLoading(false, false, false), true);
+  // Loading follows the workspace, not the summaries: a pilots session with no Core chosen never gets summaries and must not load forever.
+  assert.equal(completionLoading(false, true), true, 'workspace still loading');
+  assert.equal(completionLoading(false, false), false, 'workspace loaded without summaries: not available');
+  assert.equal(completionLoading(true, true), false); assert.equal(completionLoading(true, false), false);
 });
 
 test('B3: a card that cannot be measured says it is not counted, and the chip names the weights that count', () => {
