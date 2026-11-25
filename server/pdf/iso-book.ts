@@ -12,8 +12,8 @@ import type { Row } from '../../shared/types.ts';
 /**
  * ISO Book assembly (pdf-lib): generated parts come from their registry builders, uploaded PDFs are appended page by
  * page, uploaded PNG / JPEG images get one page each, everything else (and every damaged or encrypted PDF) is listed
- * on the "Files not included" page. A cover with the table of contents comes first; the generated pages carry the
- * book's page number in the footer.
+ * on the "Files not included" page. A cover with the table of contents can come first (the routes ask for none since
+ * Task sheet left the book, client change list 22.11.2026); the generated pages carry the book's page number in the footer.
  */
 export interface BookEnvironment extends BookContext {
   now: Date;

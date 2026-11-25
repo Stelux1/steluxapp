@@ -14,8 +14,12 @@ import { Badge, EmptyState, Modal, SearchInput, TableScroll } from './components
 import { useWorkspace } from './context.tsx';
 import { RecordEditor } from './dialogs.tsx';
 
-/** Reference "Delete project site" dialog (weld__general__project-sites.txt #deleteProjectSite). */
-export const SITE_DELETE = { title: 'Delete project site', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' };
+/**
+ * Reference "Delete project site" dialog (weld__general__project-sites.txt #deleteProjectSite). Delete archives the site, as
+ * every delete of the reference does; since the Archived checkbox left the form (client change list 22.11.2026) this is the
+ * way to archive a site, so the dialog says where it goes and that it can be restored.
+ */
+export const SITE_DELETE = { title: 'Delete project site', text: 'Are you sure?', note: 'The project site moves to the archived list (Show archived sites), where it can be restored.', button: 'Delete', cancel: 'Cancel' };
 /** The server refuses to delete a site that still has projects (409); the dialog says so before Delete is pressed. */
 export const SITE_DELETE_BLOCKED = 'This project site still has projects and cannot be deleted. Delete its projects first.';
 export const siteHasProjects = (projects: Row[], siteId: string) => projects.some(project => !project._archived && project.siteId === siteId);
@@ -31,7 +35,7 @@ export function DeleteSiteDialog({ site, onClose }: { site: Row; onClose: () => 
     catch (failure) { setError((failure as Error).message); setBusy(false); }
   }
   return <Modal title={SITE_DELETE.title} subtitle={String(site.name)} onClose={onClose}>
-    <div className="modal-body">{(error || blocked) && <div className="alert error" role="alert">{error || blocked}</div>}<p>{SITE_DELETE.text}</p></div>
+    <div className="modal-body">{(error || blocked) && <div className="alert error" role="alert">{error || blocked}</div>}<p>{SITE_DELETE.text}</p>{!blocked && <p className="muted">{SITE_DELETE.note}</p>}</div>
     <div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{SITE_DELETE.cancel}</button><button type="button" className="btn danger" disabled={busy || Boolean(blocked)} onClick={() => void submit()}><Trash2 size={15}/>{SITE_DELETE.button}</button></div>
   </Modal>;
 }

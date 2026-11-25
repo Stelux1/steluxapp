@@ -330,6 +330,8 @@ const quantityText = (value: number) => String(Math.round(value * 1e6) / 1e6);
  * (`projectIds`, through its project or its lines' isometrics). Null otherwise. Piping class: of the isometrics the line
  * was ordered for.
  */
+/** The Phone line of a main project on an order / RFQ: only when one is stored (the main project form no longer has the field, client change list 22.11.2026). */
+const sitePhone = (site: Row | undefined | null): LabelValueItem[] => text(site?.phone) ? [{ label: 'Phone', value: text(site?.phone) }] : [];
 export function orderDocumentModel(rows: Rows, orderId: string, projectIds: Set<string>): OrderDocumentModel | null {
   const order = find(rows, 'orders', orderId);
   if (!order || !orderProjectIds(rows, order.id).some(id => projectIds.has(id))) return null;
@@ -348,7 +350,7 @@ export function orderDocumentModel(rows: Rows, orderId: string, projectIds: Set<
   ]).sort((a, b) => naturalCompare(a[0], b[0]) || naturalCompare(a[2], b[2]));
   const address = [text(site?.address), [text(site?.zip), text(site?.residence)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const number = text(order.number);
-  return { order, number, date: printMoment(momentOf(order.date, order.orderedAt), true), site, items: [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, { label: 'Phone', value: text(site?.phone) }, { label: 'Order number', value: number }], lines };
+  return { order, number, date: printMoment(momentOf(order.date, order.orderedAt), true), site, items: [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, ...sitePhone(site), { label: 'Order number', value: number }], lines };
 }
 
 // ----- Request for Quotation (MTO Pilot) --------------------------------------------------------------------------------------
@@ -380,7 +382,7 @@ export function rfqDocumentModel(rows: Rows, rfqId: string, projectIds: Set<stri
   const address = [text(site?.address), [text(site?.zip), text(site?.residence)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const number = text(rfq.number);
   const requiredBy = /^\d{4}-\d{2}-\d{2}$/.test(text(rfq.requiredBy)) ? printMoment({ date: text(rfq.requiredBy), time: '' }) : '';
-  const items: LabelValueItem[] = [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, { label: 'Phone', value: text(site?.phone) }, { label: 'Request number', value: number }, { label: 'Supplier', value: text(supplier?.name) || 'Not chosen' }];
+  const items: LabelValueItem[] = [{ label: 'Home location', value: text(site?.name) }, { label: 'Address', value: address }, ...sitePhone(site), { label: 'Request number', value: number }, { label: 'Supplier', value: text(supplier?.name) || 'Not chosen' }];
   if (requiredBy) items.push({ label: 'Quote needed by', value: requiredBy });
   return { rfq, number, date: printMoment(momentOf(rfq.date, rfq.issuedAt), true), site, supplier, requiredBy, note: text(rfq.note), items, lines };
 }

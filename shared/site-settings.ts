@@ -65,7 +65,7 @@ export const repairPerformanceLimit = (_site: SiteLike) => DEFAULT_REPAIR_PERFOR
 export const ndtMeasurement = (_site: SiteLike): 'inch-weighted' | 'per-weld' => 'inch-weighted';
 
 // ----- the main project form of the hosted profile (reference "Add project site") -------------------------------------
-/** Label of a weight field in the reference: "Distribution - Shop", "Welds - Shop", … and, for the Site phase, "Hydrotest" / "Paint/Tracing". */
+/** Label of a legacy weight field: "Distribution - Shop", "Welds - Shop", … and, for the Site phase, "Hydrotest" / "Paint/Tracing" (stored only). */
 export const progressLabel = (phase: ProgressPhase, activityKey?: string) => {
   if (!activityKey) return `Distribution - ${phase.label}`;
   const found = phase.activities.find(a => a.key === activityKey)!;
@@ -80,15 +80,22 @@ export const PROGRESS_HELP = {
   lines: PROGRESS_MODEL.phases.flatMap(phase => phase.activities.map(activity => [`${activity.label} (${phase.label}, ${activity.weight}%)`, (PROGRESS_MODEL_HELP.lines[phase.key] as Record<string, string>)[activity.key]] as [string, string])),
   rule: PROGRESS_MODEL_HELP.rule,
 };
+/** The one-line note of the Iso progress section of the main project form. */
+export const PROGRESS_FIXED_NOTE = 'Fixed for all projects';
 /** Defaults of the legacy weight fields on a new main project (Shop 50, Field 50, Site 0, activities 0); stored and ignored. */
 export const PROGRESS_DEFAULTS: Record<string, number> = Object.fromEntries(PROGRESS_PHASES.flatMap(phase => [[phase.field, phase.key === 'site' ? 0 : 50], ...phase.activities.map(a => [a.field, 0])]));
 const SITE_FORM_SECTION = 'Project settings';
-const SITE_CONTACT_LABELS: Record<string, string> = { name: 'Name', address: 'Address', zip: 'Zip code', residence: 'Residence', phone: 'Phone', email: 'Email address' };
-export const NDT_MEASUREMENT_HINTS: Record<string, string> = {
-  [NDT_MEASUREMENTS[0]]: 'A DN500 weld counts more than a DN15 weld.',
-  [NDT_MEASUREMENTS[1]]: '10 welds with NDT required, 1 Accepted = 10% of the NDT weight.',
-};
-interface SiteFormField { name: string; label: string; section?: string; default?: unknown; options?: string[]; control?: 'radio'; optionHints?: Record<string, string>; intro?: string; hint?: string }
+/** The first block of the form, in this order and wording (client change list 22.11.2026, images 1 and 2). */
+export const SITE_ADDRESS_FIELDS = ['name', 'address', 'zip', 'residence'] as const;
+const SITE_CONTACT_LABELS: Record<string, string> = { name: 'Name', address: 'Address', zip: 'Zip code', residence: 'City', phone: 'Phone', email: 'Email address' };
+/**
+ * Fields the hosted main project form no longer shows (client change list 22.11.2026, images 2–4): Phone, Email address,
+ * Flange tightening standard (chosen per flange now), Defect norm, Repair performance, NDT measurement, IRN Code and
+ * Archived (archiving is a list action of Project sites). They stay defined, so a site that stores them still opens and
+ * saves (the server answers 404 for an unknown field); their values stay in the database and are never sent unchanged.
+ */
+export const HOSTED_HIDDEN_SITE_FIELDS = ['phone', 'email', 'flangeStandard', 'defectNorm', 'repairLimit', 'ndtMeasurement', 'irnCode', 'archived'];
+interface SiteFormField { name: string; label: string; section?: string; default?: unknown; hidden?: boolean; control?: 'radio'; intro?: string; hint?: string }
 /**
  * Document settings of the hosted main project form in the order, grouping and wording of the reference ("Add project
  * site", tab Document settings). A group heading is the `intro` line above its first field. Our owner-specific LISL form
@@ -109,36 +116,34 @@ export const HOSTED_DOCUMENT_SETTINGS: { name: string; label: string; intro?: st
 /** Heading above our own document settings (owner-specific LISL forms), placed after the reference ones. */
 export const OWNER_SETTINGS_HEADING = 'Owner-specific LISL forms';
 /**
- * The fields of the main project form as the hosted profile shows them (reference "Add project site"): name and address
- * data inside the first section "Project settings" with the reference labels, "Repair performance", NDT measurement as
- * two radio buttons, and the Iso progress weights phase by phase ("Distribution - Shop", its activities, "Distribution -
- * Field", …) starting at Shop 50 / Field 50 / Site 0. Other profiles keep the shared definitions.
+ * The fields of the main project form as the hosted profile shows them: "Project settings" starts with Name, Address,
+ * Zip code and City (a 2 × 2 block, image 1), then the settings that stay (Mandatory fields, Validation on WPS,
+ * Project-specific Material Certificates, Material Management Display Setting, Diameter standard); Document settings
+ * follow in the reference wording. The legacy Iso progress weights are hidden: the form shows the fixed model
+ * (shared/progress-model.ts) read-only instead, and a new site still stores their defaults. Other profiles keep the
+ * shared definitions.
  */
 export function hostedSiteFields<T extends SiteFormField>(fields: T[]): T[] {
-  const progress = new Set(PROGRESS_FIELDS);
+  const progress = new Set(PROGRESS_FIELDS), hidden = new Set(HOSTED_HIDDEN_SITE_FIELDS);
   const documentSettings = new Map(HOSTED_DOCUMENT_SETTINGS.map(setting => [setting.name, setting]));
   let firstOwner = '';
   const adapted = fields.map(field => {
+    if (hidden.has(field.name)) return { ...field, hidden: true, ...(SITE_CONTACT_LABELS[field.name] ? { label: SITE_CONTACT_LABELS[field.name], section: SITE_FORM_SECTION } : {}) };
     if (SITE_CONTACT_LABELS[field.name]) return { ...field, label: SITE_CONTACT_LABELS[field.name], section: SITE_FORM_SECTION };
-    if (field.name === 'repairLimit') return { ...field, label: 'Repair performance' };
     if (field.name === 'lislVtSource') return { ...field, label: LISL_VT_SOURCE_LABEL, control: 'radio' as const, default: LISL_VT_SOURCES[0] };
     const document = documentSettings.get(field.name);
     if (document) return { ...field, label: document.label, ...(document.intro ? { intro: document.intro } : {}), ...(document.hint ? { hint: document.hint } : {}) };
-    if (field.section === 'Document settings' && !(field as { hidden?: boolean }).hidden && !firstOwner) { firstOwner = field.name; return { ...field, intro: OWNER_SETTINGS_HEADING }; }
-    if (field.name === 'ndtMeasurement') return { ...field, control: 'radio' as const, optionHints: NDT_MEASUREMENT_HINTS, default: NDT_MEASUREMENTS[0] };
+    if (field.section === 'Document settings' && !field.hidden && !firstOwner) { firstOwner = field.name; return { ...field, intro: OWNER_SETTINGS_HEADING }; }
     if (progress.has(field.name)) {
       const phase = PROGRESS_PHASES.find(item => item.field === field.name || item.activities.some(a => a.field === field.name))!;
       const activityKey = phase.activities.find(a => a.field === field.name)?.key;
-      return { ...field, label: progressLabel(phase, activityKey), default: PROGRESS_DEFAULTS[field.name] };
+      return { ...field, label: progressLabel(phase, activityKey), default: PROGRESS_DEFAULTS[field.name], hidden: true };
     }
     return field;
   });
-  // Iso progress in the reference order: each phase's distribution, then its activities.
-  const byName = new Map(adapted.map(field => [field.name, field]));
-  const ordered = PROGRESS_PHASES.flatMap(phase => [phase.field, ...phase.activities.map(a => a.field)]).map(name => byName.get(name)).filter((field): field is T => Boolean(field));
-  const slots = adapted.flatMap((field, index) => progress.has(field.name) ? [index] : []);
-  const result = [...adapted]; slots.forEach((slot, i) => { result[slot] = ordered[i]; });
-  return result;
+  // Name, Address, Zip code, City lead the form (the stable sort keeps every other field in its place).
+  const rank = (name: string) => { const index = (SITE_ADDRESS_FIELDS as readonly string[]).indexOf(name); return index < 0 ? SITE_ADDRESS_FIELDS.length : index; };
+  return [...adapted].sort((a, b) => rank(a.name) - rank(b.name));
 }
 
 // ----- owner-specific LISL forms ([GU], [MV], [GU Rev 2 / Rev 3]) -----------------------------------------------------

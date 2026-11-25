@@ -2,7 +2,6 @@ import { CATALOG_SITES } from '../shared/weld-catalogs.ts';
 import { copyName, duplicateFields, duplicateParts } from '../shared/site-duplicate.ts';
 import type { Row } from '../shared/types.ts';
 import { AppError, type Actor, type Store } from './store.ts';
-import { copyMemoTemplates } from './memo-templates.ts';
 import { applyDefaultSpoolNames } from './spool-catalog.ts';
 import { applyDefaultDiameters } from './diameter-standard.ts';
 import { applyBaseMaterials } from './material-base.ts';
@@ -20,7 +19,6 @@ export function duplicateSite(store: Store, data: Record<string, unknown>, actor
   const site = store.create('sites', { name: copyName(String(source.name), store.list('sites').map(row => String(row.name))), ...copied }, actor);
   for (const part of parts) {
     if (part.catalog) for (const link of store.list(CATALOG_SITES).filter(row => row.resourceKey === part.catalog && row.siteId === source.id)) store.create(CATALOG_SITES, { resourceKey: part.catalog, recordId: link.recordId, siteId: site.id, enabled: link.enabled !== false }, actor);
-    if (part.records === 'memo-templates') copyMemoTemplates(store, source.id, site.id, actor);
     // A WPS saved in a main project belongs to it (shared/welder-data.ts → SITE_OWNED, client 20.11.2026): it is not switched on
     // in the copy, which fills in its own; an older WPS shared by the main projects is, as before.
     const owned = part.links?.resource === 'wps_sites' ? new Set(store.list('wps', true).filter(row => String(row.siteId ?? '')).map(row => row.id)) : new Set<string>();

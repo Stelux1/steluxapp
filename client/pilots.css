@@ -117,18 +117,23 @@ a.pilot-tile:hover { border-color: var(--border-strong); border-top-color: var(-
 .password-strength.level-2 .strength-bar i { background: #e0a100; }
 .password-strength.level-3 .strength-bar i, .password-strength.level-4 .strength-bar i { background: #2f9e44; }
 .password-strength strong { color: var(--ink); font-weight: 600; }
-/* Main project form: NDT measurement as radio buttons, weights phase by phase, duplicate options. */
+/* Main project form: radio buttons, the fixed Iso progress model (read-only), duplicate options. */
 .radio-field { border: 0; margin: 0; padding: 0; min-width: 0; }
 .radio-field legend { padding: 0; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .radio-option { display: flex; align-items: flex-start; gap: 9px; padding: 4px 0; font-size: 13px; color: var(--ink); cursor: pointer; }
 .radio-option input { margin-top: 3px; }
 .radio-option .field-hint { margin-top: 2px; }
-.weight-group { border-top: 1px solid var(--line); padding-top: 4px; }
-.weight-group:first-of-type { border-top: 0; }
-.weight-sum { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); padding: 2px 0 8px; }
-.weight-sum strong { color: #b42318; font-variant-numeric: tabular-nums; }
-.weight-sum strong.ok { color: #1c7a3a; }
-.weight-note { margin: 8px 0 0; }
+.progress-model { display: grid; gap: 12px; }
+.progress-fixed { margin: 0; font-size: 12px; color: var(--muted); }
+.progress-phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.progress-phase { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; background: #fff; min-width: 0; }
+.progress-phase h4 { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.progress-phase h4 span { font-size: 11px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+.progress-activities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin: 0; }
+.progress-activities div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.progress-activities dt { font-size: 12px; color: var(--ink); line-height: 1.35; }
+.progress-activities dd { margin: 0; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-blue); text-align: center; font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+@media (max-width: 420px) { .progress-activities { grid-template-columns: minmax(0, 1fr); } }
 .progress-help { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2, transparent); font-size: 13px; }
 .progress-help summary { cursor: pointer; font-weight: 600; }
 .progress-help p { margin: 8px 0 0; }

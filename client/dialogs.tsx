@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState, type FormEvent } from 'react';
-import { flangeEditorResource, flangeFieldInDialog, flangeInputErrors } from '../shared/flanges.ts';
+import { flangeEditorResource, flangeFieldInDialog, flangeInputErrors, flangeTighteningStandard } from '../shared/flanges.ts';
 import { editorChange, editorFieldValues, editorPayload, flangeOpenValues } from './editor-values.ts';
 import { Plus, Trash2, Upload, Download, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { RESOURCE_MAP } from './catalog.ts';
@@ -21,7 +21,7 @@ import { usePilot } from './pilot.tsx';
 import { DIAMETER_NUMBER_MESSAGE, SITE_OWNED, diameterNumbers, hostedFieldOrder } from '../shared/welder-data.ts';
 import { enablementField, useSiteEnablement } from './weld-catalogs.tsx';
 import { composeDiameter, unitPrefill } from '../shared/diameter-standard.ts';
-import { PROGRESS_HELP, PROGRESS_MODEL } from '../shared/site-settings.ts';
+import { FLANGE_STANDARDS, PROGRESS_FIXED_NOTE, PROGRESS_HELP, PROGRESS_MODEL } from '../shared/site-settings.ts';
 import { DuplicateSiteDialog } from './site-duplicate.tsx';
 import { AddNewIsometric } from './iso-add-new.tsx';
 import { IsoCurrentRevisions, IsoFileInputs, IsoRevisionHelp, isoFileErrors, uploadIsoFiles } from './iso-form-files.tsx';
@@ -29,9 +29,7 @@ import { IRN_AUTO_MESSAGE } from '../shared/iso-pages.ts';
 import { UserSiteProfiles } from './user-site-profiles.tsx';
 import { newUserProfileDefaults } from '../shared/access-ui.ts';
 import { SCOPE_PILOTS, SITE_SCOPE_SPECIFIC, siteIdsField, siteScopeField } from '../shared/site-scope.ts';
-import { IsoBookSwitches, MemoTemplateToolbar, MemoTemplatesTab } from './memo-templates.tsx';
-import { MEMO_TEXTS } from '../shared/memo-templates.ts';
-import { ISO_BOOK_SECTION } from '../shared/iso-book-settings.ts';
+import { MemoTemplateToolbar } from './memo-templates.tsx';
 
 type EditorProps={resourceKey:string;record?:Row;defaults?:Record<string,unknown>;onClose:()=>void};
 /** The hosted WPS and PQR pages have their own editors (reference field order); Edit from any place opens them, not the generic form. */
@@ -55,9 +53,11 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
   useEffect(() => { if (resourceKey !== 'diameters' || !hosted || (String(values.unit ?? '') === String(initialValues.unit ?? '') && String(values.unitValue ?? '') === String(initialValues.unitValue ?? ''))) return; const composed = composeDiameter(values.unit, values.unitValue); if (composed) setValues(old => ({ ...old, diameter: composed, ...Object.fromEntries(Object.entries(unitPrefill(old.unit, old.unitValue)).map(([name, value]) => [name, String(value)])) })); }, [values.unit, values.unitValue]); // eslint-disable-line react-hooks/exhaustive-deps
   // Isometric (hosted): while the main project numbers its isometrics automatically, the IRN is greyed out (the server refuses a typed one).
   const irnLocked = hosted && resourceKey === 'isometrics' && (rows.sites || []).some(site => site.irnAuto === true && site.id === (rows.projects || []).find(project => project.id === (values.projectId || record?.projectId))?.siteId);
-  const groups = [...new Set(editorFields.filter(shown).map(f => f.section || 'Details'))];
+  // Project sites: Iso progress is the fixed model shown read-only (its legacy weight fields are hidden in the hosted form).
+  const groups = [...new Set([...editorFields.filter(shown).map(f => f.section || 'Details'), ...(resourceKey === 'sites' && editorFields.some(f => f.section === PROGRESS_SECTION) ? [PROGRESS_SECTION] : [])])];
   // Flange form: the project follows the isometric (or the only project), and the isometric's own values fill what is still empty (Add and Edit).
-  useEffect(() => { if (resourceKey !== 'flanges') return; setValues(start => flangeOpenValues(start, record, rows.isometrics, rows.projects)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // A flange saved before it had its own tightening standard opens with the standard it follows (that of its main project).
+  useEffect(() => { if (resourceKey !== 'flanges') return; setValues(start => { const next = flangeOpenValues(start, record, rows.isometrics, rows.projects); return record && !FLANGE_STANDARDS.includes(String(record.tightening_standard ?? '')) ? { ...next, tightening_standard: flangeTighteningStandard(record, (rows.sites || []).find(site => site.id === (rows.projects || []).find(project => project.id === next.projectId)?.siteId)) } : next; }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // A long form is often scrolled past the message when it is saved: bring it back into view.
   useEffect(() => { if (error) document.querySelector('.modal-body > .alert.error')?.scrollIntoView({ block: 'nearest' }); }, [error, fields]);
   async function submit(e: FormEvent) {
@@ -89,14 +89,24 @@ function ResourceEditor({ resourceKey, record, defaults = {}, onClose }: EditorP
     return f.name === `${pilot}ProfileId` ? null : <UserSiteProfiles pilot={pilot} values={values} fallback={String(values[`${pilot}ProfileId`] || values.profileId || '')} error={fields[siteIdsField(pilot)] || fields[`${pilot}SiteProfiles`]} onChange={change}/>;
   };
   if (duplicating && record) return <DuplicateSiteDialog site={record} onClose={onClose} onBack={() => setDuplicating(false)}/>;
-  return <Modal title={(record ? def.wording?.edit : def.wording?.add) ?? `${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{editorFields.filter(f => shown(f)&&(f.section || 'Details') === group).length} fields</span></summary>{resourceKey === 'sites' && group === ISO_BOOK_SECTION ? <IsoBookSwitches fields={editorFields.filter(f => f.section === group)} values={values} onChange={change}/> : resourceKey === 'sites' && group === 'Iso progress' ? <ProgressGroups/> : <><div className="form-grid">{editorFields.filter(f => shown(f)&&(f.section || 'Details') === group).map(f => <Fragment key={f.name}>{resourceKey === 'isometrics' && hosted && f.name === 'description' && <MemoTemplateToolbar projectId={String(values.projectId || '')} value={values.description} onChange={v => change('description', v)}/>}{siteProfileField(f) !== undefined ? siteProfileField(f) : <FieldInput field={irnLocked && f.name === 'irn' ? { ...f, readonly: true, hint: IRN_AUTO_MESSAGE } : f} value={values[f.name]} values={values} error={fields[f.name]} setValue={change} allowedIds={resourceKey === 'flanges' && f.name === 'isoId' && values.projectId ? (rows.isometrics || []).filter(row => row.projectId === values.projectId).map(row => row.id) : undefined} onChange={v => change(f.name, v)}/>}{withPhoto && f.name === 'currentlyOn' && <div className="field full-width"><label htmlFor="welder-photo">Photo</label><input id="welder-photo" type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e => setPhoto(e.target.files?.[0] ?? null)}/><small className="field-hint">Shown on the welder card.</small></div>}{withFile && FORM_FILE_AFTER[resourceKey] === f.name && fileField}{isoForm && record && f.name === 'revNo' && <IsoRevisionHelp iso={record}/>}{isoForm && record && f.name === 'itp2Id' && <IsoCurrentRevisions iso={record}/>}{isoForm && f.name === 'pwht' && <IsoFileInputs editing={Boolean(record)} files={isoPdfs} errors={fields} onChange={(name, chosen) => setIsoPdfs(old => ({ ...old, [name]: chosen }))}/>}</Fragment>)}</div></>}</details>)}{resourceKey === 'sites' && record && hosted && <details className="form-section"><summary>{MEMO_TEXTS.tab}</summary><MemoTemplatesTab siteId={record.id}/></details>}{withFile && !FORM_FILE_AFTER[resourceKey] && fileField}</div><div className="modal-footer">{resourceKey === 'isometrics' && record && hosted && <AddNewIsometric record={record} fields={def.fields} values={values} busy={busy} onError={(message, details) => { setError(message); setFields(details || {}); }} onSaved={onClose}/>}{resourceKey === 'sites' && record && hosted && canRun('duplicate-site') && <button type="button" className="btn duplicate-site-button" disabled={busy} onClick={() => setDuplicating(true)}>Duplicate Project site</button>}<button type="button" className="btn" disabled={busy} onClick={onClose}>{record && def.wording?.cancelEdit || 'Cancel'}</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{def.wording ? (record ? 'Update' : 'Add') : record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
+  return <Modal title={(record ? def.wording?.edit : def.wording?.add) ?? `${record ? 'Edit' : 'Add'} ${def.singular}`} subtitle={def.description} onClose={onClose} wide={def.fields.length > 7}><form onInvalidCapture={revealInvalidField} onSubmit={e => void submit(e)}><div className="modal-body">{error && <div className="alert error" role="alert"><AlertCircle size={18}/><span>{error}</span></div>}{groups.map((group, i) => <details className="form-section" key={group} open={i === 0 || Object.keys(fields).some(k => editorFields.find(f => f.name === k)?.section === group)}><summary>{group}<span>{resourceKey === 'sites' && group === PROGRESS_SECTION ? 'Fixed' : `${editorFields.filter(f => shown(f)&&(f.section || 'Details') === group).length} fields`}</span></summary>{resourceKey === 'sites' && group === PROGRESS_SECTION ? <ProgressGroups/> : <><div className="form-grid">{editorFields.filter(f => shown(f)&&(f.section || 'Details') === group).map(f => <Fragment key={f.name}>{resourceKey === 'isometrics' && hosted && f.name === 'description' && <MemoTemplateToolbar projectId={String(values.projectId || '')} value={values.description} onChange={v => change('description', v)}/>}{siteProfileField(f) !== undefined ? siteProfileField(f) : <FieldInput field={irnLocked && f.name === 'irn' ? { ...f, readonly: true, hint: IRN_AUTO_MESSAGE } : f} value={values[f.name]} values={values} error={fields[f.name]} setValue={change} allowedIds={resourceKey === 'flanges' && f.name === 'isoId' && values.projectId ? (rows.isometrics || []).filter(row => row.projectId === values.projectId).map(row => row.id) : undefined} onChange={v => change(f.name, v)}/>}{withPhoto && f.name === 'currentlyOn' && <div className="field full-width"><label htmlFor="welder-photo">Photo</label><input id="welder-photo" type="file" accept=".png,.jpg,.jpeg,.webp" onChange={e => setPhoto(e.target.files?.[0] ?? null)}/><small className="field-hint">Shown on the welder card.</small></div>}{withFile && FORM_FILE_AFTER[resourceKey] === f.name && fileField}{isoForm && record && f.name === 'revNo' && <IsoRevisionHelp iso={record}/>}{isoForm && record && f.name === 'itp2Id' && <IsoCurrentRevisions iso={record}/>}{isoForm && f.name === 'pwht' && <IsoFileInputs editing={Boolean(record)} files={isoPdfs} errors={fields} onChange={(name, chosen) => setIsoPdfs(old => ({ ...old, [name]: chosen }))}/>}</Fragment>)}</div></>}</details>)}{withFile && !FORM_FILE_AFTER[resourceKey] && fileField}</div><div className="modal-footer">{resourceKey === 'isometrics' && record && hosted && <AddNewIsometric record={record} fields={def.fields} values={values} busy={busy} onError={(message, details) => { setError(message); setFields(details || {}); }} onSaved={onClose}/>}{resourceKey === 'sites' && record && hosted && canRun('duplicate-site') && <button type="button" className="btn duplicate-site-button" disabled={busy} onClick={() => setDuplicating(true)}>Duplicate Project site</button>}<button type="button" className="btn" disabled={busy} onClick={onClose}>{record && def.wording?.cancelEdit || 'Cancel'}</button><button className="btn primary" disabled={busy}>{busy && <Loader2 size={15} className="spin"/>}{def.wording ? (record ? 'Update' : 'Add') : record ? 'Save changes' : `Create ${def.singular}`}</button></div></form></Modal>;
 }
-/** Iso progress of the main project form: the fixed weights of shared/progress-model.ts, read-only (stored weights are ignored). */
-function ProgressGroups() {
-  return <><p className="field-hint full-width">{PROGRESS_HELP.intro} The weights are fixed and the same for every main project.</p>{PROGRESS_MODEL.phases.map(phase => <div className="form-grid weight-group" key={phase.key} role="group" aria-label={`${phase.label} weights`}>
-    <div className="field full-width weight-sum"><span>{phase.label}</span><strong>{phase.weight}%</strong></div>
-    {phase.activities.map(activity => <div className="field weight-sum" key={activity.key}><span>{activity.label}</span><strong>{activity.weight}%</strong></div>)}
-  </div>)}<p className="field-hint weight-note">{PROGRESS_HELP.rule}</p></>;
+const PROGRESS_SECTION = 'Iso progress';
+/**
+ * Iso progress of the main project form: the fixed model of shared/progress-model.ts, read-only (images 6 and 7). No input,
+ * no sum rule; weights stored on older sites are ignored. "How each activity is measured" explains the drivers.
+ */
+export function ProgressGroups() {
+  return <div className="progress-model">
+    <p className="progress-fixed" role="note">{PROGRESS_FIXED_NOTE}</p>
+    <div className="progress-phases">{PROGRESS_MODEL.phases.map(phase => <section className="progress-phase" key={phase.key} aria-labelledby={`progress-phase-${phase.key}`}>
+      <h4 id={`progress-phase-${phase.key}`}>{phase.label}<span>{phase.weight}% of the project</span></h4>
+      <dl className="progress-activities">{phase.activities.map(activity => <div key={activity.key}><dt>{activity.label}</dt><dd>{activity.weight}%</dd></div>)}</dl>
+    </section>)}</div>
+    <details className="progress-help"><summary>How each activity is measured</summary><p>{PROGRESS_HELP.intro}</p>
+      <dl>{PROGRESS_HELP.lines.map(([term, text]) => <Fragment key={term}><dt>{term}</dt><dd>{text}</dd></Fragment>)}</dl>
+      <p>{PROGRESS_HELP.rule}</p></details>
+  </div>;
 }
 interface Line { materialId?: string; lineId?: string; quantity: number | string; chargeNo?: string }
 /** `copy` replaces the action's title, description and submit label where a page words the same action its own way. */

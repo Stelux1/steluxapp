@@ -147,7 +147,7 @@ export function FlangeDetailPage() {
 
 function FlangeDetail({ flange }: { flange: Row }) {
   const { rows, canRecord } = useWorkspace();
-  const item = flangeItems([flange], activeRows(rows, 'isometrics'), activeRows(rows, 'projects'))[0];
+  const item = flangeItems([flange], activeRows(rows, 'isometrics'), activeRows(rows, 'projects'), rows.sites || [])[0];
   const editable = canRecord('flanges', 'edit', flange);
   const gate = releaseGate(rows, flange.id);
   // After the QA/QC sign-off the server refuses new passes, bolts, leak tests, labels and deviations (sec2-005): their forms are hidden.

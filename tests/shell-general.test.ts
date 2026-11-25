@@ -47,17 +47,21 @@ test('Project sites has no menu entry in either Core (it duplicates Change site)
   assert.deepEqual(pagePilots('/workspace/sites'), ['weld', 'mto'], 'the Project sites page is still a shared workspace page, never No access');
   const picker = readFileSync(join(process.cwd(), 'client', 'project-workspace.tsx'), 'utf8');
   assert.match(picker, /Add main project/); assert.match(picker, /Edit main project/); assert.match(picker, /Archived projects/); assert.match(picker, /<RecordEditor resourceKey="sites"/);
-  assert.deepEqual(site.columns, ['name', 'address', 'phone', 'email', 'irnCode']);
+  assert.deepEqual(site.columns, ['name', 'address', 'zip', 'residence']);
   assert.deepEqual([...SITE_LIST_COLUMNS], site.columns);
   assert.deepEqual(SITE_PAGE_SIZES, [5, 20, 50, 100, 500]);
-  assert.deepEqual(['Name', 'Address', 'Phone', 'Email address'], ['name', 'address', 'phone', 'email'].map(name => field(name).label));
-  assert.equal(HOSTED_DEFAULT_SORT.sites, 'irnCode'); assert.equal(listDefaultSort('sites', true, 'name'), 'irnCode'); assert.equal(listDefaultSort('sites', false, 'name'), 'name');
+  assert.deepEqual(['Name', 'Address', 'Zip code', 'City'], ['name', 'address', 'zip', 'residence'].map(name => field(name).label));
+  assert.equal(HOSTED_DEFAULT_SORT.sites, 'name'); assert.equal(listDefaultSort('sites', true, 'name'), 'name'); assert.equal(listDefaultSort('sites', false, 'name'), 'name');
 });
-test('the list of project sites is sorted by IRN Code, archived sites are separate, search covers the shown columns', () => {
-  const rows = [row('c', { name: 'Harbour', irnCode: 'IRN-20', address: '1 Quay' }), row('a', { name: 'Yard', irnCode: 'IRN-3', phone: '555' }), row('b', { name: 'Old', irnCode: 'IRN-1', _archived: true }), row('d', { name: 'Alpha', irnCode: 'IRN-3', email: 'x@example.test' })];
-  assert.deepEqual(siteListRows(rows, { archived: false, query: '', sort: SITE_DEFAULT_SORT }).map(item => item.id), ['d', 'a', 'c'], 'IRN 3, IRN 3 (by name), IRN 20 (numeric order)');
+test('the list of project sites is sorted by Name, archived sites are separate, search covers the shown columns only', () => {
+  const rows = [row('c', { name: 'Harbour 10', irnCode: 'IRN-20', address: '1 Quay', zip: '2000', residence: 'Antwerp' }), row('a', { name: 'Yard', irnCode: 'IRN-3', phone: '555' }), row('b', { name: 'Old', irnCode: 'IRN-1', _archived: true }), row('d', { name: 'Harbour 9', irnCode: 'IRN-3', email: 'x@example.test', residence: 'Ghent' })];
+  assert.deepEqual(SITE_DEFAULT_SORT, { field: 'name', direction: 1 });
+  assert.deepEqual(siteListRows(rows, { archived: false, query: '', sort: SITE_DEFAULT_SORT }).map(item => item.id), ['d', 'c', 'a'], 'Harbour 9, Harbour 10 (numeric order), Yard');
   assert.deepEqual(siteListRows(rows, { archived: true, query: '', sort: SITE_DEFAULT_SORT }).map(item => item.id), ['b']);
   assert.deepEqual(siteListRows(rows, { archived: false, query: 'quay', sort: SITE_DEFAULT_SORT }).map(item => item.id), ['c']);
+  assert.deepEqual(siteListRows(rows, { archived: false, query: '2000', sort: SITE_DEFAULT_SORT }).map(item => item.id), ['c'], 'zip code');
+  assert.deepEqual(siteListRows(rows, { archived: false, query: 'ghent', sort: SITE_DEFAULT_SORT }).map(item => item.id), ['d'], 'city');
+  for (const hidden of ['555', 'x@example', 'IRN-3']) assert.deepEqual(siteListRows(rows, { archived: false, query: hidden, sort: SITE_DEFAULT_SORT }), [], `${hidden}: phone, email and IRN Code are no column any more`);
   assert.deepEqual(siteListRows(rows, { archived: false, query: '', sort: { field: 'name', direction: -1 } }).map(item => item.id), ['a', 'c', 'd']);
 });
 test('lists and pages use the reference texts', () => {
@@ -67,28 +71,27 @@ test('lists and pages use the reference texts', () => {
 });
 
 // ----- -002 / -005 / -006 the main project form ------------------------------------------------------------------------
-test('main project form: reference labels, address required, everything first in Project settings', () => {
-  assert.deepEqual(['name', 'address', 'zip', 'residence', 'phone', 'email'].map(name => [field(name).label, field(name).section]), [['Name', 'Project settings'], ['Address', 'Project settings'], ['Zip code', 'Project settings'], ['Residence', 'Project settings'], ['Phone', 'Project settings'], ['Email address', 'Project settings']]);
+test('main project form: Name, Address, Zip code, City first in Project settings, address required, no Phone or Email address', () => {
+  assert.deepEqual(site.fields.filter(item => !item.hidden).slice(0, 4).map(item => [item.name, item.label, item.section]), [['name', 'Name', 'Project settings'], ['address', 'Address', 'Project settings'], ['zip', 'Zip code', 'Project settings'], ['residence', 'City', 'Project settings']]);
+  assert.equal(field('phone').hidden, true); assert.equal(field('email').hidden, true);
   assert.equal(field('name').required, true); assert.equal(field('address').required, true);
-  // ISO Book is a tab of Edit project site only (shell-general-012): its switches are hidden in Add.
+  // The ISO Book switches and the legacy weights stay defined but hidden: the form shows Project settings and Document settings
+  // as fields, Iso progress as the fixed model (client/dialogs.tsx ProgressGroups).
   assert.deepEqual([...new Set(site.fields.map(item => item.section || 'Details'))], ['Project settings', 'Document settings', 'Iso progress', 'ISO Book']);
-  assert.deepEqual([...new Set(site.fields.filter(item => !item.hidden).map(item => item.section || 'Details'))], ['Project settings', 'Document settings', 'Iso progress']);
+  assert.deepEqual([...new Set(site.fields.filter(item => !item.hidden).map(item => item.section || 'Details'))], ['Project settings', 'Document settings']);
   assert.deepEqual(Object.keys(missingRequired('sites', { name: 'Site' })), ['address']);
   // The other profiles keep the shared definitions.
   const demo = projectResource(availabilityFor('welding-demo'), RESOURCE_MAP.sites);
   assert.equal(demo.fields.find(item => item.name === 'zip')?.label, 'Postcode'); assert.equal(demo.fields.find(item => item.name === 'address')?.required, undefined);
 });
-test('NDT measurement is two radio buttons with their explanations and Repair performance has its reference label', () => {
-  const ndt = field('ndtMeasurement');
-  assert.equal(ndt.control, 'radio'); assert.deepEqual(ndt.options, ['Inch-weighted', 'Per weld']); assert.equal(ndt.default, 'Inch-weighted');
-  assert.equal(ndt.optionHints?.['Inch-weighted'], 'A DN500 weld counts more than a DN15 weld.');
-  assert.equal(ndt.optionHints?.['Per weld'], '10 welds with NDT required, 1 Accepted = 10% of the NDT weight.');
-  assert.equal(field('repairLimit').label, 'Repair performance');
-  assert.equal(projectResource(availabilityFor('welding-demo'), RESOURCE_MAP.sites).fields.find(item => item.name === 'ndtMeasurement')?.control, undefined);
+test('Defect norm, Repair performance, NDT measurement, IRN Code, Archived and the flange standard are gone from the form; their values stay stored', () => {
+  for (const name of ['defectNorm', 'repairLimit', 'ndtMeasurement', 'irnCode', 'archived', 'flangeStandard']) assert.equal(field(name).hidden, true, name);
+  assert.deepEqual(site.fields.filter(item => item.section === 'Project settings' && !item.hidden).slice(4).map(item => item.name), ['mandatoryFields', 'wpsValidation', 'projectCertificates', 'materialManagementDisplay', 'diameterStandard']);
+  assert.equal(field('ndtMeasurement').default, 'Inch-weighted', 'a new site still stores the default');
 });
-test('Iso progress weights come phase by phase with the reference labels, and a new main project starts at 50 / 50 / 0', () => {
+test('the legacy Iso progress weights are hidden, and a new main project still stores 50 / 50 / 0', () => {
   const progress = site.fields.filter(item => item.section === 'Iso progress');
-  assert.deepEqual(progress.map(item => item.label), ['Distribution - Shop', 'Welds - Shop', 'NDT - Shop', 'Material pipe - Shop', 'Supports - Shop', 'Appendages - Shop', 'Distribution - Field', 'Material pipe - Field', 'Welds - Field', 'NDT - Field', 'Supports - Field', 'Appendages - Field', 'Punch - Field', 'Distribution - Site', 'Hydrotest', 'Paint/Tracing']);
+  assert.ok(progress.every(item => item.hidden), 'no weight input');
   assert.deepEqual(progress.map(item => item.name).sort(), [...PROGRESS_FIELDS].sort());
   assert.deepEqual([field('weightShop').default, field('weightField').default, field('weightSite').default], [50, 50, 0]);
   assert.ok(progress.filter(item => !item.name.startsWith('weight')).every(item => item.default === 0));
@@ -122,10 +125,11 @@ test('Duplicate Project site copies the ticked settings and lists, names the cop
   assert.ok(copied.length > 0 && copied.every(link => link.resourceKey === 'weld_types'), 'only the ticked list');
   assert.ok(copied.some(link => link.recordId === 'weld-type-1' && link.enabled === false), 'a record switched off on the source stays off');
   assert.equal(copied.length, weldTypeLinks + 1); assert.ok(otherLinks >= 0);
-  // A second copy is numbered; Iso progress and Document settings travel when ticked; unknown options are refused.
-  const second = runAction(store, 'duplicate-site', { siteId: source.id, parts: ['isoProgress', 'documentSettings'] }, SYSTEM).record!;
-  assert.equal(second.name, `${source.name} (Copy 2)`); assert.equal(second.weightShop, source.weightShop); assert.equal(second.hydrotestPlan ?? '', source.hydrotestPlan ?? '');
-  assert.throws(() => runAction(store, 'duplicate-site', { siteId: source.id, parts: ['projects'] }, SYSTEM), /listed options/);
+  // A second copy is numbered; Document settings travel when ticked; unknown options (Iso progress, ISO Book and Memo
+  // templates included, client change list 22.11.2026) are refused.
+  const second = runAction(store, 'duplicate-site', { siteId: source.id, parts: ['documentSettings'] }, SYSTEM).record!;
+  assert.equal(second.name, `${source.name} (Copy 2)`); assert.equal(second.hydrotestPlan ?? '', source.hydrotestPlan ?? '');
+  for (const removed of ['projects', 'isoProgress', 'isobook', 'memoTemplates']) assert.throws(() => runAction(store, 'duplicate-site', { siteId: source.id, parts: [removed] }, SYSTEM), /listed options/, removed);
   assert.equal(duplicateParts(['welders'])!.length, 1); assert.equal(duplicateParts(['welders', 'welders']), null);
   assert.equal(copyName('A', ['a (copy)']), 'A (Copy 2)'); assert.ok(DUPLICATE_PARTS.every(part => part.label));
 });
@@ -370,19 +374,21 @@ test('the logo sizing: older records read the reference defaults, values are cla
 });
 
 // ----- shell-general-003: Delete project site and the Archived checkbox ----------------------------------------------------
-test('Project settings end with the Archived checkbox (hosted only); Delete project site reads "Are you sure?"', () => {
+test('Archived left the form; Delete project site ("Are you sure?") archives the site and says it can be restored', () => {
   const settings = site.fields.filter(item => item.section === 'Project settings' && !item.hidden);
-  assert.equal(settings.at(-1)?.name, 'archived', 'the last field of Project settings');
-  assert.deepEqual([field('archived').label, field('archived').type], ['Archived', 'checkbox']);
-  assert.ok(field('archived').hint && field('archived').hint!.length < 120, 'a short help text of our own');
+  assert.ok(!settings.some(item => item.name === 'archived'), 'no Archived checkbox in the form');
+  assert.deepEqual([field('archived').type, field('archived').hidden], ['checkbox', true], 'still defined, so an older save that sends it is accepted');
   assert.equal(RESOURCE_MAP.sites.fields.find(item => item.name === 'archived')?.hidden, true, 'other profiles do not show it');
   assert.equal(projectResource(availabilityFor('welding-demo'), RESOURCE_MAP.sites).fields.some(item => item.name === 'archived'), false);
-  assert.deepEqual(SITE_DELETE, { title: 'Delete project site', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' });
+  assert.deepEqual(SITE_DELETE, { title: 'Delete project site', text: 'Are you sure?', note: 'The project site moves to the archived list (Show archived sites), where it can be restored.', button: 'Delete', cancel: 'Cancel' });
+  const page = readFileSync(new URL('../client/sites-page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /post\(`\/records\/sites\/\$\{site\.id\}\/archive`/, 'Delete archives');
+  assert.match(page, /site\._archived && <ArchiveRecordButton resourceKey="sites"/, 'an archived site is restored from Show archived sites');
   assert.equal(SITE_DELETE_BLOCKED, SITE_DELETE_REFUSED, 'the dialog and the server say the same');
   assert.equal(siteHasProjects([row('p1', { siteId: 'a' }), row('p2', { siteId: 'b', _archived: true })], 'a'), true);
   assert.equal(siteHasProjects([row('p2', { siteId: 'b', _archived: true })], 'b'), false, 'a deleted (archived) project does not count');
 });
-test('hosted: deleting an empty project site succeeds, a site with projects gets 409; ticking Archived moves a site to the archived list', async t => {
+test('hosted: deleting an empty project site succeeds, a site with projects gets 409; a save that still sends Archived ticked moves a site to the archived list', async t => {
   const f = await fixture(t);
   const created = await f.admin.request('/records/sites', 'POST', { name: 'Empty yard', address: '9 Empty Road' }); assert.equal(created.status, 201);
   const empty = (await json<{ record: Row }>(created)).record;
@@ -394,7 +400,7 @@ test('hosted: deleting an empty project site succeeds, a site with projects gets
   const refused = await f.admin.request(`/records/sites/${NORTH}/archive`, 'POST', { _version: north._version });
   assert.equal(refused.status, 409); assert.equal((await json<{ error: string }>(refused)).error, SITE_DELETE_REFUSED);
   assert.ok(f.store.list('sites').some(item => item.id === NORTH));
-  // The Archived checkbox: on save, the site moves to the archived list (Show archived sites).
+  // An older form that still sends Archived ticked: on save, the site moves to the archived list (Show archived sites).
   const other = (await json<{ record: Row }>(await f.admin.request('/records/sites', 'POST', { name: 'Old yard', address: '3 Old Road' }))).record;
   const ticked = await f.admin.request(`/records/sites/${other.id}`, 'PUT', { name: 'Old yard', archived: true, _version: other._version });
   assert.equal(ticked.status, 200); const saved = (await json<{ record: Row }>(ticked)).record;
