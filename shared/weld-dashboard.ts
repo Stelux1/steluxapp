@@ -26,9 +26,9 @@ export interface DashboardRows {
 /** Filters of the dashboard; the four multi-selects of the reference hold lists (empty = all). */
 export interface DashboardFilters {
   from: string; to: string; companyId: string; location: '' | 'Shop' | 'Field'; projectIds: string[]; welderIds: string[]; itpId: string;
-  pipingClass: string; irn: string; ped: string; material: string; ndtGroupIds: string[]; ndtProcessId: string; wpsIds: string[];
+  pipingClass: string; /** The "Custom field" of the isometric (stored as `irn`). */ irn: string; ped: string; material: string; wpsIds: string[];
 }
-export const NO_DASHBOARD_FILTERS: DashboardFilters = { from: '', to: '', companyId: '', location: '', projectIds: [], welderIds: [], itpId: '', pipingClass: '', irn: '', ped: '', material: '', ndtGroupIds: [], ndtProcessId: '', wpsIds: [] };
+export const NO_DASHBOARD_FILTERS: DashboardFilters = { from: '', to: '', companyId: '', location: '', projectIds: [], welderIds: [], itpId: '', pipingClass: '', irn: '', ped: '', material: '', wpsIds: [] };
 /** The filters a dashboard opens with, and Reset returns to: To Date = today, everything else empty (reference). */
 export const defaultDashboardFilters = (today: string): DashboardFilters => ({ ...NO_DASHBOARD_FILTERS, to: today });
 /** Today as yyyy-mm-dd in local time. */
@@ -98,7 +98,7 @@ export function requiredExaminations(welds: number, percent: number): number {
 
 export interface Fact {
   weld: Row; iso: Row | undefined; projectId: string; welderIds: string[]; companyIds: string[]; wpsId: string; itpId: string;
-  location: string; typeLabel: string; length: number; processIds: Set<string>; groupIds: Set<string>;
+  location: string; typeLabel: string; length: number;
 }
 /** Short label of a weld type: its abbreviation, else its name; "UNK" for a weld without type (reference). */
 export const weldTypeLabel = (type: Row | undefined) => text(type?.abbreviation) || text(type?.name) || 'UNK';
@@ -107,17 +107,13 @@ function facts(rows: DashboardRows): Fact[] {
   const isos = new Map(live(rows.isometrics).map(row => [row.id, row]));
   const welders = new Map(live(rows.welders).map(row => [row.id, row]));
   const types = new Map(live(rows.weldTypes).map(row => [row.id, row]));
-  const processes = new Map(live(rows.ndtProcesses).map(row => [row.id, row]));
-  const requests = live(rows.requests).filter(row => text(row.type) === NDT);
   const itps = live(rows.itps), diameters = live(rows.diameters);
   return live(rows.welds).filter(weld => isos.has(String(weld.isoId)) && !isNonWeldCode(weld.weldNo)).map(weld => {
     const iso = isos.get(String(weld.isoId)), type = types.get(String(weld.typeId)), location = text(type?.location);
     const welderIds = weldWelderIds(weld);
-    const processIds = new Set(requests.filter(request => request.weldId === weld.id).map(request => text(request.processId)).filter(Boolean));
     return {
       weld, iso, projectId: text(iso?.projectId), welderIds, companyIds: welderIds.map(id => text(welders.get(id)?.companyId)).filter(Boolean),
       wpsId: text(weld.wpsId), itpId: weldItpId(iso, location, itps), location, typeLabel: type ? weldTypeLabel(type) : 'UNK', length: weldLength(weld, diameters),
-      processIds, groupIds: new Set([...processIds].map(id => text(processes.get(id)?.groupId)).filter(Boolean)),
     };
   });
 }
@@ -136,18 +132,14 @@ function inScope(fact: Fact, f: DashboardFilters): boolean {
   if (f.irn && text(fact.iso?.irn) !== f.irn) return false;
   if (f.ped && text(fact.iso?.ped) !== f.ped) return false;
   if (f.material && text(fact.iso?.material) !== f.material) return false;
-  if (f.ndtProcessId && !fact.processIds.has(f.ndtProcessId)) return false;
-  if (!anyOf(f.ndtGroupIds, [...fact.groupIds])) return false;
   if (!anyOf(f.wpsIds, fact.wpsId)) return false;
   return true;
 }
 
 // ----- KPI cards -----------------------------------------------------------------------------------------------------
 
-/** "View ▾" of the reference: number of welds (default) or summed weld length in mm. */
+/** Number of welds (default) or summed weld length in mm; the dashboard no longer offers the switch, the default is used. */
 export type WeldView = 'welds' | 'length';
-export const VIEW_OPTIONS: { value: WeldView; label: string }[] = [{ value: 'length', label: 'Welds length' }, { value: 'welds', label: 'Number of welds' }];
-export const viewLabel = (view: WeldView) => `View: ${VIEW_OPTIONS.find(option => option.value === view)!.label}`;
 
 export interface WeldTypeCount { key: string; label: string; count: number; }
 export interface RepairPerformance { value: number; limit: number; aboveLimit: boolean; /** Repaired as a share of every weld in scope. */ scopePercent: number; }
@@ -344,44 +336,15 @@ export function complianceWarnings(rows: DashboardRows, scope: Fact[]): string[]
   ];
 }
 
-// ----- group list: filter, search, paging -----------------------------------------------------------------------------
-
-export const GROUP_FILTERS = ['Not compliant', 'Compliant', 'All groups'] as const;
-export type GroupFilter = typeof GROUP_FILTERS[number];
-export const COMPLIANCE_PAGE_SIZE = 50;
-
-export function filterGroups(groups: ComplianceGroup[], mode: GroupFilter, query: string): ComplianceGroup[] {
-  const needle = query.trim().toLowerCase();
-  return groups.filter(group => (mode === 'All groups' || group.compliant === (mode === 'Compliant'))
-    && (!needle || [group.welderLabel, group.wpsName, group.itpNumber].some(value => value.toLowerCase().includes(needle))));
-}
-/** One page (0-based) of `items`; the page is clamped into range. */
-export function pageOf<T>(items: T[], page: number, size = COMPLIANCE_PAGE_SIZE): { items: T[]; page: number; pages: number } {
-  const pages = Math.max(1, Math.ceil(items.length / size)), at = Math.min(Math.max(0, Math.trunc(page) || 0), pages - 1);
-  return { items: items.slice(at * size, at * size + size), page: at, pages };
-}
-/** Range text of the pager: "1–3 of 3", "0–0 of 0". */
-export function pageRange(total: number, page: number, size = COMPLIANCE_PAGE_SIZE): string {
-  const from = total === 0 ? 0 : page * size + 1, to = Math.min(page * size + size, total);
-  return `${from}–${to} of ${total}`;
-}
-
 // ----- filter labels, summary line and refresh ----------------------------------------------------------------------
 
 /** Option texts of the reference filters. */
 export const welderOptionLabel = (welder: Row) => `${text(welder.number)} | ${text(welder.name)}`;
 const percentText = (value: number) => String(Math.round(value * 100) / 100);
 export const itpOptionLabel = (itp: Row) => `${text(itp.number)} | ${percentText(itpNdtPercent(itp) ?? DEFAULT_NDT_PERCENT)}%`;
-export const ndtProcessLabel = (process: Row) => text(process.description) ? `${text(process.name)} - ${text(process.description)}` : text(process.name);
-export const FILTER_PLACEHOLDERS = { projects: 'All projects', welders: 'All welders', ndtGroups: 'All NDT Groups', wps: 'All wps methods', ndtProcess: 'All NDT processes', any: 'All' } as const;
-/** The one-line filter summary above the buttons: From Date, Project and Welder, "All" while unset. */
-export function filterSummary(filters: DashboardFilters, names: { project: (id: string) => string; welder: (id: string) => string; date: (value: string) => string }): [string, string][] {
-  return [
-    ['From Date', filters.from ? names.date(filters.from) : 'All'],
-    ['Project', filters.projectIds.length ? filters.projectIds.map(names.project).join(', ') : 'All'],
-    ['Welder', filters.welderIds.length ? filters.welderIds.map(names.welder).join(', ') : 'All'],
-  ];
-}
+export const FILTER_PLACEHOLDERS = { projects: 'All sub-projects', welders: 'All welders', wps: 'All wps methods', itp: 'All ITPs', customField: 'All custom fields', any: 'All' } as const;
+/** Filter labels of the dashboard form (client change list 22.11.2026: Intern prj. no. -> Sub-project, ITP/KNR -> ITP, IRN -> Custom field). */
+export const FILTER_LABELS = { project: 'Sub-project', itp: 'ITP', customField: 'Custom field' } as const;
 /** The dashboard reloads its data every 3 minutes while it is open (reference setInterval 180000). */
 export const DASHBOARD_REFRESH_MS = 180_000;
 export function scheduleDashboardRefresh(run: () => void, timers: { setInterval: typeof setInterval; clearInterval: typeof clearInterval } = globalThis): () => void {

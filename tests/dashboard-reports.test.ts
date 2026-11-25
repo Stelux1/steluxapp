@@ -15,7 +15,7 @@ import { NO_DASHBOARD_FILTERS, weldDashboard, type DashboardFilters } from '../s
 import { isNonWeldCode } from '../shared/weld-codes.ts';
 import {
   DASHBOARD_REPORTS, DASHBOARD_REPORT_MAP, NDT_REQUIRED, RANGE_TOO_LONG, WELDER_REQUIRED, dialogDefaults, ndtTracking, reportData, reportQuery, reportRefusal, reportRows,
-  scopeFilters, totals, wdiTracking, wdiTrackingV2, welderReport, welderTracer, welderTracking,
+  reportHeader, scopeFilters, totals, wdiTracking, wdiTrackingV2, welderReport, welderTracer, welderTracking,
 } from '../shared/dashboard-reports.ts';
 import { PDF_DOCUMENTS } from '../server/pdf/documents.ts';
 import type { Row } from '../shared/types.ts';
@@ -69,6 +69,16 @@ test('Reports ▾ lists the ten reference entries in the reference order, with t
   // The menu is mounted on the dashboard next to Filter and Reset.
   const mount = readFileSync(new URL('../client/itp-dashboard.tsx', import.meta.url), 'utf8');
   assert.match(mount, /<DashboardReports filters=\{filters\}/);
+});
+
+test('B4: the dashboard has no NDT filter to carry, and the PDF captions use Sub-project, ITP and Custom field', () => {
+  const stale = { ...filters({ itpId: 'itp-1', irn: 'X-1' }), ndtProcessId: 'ndt-rt', ndtGroupIds: ['g1'] } as unknown as DashboardFilters;
+  for (const entry of DASHBOARD_REPORTS) assert.notEqual(reportQuery(entry, stale, dialogDefaults(entry), { defaultTo: '' }).ndt, 'ndt-rt', entry.key);
+  const header = reportHeader(report('dashboard-welder-report'), {} as Record<string, Row[]>, { project: [], itp: [], irn: ['X-1'] } as never, null);
+  const labels = [...header.left, ...header.box].map(item => item.label);
+  assert.ok(labels.includes('Sub-project') && labels.includes('ITP') && labels.includes('Custom field'), labels.join(', '));
+  assert.ok(!labels.some(label => /^(Project|ITP nr\.|IRN)$/.test(label)), labels.join(', '));
+  assert.equal(header.box.find(item => item.label === 'Custom field')?.value, 'X-1');
 });
 
 test('each dialog sends the dashboard filters it carries, its fixed values and its own fields', () => {
