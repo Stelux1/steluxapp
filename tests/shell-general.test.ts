@@ -14,7 +14,7 @@ import { passwordHash } from '../server/auth.ts';
 import { runAction } from '../server/workflows.ts';
 import { RESOURCE_MAP } from '../shared/resources.ts';
 import { HOSTED_RELEASE_PROFILE, availabilityFor, projectResource } from '../shared/release.ts';
-import { NO_RIGHTS_TEXT, PILOTS, PILOT_MAP, pilotItemPath, pilotItemState, pilotPageState, type MenuRights } from '../shared/pilots.ts';
+import { NO_RIGHTS_TEXT, PILOTS, PILOT_MAP, pagePilots, pilotItemPath, pilotItemState, pilotPageState, type MenuRights } from '../shared/pilots.ts';
 import { PROGRESS_DEFAULTS, PROGRESS_FIELDS, PROGRESS_MODEL } from '../shared/site-settings.ts';
 import { isoProgress } from '../shared/iso-status.ts';
 import { HOSTED_DEFAULT_SORT, listDefaultSort } from '../shared/welder-data.ts';
@@ -38,12 +38,15 @@ const row = (id: string, extra: Record<string, unknown> = {}) => ({ id, _version
 const site = projectResource(hosted, RESOURCE_MAP.sites);
 const field = (name: string) => site.fields.find(item => item.name === name)!;
 
-// ----- -001 General data → Project sites -------------------------------------------------------------------------------
-test('General data → Project sites opens the reference table in both pilots, not the card screen', () => {
+// ----- -001 Project sites: no menu entry, "Change site" leads to the same screen ------------------------------------------
+test('Project sites has no menu entry in either Core (it duplicates Change site) but its page stays open to both; Change site offers add / edit / archive', () => {
   for (const pilot of PILOTS) {
-    const item = pilot.groups.find(group => group.title === 'General data')!.items[0];
-    assert.equal(item.label, 'Project sites'); assert.equal(pilotItemPath(item), '/workspace/sites', pilot.key);
+    assert.ok(!pilot.groups.some(group => group.title === 'General data'), pilot.key);
+    assert.ok(!pilot.groups.flatMap(group => group.items).some(item => item.label === 'Project sites' || item.resource === 'sites'), pilot.key);
   }
+  assert.deepEqual(pagePilots('/workspace/sites'), ['weld', 'mto'], 'the Project sites page is still a shared workspace page, never No access');
+  const picker = readFileSync(join(process.cwd(), 'client', 'project-workspace.tsx'), 'utf8');
+  assert.match(picker, /Add main project/); assert.match(picker, /Edit main project/); assert.match(picker, /Archived projects/); assert.match(picker, /<RecordEditor resourceKey="sites"/);
   assert.deepEqual(site.columns, ['name', 'address', 'phone', 'email', 'irnCode']);
   assert.deepEqual([...SITE_LIST_COLUMNS], site.columns);
   assert.deepEqual(SITE_PAGE_SIZES, [5, 20, 50, 100, 500]);
@@ -252,10 +255,10 @@ test('a menu item the profile may not open stays in the menu, marked no-rights; 
   assert.equal((await limited.as.request('/records/welders')).status, 403);
   const rights: MenuRights = { delivered: path => path !== '/welding/nothing' && true, canRecord: key => canResource(user, key), canReadReport: () => false };
   const weld = PILOT_MAP.weld, items = weld.groups.flatMap(group => group.items), byLabel = (label: string) => items.find(item => item.label === label)!;
-  assert.equal(pilotItemState(byLabel('Welders'), rights), 'no-rights'); assert.equal(pilotItemState(byLabel('Project sites'), rights), 'open'); assert.equal(pilotItemState(byLabel('Dashboard'), rights), 'open');
+  assert.equal(pilotItemState(byLabel('Welders'), rights), 'no-rights'); assert.equal(pilotItemState(byLabel('Dashboard'), rights), 'open');
   assert.equal(pilotItemState(byLabel('Welders'), { ...rights, delivered: () => false }), 'hidden', 'a page that is not delivered is not listed');
   assert.equal(pilotItemState(byLabel('Iso overview'), rights), 'no-rights');
-  assert.equal(pilotPageState(weld, '/welding/nothing', rights), 'unlisted'); assert.equal(pilotPageState(weld, pilotItemPath(byLabel('Welders'))!, rights), 'no-rights'); assert.equal(pilotPageState(weld, '/workspace/sites', rights), 'open');
+  assert.equal(pilotPageState(weld, '/welding/nothing', rights), 'unlisted'); assert.equal(pilotPageState(weld, pilotItemPath(byLabel('Welders'))!, rights), 'no-rights'); assert.equal(pilotPageState(weld, '/workspace/sites', rights), 'unlisted');
   assert.equal(pilotPageState(weld, '/workspace/isometrics/x', rights), 'unlisted');
   const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(PilotNoRights)));
   assert.match(html, /You do not have rights to open this page\./);
@@ -423,7 +426,7 @@ test('pilots say Logout and Change site; the selector no longer mentions profile
   const weld = PILOT_MAP.weld;
   const base: MenuRights = { delivered: () => true, canRecord: () => false, canReadReport: () => false, canArea: () => false };
   assert.equal(pilotHomePath(weld, base), null, 'nothing open: no button');
-  assert.deepEqual(pilotHomePath(weld, { ...base, canRecord: key => key === 'sites' }), { path: '/workspace/sites', label: 'Go to Project sites' }, 'no dashboard area 35: the first open page');
+  assert.deepEqual(pilotHomePath(weld, { ...base, canRecord: key => key === 'welders' }), { path: '/welding/welders', label: 'Go to Welders' }, 'no dashboard area 35: the first open page');
   assert.deepEqual(pilotHomePath(weld, { ...base, canArea: key => key === '35' }), { path: '/dashboard', label: 'Go to dashboard' });
   const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(PilotNoRights)));
   assert.match(html, /Go to dashboard/, 'outside a workspace the button stays');
