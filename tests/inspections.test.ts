@@ -18,7 +18,7 @@ import { canAction } from '../shared/permissions.ts';
 import { PILOT_MAP } from '../shared/pilots.ts';
 import { isoBlockers } from '../shared/iso-status.ts';
 import {
-  ARCHIVE_TITLES, MANAGER_PATH, MANAGER_TABS, cellStatusTitle, heatSections, viCellText, weldArchive, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
+  HEAT_LABELS, HEAT_TYPES, KIND_LABELS, heatRequired, ARCHIVE_TITLES, MANAGER_PATH, MANAGER_TABS, cellStatusTitle, heatSections, viCellText, weldArchive, countsForCompliance, inspectionCellState, workspaceCellRows, isTracer, managerColumns, managerRequests, managerWelds, nextRepairNumber, repairChain, repairState,
   resultLabel, roundErrors, roundLabel, storedResult, tracerError, tracerSummary, inspectionFileError,
   naBlockErrors, roundsHaveNa, roundLockedError, autoReweld, notAccepted, repairDue, repairsOf, tracerProposal, tracerDetail, TRACER_DETAIL_TEXTS,
   ARCHIVE_PAGE_SIZES, MANAGER_PAGE_SIZES, MASS_REQUEST_TEXTS, PWHT_DOCUMENT, archiveViewLabel, filterManagerWelds, groupRequests, keepEligible, managerResults, massRequestPlan, monthRange, nextRequestNumber, openProcessIds, requestNumberShown, requestSelectable,
@@ -109,6 +109,26 @@ test('the inspection cell shows No, Yes while open, requested, accepted and not 
   const workspace = { inspection_results: [rejected], inspection_requests: [request], attachments: [], welds: [w] };
   const fromWorkspace = inspectionCellState(w, 'NDT', workspaceCellRows(workspace));
   assert.equal(fromWorkspace.status, 'rejected'); assert.equal(fromWorkspace.tracer, false);
+});
+
+test('D5: the weld table shows Pre-HT and PWHT as two columns, each with only its own requirement, request, result, report and print icon', () => {
+  assert.deepEqual(HEAT_TYPES.map(heat => HEAT_LABELS[heat]), ['Pre-HT', 'PWHT']);
+  assert.deepEqual([KIND_LABELS.VI, KIND_LABELS['NDT PRE'], KIND_LABELS.NDT], ['VT', 'NDT (Pre)', 'NDT'], 'VI reads VT');
+  const both = weld('h', { pwhtReqPre: true, pwhtReq: true }), preOnly = weld('p', { pwhtReqPre: true }), postOnly = weld('q', { pwhtReq: true });
+  assert.deepEqual([heatRequired(both, 'PRE-HT'), heatRequired(both, 'PWHT'), heatRequired(preOnly, 'PWHT'), heatRequired(postOnly, 'PRE-HT')], [true, true, false, false]);
+  // Pre-HT required, PWHT not: the PWHT column reads No while the Pre-HT column is open and offers its request.
+  assert.equal(inspectionCellState(preOnly, 'PWHT', {}, 'PRE-HT').status, 'open'); assert.equal(inspectionCellState(preOnly, 'PWHT', {}, 'PRE-HT').printable, true);
+  assert.equal(inspectionCellState(preOnly, 'PWHT', {}, 'PWHT').required, false); assert.equal(inspectionCellState(preOnly, 'PWHT', {}, 'PWHT').status, 'not-required'); assert.equal(inspectionCellState(preOnly, 'PWHT', {}, 'PWHT').printable, false);
+  // Both required: an accepted PWHT result settles the PWHT column only; the combined kind still waits for Pre-HT.
+  const accepted = result('h', 'Accepted', '2026-10-01', { type: 'PWHT', reportNo: 'HT-1' });
+  const rows = { results: [accepted], requests: [row('r-pre', { weldId: 'h', type: 'PRE-HT', status: 'Open', number: 'R00007', date: '2026-10-01' }), row('r-post', { weldId: 'h', type: 'PWHT', status: 'Closed', number: 'R00008', date: '2026-10-01' })], attachments: [row('f', { entityType: 'inspection_results', entityId: accepted.id })] };
+  const pre = inspectionCellState(both, 'PWHT', rows, 'PRE-HT'), post = inspectionCellState(both, 'PWHT', rows, 'PWHT');
+  assert.equal(pre.status, 'requested'); assert.deepEqual(pre.results, []); assert.deepEqual(pre.reportFiles, []); assert.deepEqual(pre.archive.map(item => item.number), ['R00007']); assert.equal(pre.printable, false, 'its request exists');
+  assert.equal(post.status, 'accepted'); assert.deepEqual(post.reportFiles.map(file => file.id), ['f']); assert.deepEqual(post.archive.map(item => item.number), ['R00008']);
+  assert.equal(inspectionCellState(both, 'PWHT', rows).status, 'requested', 'without a heat type the kind keeps the combined behaviour (NDT/PWHT Manager, PDFs)');
+  assert.deepEqual(weldArchive(both, 'PWHT', rows).map(item => item.number).sort(), ['R00007', 'R00008']);
+  // A result recorded without the flag still shows in its own column (Yes), as NDT does.
+  assert.equal(inspectionCellState(weld('x'), 'PWHT', { results: [result('x', 'Accepted', '2026-10-01', { type: 'PRE-HT' })] }, 'PRE-HT').required, true);
 });
 
 test('repair welds are numbered R1, R2 along the chain and the original stays open until a repair is accepted', () => {
@@ -584,7 +604,7 @@ test('VT hub: three tabs and the reference labels, options and defaults of the N
   assert.deepEqual(Object.values(VT_NEW_LABELS), ['Filter', 'ITP', 'Activity No', 'QAQC Engineer', 'Custom Report No (If needed)']);
   assert.deepEqual(VT_FILTERS.map(option => option.label), ['Include all welds', 'Select specific weld(s)']);
   assert.deepEqual(VT_ITPS, ['ITP 1', 'ITP 2'], 'no empty choice, ITP 1 is the first and so the default');
-  assert.deepEqual(VT_PICKER_COLUMNS, ['C', 'WN', 'Type', 'Wdr']); assert.deepEqual(VT_UPLOAD_COLUMNS, ['A', 'NA', 'WN', 'Type', 'Wdr']);
+  assert.deepEqual(VT_PICKER_COLUMNS, ['C', 'WN', 'Type', 'WD']); assert.deepEqual(VT_UPLOAD_COLUMNS, ['A', 'NA', 'WN', 'Type', 'WD'], 'WD as in the weld table (client change list 22.11.2026)');
   assert.equal(VT_DELETE_CONFIRM, 'Delete selected VT report(s)?');
   const hub = INSPECTION_ACTIONS.find(action => action.key === 'visual-inspection')!;
   for (const name of ['op', 'isoId', 'reportId', 'reportIds', 'mode']) assert.ok(hub.fields.some(field => field.name === name), name);

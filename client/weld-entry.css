@@ -1,35 +1,48 @@
-/* Weld table and weld entry on the isometric (Weld Pilot). Tokens come from brand.css. */
-.weld-panel { padding: 0; overflow: hidden; }
-.weld-panel-heading { flex-wrap: wrap; gap: 12px 16px; padding: 18px 20px 12px; align-items: center; }
-.weld-panel-heading > div:first-child { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+/* The LISL of the isometric and weld entry (Weld Core). Tokens come from brand.css. */
+.weld-panel { padding: 0; overflow: hidden; margin-bottom: 10px; }
+.weld-panel-heading { flex-wrap: wrap; gap: 8px 16px; padding: 10px 16px; align-items: center; min-height: 52px; }
+.weld-panel-heading > div:first-child { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .weld-panel-heading h2 { margin: 0; }
-.weld-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-.weld-views { margin: 0; }
-.weld-views-bar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
-.weld-panel > .alert { margin: 0 20px 12px; }
-.weld-panel .table-scroll-wrap { border-top: 1px solid var(--line); }
-.weld-legend { display: flex; align-items: center; gap: 8px; margin: 0; padding: 12px 20px 16px; font-size: 13px; }
+.weld-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.weld-checked { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.weld-panel > .alert { margin: 0 16px 12px; }
 
-.weld-table { min-width: 1280px; }
-.weld-table th { white-space: nowrap; font-size: 12px; }
-.weld-table td { vertical-align: middle; font-size: 13px; }
-.weld-table .select-cell { width: 40px; text-align: center; }
-.weld-table .weld-no { font-weight: 600; white-space: nowrap; }
-.weld-table .weld-material { min-width: 150px; max-width: 220px; overflow-wrap: anywhere; }
+/*
+ * The table fits its box (client change list 22.11.2026, D6): fixed layout with deliberate widths, compact type, Material ①,
+ * Material ② taking the rest. Long material and WPS texts wrap to two lines with the full text as tooltip. The box scrolls
+ * up and down with a sticky header; below about 1100 px of content it scrolls sideways inside the box (no hint line).
+ */
+.weld-table-box { overflow: auto; max-height: max(420px, calc(100vh - 170px)); border-top: 1px solid var(--line); overscroll-behavior: contain; }
+.weld-table-box:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.weld-table { table-layout: fixed; width: 100%; min-width: 920px; border-collapse: separate; border-spacing: 0; white-space: normal; font-variant-numeric: tabular-nums; }
+.weld-col-wn { width: 50px; } .weld-col-type { width: 42px; } .weld-col-wd { width: 48px; } .weld-col-vt { width: 42px; }
+.weld-col-ndt-pre, .weld-col-ndt, .weld-col-pre-ht, .weld-col-pwht { width: 50px; }
+.weld-col-idx-1, .weld-col-idx-2 { width: 38px; } .weld-col-chg-1, .weld-col-chg-2 { width: 54px; }
+.weld-col-wps { width: 70px; } .weld-col-d { width: 38px; } .weld-col-spool { width: 52px; } .weld-col-options { width: 60px; } .weld-col-select { width: 30px; }
+.weld-table th { position: sticky; top: 0; z-index: 2; padding: 6px 4px; font-size: 11.5px; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; background: var(--surface-blue); box-shadow: inset 0 -1px 0 var(--line); border-block: 0; }
+.weld-table td { height: auto; padding: 5px 4px; vertical-align: middle; font-size: 12px; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; border-bottom: 1px solid var(--line); }
+.weld-table tbody tr:last-child td { border-bottom: 0; }
+.weld-table th:first-child, .weld-table td:first-child { padding-left: 10px; }
+.weld-table .select-cell { text-align: center; padding-inline: 2px; }
+.weld-table .weld-no { font-weight: 600; }
+.weld-table .weld-no .record-link { min-height: 0; padding: 0; font-size: 12px; text-align: left; overflow-wrap: anywhere; }
+.weld-table .weld-wrap { overflow-wrap: anywhere; }
+.weld-clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .weld-table .weld-material.existing, .weld-table .weld-material.connected { color: var(--muted); font-weight: 600; letter-spacing: .02em; }
 .weld-table .weld-options { white-space: nowrap; }
-.weld-table .weld-options .icon-btn { margin-inline-end: 2px; }
-.weld-sort-head, .weld-sort-cell { width: 92px; white-space: nowrap; }
-.weld-sort-cell { display: table-cell; }
-.weld-sort-cell .icon-btn { padding: 4px; }
-.weld-grip { display: inline-flex; align-items: center; padding: 4px 2px; color: var(--muted); cursor: grab; touch-action: none; }
-.weld-grip:active { cursor: grabbing; }
-.weld-row-dragging { opacity: .45; }
-.weld-row-locked { background: color-mix(in srgb, var(--surface-blue) 55%, transparent); }
-.weld-lock { display: inline-flex; align-items: center; color: var(--muted); padding: 4px; }
-.weld-type { display: inline-block; min-width: 34px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-blue); font-weight: 600; font-size: 12px; text-align: center; cursor: help; }
+.weld-table .weld-options .icon-btn { width: 26px; height: 26px; min-height: 26px; padding: 0; }
+.weld-table .weld-stamp-set { color: #0b6b47; }
+.weld-type { display: inline-block; min-width: 30px; padding: 1px 4px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface-blue); font-weight: 600; font-size: 11px; text-align: center; cursor: help; }
 .weld-type:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.weld-drop-end td { padding: 14px; text-align: center; color: var(--muted); border: 2px dashed var(--border-strong); background: var(--surface-blue); }
+/* Inspection cells of this table: the icons wrap under Yes / No instead of widening the column. */
+.weld-table .inspection-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 0 1px; white-space: normal; }
+.weld-table .inspection-cell-main, .weld-table .inspection-cell-text { min-height: 24px; padding: 1px 3px; }
+.weld-table .inspection-cell-file, .weld-table .inspection-cell-tracer { min-width: 20px; min-height: 20px; }
+.dropdown-menu .dropdown-danger { color: #b4232f; }
+.dropdown-menu .dropdown-danger:disabled { color: var(--muted); }
+/* Delete weld at the left of the Edit weld footer: secondary and destructive. */
+.btn.weld-dialog-delete { margin-right: auto; color: #b4232f; border-color: #e7b9bd; }
+.btn.weld-dialog-delete:hover:not(:disabled) { background: #fdecee; }
 
 /* Yes / No cells of the four inspection columns: not required is calm, required stays red while open. */
 .weld-flag { display: inline-block; min-width: 36px; padding: 2px 8px; border-radius: 6px; font-weight: 600; font-size: 12px; text-align: center; }
@@ -71,26 +84,19 @@
 .btn.primary.danger:hover:not(:disabled) { background: #8f1b25; border-color: #8f1b25; }
 
 @media (max-width: 560px) {
-  .weld-panel-heading { padding: 16px 16px 10px; }
+  .weld-panel-heading { padding: 10px 12px; }
   .weld-actions { margin-left: 0; width: 100%; }
-  .weld-actions > .btn, .weld-actions > .dropdown { flex: 1 1 auto; }
-  .weld-panel > .alert { margin-inline: 16px; }
-  .weld-legend { padding-inline: 16px; }
-  .weld-views-bar { justify-content: stretch; }
+  .weld-panel > .alert { margin-inline: 12px; }
+  .weld-table-box { max-height: max(420px, calc(100vh - 120px)); }
   .weld-delete-list { columns: 2; }
 }
-@media print { .weld-actions, .weld-sort-cell, .weld-sort-head, .weld-table .select-cell, .weld-table .weld-options { display: none; } }
+@media print { .weld-actions, .weld-table .select-cell, .weld-table .weld-options, .weld-col-options, .weld-col-select { display: none; } .weld-table-box { max-height: none; overflow: visible; } .weld-table { min-width: 0; } .weld-table th { position: static; } }
 /* Mass edit welds: heading of the NDT & PWHT inputs. */
 .weld-form-section { margin: 20px 0 10px; font-size: 14px; font-weight: 600; color: var(--muted, inherit); }
-/* Search over the weld table, the Options menu divider, the stamped icon and the two columns of Mass edit welds. */
-.weld-search { padding: 4px 20px 12px; }
-.weld-search .search-field { max-width: 360px; }
-.weld-no-match { padding: 12px 20px; margin: 0; }
+/* The Options menu divider and the two columns of Mass edit welds. */
 .dropdown-divider { height: 1px; margin: 4px 0; background: var(--line); }
 .dropdown-menu .count-pill { margin-inline-start: 8px; }
-.weld-table .weld-stamp-set { color: #0b6b47; }
 .weld-mass-columns > div { min-width: 0; }
-@media (max-width: 560px) { .weld-search { padding-inline: 16px; } }
 
 /* NDT result of Edit weld: the weld's results with their reports, and Attach NDT result. */
 .weld-ndt { margin-top: 18px; border-top: 1px solid var(--line); }
@@ -103,4 +109,3 @@
 .weld-ndt-result legend { margin-bottom: 6px; font-size: 13px; font-weight: 600; }
 .weld-ndt-result label { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 .weld-ndt-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
-.weld-options .weld-lock-ndt { color: var(--ink, inherit); }

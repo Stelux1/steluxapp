@@ -14,7 +14,7 @@ import { availabilityFor, HOSTED_RELEASE_PROFILE, projectResource } from '../sha
 import { canAction } from '../shared/permissions.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import {
-  currentRevisionFile, headerFields, headingHasOptions, highestIrnCounter, irnNumber, isometricDeleteNotice, nextIrnSeries, nextRevisionNumber,
+  ISO_MENU_GROUPS, ISO_PAGE_MENU, dataLislUrl, menuGroups, currentRevisionFile, headerFields, headingHasOptions, highestIrnCounter, irnNumber, isometricDeleteNotice, nextIrnSeries, nextRevisionNumber,
   PHASE_LABELS, phaseBoxes, PROJECT_OPTIONS, PROJECT_PRINT_ENTRIES, PROJECT_ROW_ACTIONS, projectDeleteRefusal, REVISION_DIALOGS, revisionInputType,
 } from '../shared/iso-pages.ts';
 import { PDF_MENU, pdfEntries } from '../client/pdf-reports.tsx';
@@ -81,11 +81,22 @@ test('Edit isometric: Add new takes the header fields, not the assignments, prog
   for (const name of ['projectId', 'testSystemId', 'fieldPackageId', 'prefab_doc', 'field_release']) assert.ok(!names.includes(name), name);
 });
 
-test('the heading Options menu is shown only where the open tab has none of its own', () => {
-  assert.equal(headingHasOptions(true, 'welds'), false);
-  assert.equal(headingHasOptions(true, 'mto'), false);
+test('one Options menu on the isometric page: Attachments, Audit trail and Set phase are in it everywhere but beside Material Core\'s Materials tab', () => {
+  assert.equal(headingHasOptions(true, 'welds'), true, 'Weld Core: the LISL entries join the page menu, so these three are there');
+  assert.equal(headingHasOptions(true, 'mto'), false, 'the Materials tab keeps its own Options menu with them');
   assert.equal(headingHasOptions(true, 'documents'), true);
-  assert.equal(headingHasOptions(false, 'documents'), false, 'no pilot: no pilot menu');
+  assert.equal(headingHasOptions(true, 'cut-list'), true);
+  assert.equal(headingHasOptions(false, 'documents'), false, 'no Core: not offered');
+});
+
+test('D11: the page part of the Options menu keeps every entry point of the old heading, tab strip and Progress card; destructive last', () => {
+  assert.deepEqual(ISO_PAGE_MENU.map(entry => entry.key), ['edit-isometric', 'edit-quantities', 'spools', 'documents', 'attachments', 'audit-trail', 'set-phase', 'data-lisl', 'other-core', 'archive']);
+  assert.deepEqual(ISO_PAGE_MENU.filter(entry => entry.group === 'danger').map(entry => entry.label), ['Archive isometric']);
+  assert.deepEqual(ISO_MENU_GROUPS, ['welds', 'isometric', 'danger']);
+  const shown = menuGroups(ISO_PAGE_MENU, entry => ['edit-isometric', 'archive'].includes(entry.key) ? entry.label : null);
+  assert.deepEqual(shown.map(group => [group.group, group.items.map(item => item.node)]), [['isometric', ['Edit isometric']], ['danger', ['Archive isometric']]]);
+  assert.deepEqual(menuGroups(ISO_PAGE_MENU, () => null), [], 'nothing offered: no menu');
+  assert.equal(dataLislUrl({ id: 'iso-7', projectId: 'project-3' } as unknown as Parameters<typeof dataLislUrl>[0]), '/welding/lisl?project_id=project-3&iso_id=iso-7', 'Open Data LISL lands filtered on the isometric');
 });
 
 // ----- hosted API ----------------------------------------------------------------------------------------------------

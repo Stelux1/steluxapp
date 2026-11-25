@@ -25,6 +25,7 @@ import {
   welderFieldsDisabled, welderQualifiedByProcess, wpsValidationMode, wpsDiameterRange, wpsHoldsDiameter, wpsRangeText, wpsOfferedForDiameters, wpsDiameterErrors, weldDiameterOf, diameterSizeInch, type WeldDiameter, welderOptionLabel, welderOptionList, weldersForWps, weldersQualifiedForDiameter, wpsChangeClearsWelders, wpsMatchesDiameter,
 } from '../shared/weld-entry.ts';
 import { NDT_TYPES, ndtOrPwhtInProgress, ndtRequested } from '../shared/inspections.ts';
+import { menuGroups } from '../shared/iso-pages.ts';
 import type { Row, User } from '../shared/types.ts';
 
 const row = (id: string, data: Record<string, unknown> = {}) => ({ id, _version: 1, _archived: false, _createdAt: '', _updatedAt: '', ...data }) as Row;
@@ -174,10 +175,15 @@ test('Disable welds sorting: the flag is read from the isometric, the menu entry
   assert.equal(orderFailureMessage(new Error('The welds of this isometric changed.')), 'The welds of this isometric changed.'); assert.equal(orderFailureMessage(new Error('')), 'Something went wrong.'); assert.equal(orderFailureMessage(undefined), 'Something went wrong.');
 });
 
-test('Options menu: the reference order, with Punch list after the Pre-HT/PWHT upload and without Upload NDT on multiple welds', () => {
-  assert.deepEqual(WELD_OPTIONS_MENU.map(entry => entry.label), ['Attachments', 'Visual inspection', 'Generate Mass NDT-Pre request', 'Generate Mass NDT request', 'Generate Mass Pre-HT/PWHT request', 'Upload Pre-HT/PWHT on multiple welds', 'Punch list', 'Audit trail', 'Set phase', 'Show deleted welds', 'Delete selected', 'Disable welds sorting']);
-  assert.deepEqual(WELD_OPTIONS_MENU.filter(entry => entry.dividerBefore).map(entry => entry.label), ['Delete selected', 'Disable welds sorting']);
-  assert.equal(WELD_OPTIONS_MENU.some(entry => /Upload NDT/.test(entry.label)), false);
+test('Options menu (client change list 22.11.2026): weld entries first, then the isometric, destructive last; no sorting switch, no Upload NDT', () => {
+  assert.deepEqual(WELD_OPTIONS_MENU.map(entry => entry.label), ['Add welds', 'Mass edit welds', 'Visual inspection', 'Generate Mass NDT-Pre request', 'Generate Mass NDT request', 'Generate Mass Pre-HT/PWHT request', 'Upload Pre-HT/PWHT on multiple welds', 'Show deleted welds',
+    'Edit isometric', 'Progress quantities', 'Spools', 'Drawing documents', 'Attachments', 'Punch list', 'Audit trail', 'Set phase', 'Open Data LISL', 'Open in other Core', 'Delete selected', 'Archive isometric']);
+  assert.deepEqual(WELD_OPTIONS_MENU.filter(entry => entry.group === 'danger').map(entry => entry.label), ['Delete selected', 'Archive isometric'], 'destructive entries last');
+  assert.equal(WELD_OPTIONS_MENU.some(entry => /Upload NDT|sorting/i.test(entry.label)), false);
+  assert.equal(new Set(WELD_OPTIONS_MENU.map(entry => entry.key)).size, WELD_OPTIONS_MENU.length, 'one entry per key');
+  // A group with nothing to show drops out, so a divider never opens or closes the menu.
+  const groups = menuGroups(WELD_OPTIONS_MENU, entry => entry.group === 'isometric' ? null : entry.label);
+  assert.deepEqual(groups.map(group => group.group), ['welds', 'danger']);
 });
 
 test('Mass edit: the dialog has the reference labels in order, the rule checks four fields and only when a welder is set', () => {
@@ -1168,4 +1174,38 @@ test('Edit weld attaches NDT results (Approved / Rejected, report PDF) through U
   assert.match(source, /<fieldset className="weld-form-fields" disabled=\{readOnly\}>/);
   const lisl = readFileSync(new URL('../client/data-lisl.tsx', import.meta.url), 'utf8');
   assert.match(lisl, /hasFeature\('pilots'\) \? 'NDT results are attached in the weld itself/);
+});
+
+// ----- client change list 22.11.2026 (D1–D9): the LISL of the isometric page --------------------------------------------------------
+
+test('D1–D9: the LISL table has one title, the client\'s headers, Pre-HT and PWHT as two columns, and no sort column, search, padlock or trash icon', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { LISL_COLUMNS } = await import('../client/weld-entry.tsx');
+  assert.deepEqual(LISL_COLUMNS.map(column => column.label), ['WN', 'Type', 'WD', 'VT', 'NDT (Pre)', 'NDT', 'Pre-HT', 'PWHT', 'Idx', 'Chg.No.', 'Material ①', 'Idx', 'Chg.No.', 'Material ②', 'WPS', 'D', 'Spool', 'Options']);
+  const source = readFileSync(new URL('../client/weld-entry.tsx', import.meta.url), 'utf8');
+  const table = source.slice(source.indexOf('function WeldTable'), source.indexOf('export function WeldsPanel'));
+  assert.match(table, /<h2 id=\{titleId\}>LISL<\/h2>/, 'the panel title is LISL');
+  assert.doesNotMatch(table, /on this isometric`|LISL \(all fields\)|DataLisl/, 'no count text and no second view');
+  assert.doesNotMatch(table, /<Lock |weld-legend|A padlock/, 'no padlock in the table and no padlock notes');
+  assert.doesNotMatch(table, /<Trash2|Delete weld \$\{/, 'no trash icon in a row');
+  assert.doesNotMatch(table, /SearchInput|weldMatchesSearch|GripVertical|reorder-welds|toggle-weld-sorting|weld-drop-end|TableScroll/, 'no search, no sorting, no scroll hint');
+  assert.match(table, /HEAT_TYPES\.map\(heat => <td key=\{heat\}><InspectionCell weld=\{weld\} kind="PWHT" heat=\{heat\}\/><\/td>\)/, 'Pre-HT and PWHT cells each read their own heat type');
+  assert.match(table, /lockedReason=\{editingLock\?\.locked \? editingLock\.reason : undefined\}/, 'a locked weld opens read-only with its reason');
+  assert.match(table, /disabled=\{lock\.locked \|\| showDeleted\} title=\{lock\.locked \? `Cannot be checked: \$\{lock\.reason\}` : undefined\}/, 'the checkbox of a release-locked weld stays disabled and says why');
+  // Delete weld sits in Edit weld: left of the footer, only where the row icon was, behind the existing confirmation.
+  const dialog = source.slice(source.indexOf('export function WeldDialog'), source.indexOf('function RangeDialog'));
+  assert.match(dialog, /\{weld && onDeleted && !lockedReason && ndt\.editable && <button type="button" className="btn weld-dialog-delete"/);
+  assert.match(dialog, /if \(deleting && weld\) return <DeleteDialog welds=\{\[weld\]\}/);
+  const css = readFileSync(new URL('../client/weld-entry.css', import.meta.url), 'utf8');
+  assert.match(css, /\.weld-table \{ table-layout: fixed; width: 100%; min-width: 920px;/, 'fixed layout that fits about 970 px of content (1280 px with the sidebar open)');
+  assert.doesNotMatch(css, /min-width: 1280px/);
+  assert.match(css, /\.weld-table th \{ position: sticky; top: 0;/, 'the header stays while the welds scroll');
+  assert.match(css, /\.weld-table-box \{ overflow: auto; max-height: max\(420px, calc\(100vh - 170px\)\);/);
+  // The fixed columns leave room for the two Material columns at 1280 px (about 970 px of content).
+  const widths = new Map<string, number>();
+  for (const match of css.matchAll(/((?:\.weld-col-[a-z0-9-]+(?:, )?)+) \{ width: (\d+)px; \}/g)) for (const name of match[1].split(', ')) widths.set(name.replace('.weld-col-', ''), Number(match[2]));
+  const keys = [...LISL_COLUMNS.map(column => column.key), 'select'];
+  assert.deepEqual(keys.filter(key => !widths.has(key)), ['mat-1', 'mat-2'], 'every column but the two Material columns has a fixed width');
+  const total = keys.reduce((sum, key) => sum + (widths.get(key) ?? 0), 0);
+  assert.ok(970 - total >= 2 * 75, `the Material columns keep at least 75 px each at 1280 px (fixed ${total} px)`);
 });

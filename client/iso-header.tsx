@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Check, ChevronDown, Download, ExternalLink, FileText, Loader2, Play, Plus, Upload } from 'lucide-react';
+import { AlertCircle, Check, ExternalLink, Loader2, Play, Plus } from 'lucide-react';
 import { useWorkspace } from './context.tsx';
 import { usePilot } from './pilot.tsx';
 import { Modal, Progress } from './components.tsx';
@@ -8,7 +8,7 @@ import { AddRevisionDialog, DrawingRevisions } from './drawing-revisions.tsx';
 import { ItpCardLinkButton, ItpLinkControl } from './itp-dashboard.tsx';
 import { EditWeldDialog } from './weld-entry.tsx';
 import { NdtWeldDialog } from './inspections.tsx';
-import { IDENTIFICATION_FACTS } from '../shared/iso-card-facts.ts';
+import { HYDROTEST_NOT_IN_SCOPE, IDENTIFICATION_FACTS, hydrotestStateText, openPunchCount, phaseBreakdown } from '../shared/iso-card-facts.ts';
 import { itpCard, NO_ITP_LINKED } from '../shared/iso-itps-card.ts';
 import { blockerOpening, punchListUrl, RELEASE_STATUS_ANCHOR, type BlockerOpening } from '../shared/iso-blocker-targets.ts';
 import { lockContext, weldLock } from '../shared/weld-entry.ts';
@@ -16,13 +16,14 @@ import { formatMaterialStatus, materialStatus } from '../shared/mto-materials.ts
 import { hydrotestState, isoTestSystemIds } from '../shared/hydrotest.ts';
 import { hydrotestSpoolsPath } from './hydrotest.tsx';
 import { ReleaseStatus } from './releases.tsx';
-import { PunchStatus } from './punch.tsx';
+import { PunchDialog, PunchStatus } from './punch.tsx';
 import { RESOURCE_MAP } from './catalog.ts';
 import { ApiError, api, formatNumber, apiUrl } from './api.ts';
 import { currentRevision } from '../shared/revisions.ts';
 import { isoDrawingTitle, itpDrawingTitle, latestIsoFile } from '../shared/iso-pages.ts';
-import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, noBudgetText, quantityProgress, type IsoProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
+import { ISO_FINISH_ITEMS, ISO_FINISH_STATES, ISO_QUANTITIES, isoBlockers, isoBudgets, isoInputErrors, isoProgress, isoQuality, noBudgetText, quantityProgress, type IsoStatusInput, type ProgressBudgets } from '../shared/iso-status.ts';
 import { priorityLabel } from '../shared/priority.ts';
+import { punchCounts } from '../shared/punch.ts';
 import { BLOCKER_TITLES } from '../shared/iso-status.ts';
 import { PROGRESS_CARD_TEXTS, blockerCountText, finishSpecification, percentText, quantityBarText, summaryProgress } from '../shared/iso-summary.ts';
 import { startedIsoIds } from '../shared/iso-list.ts';
@@ -30,28 +31,40 @@ import type { Row } from '../shared/types.ts';
 
 const show = (value: unknown) => String(value ?? '').trim() || '—';
 
-function Card({ title, className = '', aside, children }: { title: string; className?: string; aside?: ReactNode; children: ReactNode }) {
+function Card({ title, className = '', children }: { title: string; className?: string; children: ReactNode }) {
   const id = useId();
-  return <section className={`panel iso-card ${className}`} aria-labelledby={id}><header><h2 id={id}>{title}</h2>{aside}</header>{children}</section>;
+  return <section className={`panel iso-card ${className}`} aria-labelledby={id}><h2 id={id}>{title}</h2>{children}</section>;
 }
+/** One row of a compact card: label left, value right (client change list 22.11.2026, image 20). */
+const Line = ({ label, children, title }: { label: string; children: ReactNode; title?: string }) => <div><dt>{label}</dt><dd title={title}>{children}</dd></div>;
+/** The label above the value, as the Details disclosure and Material Core's material slot list their facts. */
 const Fact = ({ label, children }: { label: string; children: ReactNode }) => <div><dt>{label}</dt><dd>{children}</dd></div>;
 
 interface HeaderProps {
   iso: Row; project?: Row;
   /** Attached drawing and ITP files of the isometric, newest first. */
   documents: Row[];
-  onUpload: (kind: string) => void;
+  /** Opens Edit isometric (the way the Custom field, the isometric's IRN, is edited); absent without the right. */
+  onEditIsometric?: () => void;
+  /** The progress quantities dialog, opened from the Completion row and from the page's Options menu. */
+  quantities: boolean;
+  onQuantities: (open: boolean) => void;
 }
 
-/** The six cards of the isometric header, identical under Weld Pilot and MTO Pilot. */
-export function IsometricHeader({ iso, project, documents, onUpload }: HeaderProps) {
+/**
+ * The top of the isometric page in both Cores (client change list 22.11.2026, image 20): four compact cards —
+ * Identification, Compliance, Technical, Progress & Status — and one collapsed Details disclosure with what the cards
+ * do not show (Asset tag, Quality, blockers, ITP links, phase flags, release status, punch status). The progress
+ * quantities are a dialog. The cards are short so the register below dominates the page.
+ */
+export function IsometricHeader({ iso, project, documents, onEditIsometric, quantities, onQuantities }: HeaderProps) {
   const { rows, canRecord, canRun, isoSummaries } = useWorkspace(); const pilot = usePilot(); const parts = statusCardParts(pilot?.pilot.key);
-  const [details, setDetails] = useState(false), [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false), [opened, setOpened] = useState<BlockerOpening | null>(null);
+  const [details, setDetails] = useState(false), [revision, setRevision] = useState(''), [history, setHistory] = useState(false), [blockers, setBlockers] = useState(false), [opened, setOpened] = useState<BlockerOpening | null>(null), [punch, setPunch] = useState(false);
   const site = rows.sites?.find(row => row.id === project?.siteId);
-  // Budgets: the server summary carries them in the hosted profile (Weld Pilot cannot read material lines); elsewhere from the rows.
+  // Budgets: the server summary carries them in the hosted profile (Weld Core cannot read material lines); elsewhere from the rows.
   const budgets = useMemo(() => isoSummaries?.[iso.id] ? isoSummaries[iso.id].budgets : isoBudgets(iso, rows), [isoSummaries, iso, rows]);
-  // Hosted profile: the server summary (computed from every record, the same in both pilots). Weld-level items are
-  // computed here only where this pilot reads welds; elsewhere each group shows its count. Other profiles: computed here.
+  // Hosted profile: the server summary (computed from every record, the same in both Cores). Weld-level items are
+  // computed here only where this Core reads welds; elsewhere each group shows its count. Other profiles: computed here.
   const summary = isoSummaries?.[iso.id], weldItems = canRecord('welds');
   const status = useMemo(() => {
     const input: IsoStatusInput = { iso, site, welds: rows.welds || [], weldTypes: rows.weld_types || [], diameters: rows.diameters || [], results: rows.inspection_results || [], releases: rows.releases ?? null, punch: rows.punchlists ?? null, testSystems: rows.test_systems ?? null, hydrotestRequests: rows.hydrotest_requests ?? null, spools: rows.spools ?? null, hydrotestResults: rows.hydrotest_results ?? null, flanges: rows.flanges ?? null, budgets };
@@ -64,14 +77,19 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     });
     return { blockers: { groups, total: summary.blockers.total }, quality: summary.quality, progress: summaryProgress(summary) };
   }, [rows, iso, site, budgets, summary, weldItems]);
-  const canEdit = canRecord('isometrics', 'edit', iso), canImport = canRecord('isometrics', 'import', iso);
+  const canEdit = canRecord('isometrics', 'edit', iso);
   const canRevise = canRun('revision', { isoId: iso.id }), historyAvailable = canRecord('revisions');
-  // MTO Pilot reads no test systems: the server summary carries the name of this isometric's own one.
+  // Material Core reads no test systems: the server summary carries the name of this isometric's own one.
   const testSystem = rows.test_systems?.find(row => row.id === iso.testSystemId);
-  const fileOf = (kind: string) => latestIsoFile(rows, documents, iso.id, kind).file;
-  // ITPs card: the register ITPs linked to this isometric and their counter (0/2, 1/1 …); typed ITP numbers do not count (shared/iso-itps-card.ts).
+  const isoFile = latestIsoFile(rows, documents, iso.id, 'ISO').file, rev = currentRevision(rows, iso.id, 'ISO');
+  // ITP row: the register ITPs linked to this isometric (shared/iso-itps-card.ts); typed ITP numbers do not count.
   const itpCardState = itpCard(iso, rows.itps, rows.attachments);
   const locks = useMemo(() => lockContext(rows.weld_types, rows.releases, rows.isometrics), [rows.weld_types, rows.releases, rows.isometrics]);
+  const hydrotest = summary?.hydrotest ?? hydrotestState(iso, rows);
+  const systems = rows.test_systems ? isoTestSystemIds(iso, rows).map(id => rows.test_systems!.find(row => row.id === id && !row._archived)).filter((row): row is Row => Boolean(row)) : [];
+  const punchSummary = summary?.punch ?? (rows.punchlists ? punchCounts(rows.punchlists.filter(row => row.isoId === iso.id && !row._archived)) : null), openPunch = openPunchCount(punchSummary);
+  const punchLinked = pilot?.pilot.key === 'weld' && canRecord('punchlists');
+  const [shop, field] = status.progress.phases;
   /** A click on a blocker item opens the dialog that fixes it (shared/iso-blocker-targets.ts). */
   function openBlocker(item: { target?: Parameters<typeof blockerOpening>[0] }) {
     const opening = blockerOpening(item.target, iso, id => { const weld = rows.welds?.find(row => row.id === id); return Boolean(weld) && weldLock(weld!, locks).locked; });
@@ -81,63 +99,75 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     else if (opening.dialog === 'punch') return;
     else setOpened(opening);
   }
+  const quality = status.quality.percent === null ? '—' : percentText(status.quality.percent);
 
-  const slot = (kind: string, number: unknown, label: string) => {
-    const file = fileOf(kind), text = show(number), rev = currentRevision(rows, iso.id, kind);
-    return <div className="iso-slot" key={kind}>
-      <div className="iso-slot-main"><FileText size={18} aria-hidden="true"/><div><small>{label}</small>
-        {file ? <a className="text-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer" title={kind === 'ISO' ? isoDrawingTitle(file, rev) : undefined}>{text}<ExternalLink size={13} aria-hidden="true"/></a> : <strong title={kind === 'ISO' ? isoDrawingTitle(undefined, rev) : undefined}>{text}</strong>}
-        <span className="iso-slot-meta">{kind === 'ISO' && iso.irn ? <>IRN {String(iso.irn)} · </> : null}
-          {historyAvailable ? <button className="text-link" onClick={() => setHistory(true)} aria-label={`${kind} revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}
-          {!file && ' · no file'}</span></div></div>
-      <div className="iso-slot-actions">
-        {canRevise && <button className="icon-btn" aria-label={`Add ${kind === 'ISO' ? 'rev' : kind + ' revision'}`} title={kind === 'ISO' ? 'Add rev' : kind === 'ITP' ? 'Add ITP revision' : 'Add ITP revision 2'} onClick={() => setRevision(kind)}><Plus size={17}/></button>}
+  return <>
+    <div className="iso-header" style={{ '--pilot-color': pilot?.pilot.color } as React.CSSProperties}>
+      <Card title="Identification"><dl className="iso-rows">
+        <Line label="ISO ID"><span className="iso-row-value">{isoFile ? <a className="text-link" href={apiUrl(`/files/${isoFile.id}`)} target="_blank" rel="noreferrer" title={isoDrawingTitle(isoFile, rev)}>{show(iso.isoNo)}<ExternalLink size={12} aria-hidden="true"/></a> : <strong title={isoDrawingTitle(undefined, rev)}>{show(iso.isoNo)}</strong>}
+          {canRevise && <button type="button" className="icon-btn iso-row-icon" aria-label="Add rev" title="Add rev" onClick={() => setRevision('ISO')}><Plus size={15}/></button>}</span></Line>
+        <Line label="Revision">{historyAvailable ? <button type="button" className="text-link" onClick={() => setHistory(true)} aria-label={`Revision ${rev}, open revision history`}>Rev {rev}</button> : <>Rev {rev}</>}</Line>
+        <Line label="ITP" title={`${itpCardState.counter} ITP slots linked`}><span className="iso-row-value iso-itp-links">{itpCardState.rows.map(entry => <span key={entry.slot}>{entry.file
+          ? <a className="text-link" href={apiUrl(`/files/${entry.file.id}`)} target="_blank" rel="noreferrer" title={itpDrawingTitle(entry.file, entry.revision)}>{show(entry.number)} · Rev {entry.revision || '—'}<ExternalLink size={12} aria-hidden="true"/></a>
+          : <span title={itpDrawingTitle(undefined, entry.revision)}>{show(entry.number)} · Rev {entry.revision || '—'}</span>}</span>)}
+          {!itpCardState.rows.length && <span className="muted" title={NO_ITP_LINKED}>—</span>}
+          <ItpCardLinkButton iso={iso} compact/></span></Line>
+        <Line label="Custom field"><span className="iso-row-value"><span title="IRN of the isometric">{show(iso.irn)}</span>{canEdit && onEditIsometric && <button type="button" className="text-link" onClick={onEditIsometric} aria-label="Edit the custom field (IRN) in Edit isometric">Edit</button>}</span></Line>
+      </dl></Card>
+      <Card title="Compliance"><dl className="iso-rows">
+        <Line label="NoBo">{iso.noBo ? 'Yes' : 'No'}</Line>
+        <Line label="NoBo Reg. / Serial">{show(iso.noBoReg)} / {show(iso.noBoSerial)}</Line>
+        <Line label="PED Cat.-Mod">{show(iso.ped)}</Line>
+        <Line label="X-ray %">{show(iso.xRay)}</Line>
+      </dl></Card>
+      <Card title="Technical"><dl className="iso-rows">
+        <Line label="Piping class">{show(iso.pipingClass)}</Line>
+        <Line label="PWHT">{iso.pwht ? 'Yes' : 'No'}</Line>
+        <Line label="Test pressure">{show(iso.testPressure)}</Line>
+        <Line label="Test system">{show(testSystem?.name ?? summary?.testSystemName)}</Line>
+      </dl></Card>
+      <Card title="Progress & Status" className="iso-status-card"><dl className="iso-rows">
+        <Line label="Completion"><span className="iso-row-value"><strong className="iso-completion" title={PROGRESS_CARD_TEXTS.percent}>{percentText(status.progress.total)}</strong><button type="button" className="text-link" onClick={() => onQuantities(true)}>{canEdit ? 'Edit quantities' : 'Quantities'}</button></span></Line>
+        <Line label="Shop / Field"><span className="iso-row-value iso-phases-value">{[shop, field].filter(Boolean).map((phase, index) => <span key={phase.key} title={phaseBreakdown(phase)}>{index ? ' / ' : ''}{phase.label} {percentText(phase.percent)}</span>)}</span></Line>
+        {parts.weldExtras ? <>
+          <Line label="Hydrotest"><span className="iso-row-value"><span title={hydrotest.inScope ? undefined : HYDROTEST_NOT_IN_SCOPE}>{hydrotestStateText(hydrotest)}</span>
+            {systems.length ? systems.map(system => <Link key={system.id} className="text-link" to={hydrotestSpoolsPath(system.id)} title={`Spools of test system ${system.name}`}>{String(system.name)}</Link>) : summary?.testSystemName ? <span>{summary.testSystemName}</span> : null}</span></Line>
+          <Line label="Punch / Priority"><span className="iso-row-value">{openPunch === null ? <span className="muted">—</span> : punchLinked ? <button type="button" className="text-link" aria-haspopup="dialog" onClick={() => setPunch(true)}>{openPunch} open</button> : <span>{openPunch} open</span>}<span aria-hidden="true">·</span><span>{priorityLabel(iso.priority) || '—'}</span></span></Line>
+        </> : <MaterialRows percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={hydrotest}/>}
+      </dl></Card>
+    </div>
+    <details className="panel iso-details" open={details} onToggle={event => setDetails(event.currentTarget.open)}>
+      <summary><span className="iso-details-title">Details</span><span className="iso-details-meta">
+        <span>Quality {quality}</span>
+        {parts.weldExtras && (status.blockers.total ? <span className="iso-details-warn">{status.blockers.total} {status.blockers.total === 1 ? 'blocker' : 'blockers'}</span> : <span className="iso-clear"><Check size={13} aria-hidden="true"/>No blockers</span>)}
+        <span className="iso-details-hint">{parts.weldExtras ? 'Asset tag, zone, ITP links, phases, release, punch' : 'Asset tag, zone, ITP links'}</span></span></summary>
+      <div className="iso-details-body">
+        <dl className="iso-facts">
+          {IDENTIFICATION_FACTS.map(fact => <Fact key={fact.field} label={fact.label}>{show(iso[fact.field])}</Fact>)}
+          <Fact label="Zone / Area">{show(iso.zone || iso.area)}</Fact>
+          <Fact label="Quality"><span title={status.quality.percent === null ? 'No NDT result accepted or rejected yet.' : `${status.quality.accepted} accepted, ${status.quality.rejected} rejected`}>{quality}</span></Fact>
+          {parts.weldExtras && <Fact label="Blockers">{status.blockers.total
+            ? <button type="button" className="iso-open-count" aria-haspopup="dialog" onClick={() => setBlockers(true)}>{status.blockers.total} open</button>
+            : <span className="iso-clear"><Check size={14} aria-hidden="true"/>0 open</span>}</Fact>}
+        </dl>
+        <section className="iso-details-section" aria-label="ITP links"><h3>ITP links <span className="iso-count">{itpCardState.counter}</span></h3>
+          {itpCardState.rows.length ? <ul className="iso-itp-rows">{itpCardState.rows.map(entry => <li key={entry.slot} className="iso-itp-row">
+            <div>{entry.file ? <a className="text-link iso-itp-number" href={apiUrl(`/files/${entry.file.id}`)} target="_blank" rel="noreferrer" title={itpDrawingTitle(entry.file, entry.revision)}>{show(entry.number)}<ExternalLink size={13} aria-hidden="true"/></a> : <strong title={itpDrawingTitle(undefined, entry.revision)}>{show(entry.number)}</strong>}{entry.scope && <small>{entry.scope}</small>}</div>
+            <div className="iso-itp-title" title={entry.title || undefined}>{entry.titleCut || '—'}</div>
+            <div className="iso-itp-meta"><span>Rev {entry.revision || '—'}</span></div>
+            <ItpLinkControl iso={iso} slot={entry.slot}/>
+          </li>)}</ul>
+            : <p className="iso-itp-empty"><span aria-hidden="true">—</span> {NO_ITP_LINKED}<ItpCardLinkButton iso={iso}/></p>}
+        </section>
+        {parts.weldExtras && <>
+          <PhaseFlags iso={iso}/>
+          <div id={RELEASE_STATUS_ANCHOR} tabIndex={-1} className="iso-release-anchor"><ReleaseStatus iso={iso}/></div>
+          <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
+        </>}
       </div>
-    </div>;
-  };
-
-  return <div className="iso-header" style={{ '--pilot-color': pilot?.pilot.color } as React.CSSProperties}>
-    <Card title="Identification">
-      {slot('ISO', iso.isoNo, 'ISO No')}
-      <dl className="iso-facts">{IDENTIFICATION_FACTS.map(fact => <Fact key={fact.field} label={fact.label}>{show(iso[fact.field])}</Fact>)}</dl>
-    </Card>
-    <Card title="ITPs" aside={<span className="iso-card-aside"><span className="iso-count" aria-label={`${itpCardState.count} of ${itpCardState.max} ITP slots linked`}>{itpCardState.counter}</span><ItpCardLinkButton iso={iso} compact/></span>}>
-      {itpCardState.rows.length ? <ul className="iso-itp-rows">{itpCardState.rows.map(entry => <li key={entry.slot} className="iso-itp-row">
-        <div>{entry.file ? <a className="text-link iso-itp-number" href={apiUrl(`/files/${entry.file.id}`)} target="_blank" rel="noreferrer" title={itpDrawingTitle(entry.file, entry.revision)}>{show(entry.number)}<ExternalLink size={13} aria-hidden="true"/></a> : <strong title={itpDrawingTitle(undefined, entry.revision)}>{show(entry.number)}</strong>}{entry.scope && <small>{entry.scope}</small>}</div>
-        <div className="iso-itp-title" title={entry.title || undefined}>{entry.titleCut || '—'}</div>
-        <div className="iso-itp-meta"><span>Rev {entry.revision || '—'}</span></div>
-        <ItpLinkControl iso={iso} slot={entry.slot}/>
-      </li>)}</ul>
-        : <p className="iso-itp-empty"><span aria-hidden="true">—</span> {NO_ITP_LINKED}<ItpCardLinkButton iso={iso}/></p>}
-    </Card>
-    <Card title="Compliance">
-      <dl className="iso-facts"><Fact label="NoBo">{iso.noBo ? 'Yes' : 'No'}</Fact><Fact label="NoBo Reg. no. / serial">{show(iso.noBoReg)} / {show(iso.noBoSerial)}</Fact><Fact label="PED Cat.-Mod">{show(iso.ped)}</Fact><Fact label="X Ray %">{show(iso.xRay)}</Fact></dl>
-    </Card>
-    <Card title="Technical">
-      <dl className="iso-facts"><Fact label="Piping class">{show(iso.pipingClass)}</Fact><Fact label="PWHT">{iso.pwht ? 'Yes' : 'No'}</Fact><Fact label="Test pressure">{show(iso.testPressure)}</Fact><Fact label="Test system">{show(testSystem?.name ?? isoSummaries?.[iso.id]?.testSystemName)}</Fact></dl>
-    </Card>
-    <ProgressCard key={`${iso.id}-${iso._version}`} iso={iso} progress={status.progress} budgets={budgets} editable={canEdit}/>
-    <Card title="Status" className="iso-status-card">
-      <div className="iso-total" role="group" aria-label="Isometric progress">
-        <strong>{status.progress.total === null ? '—' : percentText(status.progress.total)}</strong>
-        <span>of the isometric</span>
-      </div>
-      <Progress value={status.progress.total ?? 0}/>
-      <dl className="iso-facts">
-        <Fact label="Quality"><span title={status.quality.percent === null ? 'No NDT result accepted or rejected yet.' : `${status.quality.accepted} accepted, ${status.quality.rejected} rejected`}>{status.quality.percent === null ? '—' : percentText(status.quality.percent)}</span></Fact>
-        {parts.weldExtras && <Fact label="Blockers">{status.blockers.total
-          ? <button className="iso-open-count" aria-haspopup="dialog" onClick={() => setBlockers(true)}>{status.blockers.total} open</button>
-          : <span className="iso-clear"><Check size={14} aria-hidden="true"/>0 open</span>}</Fact>}
-        {parts.weldExtras && <Fact label="Priority">{priorityLabel(iso.priority)}</Fact>}
-      </dl>
-      {parts.weldExtras && <details className="iso-status-details" open={details} onToggle={event => setDetails(event.currentTarget.open)}><summary>Details<span>phases, release, hydrotest, punch</span></summary>
-      <PhaseFlags iso={iso}/>
-      <div id={RELEASE_STATUS_ANCHOR} tabIndex={-1} className="iso-release-anchor"><ReleaseStatus iso={iso}/></div>
-      {pilot?.pilot.key === 'weld' && <HydrotestStep iso={iso} state={summary?.hydrotest ?? hydrotestState(iso, rows)} summaryName={summary?.testSystemName}/>}
-      <PunchStatus iso={iso} items={rows.punchlists ?? null} summary={summary?.punch}/>
-      </details>}
-      {pilot?.pilot.key === 'mto' && <MaterialStatusSlot percent={summary ? summary.materialStatus.percent : materialStatus(iso, rows).percent} hydrotest={summary?.hydrotest ?? hydrotestState(iso, rows)}/>}
-    </Card>
+    </details>
+    {quantities && <ProgressQuantitiesDialog key={`${iso.id}-${iso._version}`} iso={iso} budgets={budgets} editable={canEdit} onClose={() => onQuantities(false)}/>}
+    {punch && <PunchDialog isoId={iso.id} onClose={() => setPunch(false)}/>}
     {blockers && <Modal title="What blocks this isometric" subtitle={`${show(iso.isoNo)} · ${status.blockers.total} open`} onClose={() => setBlockers(false)}>
       <div className="modal-body iso-blockers">{status.blockers.groups.map(group => <section key={group.key} aria-label={group.title}>
         <h3>{group.title}<span className="count-pill">{group.count}</span></h3>
@@ -151,12 +181,12 @@ export function IsometricHeader({ iso, project, documents, onUpload }: HeaderPro
     {opened?.dialog === 'ndt' && rows.welds?.find(row => row.id === opened.weldId) && <NdtWeldDialog weld={rows.welds!.find(row => row.id === opened.weldId)!} type={opened.type} onClose={() => setOpened(null)}/>}
     {revision && <AddRevisionDialog iso={iso} kind={revision} onClose={() => setRevision('')}/>}
     {history && <Modal title="Revision history" subtitle={show(iso.isoNo)} onClose={() => setHistory(false)} wide><div className="modal-body"><DrawingRevisions isoId={iso.id}/></div><div className="modal-footer"><button className="btn" onClick={() => setHistory(false)}>Close</button></div></Modal>}
-  </div>;
+  </>;
 }
 
 /**
  * '[▶ Started]' after the isometric's name once a pick list exists for it (reference weld__iso__00022.txt:1484-1487 and
- * mto__iso__00022.txt:37-38), in both pilots. Pilots read it from the server summary, as Weld Pilot reads no pick lists.
+ * mto__iso__00022.txt:37-38), in both Cores. Cores read it from the server summary, as Weld Core reads no pick lists.
  */
 export function IsoStartedTag({ iso }: { iso: Row }) {
   const { rows, isoSummaries } = useWorkspace();
@@ -165,38 +195,30 @@ export function IsoStartedTag({ iso }: { iso: Row }) {
   return started ? <span className="iso-started-tag">[<Play size={11} aria-hidden="true"/> Started]</span> : null;
 }
 
-/**
- * Hydrotest step of the Weld Pilot Status card: Yes once the hydrotest of the isometric's spools is completed, else "—",
- * and the test system(s) of its spools, each linking to the Spools tab of the Hydrotest release filtered by it ("--" without one).
- */
-export function HydrotestStep({ iso, state, summaryName }: { iso: Row; state: { inScope: boolean; completed: boolean }; summaryName?: string }) {
-  const { rows } = useWorkspace();
-  const systems = rows.test_systems ? isoTestSystemIds(iso, rows).map(id => rows.test_systems!.find(row => row.id === id && !row._archived)).filter((row): row is Row => Boolean(row)) : [];
-  return <dl className="iso-facts" data-slot="hydrotest"><Fact label="Hydrotest"><span className="iso-hydrotest">
-    <span title={state.inScope ? undefined : 'No test system, or testing not applicable.'}>{state.completed ? 'Yes' : '—'}</span>
-    {systems.length ? systems.map(system => <Link key={system.id} className="text-link" to={hydrotestSpoolsPath(system.id)}>{String(system.name)}</Link>) : summaryName ? <span>{summaryName}</span> : <span className="muted">--</span>}
-  </span></Fact></dl>;
-}
-
-/** "Hydrotest completed" of the MTO Pilot: always Yes or No (No also without a test system, as in the reference). */
+/** "Hydrotest completed" of Material Core: always Yes or No (No also without a test system, as in the reference). */
 export const hydrotestCompletedText = (hydrotest: { inScope: boolean; completed: boolean }) => hydrotest.completed ? 'Yes' : 'No';
 
 /**
- * What the Status card of an isometric holds besides Status % and Quality: in MTO Pilot only Hydrotest completed and
- * Material status (reference), the blockers, priority, phase, release and punch summaries only in the other pilots.
+ * What the Progress & Status card holds besides Completion and Shop / Field: in Material Core Hydrotest completed and
+ * Material status (reference); Hydrotest with its test systems, Punch / Priority, the blockers, phase, release and punch
+ * details only in the other Cores.
  */
 export const statusCardParts = (pilotKey?: string) => ({ weldExtras: pilotKey !== 'mto' });
 
-/** Hydrotest completed, then Material status (MTO Pilot): covered ÷ required over the isometric's material lines in whole percent, "Empty" without lines (shared/mto-materials.ts). */
-export function MaterialStatusSlot({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
-  return <div className="iso-material-slot" data-slot="material-status">
-    <dl className="iso-facts"><Fact label="Hydrotest completed"><span title={hydrotest.inScope ? undefined : 'No test system, or testing not applicable.'}>{hydrotestCompletedText(hydrotest)}</span></Fact>
-      <Fact label="Material status"><span title={percent === null ? 'The isometric has no material lines yet.' : undefined}>{formatMaterialStatus(percent)}</span></Fact></dl>
-    {percent !== null && <Progress value={percent}/>}
-  </div>;
+/** Hydrotest completed and Material status as two rows of the Progress & Status card (Material Core). */
+function MaterialRows({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
+  return <>
+    <Line label="Hydrotest completed"><span title={hydrotest.inScope ? undefined : HYDROTEST_NOT_IN_SCOPE}>{hydrotestCompletedText(hydrotest)}</span></Line>
+    <Line label="Material status"><span className="iso-row-value" title={percent === null ? 'The isometric has no material lines yet.' : undefined}>{formatMaterialStatus(percent)}{percent !== null && <Progress value={percent}/>}</span></Line>
+  </>;
 }
 
-/** The existing phase flags of the isometric, folded into the status card. */
+/** Hydrotest completed, then Material status (Material Core): covered ÷ required over the isometric's material lines in whole percent, "Empty" without lines (shared/mto-materials.ts). */
+export function MaterialStatusSlot({ percent, hydrotest }: { percent: number | null; hydrotest: { inScope: boolean; completed: boolean } }) {
+  return <div className="iso-material-slot" data-slot="material-status"><dl className="iso-rows"><MaterialRows percent={percent} hydrotest={hydrotest}/></dl></div>;
+}
+
+/** The existing phase flags of the isometric, in the Details disclosure. */
 function PhaseFlags({ iso }: { iso: Row }) {
   const flags = (RESOURCE_MAP.isometrics?.fields || []).filter(field => field.section === 'Phases');
   if (!flags.length) return null;
@@ -205,13 +227,18 @@ function PhaseFlags({ iso }: { iso: Row }) {
     <ul>{flags.map(field => <li key={field.name} className={iso[field.name] === true ? 'done' : ''}><span aria-hidden="true">{iso[field.name] === true ? '✓' : '○'}</span>{field.label}<span className="sr-only">{iso[field.name] === true ? ' done' : ' open'}</span></li>)}</ul></details>;
 }
 
-function ProgressCard({ iso, progress, budgets, editable }: { iso: Row; progress: IsoProgress; budgets?: ProgressBudgets; editable: boolean }) {
-  const { refresh, notify } = useWorkspace();
+/**
+ * The isometric's stored progress quantities and finish states (the former Progress card, now a dialog opened from
+ * Completion and from Options). Every input still saves its stored field. Of the quantities only Field supports drives the
+ * progress (Supports erection); the others stay as recorded values beside their MTO budgets.
+ */
+function ProgressQuantitiesDialog({ iso, budgets, editable, onClose }: { iso: Row; budgets?: ProgressBudgets; editable: boolean; onClose: () => void }) {
+  const { refresh, notify } = useWorkspace(); const id = `iso-quantities-${useId().replaceAll(':', '')}`;
   const original = useMemo(() => ({
     ...Object.fromEntries(ISO_QUANTITIES.map(quantity => [quantity.field, iso[quantity.field] === null || iso[quantity.field] === undefined ? '' : String(iso[quantity.field])])),
     ...Object.fromEntries(ISO_FINISH_ITEMS.map(item => [item.field, ISO_FINISH_STATES.includes(String(iso[item.field])) ? String(iso[item.field]) : 'Open'])),
   } as Record<string, string>), [iso]);
-  const [draft, setDraft] = useState(original), [open, setOpen] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState(original), [busy, setBusy] = useState(false), [error, setError] = useState(''), [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const changed = Object.keys(draft).filter(name => draft[name] !== original[name]);
   const budgetOf = (phase: 'shop' | 'field', key: string) => Number(budgets?.[phase]?.[key as 'materialPipe']) || 0;
   const set = (name: string, value: string) => { setDraft(current => ({ ...current, [name]: value })); setFieldErrors(current => ({ ...current, [name]: '' })); };
@@ -229,42 +256,40 @@ function ProgressCard({ iso, progress, budgets, editable }: { iso: Row; progress
     const problems = isoInputErrors({ isoNo: iso.isoNo, ...payload }, iso, budgets);
     if (Object.keys(problems).length) { setFieldErrors(problems); setError('Check the highlighted values.'); return; }
     setBusy(true); setError(''); setFieldErrors({});
-    try { await api(`/records/isometrics/${iso.id}`, { method: 'PUT', body: JSON.stringify({ ...payload, _version: iso._version }) }); await refresh(); notify('Progress saved.'); }
+    try { await api(`/records/isometrics/${iso.id}`, { method: 'PUT', body: JSON.stringify({ ...payload, _version: iso._version }) }); await refresh(); notify('Progress quantities saved.'); onClose(); }
     catch (failure) { setError((failure as Error).message || 'Saving failed.'); setFieldErrors((failure as ApiError).fields || {}); }
     finally { setBusy(false); }
   }
 
-  // Shop and Field carry their percentages; the finish states (paint, tracing, insulation) are no progress driver but stay editable here.
-  const phases: { key: string; label: string; percent: number | null }[] = [...progress.phases, { key: 'finish', label: 'Paint / Tracing / Insulation', percent: null }];
-  return <Card title="Progress" className="iso-progress-card">
-    <div className="iso-phase-list">{phases.map(phase => {
-      const id = `iso-phase-${iso.id}-${phase.key}`, expanded = open === phase.key;
-      const label = phase.key === 'shop' ? 'Shop prefab' : phase.label;
-      return <div key={phase.key} className="iso-phase">
-        <h3><button aria-expanded={expanded} aria-controls={id} onClick={() => setOpen(expanded ? '' : phase.key)}>
-          <span className="iso-phase-name" title={phase.key === 'finish' ? PROGRESS_CARD_TEXTS.finish : PROGRESS_CARD_TEXTS.phase[phase.key as 'shop']}>{label}</span>{phase.percent !== null && <span className="iso-phase-value" title={PROGRESS_CARD_TEXTS.percent}>{percentText(phase.percent)}</span>}<ChevronDown size={16} className="iso-chevron" aria-hidden="true"/></button></h3>
-        {expanded && <div id={id} className="iso-phase-body">
-          {phase.key === 'finish' ? <div className="iso-finish">
-            {ISO_FINISH_ITEMS.map(item => <fieldset key={item.field} disabled={!editable} title={PROGRESS_CARD_TEXTS.finish}><legend>{item.label}<small title={PROGRESS_CARD_TEXTS.specification}> · {finishSpecification(iso, item.field)}</small></legend>
-              <div className="iso-segmented">{ISO_FINISH_STATES.map(state => <label key={state} className={draft[item.field] === state ? 'on' : ''}><input type="radio" name={`${id}-${item.field}`} value={state} checked={draft[item.field] === state} onChange={() => set(item.field, state)}/>{state}</label>)}</div>
-              {fieldErrors[item.field] && <small className="field-error">{fieldErrors[item.field]}</small>}</fieldset>)}
-          </div> : <div className="iso-quantities">{ISO_QUANTITIES.filter(quantity => quantity.phase === phase.key).map(quantity => {
-            const budget = budgetOf(quantity.phase, quantity.key), inputId = `${id}-${quantity.field}`;
-            const percent = quantityBarText(quantity.phase, budget, quantityProgress(draft[quantity.field], budgets, quantity.phase, quantity.key));
-            return <div className="iso-quantity" key={quantity.field} title={budget ? undefined : noBudgetText(quantity.phase, quantity.key)}>
-              <label htmlFor={inputId}>{quantity.label} ({quantity.unit})</label>
-              <input id={inputId} type="number" min={0} max={budget || undefined} step="any" inputMode="decimal" disabled={!editable || !budget} placeholder={budget ? '' : 'N/A'} value={budget ? draft[quantity.field] : ''} aria-describedby={`${inputId}-note`} aria-invalid={Boolean(fieldErrors[quantity.field])} onChange={event => set(quantity.field, event.target.value)}/>
-              <small id={`${inputId}-note`}>{percent}<span title={PROGRESS_CARD_TEXTS.budgetColumn[quantity.phase]}>{budget ? ` of ${formatNumber(budget, 2)}` : ' · —'}</span></small>
-              {fieldErrors[quantity.field] && <small className="field-error">{fieldErrors[quantity.field]}</small>}
-            </div>; })}</div>}
-        </div>}
-      </div>; })}</div>
-    {error && <div className="alert error" role="alert"><AlertCircle size={16}/><span>{error}</span></div>}
-    {!editable && <p className="iso-hint">You can view the progress but not change it.</p>}
-    {editable && <div className="iso-progress-actions">
-      <button className="btn primary small" title={PROGRESS_CARD_TEXTS.save} disabled={busy || !changed.length} onClick={() => void save()}>{busy && <Loader2 size={14} className="spin"/>}Save</button>
-      <button className="btn small" disabled={busy} onClick={setAll}>Set all to 100%</button>
-      {changed.length > 0 && <span className="iso-unsaved" role="status">Unsaved changes</span>}
-    </div>}
-  </Card>;
+  const phases = [{ key: 'shop' as const, label: 'Shop prefab' }, { key: 'field' as const, label: 'Field' }];
+  return <Modal title="Progress quantities" subtitle={show(iso.isoNo)} onClose={onClose}>
+    <div className="modal-body iso-quantities-dialog">
+      {error && <div className="alert error" role="alert"><AlertCircle size={16}/><span>{error}</span></div>}
+      <p className="iso-hint">The progress of the isometric is computed from its welds, tests, flanges and releases. Of these quantities only Field supports counts (Supports erection); the others are kept as recorded.</p>
+      {phases.map(phase => <section key={phase.key} className="iso-quantity-group" aria-labelledby={`${id}-${phase.key}`}>
+        <h3 id={`${id}-${phase.key}`} title={PROGRESS_CARD_TEXTS.phase[phase.key]}>{phase.label}</h3>
+        <div className="iso-quantities">{ISO_QUANTITIES.filter(quantity => quantity.phase === phase.key).map(quantity => {
+          const budget = budgetOf(quantity.phase, quantity.key), inputId = `${id}-${quantity.field}`;
+          const percent = quantityBarText(quantity.phase, budget, quantityProgress(draft[quantity.field], budgets, quantity.phase, quantity.key));
+          return <div className="iso-quantity" key={quantity.field} title={budget ? undefined : noBudgetText(quantity.phase, quantity.key)}>
+            <label htmlFor={inputId}>{quantity.label} ({quantity.unit}){quantity.phase === 'field' && quantity.key === 'supports' && <small className="iso-drives"> · drives Supports erection</small>}</label>
+            <input id={inputId} type="number" min={0} max={budget || undefined} step="any" inputMode="decimal" disabled={!editable || !budget} placeholder={budget ? '' : 'N/A'} value={budget ? draft[quantity.field] : ''} aria-describedby={`${inputId}-note`} aria-invalid={Boolean(fieldErrors[quantity.field])} onChange={event => set(quantity.field, event.target.value)}/>
+            <small id={`${inputId}-note`}>{percent}<span title={PROGRESS_CARD_TEXTS.budgetColumn[quantity.phase]}>{budget ? ` of ${formatNumber(budget, 2)}` : ' · —'}</span></small>
+            {fieldErrors[quantity.field] && <small className="field-error">{fieldErrors[quantity.field]}</small>}
+          </div>; })}</div>
+      </section>)}
+      <section className="iso-quantity-group" aria-labelledby={`${id}-finish`}><h3 id={`${id}-finish`}>Paint / Tracing / Insulation</h3>
+        <div className="iso-finish">{ISO_FINISH_ITEMS.map(item => <fieldset key={item.field} disabled={!editable} title={PROGRESS_CARD_TEXTS.finish}><legend>{item.label}<small title={PROGRESS_CARD_TEXTS.specification}> · {finishSpecification(iso, item.field)}</small></legend>
+          <div className="iso-segmented">{ISO_FINISH_STATES.map(state => <label key={state} className={draft[item.field] === state ? 'on' : ''}><input type="radio" name={`${id}-${item.field}`} value={state} checked={draft[item.field] === state} onChange={() => set(item.field, state)}/>{state}</label>)}</div>
+          {fieldErrors[item.field] && <small className="field-error">{fieldErrors[item.field]}</small>}</fieldset>)}</div>
+      </section>
+      {!editable && <p className="iso-hint">You can view the quantities but not change them.</p>}
+    </div>
+    <div className="modal-footer">
+      {editable && changed.length > 0 && <span className="iso-unsaved" role="status">Unsaved changes</span>}
+      {editable && <button type="button" className="btn" disabled={busy} onClick={setAll}>Set all to 100%</button>}
+      <button type="button" className="btn" disabled={busy} onClick={onClose}>{editable ? 'Cancel' : 'Close'}</button>
+      {editable && <button type="button" className="btn primary" title={PROGRESS_CARD_TEXTS.save} disabled={busy || !changed.length} onClick={() => void save()}>{busy && <Loader2 size={14} className="spin"/>}Save</button>}
+    </div>
+  </Modal>;
 }

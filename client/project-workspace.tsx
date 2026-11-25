@@ -1,8 +1,8 @@
-import { useState, lazy, Suspense, type FormEvent } from 'react';
+import { Fragment, useState, lazy, Suspense, type FormEvent, type ReactNode } from 'react';
 import { IsoFlangesCard } from './flanges.tsx';
-import { isoDrawingTitle, latestIsoFile } from '../shared/iso-pages.ts';
+import { ISO_PAGE_MENU, dataLislUrl, headingHasOptions, menuGroups } from '../shared/iso-pages.ts';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ExternalLink, ArrowLeft, ArrowRight, ChevronDown, ChevronLeft, ChevronRight, FileStack, FolderKanban, LayoutGrid, List, MapPin, Pencil, Plus, ScanLine, Upload, FileText, Download, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronLeft, ChevronRight, FileStack, FolderKanban, LayoutGrid, List, MapPin, Pencil, Plus, ScanLine, Upload, FileText, Download, Loader2 } from 'lucide-react';
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useWorkspace, activeRows } from './context.tsx';
 import { Badge, Dropdown, EmptyState, Modal, Progress, SearchInput, TableScroll } from './components.tsx';
@@ -28,7 +28,6 @@ import { api, formatDate, formatNumber, apiUrl } from './api.ts';
 import { usePilot } from './pilot.tsx';
 import { IsoMaterialsPanel } from './mto-materials.tsx';
 import { pagePilots } from '../shared/pilots.ts';
-import { headingHasOptions } from '../shared/iso-pages.ts';
 import { FillIrnOption } from './iso-irn.tsx';
 import { ProjectIsoOverview } from './project-iso-overview.tsx';
 export { ProjectIsoOverview };
@@ -151,49 +150,102 @@ function DrawingUpload({ iso, kind, onClose }: { iso: Row; kind: string; onClose
     const body = new FormData(); body.set('file', file); body.set('entityType', 'isometrics'); body.set('entityId', iso.id); const revision = kind === 'ISO' ? iso.revNo : kind === 'ITP 2' ? iso.itp2RevNo : iso.itpRevNo; body.set('documentType', revision !== undefined && revision !== '' ? `${kind} revision ${revision}` : kind);
     try { await api('/files', { method: 'POST', body }); await refresh(); notify(`${kind} document attached.`); onClose(); } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   }
-  return <Modal title={`Upload ${kind} document`} subtitle={String(iso.isoNo)} onClose={onClose}><form onSubmit={event => void submit(event)}><div className="modal-body">{error && <div className="alert error" role="alert">{error}</div>}<div className="field"><label htmlFor="iso-document-file">Document file</label><input id="iso-document-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt" required onChange={event => setFile(event.target.files?.[0] || null)}/><small>Earlier uploads remain in Documents. Update drawing references through Edit isometric.</small></div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !file}>{busy ? <Loader2 size={15} className="spin"/> : <Upload size={15}/>}Upload document</button></div></form></Modal>;
+  return <Modal title={`Upload ${kind} document`} subtitle={String(iso.isoNo)} onClose={onClose}><form onSubmit={event => void submit(event)}><div className="modal-body">{error && <div className="alert error" role="alert">{error}</div>}<div className="field"><label htmlFor="iso-document-file">Document file</label><input id="iso-document-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.docx,.txt" required onChange={event => setFile(event.target.files?.[0] || null)}/><small>Earlier uploads remain in Drawing documents. Update drawing references through Edit isometric.</small></div></div><div className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !file}>{busy ? <Loader2 size={15} className="spin"/> : <Upload size={15}/>}Upload document</button></div></form></Modal>;
 }
 
-/** The isometric name in the heading: opens the latest drawing revision in a new tab, plain text while no file is uploaded. */
-function IsoNameLink({ iso, documents }: { iso: Row; documents: Row[] }) {
-  const { rows } = useWorkspace(); const { file, revision } = latestIsoFile(rows, documents, iso.id, 'ISO'), name = String(iso.isoNo);
-  return file ? <a className="iso-name-link" href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer" title={isoDrawingTitle(file, revision)}>{name}<ExternalLink size={16} aria-hidden="true"/></a> : <span title={isoDrawingTitle(undefined, revision)}>{name}</span>;
+/** The spools of the isometric: the Spools tab (Material Core, other profiles) and Options → Spools (Weld Core). */
+function SpoolsTable({ spools, welds, onEdit }: { spools: Row[]; welds: Row[]; onEdit: (spool: Row) => void }) {
+  const { canRecord, openRecord } = useWorkspace();
+  return <>{spools.length > 0 && <TableScroll><table className="data-table"><thead><tr><th>Spool</th><th>Diameter</th><th>Welds</th><th><span className="sr-only">Actions</span></th></tr></thead><tbody>{spools.map(spool => <tr key={spool.id}><td><button className="record-link" onClick={() => openRecord('spools', spool.id)}>{String(spool.name)}</button></td><td>{String(spool.diameter || '—')}</td><td>{welds.filter(weld => weld.spoolId === spool.id).length}</td><td>{canRecord('spools', 'edit', spool) && <button className="icon-btn" aria-label={`Edit spool ${spool.name}`} onClick={() => onEdit(spool)}><Pencil size={16}/></button>}</td></tr>)}</tbody></table></TableScroll>}
+    {!spools.length && <EmptyState title="No spools in this isometric" description="Add a spool, then assign it when adding or editing a weld."/>}</>;
+}
+/** The drawing and ITP documents of the isometric: the Documents tab (Material Core, other profiles) and Options → Drawing documents (Weld Core). */
+function DrawingDocuments({ documents }: { documents: Row[] }) {
+  return <>{documents.map(file => <a className="attachment-row" key={file.id} href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer"><FileText size={22}/><div><strong>{String(file.name)}</strong><small>{String(file.documentType)} · {formatDate(file._createdAt)}</small></div><Download size={17}/></a>)}
+    {!documents.length && <EmptyState title="No drawing documents attached" description="Upload the drawing or an ITP document with Upload document."/>}</>;
 }
 
+/**
+ * The isometric page (client change list 22.11.2026, images 16–20). One slim top line: Main project › Sub-project › the
+ * isometric switcher › LISL, with Options, Reports and Add weld at the right. Then four compact cards and, in Weld Core,
+ * the LISL with no tab strip; Spools and Drawing documents open from Options. Material Core keeps its tabs. The Flanges
+ * and WDI strips sit collapsed below the register.
+ */
 export function IsometricWorkspace() {
   const { isoId = '' } = useParams();
-  const { rows, canRecord, canRun, canReadReport, openRecord } = useWorkspace(); const pilot = usePilot();
+  const { rows, allRows, canRecord, canRun, canReadReport, hasFeature } = useWorkspace(); const pilot = usePilot();
   const navigate = useNavigate(); const [phasing, setPhasing] = useState(false), [auditing, setAuditing] = useState(false), [attaching, setAttaching] = useState(false);
   const [editor, setEditor] = useState(''), [editingSpool, setEditingSpool] = useState<Row | undefined>(), [selectedTab, setTab] = useState(pilot?.pilot.key === 'mto' ? 'mto' : 'welds'), [upload, setUpload] = useState('');
-  const [archiving, setArchiving] = useState(false);
+  const [archiving, setArchiving] = useState(false), [quantities, setQuantities] = useState(false), [listing, setListing] = useState<'spools' | 'documents' | ''>('');
   const iso = rows.isometrics?.find(row => row.id === isoId && !row._archived);
   if (!iso || !canRecord('isometrics')) return <EmptyState title="Isometric unavailable" description="Choose an isometric in the selected main project."/>;
   const project = rows.projects?.find(row => row.id === iso.projectId);
+  const site = (rows.sites || allRows.sites)?.find(row => row.id === project?.siteId);
   const isos = activeRows(rows, 'isometrics').filter(row => row.projectId === iso.projectId).sort((a, b) => String(a.isoNo).localeCompare(String(b.isoNo), 'en', { numeric: true }));
   const index = isos.findIndex(row => row.id === isoId), welds = activeRows(rows, 'welds').filter(row => row.isoId === isoId), spools = activeRows(rows, 'spools').filter(row => row.isoId === isoId);
   const documents = activeRows(rows, 'attachments').filter(row => row.entityType === 'isometrics' && row.entityId === isoId).sort((a, b) => b._createdAt.localeCompare(a._createdAt));
-  // Without pilots every tab is shown; Weld Pilot keeps the weld register, MTO Pilot the materials and the Cut list. The
-  // calculation tab left MTO Pilot with its Calculations section (client, 20.11.2026): calculations become a pilot of their own.
-  const weldTabs = !pilot || pilot.pilot.key === 'weld', mtoTabs = !pilot || pilot.pilot.key === 'mto';
-  const tabs = [...(weldTabs ? [['welds', pilot ? 'Welds' : 'LISL · Welds', welds.length]] : []), ...(mtoTabs ? (['mto', 'calculation', 'cut-list'] as const).filter(key => canReadReport(key) && !(pilot && key === 'calculation')).map(key => [key, key === 'mto' ? (pilot ? 'Materials' : 'MTO') : key === 'calculation' ? 'Calculation · MSPS' : 'Cut list', activeRows(rows, key === 'mto' ? 'iso_materials' : key === 'calculation' ? 'calculation_lines' : 'cut_list').filter(row => row.isoId === isoId).length]) : []), ...(canRecord('spools') ? [['spools', 'Spools', spools.length]] : []), ...(canRecord('attachments') ? [['documents', 'Documents', documents.length]] : [])];
-  const tab = tabs.some(([key]) => key === selectedTab) ? selectedTab : String(tabs[0]?.[0] || '');
+  // Weld Core: the LISL is the page (no tab strip). Material Core keeps its materials and Cut list tabs, the other profiles every tab;
+  // the calculation tab left Material Core with its Calculations section (client, 20.11.2026).
+  const lislPage = pilot?.pilot.key === 'weld';
+  const weldTabs = !pilot, mtoTabs = !pilot || pilot.pilot.key === 'mto';
+  const tabs = lislPage ? [] : [...(weldTabs ? [['welds', 'LISL · Welds', welds.length]] : []), ...(mtoTabs ? (['mto', 'calculation', 'cut-list'] as const).filter(key => canReadReport(key) && !(pilot && key === 'calculation')).map(key => [key, key === 'mto' ? (pilot ? 'Materials' : 'MTO') : key === 'calculation' ? 'Calculation · MSPS' : 'Cut list', activeRows(rows, key === 'mto' ? 'iso_materials' : key === 'calculation' ? 'calculation_lines' : 'cut_list').filter(row => row.isoId === isoId).length]) : []), ...(canRecord('spools') ? [['spools', 'Spools', spools.length]] : []), ...(canRecord('attachments') ? [['documents', 'Documents', documents.length]] : [])];
+  const tab = lislPage ? 'welds' : tabs.some(([key]) => key === selectedTab) ? selectedTab : String(tabs[0]?.[0] || '');
   const otherPilot = pilot?.allowed.find(other => other.key !== pilot.pilot.key);
-  return <div className="page workflow-page iso-workspace">
-    <div className="iso-workspace-navigation"><Link className="text-link" to={`/workspace/projects/${iso.projectId}/isometrics`}><ArrowLeft size={15}/>{String(project?.internnumber || 'Subproject')} · Isometrics</Link><div><label className="sr-only" htmlFor="workspace-isometric">Switch isometric</label><select id="workspace-isometric" value={isoId} onChange={event => navigate(`/workspace/isometrics/${event.target.value}`)}>{isos.map(row => <option key={row.id} value={row.id}>{String(row.isoNo)}</option>)}</select><button className="icon-btn" aria-label="Previous isometric" disabled={index <= 0} onClick={() => navigate(`/workspace/isometrics/${isos[index - 1].id}`)}><ChevronLeft size={18}/></button><button className="icon-btn" aria-label="Next isometric" disabled={index + 1 >= isos.length} onClick={() => navigate(`/workspace/isometrics/${isos[index + 1].id}`)}><ChevronRight size={18}/></button></div></div>
-    <div className="page-heading"><div><div className="eyebrow">ISOMETRIC WORKSPACE</div><h1><IsoNameLink iso={iso} documents={documents}/><IsoStartedTag iso={iso}/></h1><p>{String(project?.description || project?.internnumber || '')}{iso.area || iso.zone ? ` · ${iso.area || iso.zone}` : ''}</p></div><div className="heading-actions">{otherPilot && <button className="btn pilot-switch-button" style={{ '--pilot-color': otherPilot.color } as React.CSSProperties} onClick={() => pilot!.openPilot(otherPilot.key, `/workspace/isometrics/${isoId}`)}>Open in {otherPilot.title}<ArrowRight size={15}/></button>}<PdfReportsMenu iso={iso}/>{pilot?.pilot.key === 'mto' && <IsoBookButton iso={iso}/>}{headingHasOptions(Boolean(pilot), tab) && <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}><button disabled={!canRecord('attachments')} onClick={() => setAttaching(true)}>Attachments<AttachmentCountBadge isoId={isoId}/></button><button onClick={() => setAuditing(true)}>Audit trail</button><button disabled={!canRun('phases', { isoIds: [iso.id] })} onClick={() => setPhasing(true)}>Set phase</button></Dropdown>}<ArchiveRecordButton resourceKey="isometrics" record={iso} onArchive={() => setArchiving(true)}/>{canRecord('isometrics', 'edit', iso) && <button className="btn" onClick={() => setEditor('isometrics')}><Pencil size={15}/>Edit isometric</button>}</div></div>
-    <IsometricHeader iso={iso} project={project} documents={documents} onUpload={setUpload}/>
+  const canEdit = canRecord('isometrics', 'edit', iso), recordEntries = headingHasOptions(Boolean(pilot), tab);
+  const editSpool = (spool?: Row) => { setEditingSpool(spool); setEditor('spools'); };
+  const count = (value: number) => <span className="count-pill">{value}</span>;
+  /** The page's own entries of the Options menu (ISO_PAGE_MENU); in Weld Core they join the LISL's entries in one menu. */
+  const pageItem = (key: string, label: string): ReactNode => {
+    switch (key) {
+      case 'edit-isometric': return canEdit ? <button type="button" onClick={() => setEditor('isometrics')}>{label}</button> : null;
+      case 'edit-quantities': return <button type="button" onClick={() => setQuantities(true)}>{label}</button>;
+      case 'spools': return lislPage && canRecord('spools') ? <button type="button" onClick={() => setListing('spools')}>{label}{count(spools.length)}</button> : null;
+      case 'documents': return lislPage && canRecord('attachments') ? <button type="button" onClick={() => setListing('documents')}>{label}{count(documents.length)}</button> : null;
+      case 'attachments': return recordEntries ? <button type="button" disabled={!canRecord('attachments')} onClick={() => setAttaching(true)}>{label}<AttachmentCountBadge isoId={isoId}/></button> : null;
+      case 'audit-trail': return recordEntries ? <button type="button" onClick={() => setAuditing(true)}>{label}</button> : null;
+      case 'set-phase': return recordEntries ? <button type="button" disabled={!canRun('phases', { isoIds: [iso.id] })} onClick={() => setPhasing(true)}>{label}</button> : null;
+      // The full-field register (the former "LISL (all fields)" view), filtered on this isometric.
+      case 'data-lisl': return lislPage && hasFeature('lisl') && canReadReport('lisl') && pagePilots('/welding/lisl').includes(pilot!.pilot.key) ? <Link to={dataLislUrl(iso)}>{label}</Link> : null;
+      case 'other-core': return otherPilot ? <button type="button" onClick={() => pilot!.openPilot(otherPilot.key, `/workspace/isometrics/${isoId}`)}>Open in {otherPilot.title}</button> : null;
+      case 'archive': return canRecord('isometrics', 'delete', iso) ? <button type="button" className="dropdown-danger" onClick={() => setArchiving(true)}>{label}</button> : null;
+      default: return null;
+    }
+  };
+  const groupedMenu = (groups: ReturnType<typeof menuGroups<ReactNode>>) => groups.length ? <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>{groups.map((group, position) => <Fragment key={group.group}>{position > 0 && <div role="separator" className="dropdown-divider"/>}{group.items.map(item => <Fragment key={item.key}>{item.node}</Fragment>)}</Fragment>)}</Dropdown> : null;
+  const current = lislPage ? 'LISL' : String(tabs.find(([key]) => key === tab)?.[1] || 'Isometric');
+  const topLine = (actions: ReactNode) => <div className="iso-topline">
+    <nav className="iso-crumbs" aria-label="Isometric location"><ol>
+      <li><Link to="/dashboard" title="Main project">{String(site?.name || 'Main project')}</Link></li>
+      <li><Link to={`/workspace/projects/${iso.projectId}/isometrics`} title={String(project?.description || 'Sub-project')}>{String(project?.internnumber || 'Sub-project')}</Link></li>
+      <li className="iso-switcher"><label className="sr-only" htmlFor="workspace-isometric">Switch isometric</label><select id="workspace-isometric" value={isoId} onChange={event => navigate(`/workspace/isometrics/${event.target.value}`)}>{isos.map(row => <option key={row.id} value={row.id}>{String(row.isoNo)}</option>)}</select><button type="button" className="icon-btn" aria-label="Previous isometric" disabled={index <= 0} onClick={() => navigate(`/workspace/isometrics/${isos[index - 1].id}`)}><ChevronLeft size={17}/></button><button type="button" className="icon-btn" aria-label="Next isometric" disabled={index + 1 >= isos.length} onClick={() => navigate(`/workspace/isometrics/${isos[index + 1].id}`)}><ChevronRight size={17}/></button><IsoStartedTag iso={iso}/></li>
+      <li aria-current="page">{current}</li>
+    </ol></nav>
+    <div className="iso-topline-actions">{actions}</div>
+  </div>;
+  const header = <IsometricHeader iso={iso} project={project} documents={documents} onEditIsometric={canEdit ? () => setEditor('isometrics') : undefined} quantities={quantities} onQuantities={setQuantities}/>;
+  const strips = <div className="iso-strips">
     <IsoFlangesCard isoId={isoId}/>
     {canRecord('welds') && canRecord('diameters') && <details className="panel iso-wdi-panel"><summary>Weld inch progress (WDI)<span>{wdiProgress(welds, rows.diameters || []).percent}% completed</span></summary><WdiProgress welds={welds} diameters={rows.diameters || []}/></details>}
-    <div className="iso-workspace-tabs" role="tablist" aria-label={pilot ? `${pilot.pilot.title} isometric records` : 'Isometric records'}>{tabs.map(([key, title, count]) => <button key={String(key)} id={`iso-tab-${key}`} role="tab" aria-selected={tab === key} aria-controls={`iso-panel-${isoId}`} tabIndex={tab === key ? 0 : -1} onKeyDown={event => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') { event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('button')); const next = buttons[(buttons.indexOf(event.currentTarget) + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length]; next.click(); next.focus(); } }} onClick={event => { setTab(String(key)); event.currentTarget.focus(); }}>{String(title)}<span>{String(count)}</span></button>)}</div>
-    <div role="tabpanel" id={`iso-panel-${isoId}`} aria-labelledby={`iso-tab-${tab}`}>
-      {tab === 'welds' && pilot && <WeldsPanel key={isoId} iso={iso} canAttachments={canRecord('attachments')} canSetPhase={canRun('phases', { isoIds: [iso.id] })} onAttachments={() => setAttaching(true)} onAuditTrail={() => setAuditing(true)} onSetPhase={() => setPhasing(true)}/>}
-      {tab === 'welds' && !pilot && (canReadReport('lisl') ? <DataLisl key={isoId} scopeIsoId={isoId} scopeProjectId={String(iso.projectId)} embedded/> : <EmptyState title="Weld register restricted" description="Your permission profile does not include the LISL register."/>)}
-      {pilot && tab === 'mto' && <IsoMaterialsPanel key={isoId} iso={iso} onAttachments={() => setAttaching(true)} onAudit={() => setAuditing(true)} onPhase={() => setPhasing(true)}/>}
-      {(['mto', 'calculation'] as const).filter(mode => !(pilot && mode === 'mto')).map(mode => tab === mode && <Suspense key={mode + isoId} fallback={<p role="status">Opening register…</p>}><PlanningRegister mode={mode} scopeIsoId={isoId} scopeProjectId={String(iso.projectId)}/></Suspense>)}
-      {tab === 'cut-list' && <Suspense key={`cut-list-${isoId}`} fallback={<p role="status">Opening cut list…</p>}><CutListPanel iso={iso}/></Suspense>}
-      {tab === 'spools' && <section className="panel"><div className="panel-heading"><h2>Spools</h2>{canRecord('spools', 'insert') && <button className="btn primary" onClick={() => { setEditingSpool(undefined); setEditor('spools'); }}><Plus size={16}/>Add spool</button>}</div><TableScroll><table className="data-table"><thead><tr><th>Spool</th><th>Diameter</th><th>Welds</th><th/></tr></thead><tbody>{spools.map(spool => <tr key={spool.id}><td><button className="record-link" onClick={() => openRecord('spools', spool.id)}>{String(spool.name)}</button></td><td>{String(spool.diameter || '—')}</td><td>{welds.filter(weld => weld.spoolId === spool.id).length}</td><td>{canRecord('spools', 'edit', spool) && <button className="icon-btn" aria-label={`Edit spool ${spool.name}`} onClick={() => { setEditingSpool(spool); setEditor('spools'); }}><Pencil size={16}/></button>}</td></tr>)}</tbody></table></TableScroll>{!spools.length && <EmptyState title="No spools in this isometric" description="Add a spool, then assign it when adding or editing a weld."/>}</section>}
-      {tab === 'documents' && <section className="panel iso-documents"><div className="panel-heading"><h2>Drawing documents</h2>{canRecord('isometrics', 'import', iso) && <button className="btn" onClick={() => setUpload('ISO')}><Upload size={15}/>Upload document</button>}</div>{documents.map(file => <a className="attachment-row" key={file.id} href={apiUrl(`/files/${file.id}`)} target="_blank" rel="noreferrer"><FileText size={22}/><div><strong>{String(file.name)}</strong><small>{String(file.documentType)} · {formatDate(file._createdAt)}</small></div><Download size={17}/></a>)}{!documents.length && <EmptyState title="No drawing documents attached" description="Use the plus beside ISO or ITP to upload a document."/>}</section>}
-    </div>
+  </div>;
+  return <div className={`page workflow-page iso-workspace${lislPage ? ' iso-workspace-lisl' : ''}`}>
+    <h1 className="sr-only">Isometric {String(iso.isoNo)}</h1>
+    {lislPage ? <WeldsPanel iso={iso} pageItem={pageItem} layout={({ menu, addWeld, panel }) => <>{topLine(<>{menu}<PdfReportsMenu iso={iso}/>{addWeld}</>)}{header}{panel}{strips}</>}/> : <>
+      {topLine(<>{groupedMenu(menuGroups(ISO_PAGE_MENU, entry => pageItem(entry.key, entry.label)))}<PdfReportsMenu iso={iso}/>{pilot?.pilot.key === 'mto' && <IsoBookButton iso={iso}/>}</>)}
+      {header}
+      <div className="iso-workspace-tabs" role="tablist" aria-label={pilot ? `${pilot.pilot.title} isometric records` : 'Isometric records'}>{tabs.map(([key, title, total]) => <button key={String(key)} id={`iso-tab-${key}`} role="tab" aria-selected={tab === key} aria-controls={`iso-panel-${isoId}`} tabIndex={tab === key ? 0 : -1} onKeyDown={event => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') { event.preventDefault(); const buttons = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('button')); const next = buttons[(buttons.indexOf(event.currentTarget) + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length]; next.click(); next.focus(); } }} onClick={event => { setTab(String(key)); event.currentTarget.focus(); }}>{String(title)}<span>{String(total)}</span></button>)}</div>
+      <div role="tabpanel" id={`iso-panel-${isoId}`} aria-labelledby={`iso-tab-${tab}`}>
+        {tab === 'welds' && !pilot && (canReadReport('lisl') ? <DataLisl key={isoId} scopeIsoId={isoId} scopeProjectId={String(iso.projectId)} embedded/> : <EmptyState title="Weld register restricted" description="Your permission profile does not include the LISL register."/>)}
+        {pilot && tab === 'mto' && <IsoMaterialsPanel key={isoId} iso={iso} onAttachments={() => setAttaching(true)} onAudit={() => setAuditing(true)} onPhase={() => setPhasing(true)}/>}
+        {(['mto', 'calculation'] as const).filter(mode => !(pilot && mode === 'mto')).map(mode => tab === mode && <Suspense key={mode + isoId} fallback={<p role="status">Opening register…</p>}><PlanningRegister mode={mode} scopeIsoId={isoId} scopeProjectId={String(iso.projectId)}/></Suspense>)}
+        {tab === 'cut-list' && <Suspense key={`cut-list-${isoId}`} fallback={<p role="status">Opening cut list…</p>}><CutListPanel iso={iso}/></Suspense>}
+        {tab === 'spools' && <section className="panel"><div className="panel-heading"><h2>Spools</h2>{canRecord('spools', 'insert') && <button className="btn primary" onClick={() => editSpool(undefined)}><Plus size={16}/>Add spool</button>}</div><SpoolsTable spools={spools} welds={welds} onEdit={editSpool}/></section>}
+        {tab === 'documents' && <section className="panel iso-documents"><div className="panel-heading"><h2>Drawing documents</h2>{canRecord('isometrics', 'import', iso) && <button className="btn" onClick={() => setUpload('ISO')}><Upload size={15}/>Upload document</button>}</div><DrawingDocuments documents={documents}/></section>}
+      </div>
+      {strips}
+    </>}
+    {/* Options → Spools / Drawing documents (Weld Core). The list steps aside while its editor or upload is open, and comes back after. */}
+    {listing === 'spools' && !editor && <Modal title="Spools" subtitle={String(iso.isoNo)} wide onClose={() => setListing('')}><div className="modal-body iso-listing">{canRecord('spools', 'insert') && <div className="iso-listing-actions"><button type="button" className="btn primary" onClick={() => editSpool(undefined)}><Plus size={16}/>Add spool</button></div>}<SpoolsTable spools={spools} welds={welds} onEdit={editSpool}/></div><div className="modal-footer"><button type="button" className="btn" onClick={() => setListing('')}>Close</button></div></Modal>}
+    {listing === 'documents' && !upload && <Modal title="Drawing documents" subtitle={String(iso.isoNo)} wide onClose={() => setListing('')}><div className="modal-body iso-listing iso-documents">{canRecord('isometrics', 'import', iso) && <div className="iso-listing-actions"><button type="button" className="btn" onClick={() => setUpload('ISO')}><Upload size={15}/>Upload document</button></div>}<DrawingDocuments documents={documents}/></div><div className="modal-footer"><button type="button" className="btn" onClick={() => setListing('')}>Close</button></div></Modal>}
     {editor && <RecordEditor resourceKey={editor} record={editor === 'isometrics' ? iso : editingSpool} defaults={{ isoId }} onClose={() => setEditor('')}/>}
     {archiving && <ArchiveRecordDialog resourceKey="isometrics" record={iso} onClose={() => setArchiving(false)} onSaved={() => navigate(`/workspace/projects/${iso.projectId}/isometrics`)}/>}
     {upload && <DrawingUpload iso={iso} kind={upload} onClose={() => setUpload('')}/>}

@@ -1,10 +1,9 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertCircle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, FileText, GripVertical, ListPlus, Loader2, Lock, Paperclip, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronRight, FileText, Loader2, Lock, Paperclip, Pencil, Plus, RotateCcw, Stamp, Trash2 } from 'lucide-react';
 import { useWorkspace, activeRows } from './context.tsx';
-import { Badge, Dropdown, EmptyState, Modal, SearchInput, TableScroll, revealInvalidField } from './components.tsx';
+import { Badge, Dropdown, EmptyState, Modal, TableScroll, revealInvalidField } from './components.tsx';
 import { availableWps } from './catalog.ts';
 import { ApiError, api, apiUrl, post, formatDate } from './api.ts';
-import { DataLisl } from './data-lisl.tsx';
 import { InspectionCell } from './weld-inspection-cell.tsx';
 import { AttachmentCountBadge } from './iso-dialogs.tsx';
 import { uploadFiles, useInspectionMenu, type InspectionMenuItem } from './inspections.tsx';
@@ -13,15 +12,16 @@ import { projectCertificates, wpsValidation } from '../shared/site-settings.ts';
 import { enabledOnSite, enabledOptions } from '../shared/weld-catalogs.ts';
 import { SPOOL_NAMES, SPOOL_NAME_INPUT, spoolOptionsForIso } from '../shared/spool-catalog.ts';
 import { resourceAvailable } from '../shared/release.ts';
-import { NDT_DOCUMENT, NDT_ROUNDS, NDT_TYPES, INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS, currentRequest, inspectionFileError, ndtOrPwhtInProgress, requestFlag, roundLabel, weldResults } from '../shared/inspections.ts';
+import { HEAT_TYPES, NDT_DOCUMENT, NDT_ROUNDS, NDT_TYPES, INSPECTION_MASS_EDIT_FIELDS, INSPECTION_WELD_FIELDS, currentRequest, inspectionFileError, ndtOrPwhtInProgress, requestFlag, roundLabel, weldResults } from '../shared/inspections.ts';
 import { isAdministrator } from '../shared/permissions.ts';
+import { menuGroups } from '../shared/iso-pages.ts';
 import { nonWeldCode } from '../shared/weld-codes.ts';
 import {
-  WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, dropWeld, lockContext, locationTooltip, missingMandatoryFields, moveWeld, neighbourOf, orderedWelds,
+  WELDERS, diameterOptionValue, diameterOptions, certificateErrors, certificatesForProject, chargeSelection, chargeValue, lockContext, locationTooltip, missingMandatoryFields, neighbourOf, orderedWelds,
   planWeldRange, sideSummary, typeAbbreviation, weldDiameterText, weldLocation, weldLock, WELD_ENTRY_FIELDS, SIDE_VALUES,
   MASS_EDIT_CLEAR_LABEL, MASS_EDIT_COLUMNS, MASS_EDIT_DATES, MASS_EDIT_DATE_HINT, MASS_EDIT_DIAMETER, MASS_EDIT_FLAGS_LABELS, MASS_EDIT_SECTIONS, MASS_EDIT_SELECT_NOTHING,
-  NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, deletedViewEmpty, stayInDeletedView, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, WELD_ORDER_MESSAGES, WELD_SORTING_MESSAGES, orderFailureMessage, sideCellTexts, stampOptionLabel,
-  MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldMatchesSearch, weldSortingDisabled, weldSortingMenu, welderStamps, type MassEditItem,
+  NO_WELDER_TEXT, STAMP_NONE, WELD_BRING_BACK_WORDING, deletedViewEmpty, stayInDeletedView, WELD_DELETE_WORDING, WELD_OPTIONS_MENU, sideCellTexts, stampOptionLabel,
+  MASS_EDIT_MANDATORY_MESSAGE, massEditMissingFields, readMassEdit, weldSortingDisabled, welderStamps, type MassEditItem,
   CERTIFICATE_NOT_SELECTABLE, DIAMETER_MESSAGES, DUPLICATE_WELDER, EDIT_REASON_LABEL, EDIT_REASON_MAX, EDIT_REASON_WARNING, EDIT_TRACER_HINT, WELD_MANDATORY_MESSAGE, addNewEnabled, certificateSelectable, certificateSelectionErrors, chargeDetails,
   chargeOptionList, diameterErrors, diameterTextOrder, duplicateWelderErrors, editHistoryDate, editReason, newWeldDefaults, specialWeldCleared, specialWeldHidden, weldDiameterCheck, weldFormLayout, wireLabel, wpsLabel,
   RANGE_DIALOG, WELDER_PLACEHOLDER, chargeMaterialGroup, chargesForWelders, diameterRowSize, diameterSizeMm, groupWeldersForDia, materialGroupWarnings, suggestOnDia, welderFieldsDisabled, welderOptionList, weldersForWps, weldersQualifiedForDiameter,
@@ -243,8 +243,14 @@ export function EditWeldDialog({ iso, weld, onClose }: { iso: Row; weld: Row; on
   return <WeldDialog iso={iso} weld={weld} data={data} onClose={onClose} lockedReason={lock.locked ? lock.reason : undefined}/>;
 }
 
-export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Row; weld?: Row; data: WeldData; onClose: () => void; lockedReason?: string }) {
+/**
+ * Add weld / Edit weld. `onDeleted` (the LISL passes it when the account may delete welds) adds "Delete weld" at the left of
+ * the footer (client change list 22.11.2026, image 17: no trash icon in the rows): shown under the same conditions the row
+ * icon had (not locked by a completed phase, not locked by an NDT request for this account); it asks "Are you sure?" first.
+ */
+export function WeldDialog({ iso, weld, data, onClose, lockedReason, onDeleted }: { iso: Row; weld?: Row; data: WeldData; onClose: () => void; lockedReason?: string; onDeleted?: () => void }) {
   const { rows, refresh, notify, user, canRun } = useWorkspace();
+  const [deleting, setDeleting] = useState(false);
   const mode = weld ? 'edit' : 'add';
   // NDT lock (chat 17.11.2026): with an NDT request only an administrator edits the weld, with a change comment; everyone else sees it read-only.
   // An account that only records NDT results opens it read-only as well, for the NDT result section.
@@ -385,6 +391,8 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
   };
   const layout = weldFormLayout(mode).map(column => column.filter(item => !['updatePrev', 'updateNext'].includes(item.name) && shown(item.name)));
   const saveBlocked = busy || blocked || reasonMissing;
+  // Delete weld swaps the dialog for the confirmation; Cancel brings the weld back with what was typed (this component stays mounted).
+  if (deleting && weld) return <DeleteDialog welds={[weld]} onClose={() => setDeleting(false)} onDone={() => { onDeleted?.(); onClose(); }}/>;
   return <Modal title={weld ? 'Edit weld' : 'Add weld'} subtitle={`${str(iso.isoNo)}${weld ? ` · ${str(weld.weldNo)}` : ''}`} wide onClose={onClose}>
     <form onInvalidCapture={revealInvalidField} onSubmit={event => void submit(event)} noValidate>
       <div className="modal-body weld-form">
@@ -404,6 +412,7 @@ export function WeldDialog({ iso, weld, data, onClose, lockedReason }: { iso: Ro
         {weld && <NdtResultSection weld={weld} phaseLocked={Boolean(lockedReason)}/>}
       </div>
       <div className="modal-footer">
+        {weld && onDeleted && !lockedReason && ndt.editable && <button type="button" className="btn weld-dialog-delete" disabled={busy} onClick={() => setDeleting(true)}><Trash2 size={15} aria-hidden="true"/>{WELD_DELETE_WORDING.one}</button>}
         <button type="button" className="btn" disabled={busy} onClick={onClose}>{readOnly ? 'Close' : 'Cancel'}</button>
         {weld && !readOnly && <button type="button" className="btn" disabled={saveBlocked || !addNew} title={addNew ? undefined : 'Change Weld no. to a number this isometric does not have yet.'} onClick={event => void submit(event as unknown as FormEvent, true)}>Add new</button>}
         {!readOnly && <button className="btn primary" disabled={saveBlocked}>{busy && <Loader2 size={15} className="spin"/>}{weld ? 'Update' : 'Add'}</button>}
@@ -567,19 +576,37 @@ function BringBackDialog({ weld, onClose, onBack }: { weld: Row; onClose: () => 
 
 // --------------------------------------------------------------------------------------------------- the table
 
-const COLUMNS = ['Sort', 'WN', 'Type', 'Wdr', 'VI', 'NDT (Pre)', 'NDT', 'Pre-HT/PWHT', 'Idx', 'Chg.No.', 'Material ①', 'Idx', 'Chg.No.', 'Material ②', 'WPS', 'D', 'S', 'Options'];
+/**
+ * The LISL table of the isometric (client change list 22.11.2026, images 16–19): no sort column, no search, no padlocks;
+ * WD / VT / Spool headers and Pre-HT and PWHT as two columns. `table-layout: fixed` with the widths of client/weld-entry.css
+ * fits the table without horizontal scrolling from 1280 px with the sidebar open; the two Material columns take the rest.
+ */
+export const LISL_COLUMNS: { key: string; label: string; title?: string }[] = [
+  { key: 'wn', label: 'WN', title: 'Weld number' }, { key: 'type', label: 'Type', title: 'Weld type' }, { key: 'wd', label: 'WD', title: 'Welders (stamps)' }, { key: 'vt', label: 'VT', title: 'Visual testing' },
+  { key: 'ndt-pre', label: 'NDT (Pre)' }, { key: 'ndt', label: 'NDT' }, { key: 'pre-ht', label: 'Pre-HT', title: 'Pre-heat treatment' }, { key: 'pwht', label: 'PWHT', title: 'Post-weld heat treatment' },
+  { key: 'idx-1', label: 'Idx', title: 'Index no. ①' }, { key: 'chg-1', label: 'Chg.No.', title: 'Charge no. ①' }, { key: 'mat-1', label: 'Material ①' },
+  { key: 'idx-2', label: 'Idx', title: 'Index no. ②' }, { key: 'chg-2', label: 'Chg.No.', title: 'Charge no. ②' }, { key: 'mat-2', label: 'Material ②' },
+  { key: 'wps', label: 'WPS' }, { key: 'd', label: 'D', title: 'Diameter' }, { key: 'spool', label: 'Spool' }, { key: 'options', label: 'Options' },
+];
 
-function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, canAttachments, switcher }: { iso: Row; onAttachments: () => void; onAuditTrail: () => void; onSetPhase: () => void; canSetPhase: boolean; canAttachments: boolean; switcher: ReactNode }) {
+/** What the isometric page hands the LISL: its own Options entries and where the actions and the panel go. */
+export interface WeldsPanelProps {
+  iso: Row;
+  /** An entry of the page's own part of the Options menu (ISO_PAGE_MENU keys); null when the page does not offer it. */
+  pageItem: (key: string, label: string) => ReactNode;
+  /** Places the Options menu and Add weld in the page's top line and the LISL panel under the header cards. */
+  layout: (parts: { menu: ReactNode; addWeld: ReactNode; panel: ReactNode }) => ReactNode;
+}
+
+function WeldTable({ iso, pageItem, layout }: WeldsPanelProps) {
   const { canRecord, canRun, refresh, notify, user } = useWorkspace(); const data = useWeldData(iso);
-  const [selected, setSelected] = useState<string[]>([]), [query, setQuery] = useState(''), [showDeleted, setShowDeleted] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]), [showDeleted, setShowDeleted] = useState(false);
   const [dialog, setDialog] = useState<'add' | 'range' | 'mass' | 'delete' | 'punch' | null>(null), [editing, setEditing] = useState<Row | null>(null), [stamping, setStamping] = useState<Row | null>(null), [removing, setRemoving] = useState<Row[]>([]), [restoring, setRestoring] = useState<Row | null>(null);
-  const [dragging, setDragging] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(''), [announce, setAnnounce] = useState('');
   // NDT / visual inspection / PWHT entries of the inspections flow (already filtered by permission and the 'inspections' feature).
   const inspectionMenu = useInspectionMenu(str(iso.id)), [inspection, setInspection] = useState<InspectionMenuItem | null>(null);
-  const { welds } = data, order = welds.map(weld => weld.id);
-  const sortingOff = weldSortingDisabled(iso), sorting = weldSortingMenu(sortingOff);
+  const { welds } = data;
   const locks = new Map([...welds, ...data.deleted].map(weld => [weld.id, weldLock(weld, data.lock)]));
-  // NDT lock: a weld with an NDT request; it can be checked, moved and deleted only by an administrator (the server says the same).
+  // NDT lock: a weld with an NDT request; only an administrator changes or deletes it (the server says the same). The weld itself says so, the table shows no padlock.
   const administrator = isAdministrator(user);
   const ndtLocks = new Map([...welds, ...data.deleted].map(weld => [weld.id, ndtLock(data.requests, weld.id, administrator)]));
   const frozen = (weld: Row) => locks.get(weld.id)!.locked || !ndtLocks.get(weld.id)!.editable;
@@ -588,119 +615,96 @@ function WeldTable({ iso, onAttachments, onAuditTrail, onSetPhase, canSetPhase, 
     return sideSummary(weld, side, { certificate, material, materialType: str(data.materialTypes.get(str(material?.typeId))?.name), materialPart: str(data.materialParts.get(str(material?.partId))?.name) });
   };
   const weldersOf = (weld: Row) => WELDERS.map(name => data.welders.get(str(weld[name]))).filter((row): row is Row => Boolean(row));
-  /** The text the Search box looks through: what the row prints (and the tooltips behind it). */
-  const rowText = (weld: Row) => {
-    const type = data.types.get(str(weld.typeId)), cells = [1, 2].map(side => { const text = sideCellTexts(sideOf(weld, side as 1 | 2)); return `${text.index} ${text.charge} ${text.material}`; });
-    return [weld.weldNo, typeAbbreviation(type), type?.name, ...weldersOf(weld).flatMap(row => [row.welderCode || row.number, row.name]), ...cells, data.wps.get(str(weld.wpsId))?.name, weldDiameterText(weld, data.diameters.get(str(weld.diameterId))), data.spools.get(str(weld.spoolId))?.name].map(str).join(' ');
-  };
   const listed = showDeleted ? data.deleted : welds;
-  const visible = listed.filter(weld => weldMatchesSearch(rowText(weld), query));
-  const checked = showDeleted ? [] : visible.filter(weld => selected.includes(weld.id) && !locks.get(weld.id)!.locked);
-  const unlocked = showDeleted ? [] : visible.filter(weld => !locks.get(weld.id)!.locked);
-  // Checked welds still go to the NDT / VI / PWHT actions; Mass edit and Delete refuse a checked weld locked by its NDT request.
+  const checked = showDeleted ? [] : listed.filter(weld => selected.includes(weld.id) && !locks.get(weld.id)!.locked);
+  const unlocked = showDeleted ? [] : listed.filter(weld => !locks.get(weld.id)!.locked);
+  // Checked welds still go to the NDT / VT / PWHT actions; Mass edit and Delete refuse a checked weld locked by its NDT request.
   const ndtFrozen = checked.find(frozen);
   const editChecked = (open: () => void) => { if (!checked.length) notify(MASS_EDIT_SELECT_NOTHING); else if (ndtFrozen) notify(ndtLockRefusal(ndtFrozen.weldNo)); else open(); };
   const canAdd = canRun('save-weld', {}), canEdit = canRun('save-weld', { weldId: 'x' }), canOpen = canEdit || NDT_TYPES.some(type => canRun('inspection-upload', { type })), canMass = canRun('mass-edit-welds'), canDelete = canRecord('welds', 'delete');
-  const showSort = !sortingOff && !showDeleted, canSort = canRun('reorder-welds') && showSort;
-  const columns = showSort ? COLUMNS : COLUMNS.slice(1);
-  async function toggleSorting() {
-    try { await post('/actions/toggle-weld-sorting', { isoId: iso.id, enabled: sortingOff }); await refresh(); notify(sortingOff ? WELD_SORTING_MESSAGES.enabled : WELD_SORTING_MESSAGES.disabled); }
-    catch { setError(WELD_SORTING_MESSAGES.failed); }
-  }
-  async function toggleDeleted() { setShowDeleted(value => !value); setSelected([]); setQuery(''); try { await refresh(); } catch { /* the workspace shows its own connection error */ } }
-  async function reorder(next: string[] | null, moved?: Row, direction?: 'up' | 'down') {
-    if (!next || busy) return; setBusy(true); setError('');
-    try { await post('/actions/reorder-welds', { isoId: iso.id, weldIds: next }); await refresh(); notify(WELD_ORDER_MESSAGES.saved); if (moved) setAnnounce(`Weld ${str(moved.weldNo)} moved to place ${next.indexOf(moved.id) + 1} of ${next.length}.`); }
-    catch (failure) { setError(orderFailureMessage(failure)); try { await refresh(); } catch { /* the saved order could not be reloaded either */ } } finally { setBusy(false); setDragging(''); }
-    // The arrow buttons are disabled while saving, which drops keyboard focus: give it back to the moved weld (the other arrow once it reached an end).
-    if (moved && direction) requestAnimationFrame(() => {
-      const button = (dir: 'up' | 'down') => document.querySelector<HTMLButtonElement>(`button[aria-label="${CSS.escape(`Move weld ${str(moved.weldNo)} ${dir}`)}"]`);
-      const target = [button(direction), button(direction === 'up' ? 'down' : 'up')].find(candidate => candidate && !candidate.disabled);
-      target?.focus();
-    });
-  }
+  async function toggleDeleted() { setShowDeleted(value => !value); setSelected([]); try { await refresh(); } catch { /* the workspace shows its own connection error */ } }
   const sideCells = (weld: Row, side: 1 | 2) => {
     const summary = sideOf(weld, side), text = sideCellTexts(summary);
-    return <><td className="tabular">{text.index}</td><td className="tabular">{text.charge}</td><td className={`weld-material ${summary.kind}`}>{text.material}</td></>;
+    return <><td className="tabular">{text.index}</td><td className="tabular weld-wrap">{text.charge}</td><td className={`weld-material ${summary.kind}`}><span className="weld-clamp" title={text.material}>{text.material}</span></td></>;
   };
-  if (!canRecord('welds')) return <EmptyState title="Weld register restricted" description="Your permission profile does not include the weld register."/>;
+  const readable = canRecord('welds');
   const inspectionItem = (key: string) => inspectionMenu.find(item => item.key === key);
   const menuItem = (key: string, label: string): ReactNode => {
     switch (key) {
-      case 'attachments': return <button type="button" disabled={!canAttachments} onClick={onAttachments}>{label}<AttachmentCountBadge isoId={iso.id}/></button>;
+      case 'add-welds': return readable ? <button type="button" disabled={!canRun('add-welds') || showDeleted} onClick={() => setDialog('range')}>{label}</button> : null;
+      case 'mass-edit': return readable ? <button type="button" disabled={!canMass || showDeleted} onClick={() => editChecked(() => setDialog('mass'))}>{label}{checked.length > 0 && <span className="count-pill">{checked.length}</span>}</button> : null;
       case 'punch-list': return canRecord('punchlists') ? <button type="button" onClick={() => setDialog('punch')}>{label}</button> : null;
-      case 'audit-trail': return <button type="button" onClick={onAuditTrail}>{label}</button>;
-      case 'set-phase': return <button type="button" disabled={!canSetPhase} onClick={onSetPhase}>{label}</button>;
-      case 'show-deleted': return <button type="button" onClick={() => void toggleDeleted()}>{showDeleted ? WELD_BRING_BACK_WORDING.showActive : label}</button>;
-      case 'delete-selected': return <button type="button" disabled={!canDelete || !checked.length} onClick={() => editChecked(() => { setRemoving(checked); setDialog('delete'); })}>{label}</button>;
-      case 'sorting': return <button type="button" role="menuitemcheckbox" aria-checked={sorting.checked} onClick={() => void toggleSorting()}>{sorting.checked ? '☑' : '☐'} {sorting.label}</button>;
-      default: {
-        const item = inspectionItem(key); if (!item) return null;
+      case 'show-deleted': return readable ? <button type="button" onClick={() => void toggleDeleted()}>{showDeleted ? WELD_BRING_BACK_WORDING.showActive : label}</button> : null;
+      case 'delete-selected': return readable ? <button type="button" className="dropdown-danger" disabled={!canDelete || !checked.length} onClick={() => editChecked(() => { setRemoving(checked); setDialog('delete'); })}>{label}</button> : null;
+      case 'visual-inspection': case 'mass-ndt-pre': case 'mass-ndt': case 'mass-pwht': case 'upload-pwht': {
+        const item = readable ? inspectionItem(key) : undefined; if (!item) return null;
         const count = key === 'visual-inspection' ? /\s\((\d+)\)$/.exec(item.label)?.[1] : undefined;
         return <button type="button" onClick={() => setInspection(item)}>{label}{count !== undefined && <span className="count-pill">{count}</span>}</button>;
       }
+      default: return pageItem(key, label);
     }
   };
-  return <section className="panel weld-panel" aria-label="Welds">
-    <div className="panel-heading weld-panel-heading"><div><h2>Welds</h2><span className="muted">{showDeleted ? `${data.deleted.length} deleted on this isometric` : `${welds.length} on this isometric`}</span></div>{switcher}
+  const menu = <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>
+    {menuGroups(WELD_OPTIONS_MENU, entry => menuItem(entry.key, entry.label)).map((group, index) => <Fragment key={group.group}>{index > 0 && <div role="separator" className="dropdown-divider"/>}{group.items.map(item => <Fragment key={item.key}>{item.node}</Fragment>)}</Fragment>)}
+  </Dropdown>;
+  const addWeld = readable ? <button type="button" className="btn primary" disabled={!canAdd || showDeleted} onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : null;
+  if (!readable) return <>{layout({ menu, addWeld, panel: <section className="panel weld-panel" aria-label="LISL"><EmptyState title="Weld register restricted" description="Your permission profile does not include the weld register."/></section> })}</>;
+  const editingLock = editing ? locks.get(editing.id) : undefined;
+  const titleId = `weld-panel-title-${iso.id}`;
+  const panel = <section className="panel weld-panel" aria-labelledby={titleId}>
+    <div className="panel-heading weld-panel-heading"><div><h2 id={titleId}>LISL</h2>{showDeleted && <Badge color="amber">Deleted welds</Badge>}</div>
       <div className="heading-actions weld-actions">
-        <Dropdown label="Options" trigger={<span className="btn">Options<ChevronDown size={15}/></span>}>
-          {WELD_OPTIONS_MENU.map(entry => { const node = menuItem(entry.key, entry.label); return node ? <Fragment key={entry.key}>{entry.dividerBefore && <div role="separator" className="dropdown-divider"/>}{node}</Fragment> : null; })}
-        </Dropdown>
-        <button type="button" className="btn" disabled={!canMass || showDeleted} onClick={() => editChecked(() => setDialog('mass'))}>Mass edit welds</button>
-        <button type="button" className="btn" disabled={!canRun('add-welds') || showDeleted} onClick={() => setDialog('range')}><ListPlus size={16}/>{RANGE_DIALOG.toolbar}</button>
-        <button type="button" className="btn primary" disabled={!canAdd || showDeleted} onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button>
+        {checked.length > 0 && <span className="weld-checked" role="status">{checked.length} checked</span>}
+        {checked.length > 0 && canMass && <button type="button" className="btn small" onClick={() => editChecked(() => setDialog('mass'))}>Mass edit welds</button>}
+        {checked.length > 0 && <button type="button" className="btn small" onClick={() => setSelected([])}>Clear</button>}
+        {showDeleted && <button type="button" className="btn small" onClick={() => void toggleDeleted()}>{WELD_BRING_BACK_WORDING.showActive}</button>}
       </div></div>
-    <Failure message={error}/>
-    <p className="sr-only" role="status" aria-live="polite">{announce}</p>
-    {listed.length > 0 && <div className="weld-search"><SearchInput value={query} onChange={setQuery} placeholder="Search"/></div>}
-    {listed.length ? <TableScroll><table className="data-table weld-table" aria-label={`${showDeleted ? 'Deleted welds' : 'Welds'} of ${str(iso.isoNo)}`} aria-busy={busy}>
-      <thead><tr>{columns.map((name, index) => <th key={`${name}${index}`} scope="col" className={name === 'Sort' ? 'weld-sort-head' : undefined}>{name === 'Sort' ? <span className="sr-only">Sort</span> : name}</th>)}<th scope="col" className="select-cell"><input type="checkbox" aria-label="Check all unlocked welds" disabled={showDeleted} checked={unlocked.length > 0 && unlocked.every(weld => selected.includes(weld.id))} ref={input => { if (input) input.indeterminate = unlocked.some(weld => selected.includes(weld.id)) && !unlocked.every(weld => selected.includes(weld.id)); }} onChange={event => setSelected(current => event.target.checked ? [...new Set([...current, ...unlocked.map(weld => weld.id)])] : current.filter(id => !unlocked.some(weld => weld.id === id)))}/></th></tr></thead>
-      <tbody>{visible.map(weld => {
+    {listed.length ? <div className="weld-table-box" tabIndex={0} role="region" aria-labelledby={titleId}><table className="data-table weld-table" aria-label={`${showDeleted ? 'Deleted welds' : 'Welds'} of ${str(iso.isoNo)}`}>
+      <colgroup>{LISL_COLUMNS.map(column => <col key={column.key} className={`weld-col-${column.key}`}/>)}<col className="weld-col-select"/></colgroup>
+      <thead><tr>{LISL_COLUMNS.map(column => <th key={column.key} scope="col" title={column.title}>{column.label}</th>)}<th scope="col" className="select-cell"><input type="checkbox" aria-label="Check all unlocked welds" disabled={showDeleted} checked={unlocked.length > 0 && unlocked.every(weld => selected.includes(weld.id))} ref={input => { if (input) input.indeterminate = unlocked.some(weld => selected.includes(weld.id)) && !unlocked.every(weld => selected.includes(weld.id)); }} onChange={event => setSelected(current => event.target.checked ? [...new Set([...current, ...unlocked.map(weld => weld.id)])] : current.filter(id => !unlocked.some(weld => weld.id === id)))}/></th></tr></thead>
+      <tbody>{listed.map(weld => {
         const lock = locks.get(weld.id)!, ndt = ndtLocks.get(weld.id)!, type = data.types.get(str(weld.typeId)), stamps = welderStamps(weldersOf(weld)), stamper = data.stampers.get(str(weld.stampedBy));
-        const abbreviation = typeAbbreviation(type), tooltip = locationTooltip(type);
-        return <tr key={weld.id} className={`${lock.locked ? 'weld-row-locked' : ''} ${dragging === weld.id ? 'weld-row-dragging' : ''}`} onDragOver={event => { if (dragging && dragging !== weld.id) event.preventDefault(); }} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, weld.id), welds.find(row => row.id === dragging)); }}>
-          {showSort && <td className="weld-sort-cell">{canSort && !ndt.editable ? <span className="weld-lock" role="img" aria-label={`Weld ${str(weld.weldNo)} cannot be moved. ${NDT_LOCK_REASON}`} title={NDT_LOCK_REASON}><Lock size={14}/></span> : canSort ? <><span className="weld-grip" draggable aria-hidden="true" title="Drag to reorder" onDragStart={event => { event.dataTransfer.setData('text/plain', weld.id); event.dataTransfer.effectAllowed = 'move'; setDragging(weld.id); }} onDragEnd={() => setDragging('')}><GripVertical size={16}/></span><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} up`} disabled={busy || order[0] === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'up'), weld, 'up')}><ArrowUp size={14}/></button><button type="button" className="icon-btn" aria-label={`Move weld ${str(weld.weldNo)} down`} disabled={busy || order.at(-1) === weld.id} onClick={() => void reorder(moveWeld(order, weld.id, 'down'), weld, 'down')}><ArrowDown size={14}/></button></> : <span className="muted">-</span>}</td>}
-          <td className="weld-no">{canOpen && !lock.locked && !showDeleted ? <button type="button" className="record-link" onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
+        const abbreviation = typeAbbreviation(type), tooltip = locationTooltip(type), wps = str(data.wps.get(str(weld.wpsId))?.name);
+        // A locked weld (completed phase, or an NDT request for a non-administrator) opens read-only with the reason banner; the row looks like any other.
+        const readOnly = lock.locked || !(ndt.editable && canEdit);
+        const editLabel = readOnly ? `Open weld ${str(weld.weldNo)} (read-only${lock.locked ? `: ${lock.reason}` : ndt.locked ? '; NDT results can be attached' : ''})` : `Edit weld ${str(weld.weldNo)}`;
+        return <tr key={weld.id}>
+          <td className="weld-no">{canOpen && !showDeleted ? <button type="button" className="record-link" title={readOnly ? editLabel : undefined} onClick={() => setEditing(weld)}>{str(weld.weldNo)}</button> : str(weld.weldNo)}</td>
           <td>{abbreviation ? <span className="weld-type" tabIndex={0} title={tooltip} aria-label={`${abbreviation}, ${tooltip}`}>{abbreviation}</span> : <span className="muted">-</span>}</td>
-          <td>{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{NO_WELDER_TEXT}</span>}</td>
-          <td><InspectionCell weld={weld} kind="VI"/></td><td><InspectionCell weld={weld} kind="NDT PRE"/></td><td><InspectionCell weld={weld} kind="NDT"/></td><td><InspectionCell weld={weld} kind="PWHT"/></td>
+          <td className="weld-wrap">{stamps.length ? stamps.map((stamp, index) => <span key={index} title={stamp.name}>{index ? ', ' : ''}{stamp.code}</span>) : <span className="muted">{NO_WELDER_TEXT}</span>}</td>
+          <td><InspectionCell weld={weld} kind="VI"/></td><td><InspectionCell weld={weld} kind="NDT PRE"/></td><td><InspectionCell weld={weld} kind="NDT"/></td>
+          {HEAT_TYPES.map(heat => <td key={heat}><InspectionCell weld={weld} kind="PWHT" heat={heat}/></td>)}
           {sideCells(weld, 1)}{sideCells(weld, 2)}
-          <td>{str(data.wps.get(str(weld.wpsId))?.name) || <span className="muted">—</span>}</td>
-          <td className="tabular">{weldDiameterText(weld, data.diameters.get(str(weld.diameterId))) || <span className="muted">—</span>}</td>
-          <td>{str(data.spools.get(str(weld.spoolId))?.name) || <span className="muted">—</span>}</td>
-          <td className="weld-options">{lock.locked ? <span className="weld-lock" role="img" aria-label={`Locked. ${lock.reason}`} title={lock.reason}><Lock size={16}/></span> : showDeleted ? (canDelete && <button type="button" className="icon-btn" aria-label={`${WELD_BRING_BACK_WORDING.icon} ${str(weld.weldNo)}`} title={WELD_BRING_BACK_WORDING.icon} onClick={() => setRestoring(weld)}><RotateCcw size={16}/></button>) : <>
-            {ndt.locked && <span className="weld-lock weld-lock-ndt" role="img" aria-label={`Weld ${str(weld.weldNo)}. ${NDT_LOCK_REASON}`} title={NDT_LOCK_REASON}><Lock size={16}/></span>}
-            {canOpen && <button type="button" className="icon-btn" aria-label={ndt.editable && canEdit ? `Edit weld ${str(weld.weldNo)}` : `Open weld ${str(weld.weldNo)} to see or attach NDT results`} title={ndt.editable && canEdit ? undefined : 'Open the weld: NDT results can be attached'} onClick={() => setEditing(weld)}><Pencil size={16}/></button>}
-            {canDelete && ndt.editable && <button type="button" className="icon-btn" aria-label={`Delete weld ${str(weld.weldNo)}`} onClick={() => { setRemoving([weld]); setDialog('delete'); }}><Trash2 size={16}/></button>}
+          <td>{wps ? <span className="weld-clamp" title={wps}>{wps}</span> : <span className="muted">—</span>}</td>
+          <td className="tabular weld-wrap">{weldDiameterText(weld, data.diameters.get(str(weld.diameterId))) || <span className="muted">—</span>}</td>
+          <td className="weld-wrap">{str(data.spools.get(str(weld.spoolId))?.name) || <span className="muted">—</span>}</td>
+          <td className="weld-options">{showDeleted ? (canDelete && <button type="button" className="icon-btn" aria-label={`${WELD_BRING_BACK_WORDING.icon} ${str(weld.weldNo)}`} title={WELD_BRING_BACK_WORDING.icon} onClick={() => setRestoring(weld)}><RotateCcw size={16}/></button>) : <>
+            {canOpen && <button type="button" className="icon-btn" aria-label={editLabel} title={readOnly ? editLabel : 'Edit weld'} onClick={() => setEditing(weld)}><Pencil size={16}/></button>}
             {canEdit && <button type="button" className={`icon-btn ${weld.stampedBy ? 'weld-stamp-set' : ''}`} aria-label={`Stamp weld ${str(weld.weldNo)}${stamper ? `, stamped by ${str(stamper.name)}` : ''}`} title={stamper ? stampOptionLabel(stamper) : 'Stamp'} onClick={() => setStamping(weld)}><Stamp size={16}/></button>}</>}</td>
-          <td className="select-cell"><input type="checkbox" aria-label={`Check weld ${str(weld.weldNo)}`} disabled={lock.locked || showDeleted} title={lock.locked ? lock.reason : undefined} checked={!lock.locked && !showDeleted && selected.includes(weld.id)} onChange={event => setSelected(current => event.target.checked ? [...current, weld.id] : current.filter(id => id !== weld.id))}/></td>
+          <td className="select-cell"><input type="checkbox" aria-label={`Check weld ${str(weld.weldNo)}`} disabled={lock.locked || showDeleted} title={lock.locked ? `Cannot be checked: ${lock.reason}` : undefined} checked={!lock.locked && !showDeleted && selected.includes(weld.id)} onChange={event => setSelected(current => event.target.checked ? [...current, weld.id] : current.filter(id => id !== weld.id))}/></td>
         </tr>;
       })}</tbody>
-      {canSort && dragging && <tfoot><tr className="weld-drop-end" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void reorder(dropWeld(order, dragging, null), welds.find(row => row.id === dragging)); }}><td colSpan={columns.length + 1}>Drop here to move the weld to the end</td></tr></tfoot>}
-    </table>{visible.length === 0 && <p className="muted weld-no-match" role="status">No weld matches “{query.trim()}”.</p>}</TableScroll>
+    </table></div>
       : showDeleted ? <EmptyState {...deletedViewEmpty(welds.length)}/>
-      : <EmptyState title="No welds on this isometric" description="Add the first weld, or add a range of weld numbers at once." action={canAdd ? <button type="button" className="btn primary" onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : undefined}/>}
-    {welds.length > 0 && !showDeleted && <p className="muted weld-legend"><Lock size={13}/> A padlock marks a weld of a completed phase: field welds after the Field release, shop welds after the Prefab release. Reopen the release to change them.</p>}
-    {!showDeleted && welds.some(weld => ndtLocks.get(weld.id)!.locked) && <p className="muted weld-legend"><Lock size={13}/> A padlock in Options marks a weld with an NDT request: only an administrator can change it, with a comment. Its NDT results are attached in the weld itself (open the weld → NDT result).</p>}
+      : <EmptyState title="No welds on this isometric" description="Add the first weld, or add a range of weld numbers at once with Options → Add welds." action={canAdd ? <button type="button" className="btn primary" onClick={() => setDialog('add')}><Plus size={16}/>Add weld</button> : undefined}/>}
     {dialog === 'add' && <WeldDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
     {dialog === 'range' && <RangeDialog iso={iso} data={data} onClose={() => setDialog(null)}/>}
-    {editing && <WeldDialog iso={iso} weld={editing} data={data} onClose={() => setEditing(null)}/>}
+    {editing && <WeldDialog iso={iso} weld={editing} data={data} lockedReason={editingLock?.locked ? editingLock.reason : undefined} onDeleted={canDelete ? () => setSelected(current => current.filter(id => id !== editing.id)) : undefined} onClose={() => setEditing(null)}/>}
     {stamping && <StampDialog weld={stamping} data={data} onClose={() => setStamping(null)}/>}
     {dialog === 'mass' && <MassEditDialog iso={iso} data={data} selected={checked} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
     {dialog === 'delete' && <DeleteDialog welds={removing} onClose={() => setDialog(null)} onDone={() => setSelected([])}/>}
-    {/* Options → Punch list opens the isometric's punch dialog (Add item / Complete punch & Sign-off), the same as the Item button of the status card. */}
+    {/* Options → Punch list opens the isometric's punch dialog (Add item / Complete punch & Sign-off), the same as the open count of the Progress & Status card. */}
     {dialog === 'punch' && <PunchDialog isoId={iso.id} onClose={() => setDialog(null)}/>}
     {restoring && <BringBackDialog weld={restoring} onClose={() => setRestoring(null)} onBack={() => { if (!stayInDeletedView(data.deleted.filter(row => row.id !== restoring.id).length)) setShowDeleted(false); }}/>}
     {inspection && <inspection.Dialog isoId={str(iso.id)} weldIds={checked.map(weld => weld.id)} onClose={() => setInspection(null)}/>}
   </section>;
+  return <>{layout({ menu, addWeld, panel })}</>;
 }
 
-/** The Welds tab of the isometric in Weld Pilot: the reference weld table by default and the LISL register as a second view. */
-export function WeldsPanel(props: { iso: Row; onAttachments: () => void; onAuditTrail: () => void; onSetPhase: () => void; canSetPhase: boolean; canAttachments: boolean }) {
-  const { canReadReport } = useWorkspace(); const [view, setView] = useState<'welds' | 'lisl'>('welds');
-  const lisl = canReadReport('lisl');
-  const switcher = lisl ? <div className="table-tabs weld-views" role="group" aria-label="Weld view"><button type="button" className={view === 'welds' ? 'selected' : ''} aria-pressed={view === 'welds'} onClick={() => setView('welds')}>Welds</button><button type="button" className={view === 'lisl' ? 'selected' : ''} aria-pressed={view === 'lisl'} onClick={() => setView('lisl')}>LISL (all fields)</button></div> : null;
-  if (view === 'lisl' && lisl) return <><div className="weld-views-bar">{switcher}</div><DataLisl key={props.iso.id} scopeIsoId={props.iso.id} scopeProjectId={String(props.iso.projectId)} embedded/></>;
-  return <WeldTable {...props} switcher={switcher}/>;
+/**
+ * The isometric page of Weld Core (client change list 22.11.2026): the LISL is the page's one register, with no tab strip and no
+ * second all-fields view (the full-field Data LISL opens from Options). Its Options menu is the page's Options menu.
+ */
+export function WeldsPanel(props: WeldsPanelProps) {
+  return <WeldTable key={props.iso.id} {...props}/>;
 }

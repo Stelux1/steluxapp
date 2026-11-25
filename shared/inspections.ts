@@ -13,8 +13,18 @@ import { weldItpId } from './itp-dashboard.ts';
 
 export type InspectionKind = 'VI' | 'NDT PRE' | 'NDT' | 'PWHT';
 export const INSPECTION_KINDS: InspectionKind[] = ['VI', 'NDT PRE', 'NDT', 'PWHT'];
-/** Column headers of the weld table. */
-export const KIND_LABELS: Record<InspectionKind, string> = { VI: 'VI', 'NDT PRE': 'NDT (Pre)', NDT: 'NDT', PWHT: 'Pre-HT/PWHT' };
+/** Names of the inspection columns (weld table headers, aria labels of the cells). VI reads "VT" (client change list 22.11.2026, image 16). */
+export const KIND_LABELS: Record<InspectionKind, string> = { VI: 'VT', 'NDT PRE': 'NDT (Pre)', NDT: 'NDT', PWHT: 'Pre-HT/PWHT' };
+/**
+ * The weld table shows Pre-HT and PWHT as two columns (client change list 22.11.2026, image 19), each built like NDT (Pre) / NDT:
+ * Pre-HT reads `pwhtReqPre` and the requests / results typed 'PRE-HT', PWHT reads `pwhtReq` and those typed 'PWHT'. The kind
+ * 'PWHT' without a heat type keeps the combined behaviour for the NDT/PWHT Manager, the dialogs and the PDFs.
+ */
+export type HeatType = 'PRE-HT' | 'PWHT';
+export const HEAT_TYPES: HeatType[] = ['PRE-HT', 'PWHT'];
+export const HEAT_LABELS: Record<HeatType, string> = { 'PRE-HT': 'Pre-HT', PWHT: 'PWHT' };
+/** The weld requires this heat treatment: Pre-HT `pwhtReqPre`, PWHT `pwhtReq`. */
+export const heatRequired = (weld: Row, heat: HeatType) => (heat === 'PRE-HT' ? weld.pwhtReqPre : weld.pwhtReq) === true;
 /** Stored inspection types behind one weld-table column. */
 export const KIND_TYPES: Record<InspectionKind, string[]> = { VI: ['VI'], 'NDT PRE': ['NDT PRE'], NDT: ['NDT'], PWHT: ['PRE-HT', 'PWHT'] };
 export const NDT_TYPES = ['NDT', 'NDT PRE'];
@@ -167,10 +177,10 @@ export function archiveStamp(request: Row): string {
 /** File name of a request's PDF: `<yyyymmdd>_<number>-NDT-Request.pdf`, `-NDT-RequestPre.pdf` for NDT Pre, `-PWHT-Request.pdf` for Pre-HT / PWHT. */
 export const requestDocumentName = (request: Row) => `${textOf(request.date).replace(/-/g, '')}_${textOf(request.number)}-${request.type === 'NDT PRE' ? 'NDT-RequestPre' : request.type === 'NDT' ? 'NDT-Request' : 'PWHT-Request'}.pdf`;
 /** The requests a weld is on in a column (cancelled and numberless ones leave out), one row per request number, newest first. */
-export function weldArchive(weld: Row, kind: InspectionKind, rows: Pick<CellRows, 'requests' | 'attachments'>): WeldArchiveRow[] {
+export function weldArchive(weld: Row, kind: InspectionKind, rows: Pick<CellRows, 'requests' | 'attachments'>, heat?: HeatType): WeldArchiveRow[] {
   if (kind === 'VI') return [];
   const seen = new Set<string>(), out: WeldArchiveRow[] = [];
-  for (const request of weldRequests(rows.requests, weld.id, KIND_TYPES[kind])) {
+  for (const request of weldRequests(rows.requests, weld.id, kind === 'PWHT' && heat ? [heat] : KIND_TYPES[kind])) {
     if (request.status === 'Cancelled' || !textOf(request.number)) continue;
     const key = `${request.type}|${textOf(request.number)}`; if (seen.has(key)) continue; seen.add(key);
     // The request PDF is stored on one line of the request (it covers every weld that shares the number).
@@ -181,9 +191,9 @@ export function weldArchive(weld: Row, kind: InspectionKind, rows: Pick<CellRows
   return out;
 }
 /** The weld still needs a request: an NDT process on no request (NDT, NDT Pre), or a required Pre-HT / PWHT with no request yet. */
-export function requestPrintable(weld: Row, kind: InspectionKind, rows: Pick<CellRows, 'requests' | 'results' | 'processes'>): boolean {
+export function requestPrintable(weld: Row, kind: InspectionKind, rows: Pick<CellRows, 'requests' | 'results' | 'processes'>, heat?: HeatType): boolean {
   if (kind === 'VI') return false;
-  if (kind === 'PWHT') return requiredTypes(weld, kind).some(type => weldRequests(rows.requests, weld.id, [type]).every(row => row.status === 'Cancelled'));
+  if (kind === 'PWHT') return requiredTypes(weld, kind).filter(type => !heat || type === heat).some(type => weldRequests(rows.requests, weld.id, [type]).every(row => row.status === 'Cancelled'));
   return inspectionRequired(weld, kind) && openProcessIds(weld, kind, rows.requests, rows.results, rows.processes).length > 0;
 }
 
@@ -193,13 +203,15 @@ export function heatSections(weld: Row): HeatSection[] {
   return [...(weld.pwhtReqPre === true ? [{ type: 'PRE-HT' as const, label: 'Pre-HT', locationField: 'pwhtPreLocationId', processField: 'pwhtPreProcessId', hundred: false }] : []), ...(weld.pwhtReq === true ? [{ type: 'PWHT' as const, label: 'PWHT', locationField: 'pwhtLocationId', processField: 'pwhtProcessId', hundred: true }] : [])];
 }
 
-export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellRows): CellState {
-  const types = KIND_TYPES[kind];
+export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellRows, heat?: HeatType): CellState {
+  // A heat type narrows the Pre-HT/PWHT kind to one of its two columns.
+  const only = kind === 'PWHT' ? heat : undefined;
+  const types = only ? [only] : KIND_TYPES[kind];
   const results = weldResults(rows.results, weld.id, types), requests = weldRequests(rows.requests, weld.id, types);
   const attachments = live(rows.attachments);
   const report = kind === 'VI' ? live(rows.reports).filter(item => vtWeldIds(item).includes(weld.id)).sort((a, b) => vtSeq(b) - vtSeq(a))[0] : undefined;
   // VI has no requirement flag: the cell follows the VT reports. A weld on no report reads "-"; on one it reads "---" until it is marked.
-  const required = kind === 'VI' ? Boolean(report) || results.length > 0 : inspectionRequired(weld, kind) || results.length > 0 || requests.length > 0;
+  const required = kind === 'VI' ? Boolean(report) || results.length > 0 : (only ? heatRequired(weld, only) : inspectionRequired(weld, kind)) || results.length > 0 || requests.length > 0;
   const reports = new Set(results.map(row => `${row.type}|${textOf(row.reportNo)}`).filter(key => !key.endsWith('|')));
   const sameReport = new Set(live(rows.results).filter(row => reports.has(`${row.type}|${textOf(row.reportNo)}`)).map(row => row.id));
   const requestIds = new Set(requests.map(row => row.id));
@@ -218,7 +230,7 @@ export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellR
       status = latest?.result === 'Accepted' ? 'accepted' : latest?.result === 'Rejected' ? 'rejected' : latest?.result === EXTRA_RESULT_OPTION ? 'not-applicable' : 'on-report';
     }
   } else if (required) {
-    const typesNeeded = kind === 'PWHT' ? (requiredTypes(weld, kind).length ? requiredTypes(weld, kind) : types) : types;
+    const typesNeeded = only ? types : kind === 'PWHT' ? (requiredTypes(weld, kind).length ? requiredTypes(weld, kind) : types) : types;
     const latest = typesNeeded.map(type => latestResult(rows.results, weld.id, type));
     // A ticked ReWeld? on the latest NDT result counts as not accepted whatever the result says (reference weld 002).
     if (kind !== 'PWHT' && latest.some(row => row && rewelded(rows.results, row))) status = 'reweld';
@@ -227,7 +239,7 @@ export function inspectionCellState(weld: Row, kind: InspectionKind, rows: CellR
     else if (requests.some(row => row.status === 'Open')) status = 'requested';
     else status = 'open';
   }
-  return { required, status, requests, results, reportFiles, requestFiles, tracer, printable: requestPrintable(weld, kind, { requests: rows.requests, results: rows.results, processes: rows.processes }), archive: weldArchive(weld, kind, rows), visual };
+  return { required, status, requests, results, reportFiles, requestFiles, tracer, printable: requestPrintable(weld, kind, { requests: rows.requests, results: rows.results, processes: rows.processes }, only), archive: weldArchive(weld, kind, rows, only), visual };
 }
 
 // ----- repairs -------------------------------------------------------------------------------------------------
@@ -725,8 +737,9 @@ export const VT_FILTERS = [{ value: 'all', label: 'Include all welds' }, { value
 export const VT_ITPS = ['ITP 1', 'ITP 2'];
 /** Labels of the New tab, in the reference order. */
 export const VT_NEW_LABELS = { filter: 'Filter', itp: 'ITP', activityNo: 'Activity No', engineer: 'QAQC Engineer', customNo: 'Custom Report No (If needed)' };
-export const VT_PICKER_COLUMNS = ['C', 'WN', 'Type', 'Wdr'];
-export const VT_UPLOAD_COLUMNS = ['A', 'NA', 'WN', 'Type', 'Wdr'];
+/** WD: the welders' stamps, named as in the weld table (client change list 22.11.2026). */
+export const VT_PICKER_COLUMNS = ['C', 'WN', 'Type', 'WD'];
+export const VT_UPLOAD_COLUMNS = ['A', 'NA', 'WN', 'Type', 'WD'];
 export const VT_UPLOAD_HELP = 'Tick A or NA per weld and click Save A/NA. That can be done weld by weld. Only when every weld on the report is marked do you upload the PDF, or finish via New → Digital fill-in. Digital fill-in and Go (PDF) use the same report; a weld is not placed on a second report.';
 export const VT_DOCUMENT = 'VI document';
 export const VT_NO_WELDS = 'Select at least one weld.';
