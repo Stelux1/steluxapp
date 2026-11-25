@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { apiUrl } from './api.ts';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Download, FileStack, Plus, Pencil, Printer, ScanLine, ClipboardCheck } from 'lucide-react';
 import { LISL_COLUMNS } from '../shared/lisl.ts';
 import { buildReport } from '../shared/reports.ts';
@@ -13,7 +13,9 @@ const groups = [...new Set(LISL_COLUMNS.map(column => column.group))];
 const overview = ['Weld Type', 'Joint type', 'Welder', 'VT', 'NDT Req#', 'Index No 1', 'Charge No 1', 'Material 1', 'Index No 2', 'Charge No 2', 'Material 2', 'WPS No', 'Diameter (inch)', 'Spool', 'Weld date'];
 export function DataLisl({ scopeIsoId = '', scopeProjectId = '', embedded = false }: { scopeIsoId?: string; scopeProjectId?: string; embedded?: boolean }) {
   const { rows, siteId, canRecord, canRun, canReadReport, openRecord, hasFeature } = useWorkspace();
-  const [projectId, setProject] = useState(scopeProjectId), [isoId, setIso] = useState(scopeIsoId), [query, setQuery] = useState('');
+  // The isometric page's Options → Open Data LISL opens the register filtered on that isometric (?project_id=…&iso_id=…).
+  const [params] = useSearchParams();
+  const [projectId, setProject] = useState(scopeProjectId || (embedded ? '' : params.get('project_id') || '')), [isoId, setIso] = useState(scopeIsoId || (embedded ? '' : params.get('iso_id') || '')), [query, setQuery] = useState('');
   const [group, setGroup] = useState('LISL overview'), [ndtRequired, setNdt] = useState(''), [inspection, setInspection] = useState<Row | null>(null), [page, setPage] = useState(0), [editor, setEditor] = useState<Row | 'new' | null>(null);
   if (!hasFeature('lisl') || !canReadReport('lisl')) return <EmptyState title="This area is restricted" description="Your profile does not include the LISL register."/>;
   const report = buildReport('lisl', rows, { projectId, isoId, siteId, ndtRequired });

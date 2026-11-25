@@ -70,3 +70,39 @@
 .main-project-list-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
 .main-project-list-note { margin: 0; padding: 10px 16px 14px; }
 @media (max-width: 560px) { .project-picker-tools { width: 100%; justify-content: space-between; } }
+
+/*
+ * Isometric page, top line (client change list 22.11.2026, image 20): Main project › Sub-project › isometric switcher › LISL
+ * on the left, Options / Reports / Add weld on the right; one line at 1280 px, wrapping on narrow screens.
+ */
+.iso-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; margin-bottom: 10px; min-height: 40px; }
+.iso-crumbs { min-width: 0; flex: 1 1 420px; }
+.iso-crumbs ol { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+.iso-crumbs li { display: inline-flex; align-items: center; min-width: 0; }
+.iso-crumbs li + li::before { content: "›"; padding: 0 8px; color: var(--muted); }
+.iso-crumbs a { color: var(--muted); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.iso-crumbs a:hover { color: var(--primary); text-decoration: underline; }
+.iso-crumbs a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
+.iso-crumbs li[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.iso-switcher { gap: 2px; }
+.iso-switcher select { min-width: 150px; max-width: 260px; min-height: 34px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font-size: 13px; font-weight: 600; color: var(--ink); }
+.iso-switcher .icon-btn { width: 30px; height: 30px; min-height: 30px; }
+.iso-switcher .iso-started-tag { margin-left: 6px; font-size: 12px; }
+.iso-topline-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+/* Flanges and WDI: slim strips below the register. */
+.iso-strips { display: grid; gap: 8px; margin-top: 2px; }
+.iso-strips > * { margin-bottom: 0; }
+.iso-workspace .iso-strips .iso-flanges { padding: 6px 14px; margin-bottom: 0; }
+.iso-workspace .iso-strips .iso-wdi-panel { margin-bottom: 0; }
+/* Options → Spools / Drawing documents (Weld Core). */
+.iso-listing-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.iso-listing.iso-documents .attachment-row { margin-inline: 0; }
+@media (max-width: 760px) {
+  .iso-topline { align-items: stretch; }
+  .iso-crumbs { flex-basis: 100%; }
+  .iso-switcher { flex: 1 1 100%; }
+  .iso-switcher select { flex: 1; max-width: none; min-width: 0; }
+  .iso-topline-actions { width: 100%; margin-left: 0; }
+  .iso-topline-actions > .btn, .iso-topline-actions > .dropdown { flex: 1 1 auto; }
+}
+@media print { .iso-topline-actions, .iso-switcher .icon-btn, .iso-strips { display: none; } }

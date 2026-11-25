@@ -5,6 +5,7 @@ import { certificatesForProject as projectCertificatesOf, splitIds } from './wel
 import { weldLocked, weldLockReason, weldPhase } from './releases.ts';
 import { INSPECTION_MASS_EDIT_FIELDS, locationField, ndtRequested, processField } from './inspections.ts';
 import { nonWeldCode, type NonWeldCode } from './weld-codes.ts';
+import { ISO_PAGE_MENU, type IsoMenuEntry } from './iso-pages.ts';
 
 /**
  * Weld table and weld entry on the isometric (Weld Pilot). Pure functions over plain rows: the server uses them
@@ -816,12 +817,18 @@ export const MASS_EDIT_SELECT_NOTHING = 'Select one or more welds first.';
 // ---------------------------------------------------------------------------------------------------------------
 // Options menu, delete, bring back, stamp
 
-/** Entries of the weld table's Options menu in the reference order. "Upload NDT on multiple welds" is not in it. */
-export const WELD_OPTIONS_MENU: { key: string; label: string; dividerBefore?: boolean }[] = [
-  { key: 'attachments', label: 'Attachments' }, { key: 'visual-inspection', label: 'Visual inspection' }, { key: 'mass-ndt-pre', label: 'Generate Mass NDT-Pre request' },
-  { key: 'mass-ndt', label: 'Generate Mass NDT request' }, { key: 'mass-pwht', label: 'Generate Mass Pre-HT/PWHT request' }, { key: 'upload-pwht', label: 'Upload Pre-HT/PWHT on multiple welds' },
-  { key: 'punch-list', label: 'Punch list' }, { key: 'audit-trail', label: 'Audit trail' }, { key: 'set-phase', label: 'Set phase' }, { key: 'show-deleted', label: 'Show deleted welds' },
-  { key: 'delete-selected', label: 'Delete selected', dividerBefore: true }, { key: 'sorting', label: 'Disable welds sorting', dividerBefore: true },
+/**
+ * The one Options menu of the isometric page in Weld Core (client change list 22.11.2026, image 20): first the weld entries
+ * (Add welds and Mass edit welds moved here from the toolbar), then the isometric's own entries (ISO_PAGE_MENU, with Punch
+ * list after Attachments), destructive entries last. "Upload NDT on multiple welds" is not in it; the welds sorting switch is
+ * gone with the sort column (D3).
+ */
+export const WELD_OPTIONS_MENU: IsoMenuEntry[] = [
+  ...([['add-welds', 'Add welds'], ['mass-edit', 'Mass edit welds'], ['visual-inspection', 'Visual inspection'], ['mass-ndt-pre', 'Generate Mass NDT-Pre request'], ['mass-ndt', 'Generate Mass NDT request'],
+    ['mass-pwht', 'Generate Mass Pre-HT/PWHT request'], ['upload-pwht', 'Upload Pre-HT/PWHT on multiple welds'], ['show-deleted', 'Show deleted welds']] as const).map(([key, label]) => ({ key, label, group: 'welds' as const })),
+  ...ISO_PAGE_MENU.filter(entry => entry.group === 'isometric').flatMap(entry => entry.key === 'attachments' ? [entry, { key: 'punch-list', label: 'Punch list', group: 'isometric' as const }] : [entry]),
+  { key: 'delete-selected', label: 'Delete selected', group: 'danger' },
+  ...ISO_PAGE_MENU.filter(entry => entry.group === 'danger'),
 ];
 export const WELD_DELETE_WORDING = { one: 'Delete weld', many: 'Delete selected', text: 'Are you sure?', button: 'Delete', cancel: 'Cancel' } as const;
 export const WELD_BRING_BACK_WORDING = { title: 'Bring weld back', text: 'Are you sure?', button: 'Bring back', cancel: 'Cancel', icon: 'Bring weld back', showActive: 'Show active welds', emptyTitle: 'No welds added yet for this isometric.', emptyText: 'Use Add weld or Add welds to create the first weld.' } as const;

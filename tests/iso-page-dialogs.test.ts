@@ -11,7 +11,7 @@ import { passwordHash } from '../server/auth.ts';
 import { HOSTED_RELEASE_PROFILE } from '../shared/release.ts';
 import { isoBlockers, type BlockerItem, type IsoStatusInput } from '../shared/iso-status.ts';
 import { blockerOpening, punchListUrl } from '../shared/iso-blocker-targets.ts';
-import { IDENTIFICATION_FACTS } from '../shared/iso-card-facts.ts';
+import { IDENTIFICATION_FACTS, ISO_HEADER_CARDS, hydrotestStateText, openPunchCount, phaseBreakdown } from '../shared/iso-card-facts.ts';
 import { ITP_TITLE_LIMIT, NO_ITP_LINKED, cutItpTitle, itpCard } from '../shared/iso-itps-card.ts';
 import { CHECK_FOR_DELETE, attachmentDeleteIds, attachmentUploadError, isoAttachmentRows, reportTypes } from '../shared/iso-attachments.ts';
 import { ISO_AUDIT_EMPTY, auditEntities, auditWeldOptions } from '../shared/iso-audit.ts';
@@ -70,8 +70,33 @@ test('a blocker target maps to its dialog for every kind; a locked weld opens Ed
 
 // ----- delta-I1-008 / delta-I1-007: Identification and ITPS cards -----------------------------------------------------------
 
-test('Identification shows the Asset tag after the ISO No slot and no Drawing no. row', () => {
+test('Asset tag stays among the identification facts (in Details, image 20 does not show it) and no Drawing no. row', () => {
   assert.deepEqual(IDENTIFICATION_FACTS.map(fact => fact.label), ['Asset tag']);
+});
+
+test('D10: four compact cards with the rows of image 20; Hydrotest, Punch and the Shop / Field breakdown read the shared figures', async () => {
+  assert.deepEqual(ISO_HEADER_CARDS.map(card => [card.title, [...card.rows]]), [
+    ['Identification', ['ISO ID', 'Revision', 'ITP', 'Custom field']], ['Compliance', ['NoBo', 'NoBo Reg. / Serial', 'PED Cat.-Mod', 'X-ray %']],
+    ['Technical', ['Piping class', 'PWHT', 'Test pressure', 'Test system']], ['Progress & Status', ['Completion', 'Shop / Field', 'Hydrotest', 'Punch / Priority']],
+  ]);
+  assert.deepEqual([hydrotestStateText({ inScope: true, completed: true }), hydrotestStateText({ inScope: true, completed: false }), hydrotestStateText({ inScope: false, completed: false })], ['Completed', 'Pending', '—']);
+  assert.equal(openPunchCount(null), null, 'punch items not delivered: no count');
+  assert.equal(openPunchCount({ prePunchOpen: 3, punchOpen: 1, prePunchFinished: 5, punchFinished: 0, overdue: 0, blocking: 0, prePunchPassed: false, punchPassed: false, prePunchWarn: 0, punchWarn: 0 }), 4);
+  const { progressFromUnits, emptyProgressUnits } = await import('../shared/progress-model.ts');
+  const units = emptyProgressUnits(); units.shop.welding = { done: 1, total: 2 }; units.shop.fabricationBook = { done: 0, total: 1 };
+  const shop = progressFromUnits(units).phases[0];
+  assert.equal(phaseBreakdown(shop), [`Shop ${shop.percent}% · 50% of the isometric · ${shop.contribution} points`, 'MTO / Cut-Bev / Fit-up (40%): n/a', 'Welding (40%): 50%', 'NDT (10%): n/a', 'Fabrication Book (10%): 0%'].join('\n'));
+  // The page source: the header cards use these rows and the Details disclosure keeps what image 20 does not show.
+  const { readFileSync } = await import('node:fs');
+  const header = readFileSync(new URL('../client/iso-header.tsx', import.meta.url), 'utf8');
+  for (const card of ISO_HEADER_CARDS) { assert.match(header, new RegExp(`<Card title="${card.title}"`)); for (const label of card.rows.filter(label => label !== 'Hydrotest' && label !== 'Punch / Priority')) assert.match(header, new RegExp(`<Line label="${label.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}"`), label); }
+  assert.match(header, /<details className="panel iso-details"/); assert.match(header, /<ItpLinkControl iso=\{iso\} slot=\{entry\.slot\}\/>/, 'unlinking an ITP stays reachable');
+  assert.match(header, /<PhaseFlags iso=\{iso\}\/>/); assert.match(header, /<ReleaseStatus iso=\{iso\}\/>/); assert.match(header, /<PunchStatus iso=\{iso\}/);
+  assert.match(header, /function ProgressQuantitiesDialog/); assert.match(header, /Set all to 100%/, 'the quantities editor keeps Save and Set all to 100%');
+  const page = readFileSync(new URL('../client/project-workspace.tsx', import.meta.url), 'utf8');
+  assert.match(page, /<li aria-current="page">\{current\}<\/li>/); assert.match(page, /const current = lislPage \? 'LISL'/);
+  assert.match(page, /\{lislPage \? <WeldsPanel iso=\{iso\} pageItem=\{pageItem\}/, 'Weld Core: the LISL without a tab strip');
+  assert.match(page, /\{topLine\(<>\{menu\}<PdfReportsMenu iso=\{iso\}\/>\{addWeld\}<\/>\)\}\{header\}\{panel\}\{strips\}/, 'Options, Reports and Add weld in the top line; Flanges and WDI below the LISL');
 });
 
 test('ITPS card: typed ITP numbers do not count; a Shop+Field ITP counts 1/1 with one row; a linked row has scope, title cut to 25 characters, revision, PDF', () => {

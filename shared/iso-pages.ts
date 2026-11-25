@@ -118,8 +118,39 @@ export const PHASE_LABELS: Record<string, string> = {
 
 // ----- The isometric page ------------------------------------------------------------------------------------------------
 
-/** The Options menu of the page heading is shown only where the open tab has no Options menu of its own (Welds, Materials). */
-export const headingHasOptions = (pilotActive: boolean, tab: string) => pilotActive && !['welds', 'mto'].includes(tab);
+/**
+ * Attachments, Audit trail and Set phase in the page's Options menu (client change list 22.11.2026, image 20): the isometric
+ * page has one Options menu in its top line. In Weld Core the LISL's entries join it, so they are there on the LISL as well;
+ * only Material Core's Materials tab keeps its own Options menu with these three. Without a Core they are not offered.
+ */
+export const headingHasOptions = (pilotActive: boolean, tab: string) => pilotActive && tab !== 'mto';
+
+export type IsoMenuGroup = 'welds' | 'isometric' | 'danger';
+export interface IsoMenuEntry { key: string; label: string; group: IsoMenuGroup }
+/**
+ * The page entries of the isometric page's Options menu, in order: what the old page heading, the tab strip and the
+ * Progress card offered (D11: nothing loses its only entry point). A page renders only the entries it can act on; the
+ * destructive entry comes last. `other-core` is labelled "Open in <Core>" by the page.
+ */
+export const ISO_PAGE_MENU: IsoMenuEntry[] = [
+  { key: 'edit-isometric', label: 'Edit isometric', group: 'isometric' },
+  { key: 'edit-quantities', label: 'Progress quantities', group: 'isometric' },
+  { key: 'spools', label: 'Spools', group: 'isometric' },
+  { key: 'documents', label: 'Drawing documents', group: 'isometric' },
+  { key: 'attachments', label: 'Attachments', group: 'isometric' },
+  { key: 'audit-trail', label: 'Audit trail', group: 'isometric' },
+  { key: 'set-phase', label: 'Set phase', group: 'isometric' },
+  { key: 'data-lisl', label: 'Open Data LISL', group: 'isometric' },
+  { key: 'other-core', label: 'Open in other Core', group: 'isometric' },
+  { key: 'archive', label: 'Archive isometric', group: 'danger' },
+];
+export const ISO_MENU_GROUPS: IsoMenuGroup[] = ['welds', 'isometric', 'danger'];
+/** The rendered entries per group in menu order; a group with nothing rendered drops out, so a divider only ever sits between two groups. */
+export function menuGroups<T>(entries: IsoMenuEntry[], render: (entry: IsoMenuEntry) => T | null | undefined | false): { group: IsoMenuGroup; items: { key: string; node: T }[] }[] {
+  return ISO_MENU_GROUPS.map(group => ({ group, items: entries.filter(entry => entry.group === group).flatMap(entry => { const node = render(entry); return node ? [{ key: entry.key, node }] : []; }) })).filter(entry => entry.items.length > 0);
+}
+/** "Open Data LISL" opens the full-field register filtered on the isometric (the LISL page reads these parameters). */
+export const dataLislUrl = (iso: Row) => `/welding/lisl?${new URLSearchParams({ project_id: String(iso.projectId ?? ''), iso_id: String(iso.id) }).toString()}`;
 
 // ----- Add new (Edit isometric) -----------------------------------------------------------------------------------------
 

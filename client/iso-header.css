@@ -1,51 +1,60 @@
-/* Isometric header: six cards, identical under Weld Pilot and MTO Pilot. */
-.iso-header { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; align-items: start; }
-.iso-card { padding: 10px 12px 12px; min-width: 0; border-top: 3px solid var(--pilot-color, var(--primary)); }
-.iso-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
-.iso-card h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 600; }
-.iso-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.iso-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px 12px; margin: 0; }
+/*
+ * Top of the isometric page (client change list 22.11.2026, image 20): four compact cards — Identification, Compliance,
+ * Technical, Progress & Status — each a short list of label / value rows, then one collapsed Details disclosure.
+ * Four columns from 1200 px, 2 × 2 below, one column on a phone. The cards stay short so the register dominates.
+ */
+.iso-header { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 8px; align-items: stretch; }
+.iso-card { padding: 8px 12px 6px; min-width: 0; border-top: 3px solid var(--pilot-color, var(--primary)); }
+.iso-card > h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 2px; font-weight: 600; line-height: 1.5; }
+.iso-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 400; }
+.iso-rows { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0; font-size: 12.5px; line-height: 1.35; }
+.iso-rows > div { display: contents; }
+.iso-rows dt, .iso-rows dd { padding: 4px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.iso-rows > div:last-child > dt, .iso-rows > div:last-child > dd { border-bottom: 0; }
+.iso-rows dt { color: var(--muted); padding-right: 10px; }
+.iso-rows dd { margin: 0; font-weight: 500; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.iso-rows .text-link { font-size: inherit; display: inline-flex; align-items: center; gap: 3px; min-height: 0; padding: 0; overflow-wrap: anywhere; text-align: left; }
+.iso-rows .text-link svg { flex-shrink: 0; }
+.iso-row-value { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.iso-row-value .progress { flex: 1 1 60px; min-width: 40px; }
+.iso-rows .iso-row-icon, .iso-rows .icon-btn { width: 24px; height: 24px; min-height: 24px; padding: 0; }
+.iso-itp-links { gap: 2px 6px; }
+.iso-completion { font-size: 14px; font-weight: 700; }
+.iso-phases-value > span { white-space: nowrap; }
+.iso-clear { display: inline-flex; gap: 5px; align-items: center; color: #1a7f4b; }
+.iso-open-count { border: 1px solid #d9a21e; background: #fff7e0; color: #7a4f00; border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600; min-height: 28px; }
+.iso-open-count:hover { background: #ffefbf; }
+.iso-material-slot .iso-rows { margin-top: 4px; }
+
+/* Details: Asset tag, quality, blockers, ITP links, phases, release and punch status — collapsed under the cards. */
+.iso-details { margin-bottom: 10px; padding: 0; }
+.iso-details > summary { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; min-height: 34px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+.iso-details > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.iso-details-title { font-weight: 600; }
+.iso-details-meta { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; color: var(--muted); font-size: 12px; }
+.iso-details-warn { color: #7a4f00; font-weight: 600; }
+.iso-details-hint { color: var(--muted); }
+.iso-details-body { padding: 4px 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 12px; }
+.iso-details-body > .iso-facts { padding-top: 10px; }
+.iso-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px 16px; margin: 0; }
 .iso-facts > div { min-width: 0; }
 .iso-facts dt { font-size: 11px; color: var(--muted); margin-bottom: 1px; }
 .iso-facts dd { margin: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
-.iso-slot { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); min-width: 0; }
-.iso-slot:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
-.iso-card > .iso-slot:not(:last-child) + .iso-facts, .iso-slot + .iso-facts { margin-top: 0; }
-.iso-slot-main { display: flex; gap: 11px; min-width: 0; }
-.iso-slot-main > svg { color: var(--primary); flex-shrink: 0; margin-top: 2px; }
-.iso-slot-main small { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
-.iso-slot-main strong, .iso-slot-main .text-link { font-size: 15px; overflow-wrap: anywhere; }
-.iso-slot-meta { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
-.iso-slot-meta .text-link { font-size: 12px; }
-.iso-slot-actions { display: flex; gap: 2px; flex-shrink: 0; }
-.iso-total { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
-.iso-total strong { font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.iso-total span { font-size: 12px; color: var(--muted); }
-.iso-status-card .progress { margin-bottom: 8px; }
-.iso-open-count { border: 1px solid #d9a21e; background: #fff7e0; color: #7a4f00; border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600; min-height: 28px; }
-.iso-open-count:hover { background: #ffefbf; }
-.iso-clear { display: inline-flex; gap: 5px; align-items: center; color: #1a7f4b; }
-.iso-phases { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 12px; font-size: 13px; }
+.iso-details-section h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.iso-phases { border-top: 1px solid var(--line); padding-top: 10px; font-size: 13px; }
 .iso-phases summary { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
 .iso-phases summary span { color: var(--muted); font-size: 12px; }
-.iso-phases ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
+.iso-phases ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 12px; }
 .iso-phases li { display: flex; gap: 7px; font-size: 12px; color: var(--muted); }
 .iso-phases li.done { color: var(--ink); }
-.iso-material-slot { min-height: 56px; margin-top: 16px; border-top: 1px dashed var(--line); }
 .iso-hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
-.iso-weights-link { display: inline-block; margin-top: 10px; }
-.iso-phase-list { display: grid; gap: 4px; }
-.iso-phase { border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-.iso-phase h3 { margin: 0; font-size: 14px; }
-.iso-phase h3 button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 4px 10px; background: none; border: 0; text-align: left; color: var(--ink); font-weight: 500; }
-.iso-phase h3 button:hover { background: var(--surface-blue); }
-.iso-phase-name { flex: 1; }
-.iso-phase-value { font-variant-numeric: tabular-nums; font-weight: 600; }
-.iso-chevron { flex-shrink: 0; color: var(--muted); transition: transform .15s; }
-.iso-phase h3 button[aria-expanded="true"] .iso-chevron { transform: rotate(180deg); }
-.iso-phase-body { padding: 4px 12px 14px; border-top: 1px solid var(--line); }
+
+/* Progress quantities dialog (the former Progress card). */
+.iso-quantity-group + .iso-quantity-group { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.iso-quantity-group h3 { margin: 0; font-size: 14px; }
+.iso-drives { color: var(--muted); font-size: 12px; }
 .iso-quantities { display: grid; gap: 12px; padding-top: 12px; }
-.iso-quantity { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 4px 12px; align-items: center; }
+.iso-quantity { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 4px 12px; align-items: center; }
 .iso-quantity label { font-size: 13px; }
 .iso-quantity input { width: 100%; min-height: 38px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; text-align: right; }
 .iso-quantity input:disabled { background: var(--surface); color: var(--muted); }
@@ -62,9 +71,8 @@
 .iso-segmented input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .iso-segmented label:has(input:focus-visible) { outline: 2px solid var(--cyan); outline-offset: -2px; }
 .iso-finish fieldset:disabled .iso-segmented label { cursor: not-allowed; opacity: .6; }
-.iso-progress-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-.iso-unsaved { font-size: 12px; color: #925500; }
-.iso-progress-card .alert { margin-top: 12px; }
+.iso-unsaved { font-size: 12px; color: #925500; margin-right: auto; align-self: center; }
+.iso-quantities-dialog .alert { margin-bottom: 12px; }
 .iso-blockers section + section { margin-top: 18px; }
 .iso-blockers h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 8px; }
 .iso-blockers ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
@@ -73,17 +81,17 @@
 .iso-wdi-panel > summary { display: flex; justify-content: space-between; gap: 12px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }
 .iso-wdi-panel > summary span { color: var(--muted); font-size: 12px; font-weight: 400; }
 .iso-wdi-panel > .wdi-progress { padding: 4px 20px 20px; }
-/* Identification, ITPs and Progress carry names and selects: they get more of the one row. */
-@media (min-width: 1500px) { .iso-header { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.1fr); } }
-@media (max-width: 1000px) { .iso-header { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) {
-  .iso-header { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .iso-card { padding: 12px 16px; }
-  .iso-facts { gap: 12px; }
+@media (max-width: 1199px) { .iso-header { grid-template-columns: repeat(2, minmax(0, 1fr)); } .iso-phases ul { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .iso-header { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .iso-card { padding: 10px 14px 8px; }
+  .iso-rows { font-size: 13px; }
+  .iso-rows dt, .iso-rows dd { padding-block: 6px; }
+  .iso-details-hint { display: none; }
   .iso-phases ul { grid-template-columns: minmax(0, 1fr); }
   .iso-quantity { grid-template-columns: minmax(0, 1fr) 100px; }
 }
-@media print { .iso-progress-actions, .iso-slot-actions { display: none; } .iso-header { grid-template-columns: repeat(3, 1fr); } .iso-card { break-inside: avoid; } }
+@media print { .iso-row-icon, .iso-details > summary { display: none; } .iso-header { grid-template-columns: repeat(4, 1fr); } .iso-card { break-inside: avoid; } .iso-details:not([open]) { display: none; } }
 
 /* Isometrics list (hosted profile): key figures, flag columns, column filters. */
 .iso-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
